@@ -123,6 +123,24 @@ def test_vt_readiness_device_activity_and_temperature_age() -> None:
     assert (bare.ready, bare.device_active, bare.temperature_at) == (None, None, None)
 
 
+@pytest.mark.parametrize(
+    ("raw", "active"),
+    [
+        (["switch.radiator", "switch.loop"], frozenset({"switch.radiator", "switch.loop"})),
+        ([], frozenset()),
+        (None, None),
+        ("switch.radiator", None),
+        (["switch.radiator", 3], None),
+    ],
+    ids=["two", "none_active", "missing", "text", "foreign"],
+)
+def test_the_devices_vt_lists_active(raw: object, active: frozenset[str] | None) -> None:
+    """I8.8b: VT 10.4.0's `specific_states.device_actives`, the entity IDs of the zone's active
+    devices; anything else tells nothing."""
+    specific = {} if raw is None else {"device_actives": raw}
+    assert zone_values("heat", {"specific_states": specific}).devices_active == active
+
+
 @pytest.mark.parametrize(("raw", "cap"), [(0.8, 0.8), (80, 0.8), (1, 1.0), (None, None), (0, None)])
 def test_vt_cap_on_the_duty_cycle(raw: object, cap: float | None) -> None:
     values = zone_values("heat", {"configuration": {"max_on_percent": raw}})
@@ -282,24 +300,3 @@ def test_a_malformed_hvac_action_or_unit_is_unknown(action: object) -> None:
     )
     assert values.calling is None
     assert values.temperature is None
-
-
-@pytest.mark.parametrize(
-    ("attributes", "expected"),
-    [
-        ({"window_manager": {"window_state": "on", "window_auto_state": "off"}}, True),
-        ({"window_manager": {"window_state": "unavailable", "window_auto_state": "on"}}, True),
-        ({"window_manager": {"window_state": "off", "window_auto_state": "unavailable"}}, False),
-        ({"window_manager": {"window_state": "unknown", "window_auto_state": "unknown"}}, None),
-        ({"window_manager": "on"}, None),  # not VT's shape
-        ({"hvac_off_reason": "hvac_off_window_detection"}, True),  # its action turned it off
-        ({"hvac_off_reason": "hvac_off_manual"}, None),
-        ({}, None),  # no detection configured, or an older VT
-    ],
-)
-def test_vts_window_detection_holds_the_zone(
-    attributes: dict[str, object], expected: bool | None
-) -> None:
-    """G11 F: VT 10.4.0's window detection — a sensor or the slope — shows under
-    ``window_manager``; "on" in either holds the zone, and so does VT turning it off for one."""
-    assert zone_values("heat", attributes).window_open is expected

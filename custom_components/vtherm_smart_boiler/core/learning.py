@@ -2,15 +2,15 @@
 
 A zone's learning is paused while DHW runs, or control sends its "off" for a boiler fault, and its
 valve is open (no heat reaches it) — every draw, however short and on a combi boiler too, as the
-zone gets no heat meanwhile (S-41; the fault: decision 14) — while foreign heat warms it, and
-while the water temperature swings widely. Each pause keeps its causes (P-89). It resumes once
-every cause is gone and the minimum pause has passed; after hot water or a fault the flow must
-also be back within a tolerance of its setpoint — or heating be off. After foreign heat or a
-swing no flow condition applies. A pause whose causes are not known (stored by an earlier
-version) is taken for hot water: the cautious rule.
+zone gets no heat meanwhile (S-41; the fault: decision 14) — and while the water temperature
+swings widely. Each pause keeps its causes (P-89). It resumes once every cause is gone and the
+minimum pause has passed; after hot water or a fault the flow must also be back within a
+tolerance of its setpoint — or heating be off. After a swing no flow condition applies. A room
+warmed by something else (a fireplace) is VT's and SmartPI's to handle (I8.1c). A pause whose
+causes are not known (stored by an earlier version) is taken for hot water: the cautious rule.
 
 A pause ends at the latest an hour after it began, even while its cause lasts (decision 14;
-provisional, K4): the causes then on — the draw, the fault "off", foreign heat, the swing — pause
+provisional, K4): the causes then on — the draw, the fault "off", the swing — pause
 the zone again only once their signal has read off; a draw or fault signal unknown meanwhile is
 taken for the same one. That is not stored: after a restart a cause still on pauses once more.
 
@@ -41,7 +41,6 @@ DAY = 86400.0
 
 class PauseCause(StrEnum):
     DHW = "dhw"
-    FOREIGN_HEAT = "foreign_heat"
     WATER_SWING = "water_swing"
     BOILER_FAULT = "boiler_fault"  # control's "off" for a boiler fault (decision 14)
 
@@ -54,7 +53,6 @@ NO_HEAT = frozenset({PauseCause.DHW, PauseCause.BOILER_FAULT})
 @dataclass(frozen=True, slots=True)
 class LearningConfig:
     pause_on_dhw: bool = True
-    pause_on_foreign_heat: bool = True
     pause_on_water_swing: bool = True
     pause_on_fault: bool = True
     swing_k: float = 5.0  # setpoint change within the window that counts as a swing
@@ -76,7 +74,6 @@ class ZoneLearning:
     zone_id: str
     learning: bool | None
     valve_open: bool
-    foreign_heat: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +150,6 @@ def _signals(
     return {
         PauseCause.DHW: dhw if config.pause_on_dhw else False,
         PauseCause.BOILER_FAULT: fault if config.pause_on_fault else False,
-        PauseCause.FOREIGN_HEAT: config.pause_on_foreign_heat and zone.foreign_heat,
         PauseCause.WATER_SWING: swing,
     }
 
@@ -279,8 +275,8 @@ def plan_learning(
 
 def _may_resume(causes: Sequence[PauseCause], flow_recovered: bool) -> bool:
     """A pause whose causes are gone and whose minimum pause has passed ends — after hot water
-    or a fault only once the flow is back (or heating is off); after foreign heat or a swing at
-    once (P-89). The hour since the pause began ends it whatever the flow (decision 14)."""
+    or a fault only once the flow is back (or heating is off); after a swing at once (P-89).
+    The hour since the pause began ends it whatever the flow (decision 14)."""
     return flow_recovered or not any(cause in NO_HEAT for cause in causes)
 
 

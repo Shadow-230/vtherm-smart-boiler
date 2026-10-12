@@ -44,7 +44,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from .const import CONTROL, has_control_section
+from .const import CONTROL, READ_BACK_SIGNALS, has_control_section
+from .core.circuit_requests import OtherAutomation
 from .core.controller import OUTAGE_LOST_S, ControlConfig
 from .core.curve import (
     DESIGN_FLOW_OVER_ROOM_K,
@@ -90,7 +91,6 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         # control section had none keeps 25 °C, written by the entry migration.
         "hard_min": 20.0,
         "hard_max": 70.0,
-        "ceiling_band": 10.0,
         "frost_limit": 5.0,
         "frost_release": 7.0,
         "count_threshold": 1,
@@ -102,7 +102,8 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         # cannot heat on the curve gets warmer water, within the limit below. An entry from
         # before keeps what it ran with — the migration writes "off" where it stored no answer.
         "comfort_correction": True,
-        # The correction's limit, the user's (G11 B); the weather ceiling still caps it.
+        # The correction's limit, the user's (G11 B): the only bound above the curve since the
+        # "correction range" went (I8, decision B6).
         "comfort_correction_max_k": 3.0,
         # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
         "own_room_controller": False,
@@ -120,7 +121,6 @@ CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
     {
         "hard_min": (10.0, 50.0),
         "hard_max": (30.0, 90.0),
-        "ceiling_band": (0.0, 20.0),
         "comfort_correction_max_k": (0.5, 10.0),
         "frost_limit": (3.0, 10.0),
         "frost_release": (4.0, 12.0),
@@ -176,11 +176,13 @@ class ControlMode(StrEnum):
 
     FULL = "full"  # the curve: the plugin sets the water temperature
     ON_OFF = "on_off"  # the relay: heating on and off
-    ROOM_VALUES = "room_values"  # room temperature only: from 0.3, monitoring until then
     MONITOR = "monitor"  # monitoring only
+    # "Room temperature only" left the panel until it works (I8, decision C2): the 0.3
+    # thermostat-like mode; an entry with it reads as monitoring only (minor version 14).
 
 
-_WATER_MODES = (ControlMode.FULL, ControlMode.ROOM_VALUES, ControlMode.MONITOR)
+ROOM_VALUES_FROM_BEFORE = "room_values"
+_WATER_MODES = (ControlMode.FULL, ControlMode.MONITOR)
 # The modes each connection can do (decision 6): monitoring always.
 CONNECTION_MODES: Mapping[Connection, tuple[ControlMode, ...]] = MappingProxyType(
     {
@@ -195,7 +197,7 @@ CONNECTION_MODES: Mapping[Connection, tuple[ControlMode, ...]] = MappingProxyTyp
     }
 )
 # The modes that keep control off, each its own reason (decision 6).
-NO_CONTROL_MODES = frozenset({ControlMode.MONITOR, ControlMode.ROOM_VALUES})
+NO_CONTROL_MODES = frozenset({ControlMode.MONITOR})
 
 
 def boiler_class_for(connection: Connection, mode: ControlMode) -> BoilerClass:
@@ -225,8 +227,12 @@ def connection_suggested_by(path: object) -> Connection | None:
 class Topology(StrEnum):
     GATEWAY_STANDALONE = "gateway_standalone"  # the gateway is master: hand-back stops heating
     GATEWAY_WITH_THERMOSTAT = "gateway_with_thermostat"  # hand-back: the thermostat takes over
-    MONITOR_MODE = "monitor_mode"  # the gateway only listens: no control
     VIRTUAL = "virtual"  # a controller on the HA side (e.g. an ESPHome OpenTherm master)
+
+
+# A gateway that only listens is monitoring only, a control mode (I8, decision B7): the stored
+# topology reads so (minor version 16).
+MONITOR_MODE_FROM_BEFORE = "monitor_mode"
 
 
 # The write path each connection writes through (I6, decision 2).
@@ -292,9 +298,8 @@ class AlarmReaction(StrEnum):
 
 # Everything ``config_blockers`` may report (translation keys).
 CONFIG_BLOCKERS = (
-    # I6 (decision 6): monitoring only, or room values until 0.3 — chosen on purpose.
+    # I6 (decision 6): monitoring only — chosen on purpose.
     "control_mode_monitor",
-    "control_mode_room_values",
     "no_write_path",
     # I6 (decisions 2, 3): the control section suits the connection; ESPHome's safe start.
     "connection_not_for_path",
@@ -314,7 +319,6 @@ CONFIG_BLOCKERS = (
     "no_confirmed_setpoint",
     "thermostat_setpoint_same_as_read_back",  # PB-70
     "no_topology",
-    "topology_no_control",
     "curve_not_entered",
     "one_direct_circuit_only",
     "underfloor_without_max_flow",
@@ -352,9 +356,7 @@ CONFIG_BLOCKERS = (
 OTGW_PATHS = frozenset({WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT})
 # Write types control may use: nothing the boiler stores in its memory.
 WRITABLE_TYPES = frozenset({WriteType.EXPIRING, WriteType.HELD})
-CONTROLLABLE_TOPOLOGIES = frozenset(
-    {Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT, Topology.VIRTUAL}
-)
+CONTROLLABLE_TOPOLOGIES = frozenset(Topology)
 # The topologies with thermostat terminals: each asks what is wired to them (decision 1).
 GATEWAY_TOPOLOGIES = frozenset({Topology.GATEWAY_STANDALONE, Topology.GATEWAY_WITH_THERMOSTAT})
 # The kind each gateway topology cannot have: an OpenTherm thermostat means "with a thermostat",
@@ -392,9 +394,16 @@ RELAY_KEYS = (
 TARGET_KEYS = (
     "setpoint_entity", "write_type", "ch_entity", "ch_write_type", "hand_back",
     "hand_back_value", "hand_back_value_effect", "hand_back_entity", "hand_back_entity_write_type",
-    "hand_back_timeout_min", "gateway_id", "mqtt_top", "mqtt_node", "own_room_controller",
-    ESPHOME_SAFE_START, *RELAY_KEYS,
+    "hand_back_timeout_min", "own_room_controller", ESPHOME_SAFE_START, *RELAY_KEYS,
 )  # fmt: skip
+# The "Boiler interface" item's answers kept in the control section, where they were stored
+# before the item (I8, decision D2; Claude's call: the storage stays): the gateway, how it sits
+# between thermostat and boiler, what is on its thermostat terminals, the thermostat's own
+# request, the restart indicator. The firmware's MQTT topics are the connection's (one copy).
+INTERFACE_CONTROL_KEYS = (
+    "gateway_id", "topology", "thermostat_kind", "thermostat_setpoint_entity", "restart_entity",
+)  # fmt: skip
+MQTT_TOPIC_KEYS = ("mqtt_top", "mqtt_node")
 # The control section's keys that name an entity (P-19: a rename is followed there, a removal
 # told).
 ENTITY_KEYS = (
@@ -737,12 +746,110 @@ def with_room_mode(section: Any) -> Any:
     return {**section, "curve": {**curve, ROOM_MODE: RoomMode.MANUAL.value}}
 
 
+def without_correction_range(section: Any) -> Any:
+    """I8 (decision B6, minor version 12): the curve's "correction range" is gone; the comfort
+    correction's own limit is the only bound above the curve. A stored range narrower than that
+    limit bound the correction before, so it becomes the limit — of two values, the cautious
+    one; a range below the limit's smallest value let no correction through, so the correction
+    is switched off. A range that is no number is dropped; a limit that is none stays for the
+    parser to refuse."""
+    if not isinstance(section, Mapping) or "ceiling_band" not in section:
+        return section
+    result = {key: value for key, value in section.items() if key != "ceiling_band"}
+    band = _plain_number(section["ceiling_band"])
+    if band is None:
+        return result
+    stored = section.get("comfort_correction_max_k")
+    limit = (
+        CONTROL_DEFAULTS["comfort_correction_max_k"]
+        if stored in (None, "")
+        else _plain_number(stored)
+    )
+    if limit is None:
+        return result
+    if band < CONTROL_BOUNDS["comfort_correction_max_k"][0]:
+        result["comfort_correction"] = False
+    elif band < limit:
+        result["comfort_correction_max_k"] = band
+    return result
+
+
+def _plain_number(value: Any) -> float | None:
+    """A finite number as stored by a form; anything else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def with_interface_topics(section: Any, boiler: Any) -> Any:
+    """I8.4b: the OTGW firmware's topics are stored once, with the connection (the boiler
+    section), for the repeats and the writes alike; a control section writing over MQTT reads
+    them from there — topics of its own (a hand edit) are taken first."""
+    if (
+        not isinstance(section, Mapping)
+        or section.get("write_path") != WritePath.OTGW_MQTT.value
+        or not isinstance(boiler, Mapping)
+    ):
+        return section
+    found = {k: boiler[k] for k in MQTT_TOPIC_KEYS if boiler.get(k) and not section.get(k)}
+    return {**section, **found} if found else section
+
+
+# The write paths that read their writes back from the boiler (the relay is its own read-back).
+READ_BACK_PATHS = frozenset(
+    {WritePath.ENTITY.value, WritePath.OPENTHERM_GW.value, WritePath.OTGW_MQTT.value}
+)
+
+
+def with_read_backs(section: Any, signals: Any) -> Any:
+    """I8.5b: the read-backs are boiler signals (``READ_BACK_SIGNALS``, decision D3); a control
+    section writing water temperatures reads them from there — read-backs of its own (a hand
+    edit) are taken first."""
+    if (
+        not isinstance(section, Mapping)
+        or section.get("write_path") not in READ_BACK_PATHS
+        or not isinstance(signals, Mapping)
+    ):
+        return section
+    found = {
+        key: signals[signal]
+        for signal, key in READ_BACK_SIGNALS.items()
+        if signals.get(signal) and not section.get(key)
+    }
+    return {**section, **found} if found else section
+
+
+def with_boiler_inputs(section: Any, boiler: Any, signals: Any) -> Any:
+    """A control section as control runs it: the connection's MQTT topics (I8.4b) and the
+    signals' read-backs (I8.5b) in it, each where the section has none of its own."""
+    return with_read_backs(with_interface_topics(section, boiler), signals)
+
+
 def section_as_migrated(section: Any) -> Any:
-    """A control section as this version's entry migrations leave one (G11 B and D). The entry
-    migration writes each into the options; the options a stored session took the boiler with
-    (``taken_with``), which no migration reaches, are read through them, so a restart after the
-    update compares like with like."""
-    return with_room_mode(with_correction_answer(section))
+    """A control section as this version's entry migrations leave one (G11 B and D, I8 B6, F2).
+    The entry migration writes each into the options; the options a stored session took the
+    boiler with (``taken_with``), which no migration reaches, are read through them, so a
+    restart after the update compares like with like. The highest water temperature left the
+    section for the circuit's, which the restore's limits apply as they are now (PB-11)."""
+    section = without_correction_range(with_room_mode(with_correction_answer(section)))
+    if isinstance(section, Mapping) and HARD_MAX_FROM_BEFORE in section:
+        return {key: value for key, value in section.items() if key != HARD_MAX_FROM_BEFORE}
+    return section
+
+
+# I8 (decision F2): the curve's highest water temperature, merged into the circuit's — stored in
+# the control section before minor version 19.
+HARD_MAX_FROM_BEFORE = "hard_max"
+
+
+def _curve_cap(data: Mapping[str, Any]) -> float:
+    """The cap of the control section's own (I8, decision F2): none since the highest water
+    temperature became the circuit's — the circuit's cap, its default where it gives none,
+    applies — so the bounds' top; one the section still holds (a hand edit) is taken, within
+    its bounds, as it was."""
+    if data.get(HARD_MAX_FROM_BEFORE) is not None:
+        return _required(data, HARD_MAX_FROM_BEFORE)
+    return CONTROL_BOUNDS[HARD_MAX_FROM_BEFORE][1]
 
 
 class RoomMode(StrEnum):
@@ -817,6 +924,7 @@ def parse_control(
     connection: Connection | None = None,
     control_mode: ControlMode | None = None,
     design_outdoor: float | None = None,
+    requests: Collection[str] = (),
 ) -> ControlOptions:
     """The control options; an empty section means control is not configured. ``connection``,
     ``control_mode``: the setup's first answers (I6), ``None`` for an entry made before them.
@@ -828,7 +936,10 @@ def parse_control(
         return ControlOptions(connection=connection, control_mode=control_mode)
     path = WritePath(data["write_path"])
     curve_data = _mapping(data, "curve")
-    circuit = installation.circuits[0] if installation.circuits else None
+    # I8 (decision F6): the curve serves the circuit fed straight from the boiler — else, with
+    # none, the first, as before.
+    direct = [c for c in installation.circuits if c.control is CircuitControl.UNMIXED_SHARED]
+    circuit = direct[0] if direct else (installation.circuits[0] if installation.circuits else None)
     emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
     default_exponent = min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
     entered = {} if design_outdoor is None else {"design_outdoor": design_outdoor}
@@ -855,28 +966,55 @@ def parse_control(
     else:
         write_type = WriteType(data.get("write_type", WriteType.UNKNOWN))
         ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
-    circuit_max = circuit.max_flow if circuit is not None else None
-    circuit_floor = None
-    if (
-        circuit is not None
-        and circuit.control is CircuitControl.PASSIVE_FIXED
-        and circuit.fixed_temperature is not None
-    ):
-        # The mixing valve needs supply water above its own temperature (S-42); a maximum the
-        # user declared still applies, and wins.
-        circuit_floor = circuit.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
+    # The user's answer of 2026-10-12: the circuits fed straight from the boiler cap its water —
+    # each its highest water temperature, the default where empty, the default where there is
+    # none; one behind a mixer or a fixed valve is guarded by it.
+    default_max = float(CONTROL_DEFAULTS["hard_max"])
+    circuit_max = min(
+        (c.max_flow if c.max_flow is not None else default_max for c in direct),
+        default=default_max,
+    )
+    # A mixing valve needs supply water above its own temperature (S-42): the highest of the
+    # fixed valves', while heating (the user's answer of 2026-10-12: the curve, never below it).
+    circuit_floor = max(
+        (
+            c.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
+            for c in installation.circuits
+            if c.control is CircuitControl.PASSIVE_FIXED and c.fixed_temperature is not None
+        ),
+        default=None,
+    )
+    other = tuple(
+        OtherAutomation(
+            c.circuit_id,
+            frozenset(z.zone_id for z in installation.zones_in(c.circuit_id)),
+            c.circuit_id in requests,
+            c.needed,
+            # I8.8b: a zone it feeds in part asks in it through those devices.
+            {z.zone_id: z.devices for z in installation.zones_in(c.circuit_id) if z.devices},
+        )
+        for c in installation.circuits
+        if c.control is CircuitControl.SEPARATE
+    )
+    curve_zones = (
+        frozenset(z.zone_id for z in installation.zones_in(direct[0].circuit_id))
+        if direct and len(installation.circuits) > 1
+        else None
+    )
     ramp = _checked(value, "ramp_k_per_min")
     frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
         curve=curve,
         limits=FlowLimits(
             hard_min=_required(value, "hard_min"),
-            hard_max=_required(value, "hard_max"),
-            ceiling_band=_required(value, "ceiling_band"),
+            hard_max=_curve_cap(data),
         ),
+        # I8 (decision F2): the circuit's highest water temperature, else the default.
         circuit_max=circuit_max,
         boiler_max=boiler_max,
         circuit_floor=circuit_floor,
+        other_automation=other,
+        curve_zones=curve_zones,
         frost=FrostConfig(
             room_limit=_required(value, "frost_limit"),
             release=_required(value, "frost_release"),
@@ -1221,11 +1359,9 @@ def section_stops_heating(data: object) -> bool | None:
     return hand_back_stops_heating(control)
 
 
-def section_monitors_only(data: object) -> bool:
-    """A stored control section whose topology allows no control — ``monitor_mode``, refused by
-    today's form, so old data only: the plugin never takes the boiler with it."""
-    control = _stored_section(data)
-    return control is not None and control.topology is Topology.MONITOR_MODE
+def _monitoring_only(options: Mapping[str, Any]) -> bool:
+    boiler = options.get("boiler")
+    return isinstance(boiler, Mapping) and boiler.get("control_mode") == ControlMode.MONITOR.value
 
 
 class FailedSetupReport(StrEnum):
@@ -1245,9 +1381,10 @@ def failed_setup_report(
     not heated. A wish never stored or unreadable counts as "on" (the cautious side). Where
     neither section tells what a hand-back does, the house may not be heated. Nothing where the
     options hold no control section — a setup that worked would not heat either — or the
-    hand-back leaves heating to a thermostat or the boiler's own control; nor where the options'
-    section only monitors and the stored state shows no session holding the boiler: the plugin
-    never takes it there (finding 6 of the part-1 check D)."""
+    hand-back leaves heating to a thermostat or the boiler's own control; nor where monitoring
+    only is chosen and the stored state shows no session holding the boiler: the plugin never
+    takes it there (finding 6 of the part-1 check D; I8 B7: the gateway's "monitor mode" is
+    monitoring only)."""
     if not isinstance(options, Mapping) or not has_control_section(options):
         return None
     if state is not None and state.get("enabled") is False:
@@ -1257,7 +1394,7 @@ def failed_setup_report(
     if stops is None and state is not None:
         taken_with = state.get("taken_with")
         stops = section_stops_heating(taken_with)
-        if stops is None and taken_with is None and section_monitors_only(section):
+        if stops is None and taken_with is None and _monitoring_only(options):
             return None
     if stops is False:
         return None
@@ -1474,7 +1611,7 @@ def relay_blockers(
 def _zone_blockers(control: ControlOptions, installation: Installation) -> list[str]:
     if not installation.zones:
         return ["no_zones"]  # nothing could ever ask for heat (S-04)
-    if control.loop.control.demand.count_threshold > len(installation.zones):
+    if control.loop.control.demand.count_threshold > len(installation.zone_ids):
         return ["count_threshold_above_zones"]  # heating would never be asked for
     return []
 
@@ -1652,8 +1789,6 @@ def _topology_blockers(control: ControlOptions) -> list[str]:
     path = control.write_path
     if control.topology is None:
         found.append("no_topology")
-    elif control.topology not in CONTROLLABLE_TOPOLOGIES:
-        found.append("topology_no_control")
     elif path is not None and control.topology not in PATH_TOPOLOGIES[path]:
         found.append("topology_not_for_path")
     if (kind := thermostat_kind_blocker(control)) is not None:
@@ -1676,19 +1811,21 @@ def _curve_blockers(control: ControlOptions) -> list[str]:
 
 
 def _circuit_blockers(installation: Installation) -> list[str]:
-    """One circuit fed straight by the boiler flow (unmixed, or passive fixed); underfloor on
-    an unmixed one needs its maximum flow."""
+    """I8 (decision F6): at most one circuit fed straight from the boiler — the curve's — with
+    any behind a fixed valve or run by other automation; not one the boiler mixes (CH2, later).
+    Underfloor on the straight one needs its highest water temperature."""
     circuits = installation.circuits
-    if len(circuits) != 1 or circuits[0].control not in (
-        CircuitControl.UNMIXED_SHARED,
-        CircuitControl.PASSIVE_FIXED,
+    direct = [c for c in circuits if c.control is CircuitControl.UNMIXED_SHARED]
+    if (
+        not circuits
+        or len(direct) > 1
+        or any(c.control is CircuitControl.THROUGH_BOILER for c in circuits)
     ):
         return ["one_direct_circuit_only"]
-    circuit = circuits[0]
     if (
-        circuit.control is CircuitControl.UNMIXED_SHARED
-        and EmitterType.UNDERFLOOR in installation.emitters_in(circuit.circuit_id)
-        and circuit.max_flow is None
+        direct
+        and EmitterType.UNDERFLOOR in installation.emitters_in(direct[0].circuit_id)
+        and direct[0].max_flow is None
     ):
         return ["underfloor_without_max_flow"]
     return []

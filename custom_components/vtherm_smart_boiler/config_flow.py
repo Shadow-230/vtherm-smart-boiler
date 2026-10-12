@@ -43,6 +43,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.helpers.translation import async_get_translations
@@ -50,20 +51,27 @@ from homeassistant.util import dt as dt_util
 
 from .config import (
     CIRCUIT_BOUNDS,
-    FOREIGN_HEAT_THRESHOLDS,
+    CIRCUIT_DEVICES,
+    CIRCUIT_EMITTERS,
+    CIRCUIT_ZONES,
     FRESHNESS_BOUNDS_MIN,
     MONITOR_BOUNDS,
     MONITORING_DAYS_BOUNDS,
+    NEEDED_ENTITY,
+    NEEDED_TEMPERATURE,
+    REQUEST_ENTITY,
     SECTION_CODES,
-    SWITCH_MARGIN_BOUNDS,
-    ZONE_BOUNDS,
     ConfigError,
     EntryConfig,
+    circuit_label,
+    circuits_hold_zones,
     section_fits,
+    zones_on_circuits,
 )
 from .const import (
     BOILER,
     BUILDING,
+    CH_ENABLED,
     CIRCUITS,
     CONTROL,
     DOMAIN,
@@ -75,7 +83,9 @@ from .const import (
     MQTT_DOMAIN,
     OPENTHERM_GW_DOMAIN,
     PARAMETERS,
-    REFERENCE_ROOM,
+    READ_BACK_SIGNALS,
+    RELAY_READS,
+    RELAY_SIGNALS,
     SIGNALS,
     VT_DOMAIN,
     WEATHER,
@@ -92,7 +102,10 @@ from .control_config import (
     GATEWAY_TOPOLOGIES,
     HAND_BACK_TIMEOUT_DEFAULT_MIN,
     HAND_BACK_TIMEOUT_MIN,
+    INTERFACE_CONTROL_KEYS,
+    MQTT_TOPIC_KEYS,
     PATH_TOPOLOGIES,
+    READ_BACK_PATHS,
     RELAY_DEFAULTS,
     RELAY_DOMAINS,
     RELAY_KEYS,
@@ -123,6 +136,7 @@ from .control_config import (
     off_too_close_to_lowest,
     own_room_controller_offered,
     parse_thermostat_kind,
+    with_boiler_inputs,
     write_ignored_offered,
 )
 from .core.alarms import (
@@ -133,14 +147,13 @@ from .core.alarms import (
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
 )
-from .core.building import InsulationClass, ThermalMass
 from .core.demand import feeds_opening, feeds_power
-from .core.foreign_heat import SourceKind
 from .core.guards import WriteType
-from .core.installation import BoilerClass, BoilerType, CircuitControl, EmitterType, HeatSource
+from .core.installation import BoilerClass, BoilerType, CircuitControl, HeatSource
 from .core.metrics import ModulationScale
-from .core.reference_room import Strategy
+from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
+from .core.signals import Signal
 from .transport.entities import read_bounds, read_grid, relay_hvac_modes, temperature_unit_of
 from .vtherm_link import (
     VtCentralBoiler,
@@ -150,6 +163,8 @@ from .vtherm_link import (
     relay_of_boiler_interface,
     relay_used_by_zone,
     vt_central_boiler_settings,
+    vt_zones_in_area,
+    zone_devices,
     zone_name,
     zones_on_boiler_thermostat,
 )
@@ -169,7 +184,11 @@ SIGNAL_FIELDS: dict[str, tuple[dict[str, Any], bool]] = {
     "dhw_active": (_BINARY, True),
     "pressure": ({"domain": "sensor", "device_class": "pressure"}, True),
     "outdoor": (_TEMPERATURE, True),
-    "ch_setpoint": ({"domain": ["sensor", "number"], "device_class": "temperature"}, False),
+    # I8.5b (decision D3): the setpoint the boiler received — control's setpoint read-back,
+    # taken as the read-back was (no device class asked) — and heating on/off as the boiler gets
+    # it, control's read-back only: both shown at any level where control reads them back.
+    "ch_setpoint": ({"domain": ["sensor", "number", "input_number"]}, False),
+    CH_ENABLED: ({"domain": ["binary_sensor", "switch", "input_boolean"]}, False),
     "ch_active": (_BINARY, False),
     "pump_running": (_BINARY, False),
     "flue_gas": (_TEMPERATURE, False),
@@ -220,7 +239,7 @@ def _optional(key: str, current: dict[str, Any]) -> vol.Optional:
     return vol.Optional(key, description={"suggested_value": value} if value is not None else None)
 
 
-def _advanced(options: dict[str, Any]) -> bool:
+def _advanced(options: Mapping[str, Any]) -> bool:
     return options.get(LEVEL) == LEVEL_ADVANCED
 
 
@@ -336,6 +355,8 @@ CONNECTION_STEP_KEYS = (CONNECTION, HEAT_SOURCE, BOILER_TYPE)
 # The boiler's keys the panels write: a stored value of them this version cannot read is fixed
 # there (P-70).
 PANEL_BOILER_KEYS = ("class", "dhw", "condensing")
+# What the mode panel asks (I8, decision D1): a stored value of it is fixed there.
+MODE_STEP_SUBJECTS = (CONTROL_MODE, "condensing", DHW_PRIORITY)
 
 
 def _stored_boiler(options: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -411,6 +432,16 @@ def _suggested_mode(options: Mapping[str, Any], modes: list[str]) -> Any:
     return suggested.value if suggested.value in modes else vol.UNDEFINED
 
 
+def mode_due(options: Mapping[str, Any], asked_before: Mapping[str, Any]) -> bool:
+    """Whether the mode is asked at once after the connection (I8, decision D1): none stored,
+    or one the connection cannot do; or the heat source or the boiler type changed, which
+    decide what the mode panel asks (condensing, the hot-water priority)."""
+    boiler = _stored_boiler(options)
+    if boiler.get(CONTROL_MODE) not in modes_offered(options):
+        return True
+    return any(boiler.get(key) != value for key, value in asked_before.items())
+
+
 def mode_schema(options: dict[str, Any]) -> vol.Schema:
     """The second panel (decisions 6, 7, 8): the control mode the connection can do, with no
     default; condensing for a boiler that burns fuel; the hot-water priority for one that heats
@@ -437,11 +468,17 @@ def mode_schema(options: dict[str, Any]) -> vol.Schema:
 
 def apply_connection(options: dict[str, Any], user_input: dict[str, Any]) -> None:
     """The first panel's answers; the hot-water kind follows the boiler type, so a version
-    without the type reads the entry the same. Topics of a connection no longer chosen go."""
+    without the type reads the entry the same. Topics of a connection no longer chosen go. The
+    class follows the connection where the stored mode stays one it can do (I8, decision D1);
+    otherwise the mode, asked at once, sets it."""
     boiler = dict(_stored_boiler(options))
     for key in CONNECTION_STEP_KEYS:
         boiler[key] = user_input[key]
     boiler["dhw"] = BoilerType(user_input[BOILER_TYPE]).dhw.value
+    connection = Connection(user_input[CONNECTION])
+    mode = _known(ControlMode, boiler.get(CONTROL_MODE))
+    if mode is not None and mode in CONNECTION_MODES[connection]:
+        boiler["class"] = boiler_class_for(connection, mode).value
     kept = TOPIC_KEYS.get(Connection(user_input[CONNECTION]), ())
     for keys in TOPIC_KEYS.values():
         for key in keys:
@@ -450,33 +487,214 @@ def apply_connection(options: dict[str, Any], user_input: dict[str, Any]) -> Non
     options[BOILER] = boiler
 
 
-# The MQTT topics each MQTT connection publishes under (I6, decision 9): asked with the
-# connection, so the plugin can hear its repeats whether or not control is set up.
+# The MQTT topics each MQTT connection publishes under (I6, decision 9): asked in the "Boiler
+# interface" item (I8, D2), so the plugin hears the repeats whether or not control is set up —
+# and the OTGW firmware's are the ones its writes go to (one copy, minor version 15).
 EMS_ESP_BASE = "ems_esp_base"
 TOPIC_KEYS: Mapping[Connection, tuple[str, ...]] = {
     Connection.OTGW_MQTT: ("mqtt_top", "mqtt_node"),
     Connection.EMS_ESP: (EMS_ESP_BASE,),
 }
+ALL_TOPIC_KEYS = ("mqtt_top", "mqtt_node", EMS_ESP_BASE)
 
 
-def mqtt_topics_schema(options: dict[str, Any]) -> vol.Schema:
-    """The OTGW firmware's top level and node — taken from the control options where they are
-    there — or EMS-ESP's base topic, ``ems-esp`` unless stored."""
-    boiler = _stored_boiler(options)
+INTERFACE = "interface"
+
+
+# For an entry made before the connection question: the connection its write path stands for in
+# the "Boiler interface" item — a writable entity of any kind asks what any of them may.
+_INTERFACE_BY_PATH: Mapping[str, Connection] = {
+    WritePath.OPENTHERM_GW.value: Connection.OPENTHERM_GW,
+    WritePath.OTGW_MQTT.value: Connection.OTGW_MQTT,
+    WritePath.ENTITY.value: Connection.OTHER_ENTITY,
+    WritePath.RELAY.value: Connection.RELAY,
+}
+
+
+def interface_connection(options: Mapping[str, Any]) -> Connection | None:
+    """The connection the "Boiler interface" item follows: the stored one; for an entry made
+    before the question, the one its control section's write path stands for."""
+    connection = stored_connection(options)
+    if connection is not None:
+        return connection
+    return _INTERFACE_BY_PATH.get(str(_mapping(options.get(CONTROL)).get("write_path")))
+
+
+def control_wanted(options: Mapping[str, Any]) -> bool:
+    """Full control or on/off chosen; for an entry made before the mode, a control section that
+    writes."""
+    if _stored_boiler(options).get(CONTROL_MODE) is not None:
+        return wants_control(options)
     control = options.get(CONTROL)
-    control = control if isinstance(control, Mapping) else {}
-    if stored_connection(options) is Connection.EMS_ESP:
-        return vol.Schema(
-            {vol.Required(EMS_ESP_BASE, default=boiler.get(EMS_ESP_BASE, "ems-esp")): str}
-        )
-    top = boiler.get("mqtt_top") or control.get("mqtt_top") or "OTGW"
-    node = boiler.get("mqtt_node") or control.get("mqtt_node") or vol.UNDEFINED
-    return vol.Schema(
-        {
-            vol.Required("mqtt_top", default=top): str,
-            vol.Required("mqtt_node", default=node): str,
-        }
-    )
+    return isinstance(control, Mapping) and control.get("write_path") not in (None, "", NO_CONTROL)
+
+
+def interface_fields(
+    options: Mapping[str, Any], answers: Mapping[str, Any] | None = None, *, gateways: int = 1
+) -> list[str]:
+    """What the "Boiler interface" item asks (I8, decision D2), its form following the
+    connection: the MQTT topics of a connection over MQTT always — the plugin hears the device's
+    repeats on them, with control or without; with control wanted, the gateway where not exactly
+    one is set up (the one is taken without asking), the topology where the connection does not
+    decide it (a controller on Home Assistant's side is virtual), what is wired to a gateway's
+    thermostat terminals and the thermostat's own request where its topology has them, and the
+    restart indicator. ``answers``: the form's answers so far, which may reveal fields."""
+    connection = interface_connection(options)
+    if connection is None:
+        return []
+    fields = list(TOPIC_KEYS.get(connection, ()))
+    if not control_wanted(options) or connection is Connection.READ_ONLY:
+        return fields
+    control = {**_mapping(options.get(CONTROL)), **(answers or {})}
+    if connection is Connection.OPENTHERM_GW and gateways != 1:
+        fields.append("gateway_id")
+    if connection is not Connection.RELAY and connection not in VIRTUAL_CONNECTIONS:
+        fields.append("topology")
+        if _gateway_topology(control.get("topology")):
+            fields.append(THERMOSTAT_KIND)
+        if control.get("topology") == Topology.GATEWAY_WITH_THERMOSTAT.value:
+            fields.append("thermostat_setpoint_entity")
+    fields.append("restart_entity")
+    return fields
+
+
+def _mapping(raw: object) -> Mapping[str, Any]:
+    return raw if isinstance(raw, Mapping) else {}
+
+
+def interface_topologies(options: Mapping[str, Any]) -> list[str]:
+    """The topologies the connection's write path can control through (P-44's table)."""
+    connection = interface_connection(options)
+    path = CONNECTION_PATH.get(connection) if connection is not None else None
+    allowed = PATH_TOPOLOGIES.get(path, frozenset()) if path is not None else frozenset()
+    return [topology.value for topology in Topology if topology in allowed]
+
+
+def interface_schema(
+    options: Mapping[str, Any],
+    answers: Mapping[str, Any] | None = None,
+    gateways: Sequence[str] = (),
+) -> vol.Schema:
+    """The "Boiler interface" form: the fields ``interface_fields`` names, each with its stored
+    answer — the topics where the connection keeps them, EMS-ESP's ``ems-esp`` and the
+    firmware's ``OTGW`` unless stored."""
+    boiler = _stored_boiler(options)
+    topics = {k: boiler[k] for k in ALL_TOPIC_KEYS if k in boiler}
+    # A control section's own topics (a hand edit) are what the writes use: shown first.
+    stored = {**topics, **_mapping(options.get(CONTROL))}
+    current = {**stored, **{k: v for k, v in (answers or {}).items() if v not in (None, "")}}
+    topologies = interface_topologies(options)
+    fields: dict[Any, Any] = {}
+    for key in interface_fields(options, answers, gateways=len(gateways)):
+        if key == "mqtt_top":
+            fields[vol.Required(key, default=current.get(key) or "OTGW")] = str
+        elif key == "mqtt_node":
+            fields[vol.Required(key, default=current.get(key) or vol.UNDEFINED)] = str
+        elif key == EMS_ESP_BASE:
+            fields[vol.Required(key, default=current.get(key) or "ems-esp")] = str
+        elif key == "gateway_id":
+            field: Any = (
+                selector.SelectSelector(
+                    # Only a gateway set up and enabled in Home Assistant can take a write (P-106).
+                    selector.SelectSelectorConfig(
+                        options=list(gateways),
+                        custom_value=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+                if gateways
+                else str
+            )
+            fields[vol.Required(key, default=current.get(key) or vol.UNDEFINED)] = field
+        elif key == "topology":
+            chosen = current.get(key)
+            default = chosen if chosen in topologies else vol.UNDEFINED
+            fields[vol.Required(key, default=default)] = _select("topology", topologies)
+        elif key == THERMOSTAT_KIND:
+            fields[_thermostat_kind_field(current)] = _select(
+                THERMOSTAT_KIND, [kind.value for kind in ThermostatKind]
+            )
+        elif key == "thermostat_setpoint_entity":
+            fields[_optional(key, dict(current))] = _entity(_THERMOSTAT_SETPOINT_ENTITY)
+        else:  # the restart indicator
+            fields[_optional(key, dict(current))] = _entity(_RESTART_ENTITY)
+    return vol.Schema(fields)
+
+
+def interface_error(
+    options: Mapping[str, Any],
+    user_input: Mapping[str, Any],
+    gateways: Sequence[str],
+    loaded: Collection[str],
+) -> dict[str, str]:
+    """What the "Boiler interface" item needs: valid MQTT topics; a gateway set up and running
+    (P-69); the answer about a gateway's thermostat terminals, one that fits its topology
+    (decision 1); the thermostat's own request not the boiler's read-back (PB-70)."""
+    for key in ALL_TOPIC_KEYS:
+        if key in user_input and not mqtt_topic_valid(user_input[key]):
+            return {key: "mqtt_topic_invalid"}
+    fields = interface_fields(options, user_input, gateways=len(gateways))
+    if "gateway_id" in fields:
+        picked = str(user_input.get("gateway_id") or "")
+        if picked not in gateways:
+            return {"gateway_id": "gateway_unknown"}  # every write would fail
+        if picked not in loaded:
+            return {"gateway_id": "gateway_not_set_up"}  # not running: nothing arrives
+    elif (
+        interface_connection(options) is Connection.OPENTHERM_GW
+        and control_wanted(options)
+        and len(gateways) == 1
+        and gateways[0] not in loaded
+    ):
+        return {"base": "gateway_not_set_up"}
+    topology = user_input.get("topology")
+    if THERMOSTAT_KIND in fields and topology:
+        kind = parse_thermostat_kind(user_input.get(THERMOSTAT_KIND))
+        if kind is None:
+            return {THERMOSTAT_KIND: "thermostat_kind_missing"}
+        if kind_contradicts_topology(Topology(topology), kind):
+            return {THERMOSTAT_KIND: "thermostat_kind_contradicts_topology"}
+    thermostat = user_input.get("thermostat_setpoint_entity")
+    if thermostat and thermostat == setpoint_read_back(options):
+        return {"thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"}
+    return {}
+
+
+def apply_interface(
+    options: dict[str, Any], user_input: Mapping[str, Any], gateways: Sequence[str]
+) -> None:
+    """The "Boiler interface" answers: the topics with the connection (one copy), the rest in
+    the control section where they were stored before the item — each field shown set, or
+    dropped where left empty; the one gateway set up taken, a controller on Home Assistant's
+    side virtual; no thermostat answers where the topology has no terminals, none for a relay."""
+    connection = interface_connection(options)
+    boiler = dict(_stored_boiler(options))
+    for key in TOPIC_KEYS.get(connection, ()) if connection is not None else ():
+        if key in user_input:
+            boiler[key] = str(user_input[key]).strip()
+    if boiler:
+        options[BOILER] = boiler
+    if connection is Connection.OTGW_MQTT and isinstance(options.get(CONTROL), Mapping):
+        # One copy (minor version 15): a control section's own topics would be read first.
+        options[CONTROL] = {k: v for k, v in options[CONTROL].items() if k not in MQTT_TOPIC_KEYS}
+    if not control_wanted(options) or connection in (None, Connection.READ_ONLY):
+        return
+    fields = interface_fields(options, user_input, gateways=len(gateways))
+    control = dict(_mapping(options.get(CONTROL)))
+    _set_or_drop(control, dict(user_input), tuple(k for k in fields if k in INTERFACE_CONTROL_KEYS))
+    if connection is Connection.OPENTHERM_GW and len(gateways) == 1:
+        control["gateway_id"] = gateways[0]
+    if connection in VIRTUAL_CONNECTIONS:
+        control["topology"] = Topology.VIRTUAL.value
+    if not _gateway_topology(control.get("topology")):
+        control.pop(THERMOSTAT_KIND, None)
+    if control.get("topology") != Topology.GATEWAY_WITH_THERMOSTAT.value:
+        control.pop("thermostat_setpoint_entity", None)
+    if connection is Connection.RELAY:
+        for key in ("topology", THERMOSTAT_KIND, "thermostat_setpoint_entity"):
+            control.pop(key, None)
+    if control:
+        options[CONTROL] = control
 
 
 def apply_mode(options: dict[str, Any], user_input: dict[str, Any]) -> None:
@@ -508,14 +726,29 @@ GATEWAY_SIGNALS: Mapping[str, tuple[str, str]] = {
     "low_pressure_fault": ("binary_sensor", "slave_low_water_pressure"),
     "fault_indication": ("binary_sensor", "slave_fault_indication"),
     "ch_active": ("binary_sensor", "slave_ch_active"),
-}
-GATEWAY_READ_BACKS: Mapping[str, tuple[str, str]] = {
-    "confirmed_entity": ("sensor", "control_setpoint"),
-    "ch_confirmed_entity": ("binary_sensor", "master_ch_enabled"),
+    # The read-backs (I8.5b): what the gateway sends the boiler, on its boiler device.
+    "ch_setpoint": ("sensor", "control_setpoint"),
+    CH_ENABLED: ("binary_sensor", "master_ch_enabled"),
 }
 # The texts the signals step reads into its description, one per connection (I6, decision 2).
 SIGNAL_HINT = "signal_hint"
+FRESHNESS_NOTE = "freshness_note"  # what the age limits judge, by the connection (I8, D7)
 SOURCE_HINT = "source_hint"  # and one per heat source that changes what to pick (I6)
+
+
+def gateways_set_up(hass: HomeAssistant) -> tuple[list[str], set[str]]:
+    """The gateways set up and enabled in the OpenTherm Gateway integration (P-69), by ID, and
+    those of them running."""
+    entries = [
+        entry
+        for entry in hass.config_entries.async_entries(
+            OPENTHERM_GW_DOMAIN, include_ignore=False, include_disabled=False
+        )
+        if entry.data.get("id")
+    ]
+    ids = sorted({str(entry.data["id"]) for entry in entries})
+    loaded = {str(entry.data["id"]) for entry in entries if entry.state is ConfigEntryState.LOADED}
+    return ids, loaded
 
 
 def gateway_entities(hass: HomeAssistant, wanted: Mapping[str, tuple[str, str]]) -> dict[str, str]:
@@ -551,15 +784,22 @@ def _stored_signals(options: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def signals_schema(
-    options: dict[str, Any], suggested: Mapping[str, str] | None = None
+    options: dict[str, Any],
+    suggested: Mapping[str, str] | None = None,
+    answers: Mapping[str, Any] | None = None,
 ) -> vol.Schema:
     """Every signal optional (X8): a home with only a relay is monitored too; water-temperature
     control gets a blocker without flame and flow. ``suggested``: entities the connection names
     for signals not mapped yet (I6, decision 2), shown for the user to check."""
     current = {**(suggested or {}), **_stored_signals(options), WEATHER: options.get(WEATHER)}
+    current |= {k: v for k, v in (answers or {}).items() if v not in (None, "")}
     fields: dict[Any, Any] = {}
+    if stored_connection(options) is Connection.RELAY:
+        fields[vol.Required(RELAY_READS, default=relay_reads_boiler(options, answers))] = (
+            selector.BooleanSelector()
+        )
     for key, (filter_, simple) in SIGNAL_FIELDS.items():
-        if not signal_shown(options, key, simple):
+        if not signal_shown(options, key, simple, answers):
             continue
         fields[_optional(key, current)] = _entity(filter_)
     fields[_optional(WEATHER, current)] = _entity({"domain": "weather"})
@@ -569,7 +809,7 @@ def signals_schema(
 def _freshness_keys(options: dict[str, Any]) -> list[str]:
     """What may have an age limit: each mapped signal, and the weather entity when one is set —
     its own limit, never the outdoor sensor's (X2)."""
-    keys = list(options.get(SIGNALS, {}))
+    keys = [key for key in options.get(SIGNALS, {}) if key != CH_ENABLED]  # control's own (I8.5b)
     if options.get(WEATHER):
         keys.append(WEATHER)
     return keys
@@ -600,35 +840,78 @@ def boiler_schema(options: dict[str, Any]) -> vol.Schema:
     boiler = options.get(BOILER, {})
     params = options.get(PARAMETERS, {})
     current = {**boiler, **params}
-    # The class, the hot water and condensing are the first panels' (I6).
+    # The class, the hot water and condensing are the first panels' (I6). I8 (decision E1): a
+    # field shows only where it can work, and a hidden value is kept (A3) — unless it is one the
+    # options cannot read, shown so it can be fixed.
+    shown = boiler_parameters_shown(options)
     fields: dict[Any, Any] = {
         _optional("boiler_min_power", current): _number(0.3, 200, 0.1, "kW"),
-        _optional("boiler_max_power", current): _number(1, 500, 0.1, "kW"),
     }
-    if _advanced(options):
+    if "boiler_max_power" in shown:
+        fields[_optional("boiler_max_power", current)] = _number(1, 500, 0.1, "kW")
+    if "max_ch_setpoint" in shown:
         fields[_optional("max_ch_setpoint", current)] = _number(20, 95, 1, "°C")
-        if gas_rates_shown(options):  # I6, decision 7: a gas boiler's, or one not said
-            fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01)
-            fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01)
+    if "gas_at_min_power" in shown:
+        fields[_optional("gas_at_min_power", current)] = _number(0, 200, 0.01, "m³/h")
+        fields[_optional("gas_at_max_power", current)] = _number(0, 500, 0.01, "m³/h")
     if pressure_limits_shown(options):
         fields |= pressure_fields(options)
-    if _advanced(options):
-        fields.update(
-            {
-                vol.Required(
-                    "modulation_scale",
-                    default=_choice(
-                        boiler.get("modulation_scale"),
-                        ModulationScale,
-                        ModulationScale.RANGE.value,
-                    ),
-                ): _select("modulation_scale", [m.value for m in ModulationScale]),
-                vol.Required("bypass", default=boiler.get("bypass", False)): (
-                    selector.BooleanSelector()
-                ),
-            }
+    if _advanced(options) and _modulation_mapped(options):
+        default = _choice(
+            boiler.get("modulation_scale"), ModulationScale, ModulationScale.RANGE.value
+        )
+        fields[vol.Required("modulation_scale", default=default)] = _select(
+            "modulation_scale", [m.value for m in ModulationScale]
+        )
+    if _advanced(options) and bypass_shown(options):
+        fields[vol.Required("bypass", default=boiler.get("bypass", False))] = (
+            selector.BooleanSelector()
         )
     return vol.Schema(fields)
+
+
+def boiler_parameters_shown(options: Mapping[str, Any]) -> set[str]:
+    """The boiler step's parameters where they can work (I8, decision E1): the minimum power
+    always; the maximum with a modulation signal, which it scales; at the advanced level the
+    highest heating setpoint but for a relay, and the gas rates with the modulation and no gas
+    meter — a gas boiler's, or one whose fuel is not said (I6). A stored value the options
+    cannot read is shown wherever it is, to be fixed."""
+    modulation = _modulation_mapped(options)
+    advanced = _advanced(options)
+    shown = {"boiler_min_power"}
+    if modulation:
+        shown.add("boiler_max_power")
+    if advanced and interface_connection(options) is not Connection.RELAY:
+        shown.add("max_ch_setpoint")
+    if advanced and gas_rates_shown(options):
+        shown |= set(_GAS_RATES)
+    broken = {key for key in BOILER_PARAMETER_KEYS if _parameter_unreadable(options, key)}
+    if broken & set(_GAS_RATES):
+        broken |= set(_GAS_RATES)  # the pair goes together
+    return shown | broken
+
+
+def _modulation_mapped(options: Mapping[str, Any]) -> bool:
+    return "modulation" in _stored_signals(options)
+
+
+def _parameter_unreadable(options: Mapping[str, Any], key: str) -> bool:
+    """A stored parameter the options cannot take (``implausible_parameter``): a hand edit."""
+    raw = _mapping(options.get(PARAMETERS)).get(key)
+    if raw in (None, ""):
+        return False
+    try:
+        ParameterSet().with_estimate(ParameterKey(key), Estimate(float(raw), Source.ENTERED))
+    except TypeError, ValueError:
+        return True
+    return False
+
+
+def bypass_shown(options: Mapping[str, Any]) -> bool:
+    """I8 (decision E1): the bypass turns the low-flow warning off, which works from a pump or
+    a heating-active signal."""
+    signals = _stored_signals(options)
+    return "pump_running" in signals or "ch_active" in signals
 
 
 # The water pressure's limits, from the boiler's manual and the safety valve's rating: facts about
@@ -668,37 +951,192 @@ def pressure_error(user_input: dict[str, Any]) -> dict[str, str]:
 
 
 def circuit_schema(
-    options: dict[str, Any], current: dict[str, Any], more: bool = False
+    options: dict[str, Any],
+    current: dict[str, Any],
+    answers: Mapping[str, Any] | None = None,
+    *,
+    names: Sequence[str] = (),
+    removable: bool = False,
+    devices: Mapping[str, str] | None = None,
 ) -> vol.Schema:
-    """``more``: another circuit follows this one — offered next, so none is dropped by default.
-    At the advanced level the maximum's too-hot alarm (decision 10): its temperature and time,
-    offered as stored — pre-filled once the maximum is entered."""
+    """One circuit's form (I8, decisions F1 and F2): its name — ``names`` suggested, any text
+    taken; the internal ID is never shown —, its type and highest water temperature; a field
+    shows where it can work: the fixed temperature for a fixed valve; at the advanced level the
+    circuit's own flow sensor for a mixed or fixed-valve circuit, and the maximum's too-hot
+    alarm (decision 10) — its temperature and time, offered as stored, pre-filled once the
+    maximum is entered — with a flow reading. ``answers``: the form's so far, which may reveal
+    fields (A2). ``removable``: a tick that removes it — never the only one. ``current`` as the
+    form shows it (``circuit_form_view``). ``devices``: the VT zones' own devices offered, each
+    with its zone (I8.8c) — at the advanced level, where there are any; the emitter lists offer
+    their zones too."""
+    given = {**current, **(answers or {})}
+    shown = circuit_fields(options, given)
     fields: dict[Any, Any] = {
+        _optional(CIRCUIT_NAME, given): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=sorted(set(names)),
+                custom_value=True,
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
         vol.Required(
             "control",
             default=_choice(
-                current.get("control"), CircuitControl, CircuitControl.UNMIXED_SHARED.value
+                given.get("control"), CircuitControl, CircuitControl.UNMIXED_SHARED.value
             ),
         ): _select("circuit_control", [c.value for c in CircuitControl]),
-        _optional("max_flow", current): _number(*CIRCUIT_BOUNDS["max_flow"], 1, "°C"),
-        _optional("fixed_temperature", current): _number(
-            *CIRCUIT_BOUNDS["fixed_temperature"], 1, "°C"
+        vol.Optional(CIRCUIT_ZONES, default=_listed(given.get(CIRCUIT_ZONES))): _entity(
+            _ZONE_FILTER, multiple=True
         ),
+        vol.Optional(AREA): selector.AreaSelector(selector.AreaSelectorConfig()),
     }
-    if _advanced(options):
-        fields[_optional(MAX_FLOW_ALARM, current)] = _number(
-            *CIRCUIT_BOUNDS[MAX_FLOW_ALARM], 1, "°C"
+    if devices and _advanced(options):
+        fields[vol.Optional(CIRCUIT_DEVICES, default=_listed(given.get(CIRCUIT_DEVICES)))] = (
+            selector.EntitySelector(
+                selector.EntitySelectorConfig(include_entities=sorted(devices), multiple=True)
+            )
         )
-        fields[_optional(MAX_FLOW_ALARM_MIN, current)] = _number(
+    zones = fed_zones(given, devices or {})
+    for key in EMITTER_LISTS if zones else ():
+        picked = [str(z) for z in _listed(given.get(key)) if z in zones]
+        fields[vol.Optional(key, default=picked)] = selector.EntitySelector(
+            selector.EntitySelectorConfig(include_entities=zones, multiple=True)
+        )
+    fields[_optional("max_flow", given)] = _number(*CIRCUIT_BOUNDS["max_flow"], 1, "°C")
+    if "fixed_temperature" in shown:
+        fields[_optional("fixed_temperature", given)] = _number(
+            *CIRCUIT_BOUNDS["fixed_temperature"], 1, "°C"
+        )
+    if REQUEST_ENTITY in shown:  # run by other automation (I8, decision F3)
+        fields[_optional(REQUEST_ENTITY, given)] = _entity(_REQUEST_FILTER)
+        fields[_optional(NEEDED_TEMPERATURE, given)] = _number(
+            *CIRCUIT_BOUNDS[NEEDED_TEMPERATURE], 1, "°C"
+        )
+        fields[_optional(NEEDED_ENTITY, given)] = _entity(_NEEDED_FILTER)
+    if "flow_entity" in shown:
+        fields[_optional("flow_entity", given)] = _entity(_TEMPERATURE)
+    if MAX_FLOW_ALARM in shown:
+        fields[_optional(MAX_FLOW_ALARM, given)] = _number(*CIRCUIT_BOUNDS[MAX_FLOW_ALARM], 1, "°C")
+        fields[_optional(MAX_FLOW_ALARM_MIN, given)] = _number(
             *CIRCUIT_BOUNDS[MAX_FLOW_ALARM_MIN], 1, "min"
         )
-        fields[_optional("flow_entity", current)] = _entity(_TEMPERATURE)
-        fields[vol.Required("add_another", default=more)] = selector.BooleanSelector()
+    if removable:
+        fields[vol.Required(REMOVE_CIRCUIT, default=False)] = selector.BooleanSelector()
     return vol.Schema(fields)
+
+
+# I8 (decision F1): each circuit its own menu item, "Add circuit" after them — at most four
+# (CH1 and CH2 the boiler can serve, two more behind mixers); one circuit, no list, at the
+# simple level. One form serves them, the circuit it edits kept in the flow.
+CIRCUITS_MAX = 4
+ADD_CIRCUIT = "add_circuit"
+CIRCUIT_NAME = "name"
+REMOVE_CIRCUIT = "remove_circuit"
+
+
+def _circuit_list(options: Mapping[str, Any]) -> list[Any]:
+    circuits = options.get(CIRCUITS)
+    return list(circuits) if isinstance(circuits, list) else []
+
+
+def circuit_items(options: Mapping[str, Any]) -> list[str]:
+    """The menu's circuit items: one per circuit stored (the one the options imply where none
+    is), then "Add circuit" below the limit — at the advanced level; the first alone at the
+    simple level, the others kept."""
+    if not _advanced(options):
+        return ["circuit_1"]
+    count = min(max(1, len(_circuit_list(options))), CIRCUITS_MAX)
+    items = [f"circuit_{index + 1}" for index in range(count)]
+    return [*items, ADD_CIRCUIT] if count < CIRCUITS_MAX else items
+
+
+def circuit_placeholders(options: Mapping[str, Any]) -> dict[str, str]:
+    """What the menu's circuit items name, one placeholder each."""
+    circuits = _circuit_list(options)
+    return {
+        f"circuit_{index + 1}": circuit_label(
+            circuits[index] if index < len(circuits) else None, index
+        )
+        for index in range(CIRCUITS_MAX)
+    }
+
+
+def _new_circuit_id(circuits: Sequence[Any]) -> str:
+    """The internal ID of a circuit added: ``main`` for the first, else the first free number."""
+    used = {str(c.get("id")) for c in circuits if isinstance(c, Mapping)}
+    if not circuits:
+        return "main"
+    number = len(circuits) + 1
+    while f"circuit_{number}" in used:
+        number += 1
+    return f"circuit_{number}"
+
+
+def menu_items(options: Mapping[str, Any], section: str) -> list[str]:
+    """A menu section's items: the circuits' for theirs (I8, decision F1), else itself."""
+    return circuit_items(options) if section == "circuit" else [section]
+
+
+def circuit_fields(options: Mapping[str, Any], circuit: Mapping[str, Any]) -> set[str]:
+    """The circuit form's fields that can work for ``circuit`` as answered so far (I8, decision
+    F2): its type and highest water temperature always; the fixed temperature for a fixed valve;
+    at the advanced level the own flow sensor for a mixed or fixed-valve circuit, and the
+    too-hot alarm with a flow reading — the own sensor, or the boiler's flow for a circuit fed
+    straight from it."""
+    kind = _known(CircuitControl, circuit.get("control")) or CircuitControl.UNMIXED_SHARED
+    shown = {"control", "max_flow", CIRCUIT_ZONES, AREA}
+    if _listed(circuit.get(CIRCUIT_ZONES)) or _listed(circuit.get(CIRCUIT_DEVICES)):
+        shown |= set(EMITTER_LISTS)  # of its zones, those with underfloor and convectors
+    if kind is CircuitControl.PASSIVE_FIXED:
+        shown.add("fixed_temperature")
+    if kind is CircuitControl.SEPARATE:  # whether it asks, and the water it needs (I8, F3)
+        shown |= {REQUEST_ENTITY, NEEDED_TEMPERATURE, NEEDED_ENTITY}
+    if not _advanced(options):
+        return shown
+    direct = kind is CircuitControl.UNMIXED_SHARED
+    if not direct:
+        shown.add("flow_entity")
+    own = not direct and circuit.get("flow_entity") not in (None, "")
+    if own or (direct and "flow" in _stored_signals(options)):
+        shown |= {MAX_FLOW_ALARM, MAX_FLOW_ALARM_MIN}
+    return shown
 
 
 MAX_FLOW_ALARM = "max_flow_alarm"
 MAX_FLOW_ALARM_MIN = "max_flow_alarm_min"
+
+
+def circuit_form_view(circuit: Mapping[str, Any]) -> dict[str, Any]:
+    """A stored circuit as its form shows it (I8.8c): its zones fed whole, and the devices it
+    feeds of the others, in one list."""
+    stored = circuit.get(CIRCUIT_DEVICES)
+    by_zone = stored if isinstance(stored, Mapping) else {}
+    view = dict(circuit)
+    view[CIRCUIT_ZONES] = [z for z in _listed(circuit.get(CIRCUIT_ZONES)) if z not in by_zone]
+    view[CIRCUIT_DEVICES] = [d for listed in by_zone.values() for d in _listed(listed)]
+    return view
+
+
+def stored_device_zones(circuits: Sequence[Any]) -> dict[str, str]:
+    """Each device the circuits list, with its zone (I8.8c)."""
+    found: dict[str, str] = {}
+    for circuit in circuits:
+        stored = circuit.get(CIRCUIT_DEVICES) if isinstance(circuit, Mapping) else None
+        for zone, listed in (stored if isinstance(stored, Mapping) else {}).items():
+            for device in _listed(listed):
+                found[str(device)] = str(zone)
+    return found
+
+
+def fed_zones(answers: Mapping[str, Any], devices: Mapping[str, str]) -> list[str]:
+    """The zones a circuit's answers feed (I8.8c): those picked whole, then the zones of the
+    devices picked, each once."""
+    fed = [str(z) for z in _listed(answers.get(CIRCUIT_ZONES))]
+    for device in _listed(answers.get(CIRCUIT_DEVICES)):
+        zone = devices.get(str(device))
+        if zone is not None and zone not in fed:
+            fed.append(zone)
+    return fed
 
 
 def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str, str]:
@@ -711,110 +1149,110 @@ def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str,
 
 
 _ZONE_FILTER = {"domain": "climate", "integration": VT_DOMAIN}
+# I8 (decision F3): a circuit run by other automation's request — on while it asks — and the
+# water it needs, a temperature.
+_REQUEST_FILTER = {"domain": ["binary_sensor", "input_boolean", "switch"]}
+_NEEDED_FILTER = {"domain": ["sensor", "number", "input_number"]}
+# The circuit form's entity fields and what each takes (checked again on submit, P-79).
+_CIRCUIT_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
+    "flow_entity": _TEMPERATURE,
+    REQUEST_ENTITY: _REQUEST_FILTER,
+    NEEDED_ENTITY: _NEEDED_FILTER,
+}
 CLOSES_WHEN_OFF = "closes_when_off"
 
 
-def zones_schema(options: dict[str, Any]) -> vol.Schema:
-    current = [z["entity_id"] for z in options.get(ZONES, [])]
-    return vol.Schema(
-        {vol.Optional("zones", default=current): _entity(_ZONE_FILTER, multiple=True)}
-    )
+# I8 (decisions F2, F4): what a circuit lists — the VT zones it feeds, an area as a shortcut
+# filled in at the save, and of the zones those with underfloor heating and with convectors.
+AREA = "area"
+EMITTER_LISTS = tuple(CIRCUIT_EMITTERS)
 
 
-def foreign_heat_filters(options: dict[str, Any]) -> list[dict[str, Any]]:
-    """What a zone's other heat sources may be; a temperature sensor needs its threshold,
-    entered at the advanced level only."""
-    offered: list[dict[str, Any]] = [
-        {"domain": ["switch", "binary_sensor"]},
-        {"domain": "sensor", "device_class": "power"},
+def watched_zones(options: Mapping[str, Any]) -> list[str]:
+    """The zones the plugin watches (I8, decision F4): those in a circuit, in the circuits'
+    order; an entry from before minor version 20 lists them with the zones."""
+    circuits = options.get(CIRCUITS)
+    if circuits_hold_zones(circuits):
+        found: list[str] = []
+        for circuit in _circuit_list(options):
+            listed = circuit.get(CIRCUIT_ZONES) if isinstance(circuit, Mapping) else None
+            for zone in listed if isinstance(listed, list) else []:
+                if isinstance(zone, str) and zone and zone not in found:
+                    found.append(zone)
+        return found
+    zones = options.get(ZONES)
+    return [
+        str(z["entity_id"])
+        for z in (zones if isinstance(zones, list) else [])
+        if isinstance(z, Mapping) and z.get("entity_id")
     ]
-    if _advanced(options):
-        offered.append({"domain": "sensor", "device_class": "temperature"})
-    return offered
 
 
-def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
-    circuits = [c["id"] for c in options.get(CIRCUITS, [])] or ["main"]
-    fields: dict[Any, Any] = {}
-    if len(circuits) > 1:
-        fields[vol.Required("circuit", default=current.get("circuit", circuits[0]))] = (
-            selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=circuits, mode=selector.SelectSelectorMode.DROPDOWN
-                )
+def zones_schema(options: dict[str, Any]) -> vol.Schema:
+    """The "VT zones" form (I8, decision F5): of the zones the circuits feed, those whose valves
+    close while the zone is off — decision 4, off unless ticked."""
+    watched = watched_zones(options)
+    ticked = [
+        str(z["entity_id"])
+        for z in options.get(ZONES, [])
+        if isinstance(z, Mapping)
+        and z.get(CLOSES_WHEN_OFF) is True
+        and z.get("entity_id") in watched
+    ]
+    return vol.Schema(
+        {
+            vol.Optional(CLOSES_WHEN_OFF, default=ticked): selector.EntitySelector(
+                selector.EntitySelectorConfig(include_entities=watched, multiple=True)
             )
-        )
-    # No default: underfloor needs its own maximum flow, and a wrong type would hide that.
-    fields[
-        vol.Required("emitter", default=_choice(current.get("emitter"), EmitterType, vol.UNDEFINED))
-    ] = _select("emitter", [e.value for e in EmitterType])
-    # Decision 4 (provisional, K4): at both levels, off unless the user ticked it.
-    fields[vol.Required(CLOSES_WHEN_OFF, default=current.get(CLOSES_WHEN_OFF) is True)] = (
-        selector.BooleanSelector()
-    )
-    sources = [s["entity_id"] for s in current.get("foreign_heat", [])]
-    fields[vol.Optional("foreign_heat", default=sources)] = _entity(
-        foreign_heat_filters(options), multiple=True
-    )
-    if _advanced(options):
-        fields[_optional("reference_output_w", current)] = _number(
-            *ZONE_BOUNDS["reference_output_w"], 10, "W"
-        )
-        fields[_optional("exponent", current)] = _number(*ZONE_BOUNDS["exponent"], 0.01)
-        thresholds = {
-            s["kind"]: s.get("threshold")
-            for s in current.get("foreign_heat", [])
-            if s.get("threshold")
         }
-        fields[_optional("power_threshold", {"power_threshold": thresholds.get("power")})] = (
-            _number(*FOREIGN_HEAT_THRESHOLDS[SourceKind.POWER], 1, "W")
-        )
-        fields[
-            _optional(
-                "temperature_threshold", {"temperature_threshold": thresholds.get("temperature")}
-            )
-        ] = _number(*FOREIGN_HEAT_THRESHOLDS[SourceKind.TEMPERATURE], 1, "°C")
-    return vol.Schema(fields)
+    )
+
+
+def apply_zones(options: dict[str, Any], user_input: Mapping[str, Any]) -> None:
+    """The "VT zones" answers: the zones ticked, among those the circuits feed (the flows edit
+    an entry from before as the circuits hold its zones)."""
+    watched = watched_zones(options)
+    ticked = {str(z) for z in _listed(user_input.get(CLOSES_WHEN_OFF))}
+    options[ZONES] = [{"entity_id": z, CLOSES_WHEN_OFF: True} for z in watched if z in ticked]
+
+
+def has_curve(options: Mapping[str, Any]) -> bool:
+    """Whether control runs on a heating curve, which holds the design outdoor temperature (I8,
+    decision E3): full control chosen on the second panel; for an entry from before the control
+    mode, a control section that writes the water temperature."""
+    mode = _known(ControlMode, _stored_boiler(options).get(CONTROL_MODE))
+    if mode is not None:
+        return mode is ControlMode.FULL
+    control = options.get(CONTROL)
+    return isinstance(control, Mapping) and control.get("write_path") not in (
+        None,
+        "",
+        NO_CONTROL,
+        WritePath.RELAY.value,
+    )
+
+
+def building_parameter_keys(options: Mapping[str, Any]) -> tuple[str, ...]:
+    """The parameters the building step asks: the heating threshold; the design outdoor
+    temperature only where no curve holds it (I8, decision E2)."""
+    return ("heating_threshold",) if has_curve(options) else ("heating_threshold", "design_outdoor")
 
 
 def building_schema(options: dict[str, Any]) -> vol.Schema:
+    """The building (I8, decision E2): the design load and the heating threshold, at the
+    advanced level only; the design outdoor temperature where no curve holds it — then never
+    empty, so the design load is never read against a default unseen."""
     building = options.get(BUILDING, {})
     params = options.get(PARAMETERS, {})
     fields: dict[Any, Any] = {
-        _optional("floor_area", building): _number(10, 5000, 1, "m²"),
-        _optional("insulation", building): _select(
-            "insulation", [i.value for i in InsulationClass]
-        ),
-        _optional("thermal_mass", building): _select(
-            "thermal_mass", [m.value for m in ThermalMass]
-        ),
-        # I6: one value with the heating curve's, at both levels; never empty, so the curve
-        # never falls back to a default unseen.
-        vol.Required("design_outdoor", default=design_outdoor_of(options)): _number(
-            *CURVE_BOUNDS["design_outdoor"], 0.5, "°C"
-        ),
+        _optional("design_load_kw", building): _number(0.5, 200, 0.1, "kW"),
+        _optional("heating_threshold", params): _number(5, 22, 0.5, "°C"),
     }
-    if _advanced(options):
-        fields.update(
-            {
-                _optional("design_load_kw", building): _number(0.5, 200, 0.1, "kW"),
-                _optional("loss_coefficient", params): _number(0.01, 5, 0.001, "kW/K"),
-                _optional("heating_threshold", params): _number(5, 22, 0.5, "°C"),
-            }
+    if "design_outdoor" in building_parameter_keys(options):
+        fields[vol.Required("design_outdoor", default=design_outdoor_of(options))] = _number(
+            *CURVE_BOUNDS["design_outdoor"], 0.5, "°C"
         )
     return vol.Schema(fields)
-
-
-def design_outdoor_too_warm(options: Mapping[str, Any], design_outdoor: float) -> bool:
-    """The building's design outdoor temperature too warm for the curve entered (X5.8, P-68): the
-    curve step's check, made where the same value is entered too (I6)."""
-    control = options.get(CONTROL)
-    curve = control.get("curve") if isinstance(control, Mapping) else None
-    if not isinstance(curve, Mapping) or curve.get("design_flow") in (None, ""):
-        return False
-    room = float(curve.get("room", CURVE_DEFAULTS["room"]))
-    problems = curve_problems(float(curve["design_flow"]), design_outdoor, room, 0.0, 100.0)
-    return ("design_outdoor", "design_outdoor_too_warm") in problems
 
 
 def design_outdoor_of(options: Mapping[str, Any]) -> float:
@@ -830,36 +1268,34 @@ def design_outdoor_of(options: Mapping[str, Any]) -> float:
     return CURVE_DEFAULTS["design_outdoor"]
 
 
-def reference_schema(options: dict[str, Any]) -> vol.Schema:
-    reference = options.get(REFERENCE_ROOM, {})
-    zones = [z["entity_id"] for z in options.get(ZONES, [])]
-    strategies = [Strategy.LARGEST_DEFICIT.value, Strategy.AVERAGE.value]
-    if zones:
-        strategies.insert(1, Strategy.CHOSEN_ZONE.value)
-    fields: dict[Any, Any] = {
-        vol.Required(
-            "strategy",
-            default=_choice(reference.get("strategy"), Strategy, Strategy.LARGEST_DEFICIT.value),
-        ): _select("strategy", strategies),
-    }
-    if zones:
-        fields[_optional("zone", reference)] = _entity(_ZONE_FILTER)
-    if _advanced(options):
-        fields[vol.Required("switch_margin", default=reference.get("switch_margin", 0.3))] = (
-            _number(*SWITCH_MARGIN_BOUNDS, 0.1, "K")
-        )
-    return vol.Schema(fields)
-
-
 def monitor_schema(options: dict[str, Any]) -> vol.Schema:
+    """The analysis's thresholds where they can work (I8, decision E4): the condensing return
+    for a condensing boiler with a return signal, the burn and start thresholds with a flame
+    signal, the flue-gas limits as I7 has them; the monitoring days and the verdict window
+    always. A hidden value is kept (A3)."""
     monitor = options.get(MONITOR, {})
+    signals = _stored_signals(options)
+    flame = "flame" in signals
+    condensing = _stored_boiler(options).get("condensing") is not False
     return vol.Schema(
         {
-            vol.Required("condensing_return", default=monitor.get("condensing_return", 55.0)): (
-                _number(*MONITOR_BOUNDS["condensing_return"], 0.5, "°C")
+            **(
+                {
+                    vol.Required(
+                        "condensing_return", default=monitor.get("condensing_return", 55.0)
+                    ): _number(*MONITOR_BOUNDS["condensing_return"], 0.5, "°C")
+                }
+                if condensing and "return" in signals
+                else {}
             ),
-            vol.Required("short_burn_min", default=monitor.get("short_burn_min", 10.0)): _number(
-                *MONITOR_BOUNDS["short_burn_min"], 1, "min"
+            **(
+                {
+                    vol.Required(
+                        "short_burn_min", default=monitor.get("short_burn_min", 10.0)
+                    ): _number(*MONITOR_BOUNDS["short_burn_min"], 1, "min")
+                }
+                if flame
+                else {}
             ),
             vol.Required("monitoring_days", default=monitor.get("monitoring_days", 7.0)): _number(
                 *MONITORING_DAYS_BOUNDS, 1, "d"
@@ -867,12 +1303,6 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
             _optional("verdict_window_days", monitor): _number(
                 *MONITOR_BOUNDS["verdict_window_days"], 1, "d"
             ),
-            vol.Required("near_room_k", default=monitor.get("near_room_k", 3.0)): _number(
-                *MONITOR_BOUNDS["near_room_k"], 0.5, "K"
-            ),
-            vol.Required(
-                "foreign_heat_hold_min", default=monitor.get("foreign_heat_hold_min", 60.0)
-            ): _number(*MONITOR_BOUNDS["foreign_heat_hold_min"], 5, "min"),
             # I6 (decision 7): a condensing boiler's only — the alarm is off for any other.
             **(
                 _limit(
@@ -892,14 +1322,22 @@ def monitor_schema(options: dict[str, Any]) -> vol.Schema:
                 if flue_gas_limits_shown(options)
                 else {}
             ),
-            vol.Required(
-                "starts_per_hour_limit",
-                default=monitor.get("starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR),
-            ): _number(*MONITOR_BOUNDS["starts_per_hour_limit"], 1),
-            vol.Required(
-                "unstable_burns_limit",
-                default=monitor.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY),
-            ): _number(*MONITOR_BOUNDS["unstable_burns_limit"], 1),
+            **(
+                {
+                    vol.Required(
+                        "starts_per_hour_limit",
+                        default=monitor.get(
+                            "starts_per_hour_limit", DEFAULT_FREQUENT_STARTS_PER_HOUR
+                        ),
+                    ): _number(*MONITOR_BOUNDS["starts_per_hour_limit"], 1),
+                    vol.Required(
+                        "unstable_burns_limit",
+                        default=monitor.get("unstable_burns_limit", DEFAULT_UNSTABLE_BURNS_PER_DAY),
+                    ): _number(*MONITOR_BOUNDS["unstable_burns_limit"], 1),
+                }
+                if flame
+                else {}
+            ),
         }
     )
 
@@ -917,8 +1355,6 @@ NO_CONTROL = "none"
 _RELAY_ENTITY = {"domain": list(RELAY_DOMAINS)}  # a switch, or a boiler thermostat entity
 _SETPOINT_ENTITY = {"domain": ["number", "input_number"]}
 _ON_OFF_ENTITY = {"domain": ["switch", "input_boolean"]}
-_READ_BACK_ENTITY = {"domain": ["sensor", "number", "input_number"]}
-_ECHO_ENTITY = {"domain": ["binary_sensor", "switch", "input_boolean"]}
 _THERMOSTAT_SETPOINT_ENTITY = {"domain": ["sensor", "number"], "device_class": "temperature"}
 _RESTART_ENTITY = {"domain": "sensor"}
 # The one alarm whose reaction the user may choose (decision 7, Y1): a write the boiler ignores,
@@ -932,7 +1368,6 @@ CONTROL_ADVANCED_KEYS = (
     "room",
     "exponent",
     "offset",
-    "ceiling_band",
     "fallback_setpoint",
     "frost_limit",
     "frost_release",
@@ -944,7 +1379,6 @@ CONTROL_ADVANCED_KEYS = (
     "decision_interval_min",
     "off_setpoint",
     "learning_pauses",
-    "comfort_correction_max_k",
     "alarm_reactions",
     "return_after_outside_change",
     "return_after_switch_hand_back",
@@ -1008,16 +1442,14 @@ def wants_control(options: Mapping[str, Any]) -> bool:
 
 
 def control_mode_off(options: Mapping[str, Any]) -> bool:
-    """Monitoring only, or room values until 0.3, chosen on the second panel (decision 6)."""
+    """Monitoring only chosen on the mode panel (decision 6)."""
     mode = _known(ControlMode, _stored_boiler(options).get(CONTROL_MODE))
-    return mode in (ControlMode.MONITOR, ControlMode.ROOM_VALUES)
+    return mode is ControlMode.MONITOR
 
 
 def paths_for_class(options: Mapping[str, Any]) -> list[str]:
     """The write paths the form offers for the boiler class: "no control" and those that suit
-    it; "no control" alone where the control mode keeps control off."""
-    if control_mode_off(options):
-        return [NO_CONTROL]
+    it — for an entry made before the connection question (I8, decision B7)."""
     connection = stored_connection(options)
     if connection is not None:
         path = CONNECTION_PATH[connection]  # I6, decision 2
@@ -1041,16 +1473,72 @@ _GAS_RATES = ("gas_at_min_power", "gas_at_max_power")
 FLUE_GAS_LIMITS = ("flue_gas_warning", "flue_gas_alarm")
 
 
-def signal_shown(options: Mapping[str, Any], key: str, simple: bool) -> bool:
-    """Whether the signals step shows a signal: by the level, and by the heat source."""
+def relay_reads_boiler(
+    options: Mapping[str, Any], answers: Mapping[str, Any] | None = None
+) -> bool:
+    """The relay's answer to "Do you also read the boiler through another integration?": as
+    given in the form, as stored, else Yes where a boiler signal beyond the relay's is mapped."""
+    if answers is not None and RELAY_READS in answers:
+        return answers[RELAY_READS] is True
+    stored = _stored_boiler(options).get(RELAY_READS)
+    if isinstance(stored, bool):
+        return stored
+    return any(key not in RELAY_SIGNALS for key in _stored_signals(options))
+
+
+def signal_shown(
+    options: Mapping[str, Any],
+    key: str,
+    simple: bool,
+    answers: Mapping[str, Any] | None = None,
+) -> bool:
+    """Whether the signals step shows a signal: by the level, by the heat source, and for a
+    relay read through nothing else, only what it can read (I8, decision D4). ``answers``: the
+    form's answers so far."""
     source = stored_heat_source(options)
     if source is not None and key in _SIGNALS_NOT_FOR.get(source, ()):
         return False
+    if (
+        stored_connection(options) is Connection.RELAY
+        and not relay_reads_boiler(options, answers)
+        and key not in RELAY_SIGNALS
+    ):
+        return False
+    if key in READ_BACK_SIGNALS and read_backs_asked(options):
+        return True  # control checks its writes against them, at any level (I8.5b)
+    if key == CH_ENABLED:
+        return False  # control's read-back only: a value kept where it is not asked (A3)
     return simple or options.get(LEVEL) == LEVEL_ADVANCED
 
 
+def read_backs_asked(options: Mapping[str, Any]) -> bool:
+    """Whether the signals step asks control's read-backs (I8.5b): with control wanted on a
+    path that reads its writes back — the connection's, or for an entry made before the
+    question, its control section's."""
+    if not control_wanted(options):
+        return False
+    if stored_connection(options) is not None:
+        return connection_path(options) in READ_BACK_PATHS
+    return _mapping(options.get(CONTROL)).get("write_path") in READ_BACK_PATHS
+
+
+def setpoint_read_back(options: Mapping[str, Any]) -> str | None:
+    """The setpoint read-back control is judged with: the control section's own (a hand edit),
+    else the "CH setpoint" signal (I8.5b)."""
+    found = _given(_mapping(options.get(CONTROL)), "confirmed_entity")
+    found = found or _given(_stored_signals(options), "ch_setpoint")
+    return None if found is None else str(found)
+
+
 def gas_rates_shown(options: Mapping[str, Any]) -> bool:
-    return stored_heat_source(options) not in (HeatSource.ELECTRIC, HeatSource.OIL)
+    """A gas boiler's, or one whose fuel is not said (I6); with the modulation they scale, and
+    without a gas meter, which measures the gas then (I8, decision E1)."""
+    signals = _stored_signals(options)
+    return (
+        stored_heat_source(options) not in (HeatSource.ELECTRIC, HeatSource.OIL)
+        and "modulation" in signals
+        and "gas_meter" not in signals
+    )
 
 
 def flue_gas_limits_shown(options: Mapping[str, Any]) -> bool:
@@ -1066,36 +1554,35 @@ def stored_connection(options: Mapping[str, Any]) -> Connection | None:
     return _known(Connection, _stored_boiler(options).get(CONNECTION))
 
 
-def control_schema(
-    options: dict[str, Any], suggested: Mapping[str, Any] | None = None
-) -> vol.Schema:
-    """The first control step. ``suggested``: what the connection suggests where nothing is
-    stored (I6, decision 2) — the virtual topology for a controller on Home Assistant's side, the
-    gateway's own read-backs."""
-    control = options.get(CONTROL, {})
-    shown = {**(suggested or {}), **{k: v for k, v in control.items() if v not in (None, "")}}
-    paths = paths_for_class(options)
-    stored = control.get("write_path", NO_CONTROL)
-    # A stored path the class no longer suits is not offered: the user chooses again.
-    default = stored if stored in paths else vol.UNDEFINED
-    return vol.Schema(
-        {
-            vol.Required("write_path", default=default): _select("write_path", paths),
-            _optional("topology", shown): _select("topology", [t.value for t in Topology]),
-            # Asked with a gateway topology only; the form cannot hide it for the others, chosen
-            # on this same page (its text says so), and the save drops it for them.
-            _thermostat_kind_field(control): _select(
-                THERMOSTAT_KIND, [kind.value for kind in ThermostatKind]
-            ),
-            _optional("confirmed_entity", shown): _entity(_READ_BACK_ENTITY),
-            _optional("ch_confirmed_entity", shown): _entity(_ECHO_ENTITY),
-            # With an OpenTherm thermostat on a gateway (its text says so): its own request,
-            # which a fall-back after an outage shows. The form cannot show it only for that
-            # topology, chosen on this same page; the plugin reads it only with it.
-            _optional("thermostat_setpoint_entity", control): _entity(_THERMOSTAT_SETPOINT_ENTITY),
-            _optional("restart_entity", control): _entity(_RESTART_ENTITY),
-        }
-    )
+def control_schema(options: dict[str, Any]) -> vol.Schema:
+    """The first control step: the write path, only for an entry made before the connection
+    question — the connection decides it otherwise (I8, decision B7), and the step asks nothing:
+    the interface's questions are an item of their own (D2), the read-backs boiler signals
+    (D3)."""
+    control = _mapping(options.get(CONTROL))
+    fields: dict[Any, Any] = {}
+    if connection_path(options) is None:
+        paths = paths_for_class(options)
+        stored = control.get("write_path", NO_CONTROL)
+        # A stored path the class no longer suits is not offered: the user chooses again.
+        default = stored if stored in paths else vol.UNDEFINED
+        fields[vol.Required("write_path", default=default)] = _select("write_path", paths)
+    return vol.Schema(fields)
+
+
+def control_with_inputs(options: Mapping[str, Any]) -> Any:
+    """The control section as control runs it: the connection's MQTT topics (I8.4b) and the
+    signals' read-backs (I8.5b) in it, where it has none of its own."""
+    return with_boiler_inputs(options.get(CONTROL), options.get(BOILER), options.get(SIGNALS))
+
+
+def connection_path(options: Mapping[str, Any]) -> str | None:
+    """The write path the stored connection decides (I6, decision 2), no longer asked (I8,
+    decision B7); ``None`` for an entry made before the question — which still picks it — or a
+    connection that writes nothing."""
+    connection = stored_connection(options)
+    path = CONNECTION_PATH[connection] if connection is not None else None
+    return None if path is None else path.value
 
 
 # What a connection with writable entities offers where nothing is stored (I6, decision 2): the
@@ -1108,55 +1595,104 @@ _ENTITY_DEFAULTS: Mapping[Connection, tuple[str, str, Any]] = {
 _NO_ENTITY_DEFAULTS = (WriteType.UNKNOWN.value, WriteType.UNKNOWN.value, vol.UNDEFINED)
 
 
-def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
+# The hand-back method's own fields (I8, decision H1): shown once the method is picked.
+_HAND_BACK_FIELDS: Mapping[str, tuple[str, ...]] = {
+    HandBack.VALUE: ("hand_back_value", "hand_back_value_effect"),
+    HandBack.SWITCH: ("hand_back_entity", "hand_back_entity_write_type"),
+    HandBack.TIMEOUT: (HAND_BACK_TIMEOUT,),
+}
+
+
+def fixed_write_types(options: Mapping[str, Any]) -> dict[str, str]:
+    """The write types the connection fixes (I8, decision H1; Claude's call: what it is known
+    for, `_ENTITY_DEFAULTS`): ESPHome holds the setpoint and the heating switch, EMS-ESP's
+    setpoint lapses. Not asked; a value stored earlier is kept."""
+    connection = stored_connection(options)
+    defaults = _ENTITY_DEFAULTS.get(connection) if connection is not None else None
+    if defaults is None:
+        return {}
+    return {
+        key: value
+        for key, value in zip(("write_type", "ch_write_type"), defaults[:2], strict=True)
+        if value != WriteType.UNKNOWN.value
+    }
+
+
+def entity_form_fields(options: Mapping[str, Any], answers: Mapping[str, Any]) -> set[str]:
+    """The writable entity's form (I8, decisions A3, H1): a write type only where the connection
+    does not fix it — the heating switch's with a heating switch picked —, the hand-back
+    method's own fields once it is picked; the rest always, the ticks where they apply."""
+    given = {**_mapping(options.get(CONTROL)), **answers}
+    fixed = fixed_write_types(options)
+    shown = {"setpoint_entity", "ch_entity", "hand_back"}
+    if "write_type" not in fixed:
+        shown.add("write_type")
+    if given.get("ch_entity") and "ch_write_type" not in fixed:
+        shown.add("ch_write_type")
+    method = given.get("hand_back", _entity_hand_back_default(options))
+    shown |= set(_HAND_BACK_FIELDS.get(str(method), ()))
+    return shown
+
+
+def _entity_hand_back_default(options: Mapping[str, Any]) -> Any:
+    connection = stored_connection(options)
+    defaults = _ENTITY_DEFAULTS.get(connection) if connection is not None else None
+    return (defaults or _NO_ENTITY_DEFAULTS)[2]
+
+
+def control_entity_schema(
+    options: dict[str, Any], answers: Mapping[str, Any] | None = None
+) -> vol.Schema:
+    """The writable entity's form: the fields ``entity_form_fields`` shows for the answers so
+    far (A2), each with its stored value, else the connection's default."""
     control = options.get(CONTROL, {})
+    given = {**control, **(answers or {})}
+    shown = entity_form_fields(options, answers or {})
     connection = stored_connection(options)
     defaults = _ENTITY_DEFAULTS.get(connection) if connection is not None else None
     write_type, ch_write_type, hand_back = defaults or _NO_ENTITY_DEFAULTS
-    fields: dict[Any, Any] = {
+    every: dict[Any, Any] = {
         vol.Required(
-            "setpoint_entity", default=control.get("setpoint_entity", vol.UNDEFINED)
+            "setpoint_entity", default=given.get("setpoint_entity", vol.UNDEFINED)
         ): _entity(_SETPOINT_ENTITY),
-        vol.Required("write_type", default=control.get("write_type", write_type)): _select(
+        vol.Required("write_type", default=given.get("write_type", write_type)): _select(
             "write_type", [t.value for t in WriteType]
         ),
-        _optional("ch_entity", control): _entity(_ON_OFF_ENTITY),
-        vol.Required("ch_write_type", default=control.get("ch_write_type", ch_write_type)): (
+        _optional("ch_entity", given): _entity(_ON_OFF_ENTITY),
+        vol.Required("ch_write_type", default=given.get("ch_write_type", ch_write_type)): (
             _select("write_type", [t.value for t in WriteType])
         ),
-        vol.Required("hand_back", default=control.get("hand_back", hand_back)): _select(
+        vol.Required("hand_back", default=given.get("hand_back", hand_back)): _select(
             "hand_back", [h.value for h in HandBack]
         ),
-        _optional("hand_back_value", control): _number(
-            *CONTROL_BOUNDS["hand_back_value"], 0.5, "°C"
-        ),
-        _optional("hand_back_value_effect", control): _select(
+        _optional("hand_back_value", given): _number(*CONTROL_BOUNDS["hand_back_value"], 0.5, "°C"),
+        _optional("hand_back_value_effect", given): _select(
             "hand_back_value_effect", [e.value for e in ValueEffect]
         ),
-        _optional("hand_back_entity", control): _entity(_ON_OFF_ENTITY),
+        _optional("hand_back_entity", given): _entity(_ON_OFF_ENTITY),
         vol.Required(
             "hand_back_entity_write_type",
-            default=control.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
+            default=given.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
         ): _select("write_type", [t.value for t in WriteType]),
-        # The timeout method's device timeout (decision 5 of 0.2.3), shown with its cautious
-        # default; the form cannot hide it for the other methods, and the save drops it there.
+        # The timeout method's device timeout (decision 5 of 0.2.3), with its cautious default.
         vol.Optional(
             HAND_BACK_TIMEOUT,
             description={
-                "suggested_value": control.get(HAND_BACK_TIMEOUT, HAND_BACK_TIMEOUT_DEFAULT_MIN)
+                "suggested_value": given.get(HAND_BACK_TIMEOUT, HAND_BACK_TIMEOUT_DEFAULT_MIN)
             },
         ): _number(*HAND_BACK_TIMEOUT_MIN, 1, "min"),
     }
+    fields = {marker: field for marker, field in every.items() if str(marker) in shown}
     if _offers_own_room_controller(control):
         # Next to the hand-back fields, at the simple level; off by default (answers F, M).
         fields[
-            vol.Required(OWN_ROOM_CONTROLLER, default=control.get(OWN_ROOM_CONTROLLER) is True)
+            vol.Required(OWN_ROOM_CONTROLLER, default=given.get(OWN_ROOM_CONTROLLER) is True)
         ] = selector.BooleanSelector()
     if connection is Connection.ESPHOME:
         # Decision 3: never pre-filled, as the relay's separate-contact tick (answer G).
-        fields[
-            vol.Required(ESPHOME_SAFE_START, default=control.get(ESPHOME_SAFE_START) is True)
-        ] = selector.BooleanSelector()
+        fields[vol.Required(ESPHOME_SAFE_START, default=given.get(ESPHOME_SAFE_START) is True)] = (
+            selector.BooleanSelector()
+        )
     return vol.Schema(fields)
 
 
@@ -1174,36 +1710,6 @@ def _offers_own_room_controller(control: Mapping[str, Any]) -> bool:
     except ValueError:
         return False
     return own_room_controller_offered(path, topology)
-
-
-def control_gateway_schema(options: dict[str, Any], gateways: list[str]) -> vol.Schema:
-    control = options.get(CONTROL, {})
-    current = control.get("gateway_id") or (gateways[0] if len(gateways) == 1 else vol.UNDEFINED)
-    field: Any = (
-        selector.SelectSelector(
-            # Only a gateway set up and enabled in Home Assistant can take a write (P-106).
-            selector.SelectSelectorConfig(
-                options=gateways, custom_value=False, mode=selector.SelectSelectorMode.DROPDOWN
-            )
-        )
-        if gateways
-        else str
-    )
-    return vol.Schema({vol.Required("gateway_id", default=current): field})
-
-
-def control_mqtt_schema(options: dict[str, Any]) -> vol.Schema:
-    """The firmware's topics; where the control options have none, the first panel's (I6)."""
-    control = options.get(CONTROL, {})
-    boiler = _stored_boiler(options)
-    top = control.get("mqtt_top", boiler.get("mqtt_top", "OTGW"))
-    node = control.get("mqtt_node", boiler.get("mqtt_node", vol.UNDEFINED))
-    return vol.Schema(
-        {
-            vol.Required("mqtt_top", default=top): str,
-            vol.Required("mqtt_node", default=node): str,
-        }
-    )
 
 
 ACTIVATION_DELAY = "activation_delay_s"
@@ -1226,7 +1732,11 @@ def activation_delay_field(
     }
 
 
-def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None) -> vol.Schema:
+def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
+    """The "Heating curve" item (I8, decision H2): the curve's point and the lowest water
+    temperature; the comfort correction and its limit together, at both levels; at the advanced
+    level the curve's room, the rooms Auto leaves out, the exponent, the offset and the fallback
+    setpoint."""
     control = options.get(CONTROL, {})
     curve = control.get("curve", {})
 
@@ -1244,17 +1754,15 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
         vol.Required("hard_min", default=default("hard_min")): _number(
             *CONTROL_BOUNDS["hard_min"], 0.5, "°C"
         ),
-        vol.Required("hard_max", default=default("hard_max")): _number(
-            *CONTROL_BOUNDS["hard_max"], 0.5, "°C"
-        ),
-        **activation_delay_field(control, vt_delay),
-    }
-    if not _advanced(options):
-        # G11 B: on by default, so shown at the simple level too — here, where that level has
-        # no behaviour step; the advanced level shows it there, beside its limit.
-        fields[vol.Required("comfort_correction", default=default("comfort_correction"))] = (
+        # I8 (decision F2): the highest water temperature is the circuit's.
+        # G11 B, I8 (H2): on by default; with its limit, in one place at both levels.
+        vol.Required("comfort_correction", default=default("comfort_correction")): (
             selector.BooleanSelector()
-        )
+        ),
+        vol.Required("comfort_correction_max_k", default=default("comfort_correction_max_k")): (
+            _number(*CONTROL_BOUNDS["comfort_correction_max_k"], 0.5, "K")
+        ),
+    }
     if _advanced(options):
         fields |= {
             # G11 D: Auto follows the warmest room; Manual keeps the value below.
@@ -1275,27 +1783,38 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
             vol.Required("offset", default=curve.get("offset", CURVE_DEFAULTS["offset"])): (
                 _number(*CURVE_BOUNDS["offset"], 0.5, "K")
             ),
-            vol.Required("ceiling_band", default=default("ceiling_band")): _number(
-                *CONTROL_BOUNDS["ceiling_band"], 0.5, "K"
-            ),
             _optional("fallback_setpoint", control): _number(
                 *CONTROL_BOUNDS["fallback_setpoint"], 0.5, "°C"
-            ),
-            vol.Required("frost_limit", default=default("frost_limit")): _number(
-                *CONTROL_BOUNDS["frost_limit"], 0.5, "°C"
-            ),
-            vol.Required("frost_release", default=default("frost_release")): _number(
-                *CONTROL_BOUNDS["frost_release"], 0.5, "°C"
-            ),
-            _optional("frost_zone", control): selector.EntitySelector(
-                selector.EntitySelectorConfig(include_entities=_zone_entities(options))
             ),
         }
     return vol.Schema(fields)
 
 
+# The "Frost protection" item's fields (I8, decision H4), at the advanced level as before.
+FROST_KEYS = ("frost_limit", "frost_release", "frost_zone")
+
+
+def control_frost_schema(options: dict[str, Any]) -> vol.Schema:
+    """The "Frost protection" item (I8, decision H4): the room limit, the release, the zone
+    watched — every zone where none is picked."""
+    control = options.get(CONTROL, {})
+    return vol.Schema(
+        {
+            vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): _number(
+                *CONTROL_BOUNDS[key], 0.5, "°C"
+            )
+            for key in FROST_KEYS[:2]
+        }
+        | {
+            _optional("frost_zone", control): selector.EntitySelector(
+                selector.EntitySelectorConfig(include_entities=_zone_entities(options))
+            )
+        }
+    )
+
+
 def _zone_entities(options: dict[str, Any]) -> list[str]:
-    return [zone["entity_id"] for zone in options.get(ZONES, []) if zone.get("entity_id")]
+    return watched_zones(options)
 
 
 # --- the relay path (X8) ------------------------------------------------------------------------
@@ -1306,14 +1825,39 @@ HEATS_ABOVE = "boiler_heats_above_w"
 RELAY_STEP_KEYS = (*RELAY_KEYS, OWN_ROOM_CONTROLLER)
 
 
+def relay_form_fields(options: Mapping[str, Any], answers: Mapping[str, Any]) -> set[str]:
+    """The relay's form (I8, decisions A3, H1): the timer's length only with a declared timer;
+    the repeat interval only where something is repeated — without state reports, or with a
+    timer that may lapse; "boiler heats above" at the advanced level with the boiler's power
+    mapped; the rest always."""
+    given = {**_mapping(options.get(CONTROL)), **answers}
+    timer = given.get("relay_off_timer", RELAY_DEFAULTS["relay_off_timer"])
+    reports = given.get("relay_reports_state", RELAY_DEFAULTS["relay_reports_state"])
+    shown = {
+        RELAY_ENTITY, "relay_is_separate_contact", "relay_reports_state", "relay_power_on_state",
+        "relay_off_timer", "relay_rest_state", OWN_ROOM_CONTROLLER,
+    }  # fmt: skip
+    if timer == RelayTimer.MINUTES:
+        shown.add(RELAY_TIMER_MIN)
+    if reports != RelayReports.YES or timer != RelayTimer.NONE:
+        shown.add("relay_repeat_s")
+    if _advanced(options) and Signal.BOILER_POWER.value in _stored_signals(options):
+        shown.add(HEATS_ABOVE)
+    return shown
+
+
 def control_relay_schema(
-    options: dict[str, Any], prefill: VtCentralBoiler | None = None
+    options: dict[str, Any],
+    prefill: VtCentralBoiler | None = None,
+    answers: Mapping[str, Any] | None = None,
 ) -> vol.Schema:
     """The relay and its own settings (R3) — the user's declaration, each with its cautious
-    default — and the tick "the boiler has its own room controller" (answer M). ``prefill``:
-    VT's central boiler, whose relay and repeat interval are offered for confirmation where
-    nothing is stored yet (R14). The separate-contact tick is never pre-filled (answer G)."""
-    control = options.get(CONTROL, {})
+    default — and the tick "the boiler has its own room controller" (answer M); the fields
+    ``relay_form_fields`` shows for the answers so far (A2). ``prefill``: VT's central boiler,
+    whose relay and repeat interval are offered for confirmation where nothing is stored yet
+    (R14). The separate-contact tick is never pre-filled (answer G)."""
+    control = {**options.get(CONTROL, {}), **(answers or {})}
+    shown = relay_form_fields(options, answers or {})
 
     def choice(key: str, kind: type[StrEnum]) -> Any:
         return _choice(control.get(key), kind, RELAY_DEFAULTS[key])
@@ -1346,10 +1890,9 @@ def control_relay_schema(
         vol.Required(
             OWN_ROOM_CONTROLLER, default=control.get(OWN_ROOM_CONTROLLER) is True
         ): selector.BooleanSelector(),
+        _optional(HEATS_ABOVE, control): _number(10, 10000, 10, "W"),
     }
-    if _advanced(options):
-        fields[_optional(HEATS_ABOVE, control)] = _number(10, 10000, 10, "W")
-    return vol.Schema(fields)
+    return vol.Schema({m: f for m, f in fields.items() if str(m) in shown})
 
 
 def relay_entity_error(
@@ -1379,44 +1922,44 @@ def relay_entity_error(
 
 
 def apply_control_relay(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The relay step's answers; the power threshold kept where its field is not shown, and a
-    timer's length only with a declared length."""
+    """The relay step's answers: each field shown as answered, a hidden one as stored (I8,
+    decision A3); a timer's length only with a declared length."""
     control = dict(options.get(CONTROL, {}))
-    shown = [key for key in RELAY_STEP_KEYS if key != HEATS_ABOVE or _advanced(options)]
-    _set_or_drop(control, user_input, tuple(shown))
+    shown = relay_form_fields(options, user_input)
+    _set_or_drop(control, user_input, tuple(key for key in RELAY_STEP_KEYS if key in shown))
     if control.get("relay_off_timer") != RelayTimer.MINUTES:
         control.pop(RELAY_TIMER_MIN, None)
     options[CONTROL] = control
 
 
-# The relay path's behaviour step: its demand thresholds, learning pauses and frost fields at the
-# advanced level (``CONTROL_ADVANCED_KEYS``), VT's activation delay at every level (decision 5).
-RELAY_BEHAVIOUR_KEYS = (
-    "count_threshold",
-    "power_threshold_kw",
-    "opening_threshold",
-    "learning_pauses",
-    "frost_limit",
-    "frost_release",
-    "frost_zone",
-)
-
-
-def control_relay_behaviour_schema(
-    options: dict[str, Any], prefill: VtCentralBoiler | None = None
+def control_behaviour_schema(
+    options: dict[str, Any],
+    prefill: VtCentralBoiler | None = None,
+    vt_delay: float | None = None,
 ) -> vol.Schema:
-    """The relay path's behaviour (R5, R14): VT's activation delay, shown at every level and
-    pre-filled from VT's own; at the advanced level the demand thresholds — pre-filled with VT's
-    as it used them — learning pauses and frost protection, moved here from the curve step,
-    which the relay path does not have."""
+    """The "Control behaviour" item (I8, decision H3), one form for both modes: VT's activation
+    delay at every level, pre-filled from VT's own (R14); at the advanced level the demand
+    criteria — on the relay path pre-filled with VT's thresholds as it used them — and the
+    learning pauses; with full control also the ramp, the decision interval and the "off"
+    setpoint where "off" is written as a low setpoint — not with a heating switch, nor where
+    "off" is the connection's own, as EMS-ESP's 0 (I8, decision H3). ``vt_delay``: VT's own
+    activation delay, else the one ``prefill`` read."""
     control = options.get(CONTROL, {})
-    vt_delay = None if prefill is None else prefill.activation_delay_s
+    if vt_delay is None and prefill is not None:
+        vt_delay = prefill.activation_delay_s
     fields: dict[Any, Any] = {**activation_delay_field(control, vt_delay)}
-    if not _advanced(options):
-        return vol.Schema(fields)
 
-    def default(key: str) -> Any:
-        return control.get(key, CONTROL_DEFAULTS[key])
+    def required(key: str, field: Any) -> dict[Any, Any]:
+        return {vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): field}
+
+    if not _advanced(options):
+        # S-49 at the simple level: "off" next to a hand-back value that returns the boiler to
+        # its own control is refused at the save, which comes back here — shown, to be fixed.
+        if not _relay_path(options) and hand_back_value_problem(
+            options, "off_setpoint_near_hand_back_value"
+        ):
+            fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
+        return vol.Schema(fields)
 
     count = control.get("count_threshold")
     if count is None and prefill is not None and prefill.count_threshold is not None:
@@ -1435,64 +1978,19 @@ def control_relay_behaviour_schema(
         _optional("opening_threshold", control): _number(
             *CONTROL_BOUNDS["opening_threshold"], 1, "%"
         ),
-        vol.Required("learning_pauses", default=default("learning_pauses")): (
-            selector.BooleanSelector()
-        ),
-        vol.Required("frost_limit", default=default("frost_limit")): _number(
-            *CONTROL_BOUNDS["frost_limit"], 0.5, "°C"
-        ),
-        vol.Required("frost_release", default=default("frost_release")): _number(
-            *CONTROL_BOUNDS["frost_release"], 0.5, "°C"
-        ),
-        _optional("frost_zone", control): selector.EntitySelector(
-            selector.EntitySelectorConfig(include_entities=_zone_entities(options))
+        **required("learning_pauses", selector.BooleanSelector()),
+    }
+    if _relay_path(options):
+        return vol.Schema(fields)
+    fields |= {
+        **required("ramp_k_per_min", _number(*CONTROL_BOUNDS["ramp_k_per_min"], 0.1, "K/min")),
+        **required(
+            "decision_interval_min", _number(*CONTROL_BOUNDS["decision_interval_min"], 1, "min")
         ),
     }
+    if not fixed_off(options) and not heating_writes(control):
+        fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
     return vol.Schema(fields)
-
-
-def apply_control_relay_behaviour(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    control = dict(options.get(CONTROL, {}))
-    keys: tuple[str, ...] = (ACTIVATION_DELAY,)
-    if _advanced(options):
-        keys += RELAY_BEHAVIOUR_KEYS
-    _set_or_drop(control, user_input, keys)
-    options[CONTROL] = control
-
-
-def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
-    control = options.get(CONTROL, {})
-
-    def required(key: str, field: Any) -> dict[Any, Any]:
-        return {vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): field}
-
-    return vol.Schema(
-        {
-            **required("ramp_k_per_min", _number(*CONTROL_BOUNDS["ramp_k_per_min"], 0.1, "K/min")),
-            **required(
-                "decision_interval_min", _number(*CONTROL_BOUNDS["decision_interval_min"], 1, "min")
-            ),
-            # EMS-ESP's "off" is its own 0 (I6, decision 4): nothing to choose there.
-            **(
-                {}
-                if fixed_off(options)
-                else required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
-            ),
-            **required("count_threshold", _number(*CONTROL_BOUNDS["count_threshold"], 1)),
-            _optional("power_threshold_kw", control): _number(
-                *CONTROL_BOUNDS["power_threshold_kw"], 0.1, "kW"
-            ),
-            _optional("opening_threshold", control): _number(
-                *CONTROL_BOUNDS["opening_threshold"], 1, "%"
-            ),
-            **required("learning_pauses", selector.BooleanSelector()),
-            **required("comfort_correction", selector.BooleanSelector()),
-            **required(
-                "comfort_correction_max_k",
-                _number(*CONTROL_BOUNDS["comfort_correction_max_k"], 0.5, "K"),
-            ),
-        }
-    )
 
 
 RETURN_KEY = "return_after_outside_change"
@@ -1501,8 +1999,8 @@ RETURN_SWITCH_KEY = "return_after_switch_hand_back"
 
 
 def _relay_path(options: Mapping[str, Any]) -> bool:
-    control = options.get(CONTROL)
-    return isinstance(control, Mapping) and control.get("write_path") == WritePath.RELAY
+    """Control runs through a relay: the connection's path, else the one stored."""
+    return control_path(options) == WritePath.RELAY
 
 
 def reaction_alarms(options: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1553,15 +2051,14 @@ def confirm_blocking_schema() -> vol.Schema:
     return vol.Schema({vol.Required("save_anyway", default=False): selector.BooleanSelector()})
 
 
-CONTROL_STEP_KEYS = (
-    "write_path",
-    "topology",
-    THERMOSTAT_KIND,
-    "confirmed_entity",
-    "ch_confirmed_entity",
-    "thermostat_setpoint_entity",
-    "restart_entity",
-)
+CONTROL_STEP_KEYS = ("write_path",)
+# Where a problem the first control step finds is fixed, when it asks nothing (I8.5b).
+_CONTROL_PROBLEM_STEPS = {
+    "confirmed_entity_missing": "signals",
+    "thermostat_setpoint_same_as_read_back": "signals",
+    "interface_not_answered": INTERFACE,
+    "no_zones": "circuit",  # the zones are the circuits' (I8, decision F4)
+}
 
 
 # What the relay path does not read (X8): it has no topology, no thermostat terminals and no
@@ -1576,20 +2073,21 @@ _NOT_FOR_RELAY = (
 
 
 def apply_control(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The first control step: the write path, topology, what is wired to the gateway's
-    thermostat terminals and read-backs; "none" removes control. A topology without thermostat
-    terminals keeps no answer about them; the relay path keeps none of them but the restart
-    indicator."""
+    """The first control step: the write path; "none" removes control but
+    keeps the "Boiler interface" answers, which are the interface's (I8, decision D2). The relay
+    path keeps no topology, thermostat answers or read-backs: it reads none of them."""
+    control = dict(_mapping(options.get(CONTROL)))
     if user_input["write_path"] == NO_CONTROL:
-        options.pop(CONTROL, None)
+        kept = {k: v for k, v in control.items() if k in INTERFACE_CONTROL_KEYS}
+        if kept:
+            options[CONTROL] = kept
+        else:
+            options.pop(CONTROL, None)
         return
-    control = dict(options.get(CONTROL, {}))
     if control.get("write_path") != user_input["write_path"]:
         for key in TARGET_KEYS:
             control.pop(key, None)
     _set_or_drop(control, user_input, CONTROL_STEP_KEYS)
-    if not _gateway_topology(control.get("topology")):
-        control.pop(THERMOSTAT_KIND, None)
     if user_input["write_path"] == WritePath.RELAY:
         for key in _NOT_FOR_RELAY:
             control.pop(key, None)
@@ -1604,25 +2102,64 @@ def _gateway_topology(raw: object) -> bool:
 
 
 def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The writable-entity step's answers; the device's timeout only with the timeout method."""
+    """The writable-entity step's answers: each field shown as answered, a hidden one as
+    stored (I8, decision A3) — a write type the connection fixes its value where none is
+    stored; the device's timeout only with the timeout method."""
     control = dict(options.get(CONTROL, {}))
-    keys = TARGET_KEYS
-    _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
+    shown = {str(marker) for marker in control_entity_schema(options, user_input).schema}
+    _set_or_drop(control, user_input, tuple(k for k in TARGET_KEYS if k in shown))
+    for key, value in fixed_write_types(options).items():
+        control.setdefault(key, value)
     if control.get("hand_back") != HandBack.TIMEOUT:
         control.pop(HAND_BACK_TIMEOUT, None)
+    for tick in (OWN_ROOM_CONTROLLER, ESPHOME_SAFE_START):
+        if tick not in shown:
+            control.pop(tick, None)  # a declaration only where it is asked (answers F, M)
     options[CONTROL] = control
 
 
-def water_limits(options: Mapping[str, Any]) -> dict[str, str]:
-    """The curve step's (decision 10 of I6): the boiler's and the first circuit's maxima, which
-    cap the water with the step's own highest temperature — the lowest of them applies; "—"
-    where one is not entered."""
-    params = options.get(PARAMETERS)
+def highest_water_of(options: Mapping[str, Any]) -> float:
+    """The highest water temperature control writes (I8, decision F2), as control caps it (the
+    user's answer of 2026-10-12): the lowest of the circuits fed straight from the boiler, each
+    the default where empty, the default where there is none; one the control section still
+    holds (a hand edit) first, as the parser takes it."""
+    stored = _plain_number(_mapping(options.get(CONTROL)).get("hard_max"))
+    if stored is not None:
+        return stored
+    default = float(CONTROL_DEFAULTS["hard_max"])
+    return min(
+        (default if own is None else own for own in _straight_maxima(options)), default=default
+    )
+
+
+def _straight_maxima(options: Mapping[str, Any]) -> list[float | None]:
+    """Each circuit fed straight from the boiler's highest water temperature as entered, ``None``
+    where none is (I8.8: only these cap the boiler's water)."""
     circuits = options.get(CIRCUITS)
+    return [
+        _plain_number(c.get("max_flow"))
+        for c in (circuits if isinstance(circuits, list) else [])
+        if isinstance(c, Mapping)
+        and c.get("control", CircuitControl.UNMIXED_SHARED.value)
+        == CircuitControl.UNMIXED_SHARED.value
+    ]
+
+
+def _plain_number(value: object) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def water_limits(options: Mapping[str, Any]) -> dict[str, str]:
+    """The curve step's (decision 10 of I6): the boiler's maximum and the circuits', which cap
+    the water — the lower applies (I8, decision F2: a circuit's is its highest water
+    temperature, its default where none; I8.8: the lowest entered of those fed straight from
+    the boiler); "—" where one is not entered."""
+    params = options.get(PARAMETERS)
     boiler = params.get("max_ch_setpoint") if isinstance(params, Mapping) else None
-    first = circuits[0] if isinstance(circuits, list) and circuits else None
-    circuit = first.get("max_flow") if isinstance(first, Mapping) else None
-    return {"boiler_max": _degrees(boiler), "circuit_max": _degrees(circuit)}
+    entered = [own for own in _straight_maxima(options) if own is not None]
+    return {"boiler_max": _degrees(boiler), "circuit_max": _degrees(min(entered, default=None))}
 
 
 def _degrees(value: object) -> str:
@@ -1650,12 +2187,16 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
         else:
             curve[key] = value
     control["curve"] = curve
-    keys = ["hard_min", "hard_max", ACTIVATION_DELAY]
+    keys = ["hard_min", "comfort_correction", "comfort_correction_max_k"]
     if _advanced(options):
-        keys += ["ceiling_band", "fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
-    else:
-        keys.append("comfort_correction")  # G11 B: the simple level's place for it
+        keys.append("fallback_setpoint")
     _set_or_drop(control, user_input, tuple(keys))
+    options[CONTROL] = control
+
+
+def apply_control_frost(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    control = dict(options.get(CONTROL, {}))
+    _set_or_drop(control, user_input, FROST_KEYS)
     options[CONTROL] = control
 
 
@@ -1692,10 +2233,8 @@ def _set_or_drop(target: dict[str, Any], user_input: dict[str, Any], keys: tuple
             target[key] = value
 
 
-# The first control step's entity fields and what each takes (checked again on submit, P-79).
-CONTROL_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
-    "confirmed_entity": _READ_BACK_ENTITY,
-    "ch_confirmed_entity": _ECHO_ENTITY,
+# The "Boiler interface" item's entity fields (I8, decision D2).
+INTERFACE_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
     "thermostat_setpoint_entity": _THERMOSTAT_SETPOINT_ENTITY,
     "restart_entity": _RESTART_ENTITY,
 }
@@ -1729,28 +2268,53 @@ def control_error(
         }
     if path == WritePath.RELAY:
         return {}
-    if not user_input.get("confirmed_entity"):
-        return {"confirmed_entity": "confirmed_entity_missing"}
-    topology = user_input.get("topology")
-    if not topology:
-        return {"topology": "topology_missing"}
-    if Topology(topology) is Topology.MONITOR_MODE:
-        return {"topology": "topology_no_control"}
-    if Topology(topology) not in PATH_TOPOLOGIES[WritePath(path)]:
-        return {"topology": "topology_not_for_path"}
-    if connection in VIRTUAL_CONNECTIONS and Topology(topology) is not Topology.VIRTUAL:
-        return {"topology": "topology_not_for_connection"}  # a controller on HA's side
-    if Topology(topology) in GATEWAY_TOPOLOGIES:
-        kind = parse_thermostat_kind(user_input.get(THERMOSTAT_KIND))
-        if kind is None:
-            return {THERMOSTAT_KIND: "thermostat_kind_missing"}
-        if kind_contradicts_topology(Topology(topology), kind):
-            return {THERMOSTAT_KIND: "thermostat_kind_contradicts_topology"}
-    thermostat = user_input.get("thermostat_setpoint_entity")
-    if thermostat and thermostat == user_input.get("confirmed_entity"):
+    # The read-back is a boiler signal (I8.5b); given here only by an older caller.
+    read_back = _given(user_input, "confirmed_entity") or (
+        None if options is None else setpoint_read_back(options)
+    )
+    if read_back is None:
+        return {"base": "confirmed_entity_missing"}
+    # The interface's answers (I8, decision D2): stored by its own item; given here only by an
+    # older caller.
+    given = {**(_mapping(options.get(CONTROL)) if options is not None else {}), **user_input}
+    if interface_answers_problem(given, WritePath(path), connection):
+        if options is not None and interface_connection(options) is None:
+            # An entry made before the connection question, without control: the interface
+            # item follows the connection, so that comes first.
+            return {"base": "connection_not_answered"}
+        return {"base": "interface_not_answered"}
+    thermostat = given.get("thermostat_setpoint_entity")
+    if thermostat and thermostat == read_back:
         # The boiler's read-back shows the plugin's value, not the thermostat's own request.
-        return {"thermostat_setpoint_entity": "thermostat_setpoint_same_as_read_back"}
+        return {"base": "thermostat_setpoint_same_as_read_back"}
     return {}
+
+
+def interface_answers_problem(
+    given: Mapping[str, Any], path: WritePath, connection: Connection | None
+) -> str | None:
+    """What the "Boiler interface" answers lack for a water path (one table with the blockers,
+    P-44): the topology, one the path can control through and the connection suits — a
+    controller on Home Assistant's side is virtual — and, with a gateway topology, the answer
+    about its thermostat terminals, one that fits it (decision 1). ``None`` where they do."""
+    raw = given.get("topology")
+    try:
+        topology = Topology(str(raw)) if raw else None
+    except ValueError:
+        topology = None
+    if topology is None:
+        return "topology_missing"
+    if topology not in PATH_TOPOLOGIES[path]:
+        return "topology_not_for_path"
+    if connection in VIRTUAL_CONNECTIONS and topology is not Topology.VIRTUAL:
+        return "topology_not_for_connection"
+    if topology in GATEWAY_TOPOLOGIES:
+        kind = parse_thermostat_kind(given.get(THERMOSTAT_KIND))
+        if kind is None:
+            return "thermostat_kind_missing"
+        if kind_contradicts_topology(topology, kind):
+            return "thermostat_kind_contradicts_topology"
+    return None
 
 
 def mqtt_set_up(hass: HomeAssistant) -> bool:
@@ -1901,31 +2465,52 @@ BOILER_PARAMETER_KEYS = (
     "gas_at_min_power",
     "gas_at_max_power",
 )
-BUILDING_KEYS = ("floor_area", "insulation", "thermal_mass", "design_load_kw")
-BUILDING_PARAMETER_KEYS = ("loss_coefficient", "heating_threshold", "design_outdoor")
-ADVANCED_BUILDING_PARAMETERS = ("loss_coefficient", "heating_threshold")
-# Parameters shown at both levels: emptied in the form, they go.
-SIMPLE_PARAMETERS = ("boiler_min_power", "boiler_max_power", "design_outdoor")
+BUILDING_KEYS = ("design_load_kw",)
+ADVANCED_BUILDING_PARAMETERS = ("heating_threshold",)
 
 
 def apply_signals(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The signals step's answers. A relay read through nothing else keeps only what it can read
+    (I8, decision D4): the other boiler signals go. A signal no longer mapped takes its age limit
+    with it (D7)."""
     signals = _stored_signals(options)
+    relay = stored_connection(options) is Connection.RELAY
+    reads = relay_reads_boiler(options, user_input)
     for key, (_filter, simple) in SIGNAL_FIELDS.items():
-        if signal_shown(options, key, simple):  # one not shown keeps what is stored
+        if signal_shown(options, key, simple, user_input):  # one not shown keeps what is stored
             if user_input.get(key):
                 signals[key] = user_input[key]
             else:
                 signals.pop(key, None)
+        elif relay and not reads and key not in RELAY_SIGNALS:
+            signals.pop(key, None)
     options[SIGNALS] = signals
     options[WEATHER] = user_input.get(WEATHER) or None
+    if relay:
+        options[BOILER] = {**_stored_boiler(options), RELAY_READS: reads}
+    freshness = options.get(FRESHNESS)
+    if isinstance(freshness, Mapping):
+        kept = set(_freshness_keys(options))
+        options[FRESHNESS] = {k: v for k, v in freshness.items() if k in kept}
 
 
-def signal_fields(options: dict[str, Any]) -> dict[str, EntityFilter]:
+def read_back_error(options: Mapping[str, Any], user_input: Mapping[str, Any]) -> dict[str, str]:
+    """The setpoint the boiler received is not the thermostat's own request (PB-70): with a
+    gateway's thermostat, its own entity is the "Boiler interface"'s (I8.5b)."""
+    thermostat = _given(_mapping(options.get(CONTROL)), "thermostat_setpoint_entity")
+    if thermostat and thermostat == _given(user_input, "ch_setpoint"):
+        return {"ch_setpoint": "thermostat_setpoint_same_as_read_back"}
+    return {}
+
+
+def signal_fields(
+    options: dict[str, Any], answers: Mapping[str, Any] | None = None
+) -> dict[str, EntityFilter]:
     """The signals step's entity fields at the options' level, and what each takes."""
     fields: dict[str, EntityFilter] = {
         key: filter_
         for key, (filter_, simple) in SIGNAL_FIELDS.items()
-        if signal_shown(options, key, simple)
+        if signal_shown(options, key, simple, answers)
     }
     fields[WEATHER] = {"domain": "weather"}  # no signal: it may be any weather entity
     return fields
@@ -1938,7 +2523,7 @@ def shared_signal_error(options: dict[str, Any], user_input: dict[str, Any]) -> 
     empty is never a duplicate."""
     candidate = copy.deepcopy(options)
     apply_signals(candidate, user_input)
-    shown = set(signal_fields(options))
+    shown = set(signal_fields(options, user_input))
     owner: dict[str, str] = {}
     for key in SIGNAL_FIELDS:
         entity = candidate[SIGNALS].get(key)
@@ -1952,10 +2537,15 @@ def shared_signal_error(options: dict[str, Any], user_input: dict[str, Any]) -> 
 
 
 def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The boiler step's answers: each parameter it shows set, or dropped where left empty; a
+    hidden one kept (I8, decision A3)."""
+    shown = boiler_parameters_shown(options)
     boiler = dict(options.get(BOILER, {}))
     boiler.update({k: user_input[k] for k in BOILER_KEYS if k in user_input})
     options[BOILER] = boiler
-    _apply_parameters(options, user_input, BOILER_PARAMETER_KEYS)
+    params = dict(options.get(PARAMETERS, {}))
+    _set_or_drop(params, user_input, tuple(k for k in BOILER_PARAMETER_KEYS if k in shown))
+    options[PARAMETERS] = params
     monitor = dict(options.get(MONITOR, {}))
     if pressure_limits_shown(options):  # not shown: kept (I7)
         _set_or_drop(monitor, user_input, PRESSURE_KEYS)
@@ -1966,26 +2556,13 @@ def apply_boiler(options: dict[str, Any], user_input: dict[str, Any]) -> None:
 
 
 def apply_building(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The building step's answers: each field it shows set, or dropped where left empty; the
+    design outdoor temperature kept where the curve holds it."""
     building = dict(options.get(BUILDING, {}))
-    for key in BUILDING_KEYS:
-        if key in user_input and user_input[key] not in (None, ""):
-            building[key] = user_input[key]
-        elif _advanced(options) or key != "design_load_kw":
-            building.pop(key, None)
+    _set_or_drop(building, user_input, BUILDING_KEYS)
     options[BUILDING] = building
-    _apply_parameters(options, user_input, BUILDING_PARAMETER_KEYS)
-
-
-def _apply_parameters(
-    options: dict[str, Any], user_input: dict[str, Any], keys: tuple[str, ...]
-) -> None:
     params = dict(options.get(PARAMETERS, {}))
-    shown_advanced = _advanced(options)
-    for key in keys:
-        if key in user_input and user_input[key] not in (None, ""):
-            params[key] = user_input[key]
-        elif key in SIMPLE_PARAMETERS or shown_advanced:
-            params.pop(key, None)
+    _set_or_drop(params, user_input, building_parameter_keys(options))
     options[PARAMETERS] = params
 
 
@@ -1993,35 +2570,30 @@ def circuit_from_input(
     user_input: dict[str, Any],
     circuit_id: str,
     current: Mapping[str, Any] | None = None,
-    advanced: bool = True,
+    shown: Collection[str] | None = None,
 ) -> dict[str, Any]:
-    """A circuit as the options store it. With a maximum, its too-hot alarm (decision 10): at
-    the advanced level as entered, at the simple level as stored (its fields are hidden); where
-    none is given, the pre-fill — the maximum + 5 K and 10 min — so never empty, and not changed
-    by itself later. Without a maximum, no alarm."""
+    """A circuit as the options store it: each field ``shown`` (all where ``None``) as answered,
+    a hidden one as stored (I8, decision A3). With a maximum, its too-hot alarm (decision 10):
+    as entered where shown, else as stored; where none is given, the pre-fill — the maximum
+    + 5 K and 10 min — so never empty, and not changed by itself later. Without a maximum, no
+    alarm."""
+    current = current or {}
     circuit: dict[str, Any] = {"id": circuit_id, "control": user_input["control"]}
-    for key in ("max_flow", "fixed_temperature", "flow_entity"):
-        if user_input.get(key) not in (None, ""):
-            circuit[key] = user_input[key]
+    for key in (
+        "name", "max_flow", "fixed_temperature", "flow_entity",
+        REQUEST_ENTITY, NEEDED_TEMPERATURE, NEEDED_ENTITY,
+    ):  # fmt: skip
+        given = user_input if shown is None or key in shown else current
+        if given.get(key) not in (None, ""):
+            circuit[key] = given[key]
     maximum = circuit.get("max_flow")
     if maximum is None:
         return circuit
-    given = user_input if advanced else (current or {})
+    given = user_input if shown is None or MAX_FLOW_ALARM in shown else current
     alarm, minutes = given.get(MAX_FLOW_ALARM), given.get(MAX_FLOW_ALARM_MIN)
     circuit[MAX_FLOW_ALARM] = maximum + CIRCUIT_ALARM_RISE_K if alarm in (None, "") else alarm
     circuit[MAX_FLOW_ALARM_MIN] = CIRCUIT_ALARM_MIN if minutes in (None, "") else minutes
     return circuit
-
-
-def circuit_left_with_zones(options: dict[str, Any], circuits: list[dict[str, Any]]) -> bool:
-    """P-64: whether a zone still names a circuit the new list leaves out (a zone naming none
-    takes the one circuit there is)."""
-    ids = {str(circuit.get("id")) for circuit in circuits}
-    return any(
-        zone.get("circuit") not in (None, "") and str(zone["circuit"]) not in ids
-        for zone in options.get(ZONES, [])
-        if isinstance(zone, Mapping)
-    )
 
 
 # The control options that name an entity control writes to or reads (``ControlOptions.entities``).
@@ -2059,27 +2631,16 @@ def _circuit_alarm_hidden(circuit: Mapping[str, Any]) -> bool:
     )
 
 
-def source_kind(hass_state_domain: str, device_class: str | None) -> SourceKind | None:
-    if hass_state_domain == "switch":
-        return SourceKind.SWITCH
-    if hass_state_domain == "binary_sensor":
-        return SourceKind.BINARY
-    if device_class == "power":
-        return SourceKind.POWER
-    if device_class == "temperature":
-        return SourceKind.TEMPERATURE
-    return None
-
-
 def apply_monitor(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The monitor step's answers; the flue-gas limits it does not show, and the pressure limits
-    the boiler step asks, are kept (I6)."""
+    """The monitor step's answers; what it does not show is kept — the thresholds that cannot
+    work now (I8, A3), and the pressure limits the boiler step asks (I6)."""
     stored = options.get(MONITOR)
-    kept = {
-        key: stored[key]
-        for key in (*FLUE_GAS_LIMITS, *PRESSURE_KEYS)
-        if isinstance(stored, Mapping) and key in stored and key not in user_input
-    }
+    shown = {str(marker) for marker in monitor_schema(options).schema}
+    kept = (
+        {key: value for key, value in stored.items() if key not in shown}
+        if isinstance(stored, Mapping)
+        else {}
+    )
     options[MONITOR] = {**kept, **user_input}
 
 
@@ -2091,9 +2652,8 @@ MONITOR_KEPT = ("monitoring_days", "verdict_window_days", *PRESSURE_KEYS)
 
 def restore_advanced_defaults(options: dict[str, Any]) -> None:
     """Drop every tuning value only the advanced level shows, so its default applies again.
-    Facts about the installation — what is mapped, the boiler, circuits, emitter sizes, values
-    the user entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
-    options.get(REFERENCE_ROOM, {}).pop("switch_margin", None)
+    Facts about the installation — what is mapped, the boiler, circuits, zones, values the user
+    entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
     monitor = options.get(MONITOR, {})
     kept = {key: monitor[key] for key in MONITOR_KEPT if key in monitor}
     if kept:
@@ -2124,6 +2684,11 @@ def _differ(values: dict[str, Any], defaults: dict[str, Any], keys: Any) -> bool
     return any(key in values and values[key] != defaults.get(key, _MISSING) for key in keys)
 
 
+# The signals that show every boiler and monitor field but the flue-gas limits, whose stored
+# values count as set (I8, decisions E1 and E4).
+_SHOWING_EVERY_FIELD = dict.fromkeys(("flame", "return", "modulation", "pump_running"), "-")
+
+
 def has_hidden_advanced(options: dict[str, Any]) -> bool:
     """At the simple level: whether anything only the advanced level shows is active — a fact
     the user gave, or a setting that differs from its default."""
@@ -2132,21 +2697,22 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     advanced = {LEVEL: LEVEL_ADVANCED}
     params = options.get(PARAMETERS, {})
     circuits = options.get(CIRCUITS, [])
-    zones = options.get(ZONES, [])
     control = options.get(CONTROL, {})
     monitor = options.get(MONITOR, {})
     curve_defaults = _schema_defaults(control_curve_schema(advanced))
     alarm_defaults = _schema_defaults(control_alarms_schema(advanced))
     control_defaults = (
         curve_defaults
-        | _schema_defaults(control_behaviour_schema({}))
+        | _schema_defaults(control_behaviour_schema(advanced))
+        | _schema_defaults(control_frost_schema(advanced))
         | {RETURN_KEY: alarm_defaults[RETURN_KEY], RETURN_SWITCH_KEY: False}
     )
     return bool(
         any(key in options.get(SIGNALS, {}) for key in ADVANCED_SIGNALS)
         or _differ(
             options.get(BOILER, {}),
-            _schema_defaults(boiler_schema(advanced)),
+            # Every field's default: with the signals that show them (I8, decision E1).
+            _schema_defaults(boiler_schema(advanced | {SIGNALS: _SHOWING_EVERY_FIELD})),
             ("modulation_scale", "bypass"),
         )
         or any(
@@ -2162,16 +2728,9 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
         or len(circuits) > 1
         or any("flow_entity" in c for c in circuits)
         or any(_circuit_alarm_hidden(c) for c in circuits)
-        or any("reference_output_w" in z or "exponent" in z for z in zones)
-        or any("threshold" in s for z in zones for s in z.get("foreign_heat", []))
-        or _differ(
-            options.get(REFERENCE_ROOM, {}),
-            _schema_defaults(reference_schema(advanced)),
-            ("switch_margin",),
-        )
         or _differ(
             monitor,
-            _schema_defaults(monitor_schema({})),
+            _schema_defaults(monitor_schema({SIGNALS: _SHOWING_EVERY_FIELD})),
             [key for key in monitor if key not in PRESSURE_KEYS],  # the boiler step's (I6)
         )
         or _differ(
@@ -2209,15 +2768,14 @@ _PROBLEM_STEPS = {
     "duplicate_circuit": "circuit",
     "unknown_circuit": "circuit",
     "fixed_temperature_missing": "circuit",
-    "duplicate_zone": "zones",
-    "zone_without_circuit": "zones",
-    "reference_zone_unknown": "reference",
+    "duplicate_zone": "circuit",
+    "duplicate_device": "circuit",
+    "zone_without_circuit": "circuit",
     "alarm_limits_out_of_order": "monitor",
     # A stored value this version does not know: its section's step (P-70).
     "invalid_boiler": "boiler",
     "invalid_circuit": "circuit",
     "invalid_zone": "zones",
-    "invalid_reference": "reference",
     "invalid_monitor": "monitor",
     "invalid_building": "building",
     "invalid_freshness": "freshness",
@@ -2257,8 +2815,10 @@ def problem_step(code: str, subject: str | None) -> str:
     """The step where the user can fix a problem the last check found."""
     if code == "implausible_parameter":
         return "boiler" if subject in BOILER_PARAMETER_KEYS else "building"
+    if subject in MODE_STEP_SUBJECTS and code in ("invalid_boiler", "invalid_connection"):
+        return "mode"  # I8 (decision D1): the mode panel is a menu item of its own
     if code == "invalid_boiler" and subject in PANEL_BOILER_KEYS:
-        return "connection"  # I6: the class, the hot water and condensing are the panels'
+        return "connection"  # I6: the class and the hot water follow the connection's panel
     if code in ("invalid_monitor", "alarm_limits_out_of_order") and subject in (
         *PRESSURE_KEYS,
         "pressure_high",
@@ -2272,54 +2832,94 @@ def problem_step(code: str, subject: str | None) -> str:
 # The texts the menu reads into its description: what is left, what to fix, what changed.
 MENU_STATE = "menu_state"
 _SECTION_OF_STEP = {
-    "mode": "connection",
-    "mqtt_topics": "connection",
     "zone": "zones",
     "level_hidden": "level",
 }
 
 
+# I8 (decision H): control's menu items, each one form, in the menu's order — the control
+# device, the heating curve, the control behaviour, frost protection, the alarm reactions.
+CONTROL_ITEMS = ("control", "control_curve", "control_behaviour", "control_frost", "control_alarms")
+# The forms an item opens after its first: the device's, by the write path; the alarms' second
+# confirmation.
+_CONTROL_ITEM_OF_STEP = {
+    "control_entity": "control",
+    "control_relay": "control",
+    "control_relay_from_vt": "control",
+    "control_return_confirm": "control_alarms",
+}
+
+
 def section_of(step: str) -> str:
-    """The menu's section a step belongs to: the control steps are one section, as are the
-    connection's panels and the zones' forms."""
-    if step.startswith("control"):
-        return "control"
-    return _SECTION_OF_STEP.get(step, step)
+    """The menu's section a step belongs to: each control item with the forms it opens (I8,
+    decision H), as the zones' forms are one section."""
+    return _CONTROL_ITEM_OF_STEP.get(step) or _SECTION_OF_STEP.get(step, step)
+
+
+def control_path(options: Mapping[str, Any]) -> str | None:
+    """The write path control runs: the connection's, else — an entry made before the
+    connection question — the one stored; ``None`` where none is picked yet."""
+    stored = _mapping(options.get(CONTROL)).get("write_path")
+    return connection_path(options) or (str(stored) if stored else None)
+
+
+def control_item_shown(options: Mapping[str, Any], item: str) -> bool:
+    """Whether a control item applies (I8, decision H): the device where it asks something —
+    the writable entity, the relay, or the path of an entry made before the connection
+    question —; once a path is known, the curve with full control, the behaviour always,
+    frost protection at the advanced level, the alarm reactions where any applies."""
+    if item == "control":
+        return connection_path(options) in (None, WritePath.ENTITY, WritePath.RELAY)
+    if control_path(options) in (None, NO_CONTROL):
+        return False  # an entry made before the connection question picks its path first
+    if item == "control_curve":
+        return control_path(options) != WritePath.RELAY
+    if item == "control_frost":
+        return _advanced(options)
+    if item == "control_alarms":
+        return alarm_step_offered(options)
+    return True
 
 
 def control_offered(options: Mapping[str, Any]) -> bool:
     """Whether the menu offers the control section: with full control or on/off; for an entry
-    made before the control mode, as before; and while a write path is still set, so control
-    can be switched off once monitoring only is chosen — its step then offers "no control"
-    alone."""
-    if wants_control(options) or _stored_boiler(options).get(CONTROL_MODE) is None:
+    made before the control mode, as before. Monitoring only is itself "no control" (I8,
+    decision B7): a control section stored beside it is kept, unused and not shown (A3)."""
+    if _stored_boiler(options).get(CONTROL_MODE) is None:
         return True
-    control = options.get(CONTROL)
-    return isinstance(control, Mapping) and control.get("write_path") not in (None, NO_CONTROL)
+    return wants_control(options)
 
 
 def section_shown(options: Mapping[str, Any], section: str) -> bool:
-    """A section that does not apply is not on the menu (decision 2): the reference room
-    without zones, the monitor's thresholds at the simple level, control as above."""
-    if section == "reference":
-        return bool(options.get(ZONES))
-    if section == "monitor":
+    """A section that does not apply is not on the menu (decision 2): the monitor's thresholds
+    and the building (I8, decision E2) at the simple level, the interface where it asks
+    nothing, the zones' question where a circuit feeds a zone, control as above."""
+    if section in ("monitor", "building"):
         return options.get(LEVEL) == LEVEL_ADVANCED
-    if section == "control":
-        return control_offered(options)
+    if section == INTERFACE:
+        return bool(interface_fields(options))  # where there is something to ask (I8, D2)
+    if section == "zones":
+        return bool(watched_zones(options))  # its question needs zones in a circuit (I8, F5)
+    if section in CONTROL_ITEMS:
+        return control_offered(options) and control_item_shown(options, section)
     return True
 
 
 # --- flows ------------------------------------------------------------------------------------
 
 
+def _problem_shown_on(target: str, step_id: str) -> bool:
+    """Whether a problem meant for ``target`` shows on the form ``step_id``: its own, or — for
+    the first control step, which asks nothing where the connection decides the path (I8.5b) —
+    the first control form after it."""
+    return step_id == target or (target == "control" and step_id.startswith("control"))
+
+
 class _Steps:
     """Steps shared by the config flow and the options flow."""
 
     options: dict[str, Any]
-    _zone_queue: list[str]
-    _zones_done: list[dict[str, Any]]
-    _circuits_done: list[dict[str, Any]]
+    _circuit_index: int | None = None  # the circuit the form edits (I8, decision F1)
     # A problem the last check found: shown on its step, which the flow goes back to.
     _problem: tuple[str, dict[str, str]] | None = None
     _unfed_zones: str = ""  # PB-23: the zones a count of 0 could never hear, for the form
@@ -2327,8 +2927,42 @@ class _Steps:
     _MENU = "menu"
     _CATEGORY = "config"
     _confirmed: set[str]  # the sections confirmed in this flow
+    _mode_due = False  # the mode must be answered again after the connection (I8, D1)
+    _interface_draft: dict[str, Any] | None = None  # the interface form's answers so far (A2)
+    _signals_draft: dict[str, Any] | None = None  # the signals form's answers so far (A2)
+    _circuit_draft: dict[str, Any] | None = None  # the circuit form's answers so far (A2)
+    _entity_draft: dict[str, Any] | None = None  # the writable entity's answers so far (A2)
+    _relay_draft: dict[str, Any] | None = None  # the relay's answers so far (A2)
     _changed: list[str]  # the sections whose answers changed the options, in that order
     _at_menu: dict[str, Any] | None  # the options as the menu last showed them
+
+    def _stored_control(self) -> Mapping[str, Any]:
+        """The control section as stored before this flow; the setup has none."""
+        return {}
+
+    async def _async_hand_back_blocker(self) -> str | None:
+        """Why what the hand-back goes through must not change now; the setup has none."""
+        return None
+
+    def _changed_read_back(self, candidate: Mapping[str, Any], blocker: str) -> str | None:
+        """The read-back signal ``candidate`` (the options as the answer would leave them)
+        re-picks on the path kept, where it judges a hand-back's release: a gateway's (R6, H2
+        with C1), the setpoint's and the heating switch's on the entity path (PB-09; I8.5b:
+        boiler signals); ``None`` where none is."""
+        current = self._stored_control()
+        new = _mapping(control_with_inputs(candidate))
+        path = current.get("write_path")
+        if new.get("write_path") != path:
+            return None
+        fixed = fixed_keys(path, owed=blocker == HAND_BACK_PENDING)
+        return next(
+            (
+                signal
+                for signal, key in READ_BACK_SIGNALS.items()
+                if key in fixed and _given(new, key) != _given(current, key)
+            ),
+            None,
+        )
 
     def _form(
         self,
@@ -2337,8 +2971,9 @@ class _Steps:
         errors: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> ConfigFlowResult:
-        if not errors and self._problem is not None and self._problem[0] == step_id:
-            errors = self._problem[1]
+        problem = self._problem
+        if not errors and problem is not None and _problem_shown_on(problem[0], step_id):
+            errors = problem[1]
             self._problem = None
         result: ConfigFlowResult = self.async_show_form(  # type: ignore[attr-defined]
             step_id=step_id, data_schema=data_schema, errors=errors or {}, **kwargs
@@ -2395,40 +3030,23 @@ class _Steps:
     async def async_step_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """The first panel (I6): how the boiler is connected, the heat source, the boiler type;
-        then the MQTT topics for a connection over MQTT."""
+        """The first panel (I6): how the boiler is connected, the heat source, the boiler type.
+        The mode follows at once where it must be answered again (I8, decision D1;
+        ``mode_due``); the interface's own questions are an item of their own (D2)."""
         if user_input is not None:
+            before = _stored_boiler(self.options)
+            asked_before = {key: before.get(key) for key in (HEAT_SOURCE, BOILER_TYPE)}
             apply_connection(self.options, user_input)
-            if Connection(user_input[CONNECTION]) in TOPIC_KEYS:
-                return await self.async_step_mqtt_topics()
-            return await self.async_step_mode()
+            self._mode_due = mode_due(self.options, asked_before)
+            return await self._after("connection")
         return self._form(step_id="connection", data_schema=connection_schema(self.options))
 
-    async def async_step_mqtt_topics(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """The topics the interface publishes under (I6, decision 9)."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            errors = {
-                key: "mqtt_topic_invalid"
-                for key, value in user_input.items()
-                if not mqtt_topic_valid(value)
-            }
-            if not errors:
-                boiler = dict(_stored_boiler(self.options))
-                boiler.update({key: str(value).strip() for key, value in user_input.items()})
-                self.options[BOILER] = boiler
-                return await self.async_step_mode()
-        return self._form(
-            step_id="mqtt_topics", data_schema=mqtt_topics_schema(self.options), errors=errors
-        )
-
     async def async_step_mode(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """The second panel (I6): the control mode the connection can do, condensing and the
-        hot-water priority where they apply."""
+        """The second panel (I6), a menu item of its own (I8, decision D1): the control mode the
+        connection can do, condensing and the hot-water priority where they apply."""
         if user_input is not None:
             apply_mode(self.options, user_input)
+            self._mode_due = False
             return await self._after("mode")
         return self._form(step_id="mode", data_schema=mode_schema(self.options))
 
@@ -2436,17 +3054,36 @@ class _Steps:
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
+        draft = self._signals_draft
         if user_input is not None:
+            shown = set(signal_fields(self.options, draft))
+            self._signals_draft = dict(user_input)
+            if set(signal_fields(self.options, user_input)) - shown:
+                # The relay's answer revealed fields: shown again with them (I8, A2, D4).
+                return self._form(
+                    step_id="signals",
+                    data_schema=signals_schema(self.options, None, user_input),
+                    description_placeholders={"hint": await self._async_signal_hint()},
+                )
             modulation = user_input.get("modulation")
             state = self.hass.states.get(modulation) if modulation else None  # type: ignore[attr-defined]
-            errors = entity_errors(self.hass, user_input, signal_fields(self.options))  # type: ignore[attr-defined]
+            errors = entity_errors(self.hass, user_input, signal_fields(self.options, user_input))  # type: ignore[attr-defined]
             unit = None if state is None else state.attributes.get("unit_of_measurement")
             if not errors and unit not in (None, "%"):
                 errors = {"modulation": "modulation_not_percent"}  # e.g. a power sensor
             if not errors:
-                errors = shared_signal_error(self.options, user_input)
+                errors = shared_signal_error(self.options, user_input) or read_back_error(
+                    self.options, user_input
+                )
+            if not errors and (blocker := await self._async_hand_back_blocker()):
+                # What judges a hand-back's release cannot change now (PB-09, I8.5b).
+                candidate = copy.deepcopy(self.options)
+                apply_signals(candidate, user_input)
+                if key := self._changed_read_back(candidate, blocker):
+                    errors = {key: blocker}
             if not errors:
                 apply_signals(self.options, user_input)
+                self._signals_draft = None
                 return await self._after("signals")
         connection = stored_connection(self.options)
         suggested: dict[str, str] = {}
@@ -2455,7 +3092,7 @@ class _Steps:
             suggested = gateway_entities(self.hass, GATEWAY_SIGNALS)  # type: ignore[attr-defined]
         return self._form(
             step_id="signals",
-            data_schema=signals_schema(self.options, suggested),
+            data_schema=signals_schema(self.options, suggested, user_input or draft),
             errors=errors,
             description_placeholders={"hint": await self._async_signal_hint()},
         )
@@ -2493,143 +3130,224 @@ class _Steps:
                 return await self._after("boiler")
         return self._form(step_id="boiler", data_schema=boiler_schema(self.options), errors=errors)
 
+    async def async_step_circuit_1(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(0)
+
+    async def async_step_circuit_2(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(1)
+
+    async def async_step_circuit_3(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(2)
+
+    async def async_step_circuit_4(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(3)
+
+    async def async_step_add_circuit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._open_circuit(len(_circuit_list(self.options)))
+
+    async def _open_circuit(self, index: int) -> ConfigFlowResult:
+        """A circuit's menu item (I8, decision F1): its form, the circuit kept in the flow."""
+        self._circuit_index = index
+        self._circuit_draft = None
+        return await self.async_step_circuit()
+
     async def async_step_circuit(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """One circuit's form — the one its menu item opened, else the first (the wizard, a
+        problem to fix); a new one where "Add circuit" opened it. Its save replaces it in the
+        list, or adds it; its tick removes it, never the only one, nor one a zone still names
+        (P-64)."""
         errors: dict[str, str] = {}
-        index = len(self._circuits_done)
-        existing = self.options.get(CIRCUITS, [])
-        current = existing[index] if index < len(existing) else {}
-        if user_input is not None:
+        circuits = _circuit_list(self.options)
+        index = self._circuit_index or 0
+        new = index >= len(circuits)
+        stored = None if new else circuits[index]
+        current: dict[str, Any] = dict(stored) if isinstance(stored, Mapping) else {}
+        removable = not new and len(circuits) > 1
+        names = self._circuit_names()
+        placeholders = {"name": circuit_label(current, index), "zone": "-"}
+        # I8.8c: the VT zones' own devices offered at the advanced level, each with its zone
+        # from VT — and this circuit's stored ones VT no longer drives, to be refused at the
+        # save; without the field, those stored are kept, their zones as stored.
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        live = zone_devices(hass) if _advanced(self.options) else {}
+        stored_zones = stored_device_zones(circuits)
+        view = circuit_form_view(current)
+        stale = {d: stored_zones[d] for d in view[CIRCUIT_DEVICES] if d not in live}
+        offered = {**stale, **live} if live else {}
+        devices = live or {**stored_zones, **zone_devices(hass)}
+        if user_input is not None and user_input.get(REMOVE_CIRCUIT) and removable:
+            # Its zones go with it: they are no longer watched (I8, decision F4).
+            self.options[CIRCUITS] = [*circuits[:index], *circuits[index + 1 :]]
+            self._circuit_index = self._circuit_draft = None
+            return await self._after("circuit")
+        elif user_input is not None:
             advanced = _advanced(self.options)
-            circuit = circuit_from_input(
-                user_input, current.get("id", f"circuit_{index + 1}"), current, advanced
+            draft = {**view, **(self._circuit_draft or {})}
+            shown = circuit_fields(self.options, draft)
+            self._circuit_draft = dict(user_input)
+            if not offered:  # no field for them: the devices stored are kept (I8, A3)
+                user_input = {**user_input, CIRCUIT_DEVICES: view[CIRCUIT_DEVICES]}
+            # A sensor that is no temperature, a zone the circuit cannot take, are refused
+            # before they reveal anything (P-79).
+            flow = entity_errors(self.hass, user_input, _CIRCUIT_ENTITY_FIELDS)  # type: ignore[attr-defined]
+            zones, zone_error, named = self._circuit_zones(
+                user_input, circuits, index, devices, CIRCUIT_DEVICES if offered else CIRCUIT_ZONES
             )
-            if index == 0 and not current:
-                circuit["id"] = "main"
-            if not advanced and current.get("flow_entity"):
-                circuit["flow_entity"] = current["flow_entity"]  # not shown: kept
-            if (
+            # Zones the emitter lists did not offer yet: shown again with them (I8, A2, F2).
+            known = offered or devices  # as the form resolves them
+            listed = set(fed_zones(draft, known)) if EMITTER_LISTS[0] in shown else set()
+            added = set(fed_zones(user_input, known)) - listed
+            revealed = circuit_fields(self.options, {**view, **user_input}) - shown
+            if not flow and not zone_error and (revealed or added):
+                # The type or the flow sensor revealed fields: shown again with them (I8, A2).
+                return self._form(
+                    step_id="circuit",
+                    data_schema=circuit_schema(
+                        self.options,
+                        view,
+                        user_input,
+                        names=names,
+                        removable=removable,
+                        devices=offered,
+                    ),
+                    description_placeholders=placeholders,
+                )
+            shown = circuit_fields(self.options, {**current, **user_input}) | {CIRCUIT_NAME}
+            circuit_id = current.get("id") or _new_circuit_id(circuits)
+            circuit = circuit_from_input(user_input, str(circuit_id), current, shown)
+            circuit |= zones
+            if flow:
+                errors = flow
+            elif zone_error:
+                errors = zone_error
+                placeholders["zone"] = named
+            elif (
                 circuit["control"] == CircuitControl.PASSIVE_FIXED
                 and "fixed_temperature" not in circuit
             ):
                 errors["fixed_temperature"] = "fixed_temperature_missing"
             elif alarm_error := circuit_alarm_error(circuit, advanced):
                 errors = alarm_error
-            elif flow := entity_errors(self.hass, user_input, {"flow_entity": _TEMPERATURE}):  # type: ignore[attr-defined]
-                errors = flow
             else:
-                self._circuits_done.append(circuit)
-                if user_input.get("add_another"):
-                    return await self.async_step_circuit()
-                kept = [] if _advanced(self.options) else existing[len(self._circuits_done) :]
-                circuits = [*self._circuits_done, *kept]
-                if circuit_left_with_zones(self.options, circuits):
-                    # P-64: a zone would be left on a circuit that is gone; nothing is saved and
-                    # this circuit's form shows again, where another can be added.
-                    self._circuits_done.pop()
-                    errors = {"base": "circuit_has_zones"}
+                if new:
+                    circuits.append(circuit)
                 else:
-                    self.options[CIRCUITS] = circuits
-                    self._circuits_done = []
-                    return await self._after("circuit")
+                    circuits[index] = circuit
+                self.options[CIRCUITS] = circuits
+                self._circuit_index = self._circuit_draft = None
+                return await self._after("circuit")
         return self._form(
             step_id="circuit",
-            data_schema=circuit_schema(self.options, current, more=index + 1 < len(existing)),
-            errors=errors,
-            description_placeholders={"number": str(index + 1)},
-        )
-
-    async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        placeholders = {"zone": "-"}
-        if user_input is not None:
-            picked = _listed(user_input.get("zones"))
-            on_thermostat: list[str] = []
-            if zones_not_vt(self.hass, picked):  # type: ignore[attr-defined]
-                errors = {"zones": "zone_not_vt"}  # question 19: VT climates only
-            elif on_thermostat := zones_on_boiler_thermostat(
-                self.hass,  # type: ignore[attr-defined]
-                [str(zone) for zone in picked],
-                boiler_side_entities(self.options),
-            ):
-                # X5.19: it would ask for heat whenever the flame burns.
-                errors = {"zones": "zone_on_boiler_thermostat"}
-                placeholders = {
-                    "zone": ", ".join(zone_name(self.hass, z) for z in on_thermostat)  # type: ignore[attr-defined]
-                }
-            else:
-                self._zone_queue = [str(zone) for zone in picked]
-                self._zones_done = []
-                return await self.async_step_zone()
-        return self._form(
-            step_id="zones",
-            data_schema=zones_schema(self.options),
+            data_schema=circuit_schema(
+                self.options,
+                view,
+                user_input or self._circuit_draft,
+                names=names,
+                removable=removable,
+                devices=offered,
+            ),
             errors=errors,
             description_placeholders=placeholders,
         )
 
-    async def async_step_zone(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if not self._zone_queue:
-            self.options[ZONES] = self._zones_done
-            return await self._after("zones")
-        entity_id = self._zone_queue[0]
-        previous = {z["entity_id"]: z for z in self.options.get(ZONES, [])}
-        current = previous.get(entity_id, {})
-        errors: dict[str, str] = {}
+    def _circuit_zones(
+        self,
+        user_input: Mapping[str, Any],
+        circuits: Sequence[Any],
+        index: int,
+        devices: Mapping[str, str],
+        devices_field: str,
+    ) -> tuple[dict[str, Any], dict[str, str], str]:
+        """A circuit's zones as answered (I8, decisions F2 and F4): those picked whole, an
+        area's added — the shortcut filled in at the save —, those of the devices picked
+        (I8.8c; ``devices``: each device's zone), and of them those with underfloor and with
+        convectors; with the problem the answer has, and the zones or devices it names — a
+        device's on ``devices_field``, the field that shows them. Refused: a zone that is no VT
+        climate (question 19), one built on the boiler's own thermostat (X5.19), one another
+        circuit feeds — a zone may be in two only by its devices —, one in both emitter lists;
+        a device of no VT zone, one another circuit lists, one of a zone picked whole too."""
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        whole = [str(z) for z in _listed(user_input.get(CIRCUIT_ZONES))]
+        chosen = [str(d) for d in _listed(user_input.get(CIRCUIT_DEVICES))]
+        by_zone: dict[str, list[str]] = {}
+        for device in chosen:
+            if device in devices:
+                by_zone.setdefault(devices[device], []).append(device)
+        area = user_input.get(AREA)
+        for zone in vt_zones_in_area(hass, str(area)) if area else []:
+            if zone not in whole and zone not in by_zone:
+                whole.append(zone)
+        picked = fed_zones({CIRCUIT_ZONES: whole, CIRCUIT_DEVICES: chosen}, devices)
+        lists: dict[str, Any] = {CIRCUIT_ZONES: picked}
+        if by_zone:
+            lists[CIRCUIT_DEVICES] = by_zone
+        for key in EMITTER_LISTS:
+            listed = [str(z) for z in _listed(user_input.get(key)) if z in picked]
+            if listed:
+                lists[key] = listed
+        others = [c for i, c in enumerate(circuits) if i != index and isinstance(c, Mapping)]
+        split = stored_device_zones(others)
+        held = {str(z) for c in others for z in _listed(c.get(CIRCUIT_ZONES))}
+        held_whole = held - set(split.values())
+
+        def named(entities: Sequence[str]) -> str:
+            return ", ".join(zone_name(hass, e) for e in entities)
+
+        if zones_not_vt(hass, whole):
+            return lists, {CIRCUIT_ZONES: "zone_not_vt"}, "-"
+        if unknown := [d for d in chosen if d not in devices]:
+            return lists, {devices_field: "device_not_in_zone"}, named(unknown)
+        thermostat = zones_on_boiler_thermostat(hass, picked, boiler_side_entities(self.options))
+        if thermostat:
+            # X5.19: it would ask for heat whenever the flame burns.
+            return lists, {CIRCUIT_ZONES: "zone_on_boiler_thermostat"}, named(thermostat)
+        if shared := [z for z in whole if z in held]:
+            return lists, {CIRCUIT_ZONES: "zone_in_another_circuit"}, named(shared)
+        if both := [z for z in whole if z in by_zone]:
+            return lists, {devices_field: "zone_whole_and_devices"}, named(both)
+        if shared := [z for z in by_zone if z in held_whole]:
+            return lists, {devices_field: "zone_in_another_circuit"}, named(shared)
+        if taken := [d for d in chosen if d in split]:
+            return lists, {devices_field: "device_in_another_circuit"}, named(taken)
+        if set(lists.get("underfloor", ())) & set(lists.get("convectors", ())):
+            return lists, {"underfloor": "emitter_twice"}, "-"
+        return lists, {}, "-"
+
+    def _circuit_names(self) -> list[str]:
+        """Names a circuit may take (I8, decision F2): Home Assistant's areas and the VT zones'."""
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        areas = [area.name for area in ar.async_get(hass).async_list_areas()]
+        registry = er.async_get(hass)
+        zones = [
+            zone_name(hass, entry.entity_id)
+            for entry in registry.entities.values()
+            if entry.platform == VT_DOMAIN and entry.domain == "climate"
+        ]
+        return [*areas, *zones]
+
+    async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The "VT zones" form (I8, decision F5): whose valves close while the zone is off, among
+        the zones the circuits feed — they are picked in each circuit's form (F4)."""
         if user_input is not None:
-            zone: dict[str, Any] = {"entity_id": entity_id, "emitter": user_input["emitter"]}
-            if user_input.get(CLOSES_WHEN_OFF) is True:
-                # Decision 4's per-zone option, stored when ticked; off is its default.
-                zone[CLOSES_WHEN_OFF] = True
-            circuits = [c["id"] for c in self.options.get(CIRCUITS, [])] or ["main"]
-            zone["circuit"] = user_input.get("circuit", current.get("circuit", circuits[0]))
-            for key in ("reference_output_w", "exponent"):
-                if user_input.get(key) not in (None, ""):
-                    zone[key] = user_input[key]
-                elif not _advanced(self.options) and current.get(key) is not None:
-                    zone[key] = current[key]  # not shown: kept
-            thresholds = {
-                s["entity_id"]: s["threshold"]
-                for s in current.get("foreign_heat", [])
-                if s.get("threshold") is not None
-            }
-            sources = []
-            for source_id in user_input.get("foreign_heat", []):
-                state = self.hass.states.get(source_id)  # type: ignore[attr-defined]
-                kind = source_kind(
-                    source_id.split(".")[0],
-                    state.attributes.get("device_class") if state is not None else None,
-                )
-                if kind is None:
-                    errors["foreign_heat"] = "foreign_heat_unsupported"
-                    break
-                source: dict[str, Any] = {"entity_id": source_id, "kind": kind.value}
-                threshold = user_input.get(f"{kind.value}_threshold")
-                if threshold in (None, "") and not _advanced(self.options):
-                    threshold = thresholds.get(source_id)  # not shown: kept
-                if threshold not in (None, ""):
-                    source["threshold"] = threshold
-                elif kind is SourceKind.TEMPERATURE:
-                    errors["foreign_heat"] = "temperature_threshold_missing"
-                    break
-                sources.append(source)
-            if not errors:
-                errors = entity_errors(
-                    self.hass,  # type: ignore[attr-defined]
-                    user_input,
-                    {"foreign_heat": foreign_heat_filters(self.options)},
-                )
-            if not errors:
-                zone["foreign_heat"] = sources
-                self._zones_done.append(zone)
-                self._zone_queue.pop(0)
-                return await self.async_step_zone()
+            apply_zones(self.options, user_input)
+            return await self._after("zones")
+        names = ", ".join(zone_name(self.hass, z) for z in watched_zones(self.options))  # type: ignore[attr-defined]
         return self._form(
-            step_id="zone",
-            data_schema=zone_schema(self.options, current),
-            errors=errors,
-            description_placeholders={"zone": zone_name(self.hass, entity_id)},  # type: ignore[attr-defined]
+            step_id="zones",
+            data_schema=zones_schema(self.options),
+            description_placeholders={"zones": names or "-"},
         )
 
     async def async_step_building(
@@ -2637,39 +3355,10 @@ class _Steps:
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            if design_outdoor_too_warm(self.options, user_input["design_outdoor"]):
-                errors["design_outdoor"] = "design_outdoor_too_warm"
-            else:
-                apply_building(self.options, user_input)
-                return await self._after("building")
+            apply_building(self.options, user_input)
+            return await self._after("building")
         return self._form(
             step_id="building", data_schema=building_schema(self.options), errors=errors
-        )
-
-    async def async_step_reference(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            reference = {k: v for k, v in user_input.items() if v not in (None, "")}
-            margin = self.options.get(REFERENCE_ROOM, {}).get("switch_margin")
-            if not _advanced(self.options) and margin is not None:
-                reference["switch_margin"] = margin  # not shown: kept
-            zones = [z["entity_id"] for z in self.options.get(ZONES, [])]
-            if reference.get("zone") and zones_not_vt(self.hass, [reference["zone"]]):  # type: ignore[attr-defined]
-                errors["zone"] = "zone_not_vt"
-            elif (
-                reference.get("strategy") == Strategy.CHOSEN_ZONE
-                and reference.get("zone") not in zones
-            ):
-                errors["zone"] = "reference_zone_unknown"
-            else:
-                if reference.get("strategy") != Strategy.CHOSEN_ZONE:
-                    reference.pop("zone", None)
-                self.options[REFERENCE_ROOM] = reference
-                return await self._after("reference")
-        return self._form(
-            step_id="reference", data_schema=reference_schema(self.options), errors=errors
         )
 
     async def async_step_monitor(
@@ -2690,30 +3379,43 @@ class _ControlSteps(_Steps):
     _contact_asked_for: str | None = None  # the new relay whose tick was asked again (PB-45)
     _alarms_answer: dict[str, Any] | None = None  # awaiting the return's confirmation
 
-    def _stored_control(self) -> Mapping[str, Any]:
-        """The control section as stored before this flow; the setup has none."""
-        return {}
-
-    async def _async_hand_back_blocker(self) -> str | None:
-        """Why what the hand-back goes through must not change now; the setup has none."""
-        return None
-
-    def _changed_read_back(self, user_input: dict[str, Any], blocker: str) -> str | None:
-        """The read-back the answer re-picks on the path kept, where it judges a hand-back's
-        release: a gateway's (R6, H2 with C1), the setpoint's and the heating switch's on the
-        entity path (PB-09); ``None`` where none is."""
-        current = self._stored_control()
-        path = current.get("write_path")
-        if user_input.get("write_path") != path:
-            return None
-        fixed = fixed_keys(path, owed=blocker == HAND_BACK_PENDING)
-        return next(
-            (
-                key
-                for key in ("confirmed_entity", "ch_confirmed_entity")
-                if key in fixed and _given(user_input, key) != _given(current, key)
-            ),
-            None,
+    async def async_step_interface(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The "Boiler interface" item (I8, decision D2): its form follows the connection, and
+        shows itself again with the fields an answer revealed (decision A2) — a gateway topology
+        reveals what is wired to its thermostat terminals. While a hand-back is owed, or control
+        holds the boiler, what the hand-back goes through cannot change (PB-09)."""
+        gateways, loaded = gateways_set_up(self.hass)
+        errors: dict[str, str] = {}
+        draft = self._interface_draft or {}
+        if user_input is not None:
+            user_input = {
+                key: value.strip() if key in ALL_TOPIC_KEYS and isinstance(value, str) else value
+                for key, value in user_input.items()
+            }
+            shown = interface_fields(self.options, draft, gateways=len(gateways))
+            revealed = set(interface_fields(self.options, user_input, gateways=len(gateways)))
+            self._interface_draft = dict(user_input)
+            if revealed - set(shown):
+                return self._form(
+                    step_id=INTERFACE,
+                    data_schema=interface_schema(self.options, user_input, gateways),
+                )
+            errors = interface_error(self.options, user_input, gateways, loaded) or (
+                entity_errors(self.hass, user_input, INTERFACE_ENTITY_FIELDS)
+            )
+            blocker = await self._async_hand_back_blocker()
+            if not errors and blocker and self._changes_hand_back(user_input, shown, blocker):
+                errors = {"base": blocker}
+            if not errors:
+                apply_interface(self.options, user_input, gateways)
+                self._interface_draft = None
+                return await self._after(INTERFACE)
+        return self._form(
+            step_id=INTERFACE,
+            data_schema=interface_schema(self.options, user_input or draft, gateways),
+            errors=errors,
         )
 
     def _changes_hand_back(
@@ -2731,32 +3433,69 @@ class _ControlSteps(_Steps):
             if key in shown
         )
 
-    # --- control: path and topology → path details → curve and limits → (advanced) behaviour
-    # → alarm reactions → save
+    # --- control: its five items (I8, decision H), each one form saved to the menu
+
+    async def _path_errors(self, user_input: Mapping[str, Any]) -> dict[str, str]:
+        """What the write path answered still needs, or may not do now (a hand-back owed)."""
+        path = user_input["write_path"]
+        current = self._stored_control().get("write_path")
+        blocker = await self._async_hand_back_blocker()
+        errors = control_error(dict(user_input), self.options)
+        if (
+            path not in (NO_CONTROL, current)
+            and blocker
+            and errors.get("base") == ("interface_not_answered")
+        ):
+            # What the hand-back goes through cannot change now: said first, before what the
+            # new path would still need (I8, decision D2).
+            errors = {"write_path": blocker}
+        if not errors and path != NO_CONTROL and not _zone_entities(self.options):
+            errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
+        if not errors and path == WritePath.OTGW_MQTT and not mqtt_set_up(self.hass):
+            errors = {"base": "mqtt_not_set_up"}  # the commands would go nowhere (P-69)
+        if not errors and path not in (NO_CONTROL, current) and blocker:
+            # "No control" stays possible: the hand-back goes through the old path, retried
+            # by a unit that only hands back.
+            errors = {"write_path": blocker}
+        return errors
+
+    async def _control_path(self) -> ConfigFlowResult | None:
+        """A control item opened (I8, decision H): the write path's own checks first — made
+        until now at the chain's first step —, the path applied; ``None`` where all is well,
+        else the step that shows the problem or picks the path."""
+        path = control_path(self.options)
+        if path is None or await self._path_errors({"write_path": path}):
+            return await self._goto("control")
+        if _mapping(self.options.get(CONTROL)).get("write_path") != path:
+            apply_control(self.options, {"write_path": path})
+        return None
 
     async def async_step_control(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The "Control device" item. The connection decides the write path (I8, decision B7):
+        only an entry made before the question picks it. Otherwise the step asks nothing — the
+        read-backs are boiler signals (I8.5b) — and goes on to the path's own form; a problem
+        is shown where it can be fixed."""
+        fixed = connection_path(self.options)
+        if user_input is None and fixed is not None:
+            user_input = {}
         if user_input is not None:
+            if fixed is not None:
+                user_input = {**user_input, "write_path": fixed}
             path = user_input["write_path"]
-            current = self._stored_control().get("write_path")
-            errors = control_error(user_input, self.options)
-            if not errors and path != NO_CONTROL:
-                errors = entity_errors(self.hass, user_input, CONTROL_ENTITY_FIELDS)
-            if not errors and path != NO_CONTROL and not _zone_entities(self.options):
-                errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
-            blocker = await self._async_hand_back_blocker()
-            if not errors and path not in (NO_CONTROL, current) and blocker:
-                # "No control" stays possible: the hand-back goes through the old path, retried
-                # by a unit that only hands back.
-                errors = {"write_path": blocker}
-            elif not errors and blocker and (key := self._changed_read_back(user_input, blocker)):
-                errors = {key: blocker}
+            errors = await self._path_errors(user_input)
+            if errors and fixed is not None:
+                # Nothing asked here: the problem goes where it can be fixed, else it is said.
+                code = next(iter(errors.values()))
+                target = _CONTROL_PROBLEM_STEPS.get(code)
+                if target is not None and hasattr(self, f"async_step_{target}"):
+                    self._problem = (target, {"base": code})
+                    return await self._goto(target)
+                errors = {"base": code}
             if errors:
                 return self._form(
-                    step_id="control",
-                    data_schema=control_schema(self.options, self._control_suggestions()),
-                    errors=errors,
+                    step_id="control", data_schema=control_schema(self.options), errors=errors
                 )
             apply_control(self.options, user_input)
             if path == NO_CONTROL:
@@ -2767,31 +3506,29 @@ class _ControlSteps(_Steps):
                 prefill = self._vt_prefill()
                 moving = prefill is not None and prefill.exists
                 return await self._goto("control_relay_from_vt" if moving else "control_relay")
-            step = {
-                WritePath.ENTITY: "control_entity",
-                WritePath.OPENTHERM_GW: "control_gateway",
-                WritePath.OTGW_MQTT: "control_mqtt",
-            }[WritePath(path)]
-            return await self._goto(step)
-        return self._form(
-            step_id="control", data_schema=control_schema(self.options, self._control_suggestions())
-        )
-
-    def _control_suggestions(self) -> dict[str, str]:
-        """What the connection suggests on the first control step (I6, decision 2): the virtual
-        topology for ESPHome and EMS-ESP; the one gateway's read-backs."""
-        connection = stored_connection(self.options)
-        if connection in VIRTUAL_CONNECTIONS:
-            return {"topology": Topology.VIRTUAL.value}
-        if connection is Connection.OPENTHERM_GW:
-            return gateway_entities(self.hass, GATEWAY_READ_BACKS)
-        return {}
+            if path == WritePath.ENTITY:
+                return await self._goto("control_entity")
+            # The gateway and the firmware's topics are the interface's (I8, decision D2): no
+            # device form — a problem for control shows on the curve's.
+            problem = self._problem
+            if problem is not None and _problem_shown_on(problem[0], "control_curve"):
+                return await self._goto("control_curve")
+            return await self._after("control")
+        return self._form(step_id="control", data_schema=control_schema(self.options))
 
     async def async_step_control_entity(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The writable entity's form; it shows itself again with the fields an answer reveals
+        — the hand-back method's own, the heating switch's write type (I8, decisions A2, H1)."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            shown = entity_form_fields(self.options, self._entity_draft or {})
+            self._entity_draft = dict(user_input)
+            # A write type the connection fixes is judged as it stands: stored, else fixed.
+            stored = _mapping(self.options.get(CONTROL))
+            fixed = {k: stored.get(k, v) for k, v in fixed_write_types(self.options).items()}
+            user_input = {**fixed, **user_input}
             grid = read_grid(self.hass, user_input["setpoint_entity"])
             found = entity_errors(self.hass, user_input, TARGET_ENTITY_FIELDS) or (
                 targets_used_by_zone(self.hass, user_input)  # PB-54
@@ -2803,6 +3540,12 @@ class _ControlSteps(_Steps):
             elif grid is not None and grid.too_coarse:
                 # A value rounded to so coarse a step could read back as ignored (P-15).
                 errors = {"setpoint_entity": "setpoint_step_too_coarse"}
+            elif entity_form_fields(self.options, user_input) - shown:
+                # Fields the answer revealed: shown again with them, nothing saved (A2).
+                return self._form(
+                    step_id="control_entity",
+                    data_schema=control_entity_schema(self.options, user_input),
+                )
             else:
                 errors = control_details_error(
                     user_input, read_bounds(self.hass, user_input["setpoint_entity"])
@@ -2818,82 +3561,18 @@ class _ControlSteps(_Steps):
                 not errors
                 and blocker
                 and self._changes_hand_back(
-                    user_input, control_entity_schema(self.options), blocker
+                    user_input, control_entity_schema(self.options, user_input), blocker
                 )
             ):
                 errors = {"base": blocker}
             if not errors:
                 apply_control_details(self.options, user_input)
-                return await self.async_step_control_curve()
+                self._entity_draft = None
+                return await self._after("control")
         return self._form(
             step_id="control_entity",
-            data_schema=control_entity_schema(self.options),
+            data_schema=control_entity_schema(self.options, user_input or self._entity_draft),
             errors=errors,
-        )
-
-    async def async_step_control_gateway(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        # Only gateways enabled in Home Assistant are offered (P-69).
-        entries = self.hass.config_entries.async_entries(
-            OPENTHERM_GW_DOMAIN, include_ignore=False, include_disabled=False
-        )
-        gateways = sorted({str(entry.data["id"]) for entry in entries if entry.data.get("id")})
-        if user_input is not None:
-            picked = str(user_input["gateway_id"])
-            if picked not in gateways:
-                errors = {"gateway_id": "gateway_unknown"}  # every write would fail
-            elif not any(
-                entry.state is ConfigEntryState.LOADED
-                for entry in entries
-                if str(entry.data.get("id")) == picked
-            ):
-                errors = {"gateway_id": "gateway_not_set_up"}  # not running: nothing arrives
-            elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
-                user_input, control_gateway_schema(self.options, gateways), blocker
-            ):
-                errors = {"base": blocker}
-            else:
-                apply_control_details(self.options, user_input)
-                return await self.async_step_control_curve()
-        return self._form(
-            step_id="control_gateway",
-            data_schema=control_gateway_schema(self.options, gateways),
-            errors=errors,
-        )
-
-    async def async_step_control_mqtt(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            errors = {
-                key: "mqtt_topic_invalid"
-                for key in ("mqtt_top", "mqtt_node")
-                if not mqtt_topic_valid(user_input.get(key))
-            }
-            if not mqtt_set_up(self.hass):
-                errors = {"base": "mqtt_not_set_up"}  # the commands would go nowhere (P-69)
-            blocker = await self._async_hand_back_blocker()
-            # Spaces around a valid topic level are dropped, not published to.
-            user_input = {
-                key: value.strip()
-                if key in ("mqtt_top", "mqtt_node") and isinstance(value, str)
-                else value
-                for key, value in user_input.items()
-            }
-            if (
-                not errors
-                and blocker
-                and self._changes_hand_back(user_input, control_mqtt_schema(self.options), blocker)
-            ):
-                errors = {"base": blocker}
-            if not errors:
-                apply_control_details(self.options, user_input)
-                return await self.async_step_control_curve()
-        return self._form(
-            step_id="control_mqtt", data_schema=control_mqtt_schema(self.options), errors=errors
         )
 
     def _vt_prefill(self) -> VtCentralBoiler | None:
@@ -2920,14 +3599,20 @@ class _ControlSteps(_Steps):
         zone, belongs to the boiler's gateway integration or to VT, or has another role; a
         declared timer needs its length, 10 min at least (K4.2). What the hand-back goes
         through — the relay and its rest state — cannot change while a hand-back is owed or
-        control holds the relay."""
+        control holds the relay. The form shows itself again with the fields an answer reveals
+        (I8, decisions A2, H1)."""
         prefill = self._vt_prefill()
-        schema = control_relay_schema(self.options, prefill)
+        schema = control_relay_schema(self.options, prefill, user_input or self._relay_draft)
         errors: dict[str, str] = {}
         if user_input is not None:
+            shown = relay_form_fields(self.options, self._relay_draft or {})
+            self._relay_draft = dict(user_input)
             problem = relay_entity_error(self.hass, self.options, user_input.get(RELAY_ENTITY))
             if problem is not None:
                 errors = {RELAY_ENTITY: problem}
+            elif relay_form_fields(self.options, user_input) - shown:
+                # Fields the answer revealed: shown again with them, nothing saved (A2).
+                return self._form(step_id=step_id, data_schema=schema)
             elif self._contact_to_confirm(user_input):
                 errors = {"relay_is_separate_contact": "relay_contact_confirm_again"}
             elif user_input.get("relay_off_timer") == RelayTimer.MINUTES:
@@ -2943,7 +3628,8 @@ class _ControlSteps(_Steps):
                 errors = {"base": blocker}
             if not errors:
                 apply_control_relay(self.options, user_input)
-                return await self.async_step_control_relay_behaviour()
+                self._relay_draft = None
+                return await self._after("control")
         elif (
             prefill is not None
             and prefill.commands is VtCommands.NOT_SUPPORTED
@@ -2966,63 +3652,20 @@ class _ControlSteps(_Steps):
         self._contact_asked_for = relay if isinstance(relay, str) else None
         return True
 
-    async def async_step_control_relay_behaviour(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """The relay path's behaviour: VT's activation delay at every level; at the advanced
-        level the demand thresholds, learning pauses and frost fields, with the checks the
-        curve and behaviour steps make (T-37 among them)."""
-        prefill = self._vt_prefill()
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            if _advanced(self.options):
-                errors = self._relay_behaviour_error(user_input)
-            if not errors:
-                apply_control_relay_behaviour(self.options, user_input)
-                if alarm_step_offered(self.options):  # nothing is offered for relays (Y1)
-                    return await self.async_step_control_alarms()
-                return await self._after("control")
-        return self._form(
-            step_id="control_relay_behaviour",
-            data_schema=control_relay_behaviour_schema(self.options, prefill),
-            errors=errors,
-            description_placeholders=self._unfed_placeholders(errors),
-        )
-
-    def _relay_behaviour_error(self, user_input: dict[str, Any]) -> dict[str, str]:
-        count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
-        if user_input.get("frost_limit", CONTROL_DEFAULTS["frost_limit"]) >= user_input.get(
-            "frost_release", CONTROL_DEFAULTS["frost_release"]
-        ):
-            return {"frost_release": "frost_release_not_above_limit"}
-        if found := self._frost_zone_error(user_input):
-            return found
-        if count > len(self.options.get(ZONES, [])):
-            return {"count_threshold": "count_threshold_above_zones"}
-        if count == 0 and not (
-            user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
-        ):
-            return {"count_threshold": "no_demand_criterion"}
-        if (unfed := self._criterion_no_zone_feeds(user_input)) is not None:
-            return {unfed: _UNFED[unfed]}
-        return {}
-
     async def async_step_control_curve(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The "Heating curve" item (I8, decision H2)."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
         errors: dict[str, str] = {}
         if user_input is not None:
             bounds = self._setpoint_bounds()
-            if user_input["hard_min"] >= user_input["hard_max"]:
-                errors["hard_max"] = "hard_limits_out_of_order"
-            elif _outside(user_input["hard_min"], bounds):
+            highest = highest_water_of(self.options)  # the circuit's (I8, decision F2)
+            if _outside(user_input["hard_min"], bounds):
                 errors["hard_min"] = "limits_outside_entity_range"
-            elif _outside(user_input["hard_max"], bounds):
-                errors["hard_max"] = "limits_outside_entity_range"
-            elif user_input.get("frost_limit", CONTROL_DEFAULTS["frost_limit"]) >= user_input.get(
-                "frost_release", CONTROL_DEFAULTS["frost_release"]
-            ):
-                errors["frost_release"] = "frost_release_not_above_limit"
+            elif _outside(highest, bounds):
+                errors["base"] = "highest_outside_entity_range"
             elif problems := self._curve_problems(user_input):
                 field, key = problems[0]
                 errors[field] = key
@@ -3031,8 +3674,6 @@ class _ControlSteps(_Steps):
                 errors["hard_min"] = "off_setpoint_not_below_hard_min"
             elif self._lowest_above_max(user_input):
                 errors["hard_min"] = "hard_min_above_max"
-            elif found := self._frost_zone_error(user_input):
-                errors = found
             elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
                 user_input, ("hard_min",), blocker
             ):
@@ -3040,43 +3681,51 @@ class _ControlSteps(_Steps):
                 errors["hard_min"] = blocker
             else:
                 apply_control_curve(self.options, user_input)
-                if _advanced(self.options):
-                    return await self.async_step_control_behaviour()
-                if alarm_step_offered(self.options):
-                    # Y1: the reaction to an ignored write, where offered, at both levels.
-                    return await self.async_step_control_alarms()
-                return await self._after("control")
-        # VT's own activation delay, where VT kept one, is offered for the user to confirm.
-        vt_delay = VThermLink(self.hass, _zone_entities(self.options)).vt_central_activation_delay()
+                return await self._after("control_curve")
         return self._form(
             step_id="control_curve",
-            data_schema=control_curve_schema(self.options, vt_delay),
+            data_schema=control_curve_schema(self.options),
             errors=errors,
             description_placeholders=water_limits(self.options),
         )
 
+    def _behaviour_schema(self) -> vol.Schema:
+        """The behaviour form: VT's own activation delay, where VT kept one, offered for the user
+        to confirm; on the relay path VT's thresholds too (R14)."""
+        if _relay_path(self.options):
+            return control_behaviour_schema(self.options, self._vt_prefill())
+        link = VThermLink(self.hass, _zone_entities(self.options))
+        return control_behaviour_schema(self.options, vt_delay=link.vt_central_activation_delay())
+
     async def async_step_control_behaviour(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The "Control behaviour" item (I8, decision H3), one form for both modes."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
         errors: dict[str, str] = {}
+        schema = self._behaviour_schema()
+        shown = {str(marker) for marker in schema.schema}
         if user_input is not None:
-            count = int(user_input.get("count_threshold", 1))
+            count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
             hard_min = float(
                 self.options.get(CONTROL, {}).get("hard_min", CONTROL_DEFAULTS["hard_min"])
             )
             off = float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
             # PB-69: with a heating switch "off" is never written as a setpoint, so neither its
             # range nor its distance to the lowest is checked (as ``off_too_close_in``).
-            as_setpoint = not heating_writes(self.options.get(CONTROL, {})) and not fixed_off(
-                self.options
+            as_setpoint = "off_setpoint" in shown and not heating_writes(
+                self.options.get(CONTROL, {})
             )
             if as_setpoint and _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
             elif as_setpoint and off_too_close_to_lowest(off, hard_min):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"  # 1 K below (P-43)
-            elif self._off_near_hand_back_value(user_input):
+            elif "off_setpoint" in shown and self._off_near_hand_back_value(user_input):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
-            elif count > len(self.options.get(ZONES, [])):
+            elif "count_threshold" not in shown:
+                pass  # the demand is the advanced level's
+            elif count > len(watched_zones(self.options)):
                 errors["count_threshold"] = "count_threshold_above_zones"
             elif count == 0 and not (
                 user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
@@ -3084,16 +3733,33 @@ class _ControlSteps(_Steps):
                 errors["count_threshold"] = "no_demand_criterion"
             elif (unfed := self._criterion_no_zone_feeds(user_input)) is not None:
                 errors[unfed] = _UNFED[unfed]
-            else:
+            if not errors:
                 apply_control_behaviour(self.options, user_input)
-                if alarm_step_offered(self.options):
-                    return await self.async_step_control_alarms()
-                return await self._after("control")
+                return await self._after("control_behaviour")
         return self._form(
             step_id="control_behaviour",
-            data_schema=control_behaviour_schema(self.options),
+            data_schema=schema,
             errors=errors,
             description_placeholders=self._unfed_placeholders(errors),
+        )
+
+    async def async_step_control_frost(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The "Frost protection" item (I8, decision H4)."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input["frost_limit"] >= user_input["frost_release"]:
+                errors = {"frost_release": "frost_release_not_above_limit"}
+            elif found := self._frost_zone_error(user_input):
+                errors = found
+            else:
+                apply_control_frost(self.options, user_input)
+                return await self._after("control_frost")
+        return self._form(
+            step_id="control_frost", data_schema=control_frost_schema(self.options), errors=errors
         )
 
     def _curve_problems(self, user_input: dict[str, Any]) -> list[tuple[str, str]]:
@@ -3106,7 +3772,7 @@ class _ControlSteps(_Steps):
             float(user_input["design_outdoor"]),
             float(room),
             float(user_input["hard_min"]),
-            float(user_input["hard_max"]),
+            highest_water_of(self.options),
         )
 
     def _lowest_above_max(self, user_input: dict[str, Any]) -> bool:
@@ -3184,6 +3850,9 @@ class _ControlSteps(_Steps):
     async def async_step_control_alarms(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The "Alarm reactions" item (I8, decision H5)."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
         if user_input is not None:
             stored = self.options.get(CONTROL, {})
             if any(
@@ -3195,7 +3864,7 @@ class _ControlSteps(_Steps):
                 self._alarms_answer = user_input
                 return await self.async_step_control_return_confirm()
             apply_control_alarms(self.options, user_input)
-            return await self._after("control")
+            return await self._after("control_alarms")
         return self._form(step_id="control_alarms", data_schema=control_alarms_schema(self.options))
 
     async def async_step_control_return_confirm(
@@ -3207,7 +3876,7 @@ class _ControlSteps(_Steps):
             if user_input.get("understood") is True and self._alarms_answer is not None:
                 apply_control_alarms(self.options, self._alarms_answer)
                 self._alarms_answer = None
-                return await self._after("control")
+                return await self._after("control_alarms")
             errors = {"understood": "return_needs_confirmation"}
         return self._form(
             step_id="control_return_confirm",
@@ -3224,15 +3893,19 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # entry from before keeps those it ran with; 6: the design outdoor temperature is one value,
     # the building's, the curve's moved there; 7: the comfort correction, now on by default, stays
     # off in a control section that never stored it; 8: the curve's room temperature, now Auto
-    # by default, stays Manual where a curve stored no mode (see async_migrate_entry).
-    MINOR_VERSION = 8
+    # by default, stays Manual where a curve stored no mode; 9: the reference room is gone, its
+    # settings with it; 10: foreign heat is gone, the zones' sources and the hold time with it;
+    # 11: the zones' emitter output and exponent and "near room temperature" go; 12: the curve's
+    # "correction range" goes, a narrower one becoming the correction's limit; 13: the floor
+    # area, insulation and thermal mass go, an entered loss coefficient becoming the design load
+    # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
+    # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
+    # the control mode monitoring only (see async_migrate_entry).
+    MINOR_VERSION = 20
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
         self._title = DEFAULT_NAME
-        self._zone_queue = []
-        self._zones_done = []
-        self._circuits_done = []
         self._confirmed = set()
         self._changed = []
         self._at_menu = None
@@ -3245,11 +3918,13 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # I7: the first panels, the name and the level come first — they decide what follows; then
     # the menu, in this order, each section shown where it applies.
     SECTIONS = (
-        "connection", "name", "signals", "boiler", "circuit", "zones", "building", "reference",
-        "monitor", "control",
+        "connection", "mode", "name", INTERFACE, "signals", "boiler", "circuit", "zones",
+        "building", "monitor", *CONTROL_ITEMS,
     )  # fmt: skip
 
     def _next_after(self, step: str) -> str:
+        if step == "connection" and self._mode_due:
+            return "mode"
         if step == "mode" and "name" not in self._confirmed:
             return "name"
         return "menu"
@@ -3290,10 +3965,17 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
             state = await self._async_menu_text("fix", [section_of(self._problem_step(*problem))])
         else:
             state = await self._async_menu_text("ready")
-        shown = [section for section in self.SECTIONS if section_shown(self.options, section)]
+        shown = [
+            item
+            for section in self.SECTIONS
+            if section_shown(self.options, section)
+            for item in menu_items(self.options, section)
+        ]
         last = "incomplete" if missing or problem is not None else "finish"
         return self.async_show_menu(
-            step_id="menu", menu_options=[*shown, last], description_placeholders={"state": state}
+            step_id="menu",
+            menu_options=[*shown, last],
+            description_placeholders={"state": state, **circuit_placeholders(self.options)},
         )
 
     async def async_step_incomplete(
@@ -3320,9 +4002,6 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
     _CATEGORY = "options"
 
     def __init__(self) -> None:
-        self._zone_queue = []
-        self._zones_done = []
-        self._circuits_done = []
         self._confirmed = set()
         self._changed = []
         self._at_menu = None
@@ -3349,6 +4028,9 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             ]
             for key in self._unreadable:
                 options[key] = [] if key in (CIRCUITS, ZONES) else {}
+            # I8.7c: the zones are the circuits' — an entry from before is edited so (F4).
+            if (moved := zones_on_circuits(options)) is not None:
+                options.update(moved)
             self._options = options
             self._first = copy.deepcopy(options)
         return self._options
@@ -3359,11 +4041,14 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         return self._unreadable.pop(0) if self._unreadable else None
 
     def _stored_control(self) -> Mapping[str, Any]:
-        """The stored control section; one of another shape reads as none (PB-06)."""
-        current = self.config_entry.options.get(CONTROL)
+        """The stored control section as control runs it — the connection's MQTT topics (I8.4b)
+        and the signals' read-backs (I8.5b) in it; one of another shape reads as none (PB-06)."""
+        current = control_with_inputs(self.config_entry.options)
         return current if isinstance(current, Mapping) else {}
 
     def _next_after(self, step: str) -> str:
+        if step == "connection" and self._mode_due:
+            return "mode"
         return "init"
 
     async def _async_hand_back_blocker(self) -> str | None:
@@ -3401,23 +4086,32 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         types, the device's timeout, and with a hand-back owed the lowest water temperature
         (P-12, PB-09). Taking control out changes nothing: the options that took the boiler
         still hand it back, through a unit that only does that."""
-        new = self.options.get(CONTROL)
-        if not isinstance(new, Mapping):
-            return False
+        return self._hand_back_change(owed=owed) is not None
+
+    def _hand_back_change(self, *, owed: bool) -> str | None:
+        """The first answer ``_saves_another_hand_back`` finds changed; ``None`` where none is.
+        The MQTT topics are the connection's (I8.4b) and the read-backs the signals' (I8.5b),
+        read with the section as control runs it."""
+        new = control_with_inputs(self.options)
+        if not isinstance(new, Mapping) or not new.get("write_path"):
+            return None  # control taken out (its interface answers may stay): nothing changes
         current = self._stored_control()
         keys = ["write_path", *fixed_keys(new.get("write_path"), owed=owed)]
-        return any(_hand_back_answer(new, key) != _hand_back_answer(current, key) for key in keys)
+        return next(
+            (k for k in keys if _hand_back_answer(new, k) != _hand_back_answer(current, k)), None
+        )
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """The menu (I7): the sections that apply, then "Save and finish"; the description names
         the sections changed in this flow — closing the window discards them."""
         menu = [
-            section
+            item
             for section in (
-                "connection", "signals", "freshness", "boiler", "circuit", "zones", "building",
-                "reference", "control", "monitor",
+                "connection", "mode", INTERFACE, "signals", "freshness", "boiler", "circuit",
+                "zones", "building", *CONTROL_ITEMS, "monitor",
             )
             if section_shown(self.options, section)
+            for item in menu_items(self.options, section)
         ]  # fmt: skip
         # At the simple level, say when hidden advanced settings are still active.
         menu.append("level_hidden" if has_hidden_advanced(self.options) else "level")
@@ -3428,7 +4122,9 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             changes = await self._async_menu_text("unchanged")
         self._menu_shown()
         return self.async_show_menu(
-            step_id="init", menu_options=menu, description_placeholders={"changes": changes}
+            step_id="init",
+            menu_options=menu,
+            description_placeholders={"changes": changes, **circuit_placeholders(self.options)},
         )
 
     async def async_step_level_hidden(
@@ -3460,7 +4156,17 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         if user_input is not None:
             apply_freshness(self.options, user_input)
             return await self._after("freshness")
-        return self._form(step_id="freshness", data_schema=freshness_schema(self.options))
+        hass: HomeAssistant = self.hass
+        texts = await async_get_translations(hass, hass.config.language, "selector", [DOMAIN])
+        # I8 (decision D7): what the limits judge follows the connection — for an entry made
+        # before the question, the one its write path stands for.
+        kind = "relay" if interface_connection(self.options) is Connection.RELAY else "water"
+        note = texts.get(f"component.{DOMAIN}.selector.{FRESHNESS_NOTE}.options.{kind}", "")
+        return self._form(
+            step_id="freshness",
+            data_schema=freshness_schema(self.options),
+            description_placeholders={"judged": note},
+        )
 
     async def async_step_save(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         # A confirmation holds for the save right after it only: any way back to a step asks
@@ -3482,9 +4188,20 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             # boiler, or begun to owe it a hand-back, since they were answered (P-12). Nothing
             # is saved; the control step says why.
             blocker = await self._async_hand_back_blocker()
-            if blocker is not None and self._saves_another_hand_back(
-                owed=blocker == HAND_BACK_PENDING
-            ):
+            changed = (
+                None
+                if blocker is None
+                else self._hand_back_change(owed=blocker == HAND_BACK_PENDING)
+            )
+            if blocker is not None and changed is not None:
+                if changed in (*INTERFACE_CONTROL_KEYS, *MQTT_TOPIC_KEYS):
+                    # The interface's answer is what changed: its own item says why (I8, D2).
+                    self._problem = (INTERFACE, {"base": blocker})
+                    return await self._goto(INTERFACE)
+                if changed in READ_BACK_SIGNALS.values():
+                    # A read-back is a boiler signal (I8.5b): that step says why.
+                    self._problem = ("signals", {"base": blocker})
+                    return await self._goto("signals")
                 return await self._back_to_problem(blocker, None)
         if not confirmed and (blocking := self._new_blockers()):
             # Open after R6 #3: an edit that would keep control from running is confirmed first.

@@ -48,10 +48,24 @@ PARAMETERS = "parameters"
 CIRCUITS = "circuits"
 ZONES = "zones"
 BUILDING = "building"
-REFERENCE_ROOM = "reference_room"
+REFERENCE_ROOM = "reference_room"  # removed in I8.1; the migration drops what is stored
 MONITOR = "monitor"
 FRESHNESS = "freshness"
 CONTROL = "control"
+# I8 (decision D4): a relay asks whether the boiler is read through another integration too;
+# the answer is stored with the connection.
+RELAY_READS = "relay_reads_boiler"
+# What a relay without another integration can read: the boiler's water through sensors of its
+# own, its electric power, the gas meter and the outdoor temperature (the weather apart).
+RELAY_SIGNALS = ("flame", "flow", "return", "boiler_power", "gas_meter", "outdoor")
+# I8.5b (decision D3): the read-backs are boiler signals — the setpoint the boiler received (the
+# "CH setpoint" signal) and heating on/off as it gets it, a field of its own that no monitor
+# feature reads — and control takes them from there, under its options' own names.
+CH_ENABLED = "ch_enabled"
+READ_BACK_SIGNALS: Mapping[str, str] = {
+    "ch_setpoint": "confirmed_entity",
+    CH_ENABLED: "ch_confirmed_entity",
+}
 
 # Clocks.
 TICK_SECONDS = 30

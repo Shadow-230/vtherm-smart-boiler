@@ -142,3 +142,52 @@ def test_heat_sources_burn_fuel_except_electric() -> None:
         HeatSource.OIL,
         HeatSource.OTHER,
     ]
+
+
+def test_a_zone_split_by_its_devices_is_in_each_of_its_circuits() -> None:
+    """I8.8b (decision F2): a zone may feed two circuits through its single devices — a radiator
+    on the straight circuit, a floor loop behind a mixer — each listing with its own emitter;
+    the zone itself is one, its devices are each circuit's."""
+    installation = Installation(
+        BOILER,
+        circuits=(Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
+        zones=(
+            Zone("living", "main", devices=frozenset({"switch.radiator"})),
+            Zone("living", "floor", EmitterType.UNDERFLOOR, devices=frozenset({"switch.loop"})),
+            Zone("bath", "main"),
+        ),
+    )
+    assert installation.issues() == []
+    assert installation.zone_ids == ("living", "bath")
+    assert [z.devices for z in installation.zones_in("floor")] == [frozenset({"switch.loop"})]
+    assert installation.emitters_in("main") == {EmitterType.RADIATOR}
+    assert installation.emitters_in("floor") == {EmitterType.UNDERFLOOR}
+
+
+def test_a_zone_listed_whole_twice_or_a_device_in_two_circuits_is_an_error() -> None:
+    """A whole zone is one circuit's: listed again, whole or by devices, it is a duplicate; a
+    device is one circuit's too."""
+    whole = Installation(
+        BOILER,
+        circuits=(Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
+        zones=(Zone("a", "main"), Zone("a", "floor", devices=frozenset({"switch.loop"}))),
+    )
+    assert whole.issues() == [Issue(IssueCode.DUPLICATE_ZONE, Severity.ERROR, "a")]
+    shared = Installation(
+        BOILER,
+        circuits=(Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
+        zones=(
+            Zone("a", "main", devices=frozenset({"switch.one", "switch.two"})),
+            Zone("a", "floor", devices=frozenset({"switch.two"})),
+        ),
+    )
+    assert shared.issues() == [Issue(IssueCode.DUPLICATE_DEVICE, Severity.ERROR, "switch.two")]
+    twice = Installation(
+        BOILER,
+        circuits=(Circuit("main"),),
+        zones=(
+            Zone("a", "main", devices=frozenset({"switch.one"})),
+            Zone("a", "main", devices=frozenset({"switch.two"})),
+        ),
+    )
+    assert twice.issues() == [Issue(IssueCode.DUPLICATE_ZONE, Severity.ERROR, "a")]

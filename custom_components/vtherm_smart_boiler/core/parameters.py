@@ -37,7 +37,6 @@ class ParameterKey(StrEnum):
     WATER_VOLUME = "water_volume"
     LOSS_COEFFICIENT = "loss_coefficient"
     HEATING_THRESHOLD = "heating_threshold"
-    THERMAL_TIME_CONSTANT = "thermal_time_constant"
     DESIGN_OUTDOOR = "design_outdoor"
     INDOOR_REFERENCE = "indoor_reference"
 
@@ -75,7 +74,6 @@ PARAMETER_DEFS: Mapping[ParameterKey, ParameterDef] = MappingProxyType(
         ParameterKey.HEATING_THRESHOLD: ParameterDef(
             "°C", 5.0, 22.0, default=15.0, tolerance_abs=2.0
         ),
-        ParameterKey.THERMAL_TIME_CONSTANT: ParameterDef("h", 1.0, 1000.0, tolerance_rel=0.5),
         ParameterKey.DESIGN_OUTDOOR: ParameterDef("°C", -45.0, 10.0, default=-15.0),
         ParameterKey.INDOOR_REFERENCE: ParameterDef("°C", 10.0, 30.0, default=20.0),
     }

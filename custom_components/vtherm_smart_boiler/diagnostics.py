@@ -54,6 +54,8 @@ class _Redactor:
             }
         if isinstance(value, list | tuple):
             return [self(item) for item in value]
+        if isinstance(value, set | frozenset):  # a zone's active devices (I8.8b), in order
+            return [self(item) for item in sorted(value, key=str)]
         return value
 
 
@@ -153,7 +155,7 @@ async def async_get_config_entry_diagnostics(
             "features": {f.value: asdict(state) for f, state in data.features.items()},
             "features_now": {f.value: asdict(state) for f, state in data.features_now.items()},
             "parameters": _parameters(coordinator),
-            # G11: the long burn now, the window guard, and the counts kept for 0.4's tuning.
+            # G11: the long burn now, and the counts kept for 0.4's tuning.
             "long_run": {
                 "found": None
                 if coordinator.long_run.found is None
@@ -162,22 +164,16 @@ async def async_get_config_entry_diagnostics(
                 "burning_s": coordinator.long_run.burning_s,
                 "kept": dict(coordinator.long_run_totals),
             },
-            "window_suspected": sorted(coordinator.window_suspected),
             # P-90: where the user reset a measured building value, the moment it happened.
             "fit_since": {key.value: at for key, at in coordinator.fit_since.items()},
             "zones": {
                 zone_id: {
-                    "circuit": view.circuit_id,
+                    "circuits": list(view.circuit_ids),
                     "state": asdict(view.state),
-                    "hot_water": asdict(view.hot_water),
-                    "factor": asdict(view.factor),
-                    "foreign_heat": None
-                    if view.foreign_heat is None
-                    else asdict(view.foreign_heat),
+                    "heat": asdict(view.heat),
                 }
                 for zone_id, view in data.zones.items()
             },
-            "reference_room": asdict(data.reference),
             "critical": {cid: asdict(c) for cid, c in data.critical.items()},
             "alarms": {kind.value: asdict(alarm) for kind, alarm in data.alarms.items()},
             "analysis": summary,

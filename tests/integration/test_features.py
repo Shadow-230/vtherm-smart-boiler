@@ -126,6 +126,12 @@ def without(*signals: Signal) -> Change:
     return change
 
 
+def without_read_back(options: dict[str, Any]) -> None:
+    """The control section's setpoint read-back taken away: the CH setpoint signal it becomes
+    (I8.5b, decision D3)."""
+    options["control"].pop("confirmed_entity", None)
+
+
 def setting(*path: str, value: Any) -> Change:
     def change(options: dict[str, Any]) -> None:
         target = options
@@ -189,8 +195,7 @@ CASES: list[tuple[str, str, Change, str, str]] = [
         "inactive",
         "weather_entity",
     ),
-    ("hot_water", "water", without(Signal.FLOW), "inactive", "flow"),
-    ("emitter_factor", "water", without(Signal.FLOW), "inactive", "flow"),
+    ("heat_available", "water", without(Signal.FLOW), "inactive", "flow"),
     ("flue_gas_warning", "water", without(Signal.FLUE_GAS), "inactive", "flue_gas"),
     (
         "flue_gas_warning",
@@ -219,7 +224,13 @@ CASES: list[tuple[str, str, Change, str, str]] = [
     ),
     ("hysteresis_drift", "water", no_zones, "inactive", "zone_data"),
     ("unstable_ignition", "water", without(Signal.FLAME), "inactive", "flame"),
-    ("unstable_ignition", "water", without(Signal.CH_SETPOINT), "degraded", "ch_setpoint"),
+    (  # I8.5b: the control's read-back is the CH setpoint signal — taken away with it
+        "unstable_ignition",
+        "water",
+        both(without(Signal.CH_SETPOINT), without_read_back),
+        "degraded",
+        "ch_setpoint",
+    ),
     (
         "low_flow",
         "water",
@@ -466,30 +477,20 @@ async def test_an_input_unavailable_now_shows_its_feature_inactive(
     await hass.async_block_till_done()
     state = features_state(hass, entry)
     attributes = state.attributes
-    assert attributes["hot_water"] == "inactive"
-    assert attributes["hot_water_missing"] == ["flow"]
+    assert attributes["heat_available"] == "inactive"
+    assert attributes["heat_available_missing"] == ["flow"]
     flow = TEXTS["en"]["options"]["step"]["freshness"]["data"]["flow"]
     now = missing_text("unavailable_now", "en")
-    assert attributes["hot_water_missing_text"] == f"{flow} ({now})"
+    assert attributes["heat_available_missing_text"] == f"{flow} ({now})"
     assert attributes["forecasts"] == "inactive"
     assert int(state.state) >= 2
     unknown = hass.states.get(snapshots)
     assert unknown is not None
     assert unknown.state == "unknown"  # the weather unavailable: no count shown
-    hot = hass.states.get(
-        registry.async_get_entity_id(
-            "binary_sensor",
-            DOMAIN,
-            f"{entry.entry_id}_hot_water_{registry.async_get(zones.entities['living']).id}",
-        )
-        or ""
-    )
-    assert hot is not None
-    assert hot.state == "unknown"  # the entity keeps its own rule: unknown, with its reason
     hass.states.async_set(ENTITIES[Signal.FLOW], "45", {"unit_of_measurement": "°C"})
     await coordinator.async_refresh()
     await hass.async_block_till_done()
-    assert features_state(hass, entry).attributes["hot_water"] == "available"
+    assert features_state(hass, entry).attributes["heat_available"] == "available"
 
 
 async def test_the_texts_follow_home_assistants_language(
@@ -605,15 +606,10 @@ HA_ATTRIBUTES = frozenset(
 async def test_every_attribute_has_a_translated_name(
     hass: HomeAssistant, zones: FakeZones, forecasts: FakeForecasts, base: str
 ) -> None:
-    """TB-36 (PB-76, PB-77): on the water and relay installations with a foreign-heat source,
-    once every entity has been written, every attribute outside Home Assistant's own has a
-    translated name, and every state shown a text, in English and Polish."""
-    hass.states.async_set("switch.fake_stove", "off")
-
-    def stove(options: dict[str, Any]) -> None:
-        options["zones"][0]["foreign_heat"] = [{"entity_id": "switch.fake_stove"}]
-
-    entry = await _setup(hass, zones, base, stove)
+    """TB-36 (PB-76, PB-77): on the water and relay installations, once every entity has been
+    written, every attribute outside Home Assistant's own has a translated name, and every
+    state shown a text, in English and Polish."""
+    entry = await _setup(hass, zones, base, lambda options: None)
     registry = er.async_get(hass)
     # A zone is shown by its own name, which needs no text (the critical zone, the reference).
     coordinator = entry.runtime_data

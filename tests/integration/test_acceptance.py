@@ -506,13 +506,14 @@ async def test_keep_alive_loss_lets_the_gateway_fall_back(rig: Rig) -> None:
 
 async def test_hard_limits_hold_in_hard_frost(rig: Rig) -> None:
     # Below the design outdoor temperature the curve asks for more than its design flow, which
-    # the hard maximum cuts (a design flow above the maximum itself is refused, P-68).
+    # the highest water temperature cuts (a design flow above the maximum itself is refused,
+    # P-68). I8 (F2): the circuit's, which minor version 19 moved the section's into.
     await start(rig, hard_max=48, curve={"design_outdoor": -15, "design_flow": 48})
     await rig.scenario("set_outdoor", temperature=-25)
     await rig.switch(True)
     await rig.advance(1800, step=30.0)
     assert max(rig.setpoints()) <= 48.0
-    assert "limit_hard_max" in rig.state("sensor", "control_state").attributes["reasons"]
+    assert "limit_circuit_max" in rig.state("sensor", "control_state").attributes["reasons"]
 
 
 async def test_stale_data_hands_back(rig: Rig) -> None:
@@ -668,8 +669,17 @@ async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
 @pytest.mark.parametrize(
     ("changes", "blocker"),
     [
-        ({"confirmed_entity": ""}, "blocked_no_confirmed_setpoint"),
-        ({"topology": "monitor_mode"}, "blocked_topology_no_control"),
+        (  # no read-back: neither the control's own nor the CH setpoint signal (I8.5b)
+            {
+                "confirmed_entity": "",
+                "entry_options": {
+                    "signals": {k: v for k, v in SIGNALS.items() if k != "ch_setpoint"}
+                },
+            },
+            "blocked_no_confirmed_setpoint",
+        ),
+        # A gateway's monitor mode from before: monitoring only now (I8.4c, minor version 16).
+        ({"topology": "monitor_mode"}, "blocked_control_mode_monitor"),
     ],
 )
 async def test_control_is_refused_where_it_may_not_run(
@@ -1476,8 +1486,10 @@ async def options_step(rig: Rig, result: dict[str, Any], data: dict[str, Any]) -
 
 async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> None:
     """T-23 (P-37): the plugin past its monitoring and no control yet; the simulated gateway set
-    up through the stub's config flow, as at J4 — options → Control → OpenTherm Gateway →
-    gateway ID ``sim`` → "Save and finish" (I7): the flow completes; the plugin then controls
+    up through the stub's config flow, as at J4 — options → the connection (an entry made before
+    the question answers it first, then the mode) → "Boiler interface" (I8, decision D2: the one
+    gateway ``sim`` taken without asking, the topology and the thermostat terminals) → the
+    heating curve's item → "Save and finish" (I7): the flow completes; the plugin then controls
     the simulated boiler through it, its setpoint confirmed by the gateway's read-back and its
     heating switch by the boiler's "Central heating 1"."""
     await start(rig, with_control=False)
@@ -1485,27 +1497,41 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     hass = rig.hass
     menu = await hass.config_entries.options.async_init(rig.entry.entry_id)
     assert "control" in menu["menu_options"]
+    assert "interface" not in menu["menu_options"]  # nothing to follow yet
     result = await options_step(rig, menu, {"next_step_id": "control"})
-    result = await options_step(
-        rig,
-        result,
-        {
-            "write_path": "opentherm_gw",
-            "topology": "gateway_with_thermostat",
-            "thermostat_kind": "opentherm",
-            "confirmed_entity": CONFIRMED,
-            "ch_confirmed_entity": CH_ENABLED,
-        },
-    )
-    assert result["step_id"] == "control_gateway"
-    offered = next(v for m, v in result["data_schema"].schema.items() if str(m) == "gateway_id")
-    assert offered.config["options"] == ["sim"]
-    result = await options_step(rig, result, {"gateway_id": "sim"})
+    result = await options_step(rig, result, {"write_path": "opentherm_gw"})
+    assert result["errors"] == {"base": "connection_not_answered"}
+    hass.config_entries.options.async_abort(result["flow_id"])
+    menu = await hass.config_entries.options.async_init(rig.entry.entry_id)
+    result = await options_step(rig, menu, {"next_step_id": "connection"})
+    answers = {"connection": "opentherm_gw", "heat_source": "gas", "type": "combi"}
+    result = await options_step(rig, result, answers)
+    assert result["step_id"] == "mode"  # none stored: asked at once (I8, D1)
+    result = await options_step(rig, result, {"control_mode": "full"})
+    assert "interface" in result["menu_options"]
+    result = await options_step(rig, result, {"next_step_id": "interface"})
+    assert "gateway_id" not in {str(m) for m in result["data_schema"].schema}  # the one: sim
+    result = await options_step(rig, result, {"topology": "gateway_with_thermostat"})
+    assert result["step_id"] == "interface"  # shown again with the terminals' question (A2)
+    assert "thermostat_kind" in {str(m) for m in result["data_schema"].schema}
+    interface = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
+    result = await options_step(rig, result, interface)
+    assert result["type"] == "menu"
+    # The read-backs are boiler signals (I8.5b, decision D3): the gateway's, in place of the
+    # boiler's own CH setpoint.
+    result = await options_step(rig, result, {"next_step_id": "signals"})
+    shown = {str(m) for m in result["data_schema"].schema}
+    signals = {k: v for k, v in SIGNALS.items() if k in shown}
+    read_backs = {"ch_setpoint": CONFIRMED, "ch_enabled": CH_ENABLED}
+    result = await options_step(rig, result, signals | read_backs)
+    assert result["type"] == "menu"
+    # The write path follows the connection (I8, decision B7): the control device asks
+    # nothing, and its item is not on the menu (I8, decision H) — the curve's item is.
+    assert "control" not in result["menu_options"]
+    result = await options_step(rig, result, {"next_step_id": "control_curve"})
     assert result["step_id"] == "control_curve"
-    curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+    curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25}  # the highest: the circuit's
     result = await options_step(rig, result, curve)
-    if result.get("step_id") == "control_alarms":
-        result = await options_step(rig, result, {})
     assert result["type"] == "menu"  # I7: back at the menu, nothing saved yet
     assert "control" not in rig.entry.options
     result = await options_step(rig, result, {"next_step_id": "save"})

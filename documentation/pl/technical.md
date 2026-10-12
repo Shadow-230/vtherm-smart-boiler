@@ -36,8 +36,9 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   konfigurację VT oraz wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`,
   SmartPI), zamiast to zakładać. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
-  `register_feature_manager` z `vtherm_api`) pokazuje dwie wartości stref wtyczki na każdym
-  termostacie VT. Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
+  `register_feature_manager` z `vtherm_api`) pokazuje na każdym termostacie VT, czy ciepło z
+  kotła dociera teraz do jego strefy — jedną wartość, `heat_available`, z `core/heat.py` (I8,
+  decyzja C1). Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
   go dopiero po następnym przeładowaniu VT, którego wtyczka nigdy sama nie wywołuje. Nic w
   sterowaniu od niego nie zależy.
 
@@ -101,6 +102,12 @@ wyłączenie grzania z ochrony przed mrozem i zapotrzebowania stref, a temperatu
 VT, teraz zadanie wtyczki: strefy potrzebujące ciepła, łączna moc albo otwarcie zaworów, przy czym
 każda strefa liczy się tylko wtedy, gdy VT podaje jej stan jednoznacznie.
 
+**Obiegi sterowane przez inną automatykę (`core/circuit_requests.py`, `circuits_asking`).**
+Obieg, którego mieszaczem albo pompą steruje coś innego, prosi o ciepło przez własną encję albo
+przez swoje strefy; encja, której nie da się odczytać, o nic nie prosi i jest wskazana. Gdy obieg
+prosi, jego potrzeba — najpierw odczyt encji, inaczej wpisana wartość — plus 5 K jest dolną
+granicą wody (`core/limits.py`, `limit_flow`), tak jak nastawa stałego zaworu plus 5 K.
+
 **Pilnowanie stref (`core/zone_watch.py`, `follow_zones`).** Okres rozpoznania po starcie
 (najwyżej 10 minut), okres przejściowy każdej strefy i przypadek, gdy wszystkie strefy są
 nieznane.
@@ -127,7 +134,17 @@ zapisuje.
 
 **Konfiguracja (`config_flow.py`, `config.py`, `control_config.py`).** Formularze konfiguracji
 i opcji oraz opcje sterowania jako obiekty rdzenia, z blokadami, które nie pozwalają ruszyć
-sterowaniu. `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
+sterowaniu. Oba przepływy to jedno menu sekcji; sterowanie to pięć jego pozycji, każda jako jeden
+formularz — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, ochrona przed mrozem,
+reakcje na alarmy (`CONTROL_ITEMS`) —, każda pokazana tam, gdzie ma zastosowanie, i otwierana
+po sprawdzeniu ścieżki zapisu (`_control_path`). Formularz pokazuje się ponownie z polami, które
+odsłoniła odpowiedź (`entity_form_fields`, `relay_form_fields`); wartość ukrytego pola zostaje. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
+zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Strefy należą do
+obiegów: każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką i z konwektorami,
+a ze strefy zasilanej tylko w części — jej urządzenia (`devices`, według strefy; formularz
+przypisuje każde urządzenie do strefy przez `vtherm_link.zone_devices`); tylko tak strefa może
+być w dwóch obiegach. Własna sekcja stref trzyma tylko to, czy zawory strefy zamykają się, gdy
+jest wyłączona (`config._circuit_zones`). `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
 zrobionego ręcznie).
 
 ## 4. Jeden krok sterowania
@@ -142,7 +159,7 @@ flowchart TD
     B -->|"nie"| Z["Brak decyzji w tym kroku"]
     B -->|"tak"| C["Odczyt: migawka i świeżość kotła, strefy przez vtherm_link, ciepła woda"]
     C --> D["Blokady i zatrzaski"]
-    D --> E["Zapotrzebowanie stref i ochrona przed mrozem: boiler_demand, follow_zones"]
+    D --> E["Zapotrzebowanie stref, prośby obiegów i ochrona przed mrozem: boiler_demand, circuits_asking, follow_zones"]
     E --> F{"Sterownik decyduje: decide"}
     F -->|"oddanie kotła"| H["Oddanie: najniższa woda, grzanie, gdzie ktoś przejmuje, zwolnienie"]
     F -->|"grzanie, spoczynek, mróz"| G["Zabezpieczenia oceniają odczyt: plan_write, classify"]
@@ -155,13 +172,19 @@ flowchart TD
     H --> F2
 ```
 
-- **Świeżość:** nic nie jest zapisywane bez świeżych danych kotła. Łączność jest oceniana w
-  oknie (utracona, gdy nieświeże kroki pokryją 5 minut w ciągu 10; wraca po 60 sekundach
-  świeżych danych).
+- **Świeżość:** nic nie jest zapisywane bez świeżych danych kotła — przy przekaźniku bez
+  świeżego stanu samego przekaźnika; limity wieku ustawione przez użytkownika należą do
+  wskazanych sygnałów i odchodzą razem z nimi. Łączność jest oceniana w oknie (utracona, gdy
+  nieświeże kroki pokryją 5 minut w ciągu 10; wraca po 60 sekundach świeżych danych).
 - **Blokady i zatrzaski** idą przed zapotrzebowaniem: zatrzask albo alarm ustawiony na oddanie
   kotła oddaje kocioł, o cokolwiek proszą strefy.
-- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku; temperatura wody
-  co odstęp decyzji (domyślnie 5 minut) i od razu po końcu blokady albo usterki.
+- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku — zapotrzebowanie
+  stref albo prośba obiegu sterowanego przez inną automatykę; temperatura wody co odstęp decyzji
+  (domyślnie 5 minut) i od razu po końcu blokady albo usterki lub gdy zmienia się potrzeba
+  obiegu: krzywa, nigdy poniżej nastawy stałego zaworu ani potrzeby proszącego obiegu plus 5 K,
+  ograniczona przez obiegi zasilane prosto z kotła i maksimum kotła. Przy kilku obiegach
+  temperatura pokojowa krzywej i korekta komfortu biorą pod uwagę strefy obiegu zasilanego
+  prosto z kotła.
 - **Zabezpieczenia** widzą odczyt zwrotny każdego zapisu; oddania kotła żadne zabezpieczenie
   nigdy nie wstrzymuje.
 - **Dalsze kroki:** zaległe oddanie kotła jest ponawiane co minutę, aż zostanie potwierdzone;

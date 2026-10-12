@@ -72,7 +72,6 @@ def entry_with(
         ("circuits", {"id": "main"}, "invalid_circuit"),
         ("parameters", [], "invalid_parameters"),
         ("freshness", [60], "invalid_freshness"),
-        ("reference_room", "living", "invalid_reference"),
         ("building", [], "invalid_building"),
     ],
 )
@@ -108,7 +107,7 @@ async def test_a_section_of_another_shape_stops_the_entry_and_reports_a_held_boi
         ({"circuits": [{"id": "main", "max_flow": 500}]}, "max_flow"),
         ({"monitor": {"monitoring_days": "inf"}}, "monitoring_days"),
         ({"freshness": {"flow": "nan"}}, "flow"),
-        ({"parameters": {"loss_coefficient": [1]}}, "-"),  # unreadable: no section names it
+        ({"parameters": {"heating_threshold": [1]}}, "-"),  # unreadable: no section names it
     ],
 )
 async def test_a_number_outside_the_form_stops_the_entry_and_reports_a_held_boiler(

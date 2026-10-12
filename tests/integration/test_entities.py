@@ -67,17 +67,12 @@ async def test_one_service_device_holds_every_entity(
     assert {e.device_id for e in entities.values()} == {device.id}
     for key in DIAGNOSTIC:
         assert entities[key].entity_category is EntityCategory.DIAGNOSTIC, key
-    factors = [e for k, e in entities.items() if k.startswith("emitter_power_factor_")]
-    assert factors
-    assert all(e.entity_category is EntityCategory.DIAGNOSTIC for e in factors)
     for key in CONFIG:
         assert entities[key].entity_category is EntityCategory.CONFIG, key
     for key, device_class in DEVICE_CLASSES.items():
         assert entities[key].original_device_class == device_class, key
     for key, entity in entities.items():
-        if key.startswith(("hot_water_", "foreign_heat_")):
-            assert entity.original_device_class == BinarySensorDeviceClass.HEAT, key
-        elif key.startswith("alarm_"):
+        if key.startswith("alarm_"):
             assert entity.original_device_class == BinarySensorDeviceClass.PROBLEM, key
         if entity.entity_category is None:
             assert key not in DIAGNOSTIC

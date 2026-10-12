@@ -146,7 +146,7 @@ async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_value
     await heat_to(hass, 21.5)  # VT publishes its attributes again
     shown = hass.states.get(LIVING).attributes.get("smart_boiler")
     assert shown is not None
-    assert set(shown) == {"heat_available", "emitter_power_factor"}
+    assert set(shown) == {"heat_available"}
 
 
 async def test_a_vt_thermostat_already_running_shows_the_values_after_vt_reloads(

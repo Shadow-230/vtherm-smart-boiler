@@ -4,8 +4,8 @@ The case behind it: about 12 h of heat demand with the flame on throughout, the 
 setpoint within about a kelvin, a low flue temperature, and rooms never reaching their setpoints
 — the boiler had reserve; the water was simply too cool and nobody raised it. The rule looks once
 the flame has been on without a break for ``LONG_RUN_S`` (the flame known throughout: unknown
-ends the run), at the rooms the caller counts — heating, known, neither held by VT for a window
-nor with one probably open, nor warmed by foreign heat — and, first that fits:
+ends the run), at the rooms the caller counts — heating, known, not warmed by foreign heat — and,
+first that fits:
 
 1. rooms short and not warming, the flow below its setpoint by more than ``HOLDING_K`` at a
    modulation of at least ``HIGH_MODULATION`` → the boiler at its power limit (a warning);

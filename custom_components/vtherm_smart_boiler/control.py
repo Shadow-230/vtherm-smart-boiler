@@ -2007,12 +2007,7 @@ class ControlUnit:
         # Home Assistant starting alone does not stop a command kept or restored (decision 3).
         if self._enabled_now() and set(blockers) <= {HA_STARTING} and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
-        # G11 F: a room with a window probably open, as the monitor's guard sees it.
-        suspected = self._coordinator.window_suspected
-        zones = [
-            replace(zone, window_suspected=True) if zone.zone_id in suspected else zone
-            for zone in self._coordinator.link.zones()
-        ]
+        zones = self._coordinator.link.zones()
         snapshot = self._coordinator.transport.snapshot(now)
         dhw = self._coordinator.dhw_now(snapshot)
         if dhw:
@@ -3228,23 +3223,19 @@ class ControlUnit:
             outdoor_sensor=sensor,
             outdoor_weather=weather,
             zones=tuple(zones),
-            foreign_heat=self._foreign_heat(),
             boiler_fault=self._boiler_fault(now, snapshot),
             starts=coordinator.heating_starts(now),
+            # I8 (decision F3): circuits run by other automation — whether each asks (an
+            # unreadable entity: ``None``, it does not ask) and the water it needs.
+            circuit_requests={
+                circuit: read_on_off(self._hass, entity)
+                for circuit, entity in config.circuit_request_entities.items()
+            },
+            circuit_needs={
+                circuit: read_temperature(self._hass, entity).value
+                for circuit, entity in config.circuit_need_entities.items()
+            },
         )
-
-    def _foreign_heat(self) -> bool | None:
-        """Foreign heat warms a zone, as the monitor sees it (the comfort correction freezes):
-        ``None`` where no zone has a source, or the monitor's data is stale — unknown freezes
-        nothing."""
-        coordinator = self._coordinator
-        data = coordinator.data
-        if data is None or coordinator.monitor_failing:
-            return None
-        states = [view.foreign_heat for view in data.zones.values() if view.foreign_heat]
-        if not states:
-            return None
-        return any(state.active for state in states)
 
     def _read_back_known(self) -> bool:
         """On a gateway path its setpoint read-back holds a value: without one, a hand-back could
@@ -4733,23 +4724,18 @@ class ControlUnit:
             await self._async_release_learning(now)
             return
         coordinator = self._coordinator
-        data = coordinator.data
         opening = self.options.loop.control.demand.zone_opening
         learning_zones = []
         for zone in zones:
             algorithm = coordinator.link.zone_algorithm(zone.zone_id)
             if algorithm.smartpi_learning is None:
                 continue
-            view = data.zones.get(zone.zone_id) if data is not None else None
-            heat = view.foreign_heat if view is not None else None
-            foreign = heat is not None and heat.active
             demand = zone.demand
             learning_zones.append(
                 ZoneLearning(
                     zone.zone_id,
                     algorithm.smartpi_learning,
                     demand is not None and demand > opening,
-                    foreign,
                 )
             )
         plan = plan_learning(

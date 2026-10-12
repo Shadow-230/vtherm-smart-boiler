@@ -26,6 +26,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import Context, HomeAssistant, ServiceCall, State, callback
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -51,6 +52,7 @@ from custom_components.vtherm_smart_boiler.core.signal_check import Feature, Fea
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN
 
+from . import control_chain
 from .harness import (
     BOILER_ENTITIES,
     VT_PLATFORM,
@@ -517,6 +519,23 @@ def ran_before(rig: Rig, entry: MockConfigEntry, control: dict[str, Any] | None 
 def add_entry(rig: Rig, entry_options: dict[str, Any]) -> MockConfigEntry:
     """An entry that ran before, owing nothing."""
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=entry_options)
+    entry.add_to_hass(rig.hass)
+    ran_before(rig, entry)
+    return entry
+
+
+def add_current_entry(rig: Rig, entry_options: dict[str, Any]) -> MockConfigEntry:
+    """An entry stored by this version, which no migration changes: a control section's own
+    read-back stays its own, as a hand edit leaves it (I8.5b)."""
+    from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerConfigFlow
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=entry_options,
+        minor_version=SmartBoilerConfigFlow.MINOR_VERSION,
+    )
     entry.add_to_hass(rig.hass)
     ran_before(rig, entry)
     return entry
@@ -1175,8 +1194,6 @@ async def test_hot_water_without_priority_takes_no_heat_from_the_rooms(
     takes the heat from the rooms: SmartPI's learning pauses and heat is not available to the
     zone. Without priority — a buffer, a tank charged in parallel — the rooms keep their heat:
     no pause, heat available."""
-    from homeassistant.helpers import entity_registry as er
-
     hass = rig.hass
     learning: list[tuple[str, bool]] = []
 
@@ -1203,13 +1220,14 @@ async def test_hot_water_without_priority_takes_no_heat_from_the_rooms(
     }
     await set_up(rig, add_entry(rig, entry_options))
     await rig.switch(True)
+    rig.flame = True
     rig.dhw = True
     await rig.advance(30)
     assert learning == ([(zone, False)] if priority else [])
-    zone_entry = er.async_get(hass).async_get(zone)
-    assert zone_entry is not None
-    available = rig.state("binary_sensor", f"hot_water_{zone_entry.id}")
-    assert available.state == ("off" if priority else "on")
+    # What VT's thermostat is given (the feature manager's value; I8.1d: no zone entity), the
+    # flame burning (I8, decision C1).
+    view = rig.entry.runtime_data.data.zones[zone]
+    assert view.heat.available is not priority
 
 
 async def test_a_cancel_inside_smartpi_does_not_break_the_stop(
@@ -2273,35 +2291,72 @@ async def test_changing_the_write_path_is_refused_while_a_hand_back_is_owed(rig:
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
     assert rig.entry is not None
     flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"next_step_id": "control"}
     )
-    flow = await rig.hass.config_entries.options.async_configure(
-        flow["flow_id"],
-        {
-            "write_path": "opentherm_gw",
-            "topology": "gateway_with_thermostat",
-            "thermostat_kind": "opentherm",
-            "confirmed_entity": CONFIRMED,
-        },
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
+        flow["flow_id"], {"write_path": "opentherm_gw"}
     )
     assert flow["errors"] == {"write_path": "hand_back_pending"}
 
 
-async def _first_control_step(rig: Rig, answer: dict[str, Any]) -> Any:
+def control_answer(answer: dict[str, Any]) -> dict[str, Any]:
+    """The first control step's answer: the "Boiler interface" item's answers are its own now
+    (I8, decision D2), and the read-backs boiler signals (I8.5b, D3) — stored in the rig's
+    options already."""
+    from custom_components.vtherm_smart_boiler.const import READ_BACK_SIGNALS
+    from custom_components.vtherm_smart_boiler.control_config import INTERFACE_CONTROL_KEYS
+
+    dropped = {*INTERFACE_CONTROL_KEYS, *READ_BACK_SIGNALS.values()}
+    return {key: value for key, value in answer.items() if key not in dropped}
+
+
+async def _signals_step(rig: Rig, read_backs: dict[str, Any]) -> Any:
+    """I8.5b (decision D3): the read-backs, by the control options' names, answered as boiler
+    signals in the options — an emptied one unmapped, every other signal as stored."""
+    from custom_components.vtherm_smart_boiler.const import READ_BACK_SIGNALS
+
     assert rig.entry is not None
     flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
-    flow = await rig.hass.config_entries.options.async_configure(
-        flow["flow_id"], {"next_step_id": "control"}
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
+        flow["flow_id"], {"next_step_id": "signals"}
     )
-    return await rig.hass.config_entries.options.async_configure(flow["flow_id"], answer)
+    shown = {str(marker) for marker in flow["data_schema"].schema}
+    stored = {**rig.entry.options["signals"], "weather": rig.entry.options.get("weather")}
+    given = {key: value for key, value in stored.items() if key in shown and value}
+    for signal, key in READ_BACK_SIGNALS.items():
+        if key in read_backs:
+            assert signal in shown, signal
+            given.pop(signal, None)
+            if read_backs[key]:
+                given[signal] = read_backs[key]
+    return await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], given)
 
 
-GATEWAY_ANSWER = {
-    "write_path": "opentherm_gw",
-    "topology": "gateway_with_thermostat",
-    "thermostat_kind": "opentherm",
-}
+async def _first_control_step(rig: Rig, answer: dict[str, Any]) -> Any:
+    """The control device's item answered — then the next control item opens as the chain's
+    next form did (I8, decision H): the curve on a gateway path."""
+    assert rig.entry is not None
+    options = rig.hass.config_entries.options
+    flow = await options.async_init(rig.entry.entry_id)
+    flow = await options.async_configure(flow["flow_id"], {"next_step_id": "control"})
+    if flow.get("step_id") != "control":
+        return flow  # the connection decides the path: the step asks nothing (I8.5b)
+    flow = await options.async_configure(flow["flow_id"], control_answer(answer))
+    return await control_chain.after(options, flow, "control")
+
+
+async def _interface_step(rig: Rig, answer: dict[str, Any]) -> Any:
+    """I8 (decision D2): the "Boiler interface" item answered in the options."""
+    assert rig.entry is not None
+    flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
+        flow["flow_id"], {"next_step_id": "interface"}
+    )
+    return await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], answer)
+
+
+GATEWAY_ANSWER = {"write_path": "opentherm_gw"}
 
 
 async def test_the_gateways_read_back_cannot_change_while_a_hand_back_is_owed(rig: Rig) -> None:
@@ -2318,12 +2373,15 @@ async def test_the_gateways_read_back_cannot_change_while_a_hand_back_is_owed(ri
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
     other = "sensor.somewhere_else_temperature"
     rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
-    assert flow["errors"] == {"confirmed_entity": "hand_back_pending"}
+    # I8.5b (decision D3): the read-back is a boiler signal, guarded on that step.
+    flow = await _signals_step(rig, {"confirmed_entity": other})
+    assert flow["errors"] == {"ch_setpoint": "hand_back_pending"}
     assert rig.entry is not None
-    assert rig.entry.options["control"]["confirmed_entity"] == CONFIRMED
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
-    assert flow["step_id"] == "control_gateway"  # the same read-back goes on
+    assert rig.entry.options["signals"]["ch_setpoint"] == CONFIRMED
+    flow = await _signals_step(rig, {"confirmed_entity": CONFIRMED})
+    assert flow["type"] is FlowResultType.MENU  # the same read-back goes on
+    flow = await _first_control_step(rig, GATEWAY_ANSWER)
+    assert flow["step_id"] == "control_curve"  # (I8: the gateway is the interface's)
 
 
 async def test_the_gateways_read_back_cannot_change_while_control_holds_the_boiler(
@@ -2334,8 +2392,8 @@ async def test_the_gateways_read_back_cannot_change_while_control_holds_the_boil
     await rig.advance(20)
     other = "sensor.somewhere_else_temperature"
     rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
-    assert flow["errors"] == {"confirmed_entity": "control_holds_boiler"}
+    flow = await _signals_step(rig, {"confirmed_entity": other})  # a boiler signal (I8.5b)
+    assert flow["errors"] == {"ch_setpoint": "control_holds_boiler"}
 
 
 @pytest.mark.usefixtures("low_setpoint_off")
@@ -2356,12 +2414,15 @@ async def test_the_entity_paths_read_backs_cannot_change_while_a_hand_back_is_ow
     else:
         other = "binary_sensor.somewhere_else"
         rig.hass.states.async_set(other, "on")
-    answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
-    flow = await _first_control_step(rig, answer | {key: other})
-    assert flow["errors"] == {key: "hand_back_pending"}
+    # I8.5b (decision D3): the read-backs are boiler signals, guarded on that step.
+    signal = {"confirmed_entity": "ch_setpoint", "ch_confirmed_entity": "ch_enabled"}[key]
+    flow = await _signals_step(rig, {key: other})
+    assert flow["errors"] == {signal: "hand_back_pending"}
     assert rig.entry is not None
-    assert rig.entry.options["control"]["confirmed_entity"] == number.entity_id
-    flow = await _first_control_step(rig, answer)
+    assert rig.entry.options["signals"]["ch_setpoint"] == number.entity_id
+    flow = await _signals_step(rig, {})
+    assert flow["type"] is FlowResultType.MENU
+    flow = await _first_control_step(rig, {"write_path": "entity"})
     assert flow["step_id"] == "control_entity"
 
 
@@ -2381,7 +2442,7 @@ ENTITY_STEP_ANSWER = {
     ("change", "refused"),
     [
         ({"write_type": "expiring"}, True),
-        ({"ch_write_type": "held"}, True),
+        ({"ch_write_type": "expiring"}, True),
         ({"hand_back_timeout_min": 30}, False),  # judges the timeout method only
         ({}, False),
     ],
@@ -2392,10 +2453,13 @@ async def test_the_write_types_cannot_change_while_a_hand_back_is_owed(
 ) -> None:
     """PB-09: the write types judge the release — a held value must show the hand-back value,
     an expiring one only leave the plugin's — so they are fixed while a hand-back is owed or
-    control holds the boiler, whose hand-back the new options would make."""
+    control holds the boiler, whose hand-back the new options would make. A heating switch is
+    set up, so its write type is asked (I8, decision H1)."""
     number = FakeNumber(rig.hass)
     number.register()
-    await start(rig, **held_entity(number))
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    await start(rig, **held_entity(number, ch_entity=switch.entity_id, ch_write_type="held"))
     await rig.switch(True)
     if owed:
         number.set_available(False)
@@ -2403,15 +2467,74 @@ async def test_the_write_types_cannot_change_while_a_hand_back_is_owed(
         assert unit_of(rig).hand_back_owed
     else:
         assert unit_of(rig).holding
-    answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
+    answer = {"write_path": "entity", "confirmed_entity": number.entity_id}
     flow = await _first_control_step(rig, answer)
-    answer = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id} | change
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], answer)
+    heating = {"ch_entity": switch.entity_id, "ch_write_type": "held"}
+    answer = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id} | heating | change
+    flow = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], answer)
     if refused:
         reason = "hand_back_pending" if owed else "control_holds_boiler"
         assert flow["errors"] == {"base": reason}
     else:
         assert flow["step_id"] == "control_curve"
+
+
+async def test_with_control_taken_out_the_read_back_may_change(rig: Rig) -> None:
+    """PB-09's negative (I8.5b): "no control" chosen first in the same edit, the read-back — a
+    boiler signal — may change while control holds the boiler: the hand-back goes through what
+    took it."""
+    await set_up(rig, add_entry(rig, options(rig.zones) | {"level": "advanced"}))
+    await rig.switch(True)
+    await rig.advance(20)
+    other = "sensor.somewhere_else_temperature"
+    rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
+    flow = await _first_control_step(rig, {"write_path": "none"})
+    assert flow["type"] == "menu"
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
+        flow["flow_id"], {"next_step_id": "signals"}
+    )
+    assert rig.entry is not None
+    shown = {str(marker) for marker in flow["data_schema"].schema}
+    given = {k: v for k, v in rig.entry.options["signals"].items() if k in shown}
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
+        flow["flow_id"], given | {"ch_setpoint": other}
+    )
+    assert flow["type"] == "menu"
+
+
+@pytest.mark.usefixtures("low_setpoint_off")
+@pytest.mark.parametrize("connection", [False, True], ids=["before_the_question", "connection"])
+async def test_a_write_type_changed_before_a_hand_back_was_owed_is_refused_at_the_save(
+    rig: Rig, connection: bool
+) -> None:
+    """P-12: the write type changed while nothing was owed; owed before the save, the save is
+    refused, its reason on the first control form — the control step's where it asks the path,
+    else the writable-entity step's: the connection decides the path, and the control step asks
+    nothing (I8.5b). Nothing is saved."""
+    number = FakeNumber(rig.hass)
+    number.register()
+    stored = options(rig.zones, **held_entity(number))
+    if connection:
+        stored["boiler"] |= {"connection": "other_entity", "control_mode": "full"}
+    await set_up(rig, add_entry(rig, stored))
+    flow = await _first_control_step(rig, {"write_path": "entity"})
+    assert flow["step_id"] == "control_entity"
+    answer = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id, "write_type": "expiring"}
+    flow = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], answer)
+    chained = control_chain.chained(rig.hass.config_entries.options)
+    flow = await chained(flow["flow_id"], CURVE_ANSWER)
+    if flow.get("step_id") == "control_alarms":
+        flow = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], {})
+    assert flow["type"] == "menu"
+    await rig.switch(True)
+    number.set_available(False)
+    await rig.switch(False)
+    assert unit_of(rig).hand_back_owed
+    flow = await _saved(rig, flow)
+    assert flow["step_id"] == ("control_entity" if connection else "control")
+    assert flow["errors"] == {"base": "hand_back_pending"}
+    assert rig.entry is not None
+    assert rig.entry.options["control"]["write_type"] == "held"
 
 
 async def test_the_device_timeout_and_the_lowest_are_fixed_while_a_hand_back_is_owed(
@@ -2440,8 +2563,8 @@ async def test_the_device_timeout_and_the_lowest_are_fixed_while_a_hand_back_is_
             "control": {"hand_back_pending": True, "taken_with": dict(entry.options["control"])},
         },
     }
-    configure = rig.hass.config_entries.options.async_configure
-    answer = {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
+    configure = control_chain.chained(rig.hass.config_entries.options)
+    answer = {"write_path": "entity", "confirmed_entity": number.entity_id}
     flow = await _first_control_step(rig, answer)
     step = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id, "write_type": "expiring"}
     step |= {"hand_back": "timeout"}
@@ -2468,8 +2591,7 @@ async def test_the_lowest_may_change_while_control_holds_the_boiler(rig: Rig) ->
     await rig.advance(20)
     assert unit_of(rig).holding
     flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
-    configure = rig.hass.config_entries.options.async_configure
-    flow = await configure(flow["flow_id"], {"gateway_id": "gw"})
+    configure = control_chain.chained(rig.hass.config_entries.options)
     assert flow["step_id"] == "control_curve"
     flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": 30})
     assert not flow.get("errors")
@@ -2480,21 +2602,48 @@ async def test_the_lowest_may_change_while_control_holds_the_boiler(rig: Rig) ->
     assert rig.entry.options["control"]["hard_min"] == 30
 
 
-@pytest.mark.parametrize(("hard_min", "refused"), [(45, True), (40, False)])
+async def test_a_save_refused_on_the_gateway_path_shows_on_the_curve(rig: Rig) -> None:
+    """P-12 with I8 (decision H): the lowest changed while control held the boiler, then a
+    hand-back owed before the save — the save is refused; the gateway's path has no device
+    form, so the reason shows on the curve's, where the lowest is. Nothing is saved."""
+    integrations_running(rig)
+    stored = options(rig.zones)
+    stored["boiler"] |= {"connection": "opentherm_gw", "control_mode": "full"}
+    await set_up(rig, add_entry(rig, stored))
+    await rig.switch(True)
+    await rig.advance(20)
+    assert rig.entry is not None
+    manager = rig.hass.config_entries.options
+    flow = await manager.async_init(rig.entry.entry_id)
+    assert "control" not in flow["menu_options"]  # the gateway's path asks no device
+    flow = await manager.async_configure(flow["flow_id"], {"next_step_id": "control_curve"})
+    flow = await manager.async_configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": 30})
+    assert flow["type"] is FlowResultType.MENU
+    rig.gateway.connected = False
+    rig.live()
+    await rig.switch(False)
+    assert unit_of(rig).hand_back_owed
+    flow = await _saved(rig, flow)
+    assert (flow["step_id"], flow["errors"]) == ("control_curve", {"base": "hand_back_pending"})
+    assert rig.entry.options["control"].get("hard_min") != 30
+
+
+@pytest.mark.parametrize(("hard_min", "refused"), [(45, True), (35, False)])
 async def test_the_lowest_above_the_circuits_maximum_is_refused(
     rig: Rig, hard_min: int, refused: bool
 ) -> None:
-    """PB-26: the circuit's maximum 40 °C, the lowest water temperature 45 °C: refused at the
-    curve step — the hand-back would send 45 first, and control could never give it. At the
-    maximum itself it passes."""
+    """PB-26 with I8 (decision F2): the circuit's maximum, 40 °C, is the highest water
+    temperature: a lowest of 45 °C cannot pass the curve step — the hand-back would send 45
+    first, and control could never give it; the design flow between the two is refused. A
+    lowest below the maximum, with the design flow at it, passes."""
     integrations_running(rig)
     await set_up(rig, add_entry(rig, with_circuit(rig, {"max_flow": 40})))
     flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
-    configure = rig.hass.config_entries.options.async_configure
-    flow = await configure(flow["flow_id"], {"gateway_id": "gw"})
-    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": hard_min})
+    configure = control_chain.chained(rig.hass.config_entries.options)
+    curve = CURVE_ANSWER | {"design_flow": 40, "hard_min": hard_min}
+    flow = await configure(flow["flow_id"], curve)
     if refused:
-        assert flow["errors"] == {"hard_min": "hard_min_above_max"}
+        assert flow["errors"] == {"hard_min": "hard_min_not_below_design_flow"}
     else:
         assert not flow.get("errors")
 
@@ -2505,7 +2654,10 @@ async def test_an_entry_that_is_not_running_is_guarded_by_its_store(
     """R6, H2 with C1: with the entry not running — its setup failed, say — the options are
     still open, and the next start makes the hand-back the last run left owed through what they
     say then. The store tells the guard what is owed; "no control" stays possible."""
-    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
+    stored = options(rig.zones)
+    # As the entry's migration leaves it (I8.5b): the read-back a boiler signal.
+    stored["signals"]["ch_setpoint"] = stored["control"].pop("confirmed_entity")
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=stored)
     entry.add_to_hass(rig.hass)  # never set up
     rig.entry = entry
     hass_storage[f"{DOMAIN}.{entry.entry_id}"] = {
@@ -2520,13 +2672,13 @@ async def test_an_entry_that_is_not_running_is_guarded_by_its_store(
     number.register()
     flow = await _first_control_step(
         rig,
-        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+        {"write_path": "entity", "confirmed_entity": number.entity_id},
     )
     assert flow["errors"] == {"write_path": "hand_back_pending"}
     other = "sensor.somewhere_else_temperature"
     rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
-    assert flow["errors"] == {"confirmed_entity": "hand_back_pending"}
+    flow = await _signals_step(rig, {"confirmed_entity": other})
+    assert flow["errors"] == {"ch_setpoint": "hand_back_pending"}
     flow = await _first_control_step(rig, {"write_path": "none"})
     flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
@@ -2560,16 +2712,17 @@ async def test_choosing_no_control_while_a_hand_back_is_owed_keeps_handing_back(
     await rig.switch(False)
     assert rig.entry is not None
     flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"next_step_id": "control"}
     )
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"write_path": "none"}
     )
     flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
-    assert "control" not in rig.entry.options
+    # The interface's answers stay (I8, decision D2); control is taken out.
+    assert "write_path" not in rig.entry.options.get("control", {})
     assert issue(rig, "hand_back_owed") is not None
     number.set_available(True)
     await rig.advance(70)
@@ -2597,12 +2750,12 @@ async def test_clearing_the_heating_switch_is_refused_while_a_hand_back_is_owed(
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
     assert rig.entry is not None
     flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"next_step_id": "control"}
     )
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"],
-        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+        {"write_path": "entity"},
     )
     assert flow["step_id"] == "control_entity"
     unchanged = {
@@ -2613,7 +2766,7 @@ async def test_clearing_the_heating_switch_is_refused_while_a_hand_back_is_owed(
         "hand_back_value": 50,
         "hand_back_value_effect": "own_control",
     }  # everything as it is, the heating switch cleared (left out)
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], unchanged)
+    flow = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], unchanged)
     assert flow["errors"] == {"base": "hand_back_pending"}
     assert rig.entry.options["control"]["ch_entity"] == "input_boolean.fake_ch"
 
@@ -2646,19 +2799,16 @@ async def test_an_owed_hand_back_can_be_settled_by_hand(rig: Rig) -> None:
     assert rig.entry is not None
     assert not rig.entry.runtime_data.control.hand_back_owed
     flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"next_step_id": "control"}
     )
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"],
-        {
-            "write_path": "opentherm_gw",
-            "topology": "gateway_with_thermostat",
-            "thermostat_kind": "opentherm",
-            "confirmed_entity": CONFIRMED,
-        },
+        {"write_path": "opentherm_gw"},
     )
-    assert flow["step_id"] == "control_gateway"  # another device, accepted
+    # Another device, accepted: no hand-back holds it; only the interface's answers for the new
+    # path are still to give (I8, decision D2).
+    assert flow["errors"] == {"base": "interface_not_answered"}
 
 
 async def test_a_session_that_retakes_the_boiler_still_owes_the_switch_it_left_off(
@@ -2700,12 +2850,12 @@ async def test_what_control_writes_to_cannot_change_while_it_holds_the_boiler(ri
     await rig.switch(True)
     assert rig.entry is not None
     flow = await rig.hass.config_entries.options.async_init(rig.entry.entry_id)
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"next_step_id": "control"}
     )
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"],
-        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+        {"write_path": "entity"},
     )
     other = {
         "setpoint_entity": "input_number.another_boiler_flow",
@@ -2716,10 +2866,10 @@ async def test_what_control_writes_to_cannot_change_while_it_holds_the_boiler(ri
         "hand_back_value_effect": "own_control",
     }
     rig.hass.states.async_set(other["setpoint_entity"], "50", {"unit_of_measurement": "°C"})
-    result = await rig.hass.config_entries.options.async_configure(flow["flow_id"], other)
+    result = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], other)
     assert result["errors"] == {"base": "control_holds_boiler"}
     await rig.switch(False)  # given back through the device that has it
-    result = await rig.hass.config_entries.options.async_configure(flow["flow_id"], other)
+    result = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], other)
     assert result["step_id"] == "control_curve"
 
 
@@ -4790,21 +4940,27 @@ async def test_an_unreadable_store_guards_the_options_flow(
     section the options flow answers as setup would — a hand-back is owed — and keeps the write
     path; a monitor-only entry owes nothing and may set control up."""
     entry_options = options(rig.zones)
+    number = FakeNumber(rig.hass)
+    number.register()
+    # Monitor only: the interface answered for the entity path (I8, decision D2), the read-back
+    # a boiler signal (I8.5b).
+    monitor_only = without_control(entry_options) | {
+        "control": {"topology": "virtual"},
+        "signals": {**entry_options["signals"], "ch_setpoint": number.entity_id},
+    }
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Boiler",
         data={},
-        options=entry_options if section else without_control(entry_options),
+        options=entry_options if section else monitor_only,
     )
     entry.add_to_hass(rig.hass)  # never set up
     rig.entry = entry
     seed_main(hass_storage, entry)
     seed_control(hass_storage, entry, ["not", "a", "mapping"])
-    number = FakeNumber(rig.hass)
-    number.register()
     flow = await _first_control_step(
         rig,
-        {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id},
+        {"write_path": "entity", "confirmed_entity": number.entity_id},
     )
     if section:
         assert flow["errors"] == {"write_path": "hand_back_pending"}
@@ -5234,10 +5390,11 @@ async def test_options_saved_in_setup_error_reload_the_entry(
     assert entry.state is expected
     assert not hasattr(entry, "runtime_data")  # nothing of the failed setup is left
     flow = await rig.hass.config_entries.options.async_init(entry.entry_id)
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"next_step_id": "freshness"}
     )
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], {"flow": 30})
+    chained = control_chain.chained(rig.hass.config_entries.options)
+    flow = await chained(flow["flow_id"], {"flow": 30})
     flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
@@ -5898,7 +6055,7 @@ async def test_control_added_back_after_removal_starts_off(
 
 # --- V4: the hand-back's bookkeeping (P-12, P-42, P-49, P-50, P-51, P-52; Open after R6 #8) -----
 
-CURVE_ANSWER = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+CURVE_ANSWER = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25}
 
 
 async def _through_alarms(rig: Rig, flow: Any) -> Any:
@@ -5906,7 +6063,7 @@ async def _through_alarms(rig: Rig, flow: Any) -> Any:
     step — the reaction to an ignored write — follows the curve at every level; its default
     answer ends the control section, and the options are saved."""
     if flow.get("step_id") == "control_alarms":
-        flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], {})
+        flow = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], {})
     return await _saved(rig, flow)
 
 
@@ -5914,7 +6071,7 @@ async def _saved(rig: Rig, flow: Any) -> Any:
     """I7: a section ends at the menu; "Save and finish" saves."""
     if flow.get("type") != "menu":
         return flow
-    return await rig.hass.config_entries.options.async_configure(
+    return await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], {"next_step_id": "save"}
     )
 
@@ -6142,23 +6299,33 @@ async def test_a_release_by_hand_waits_for_a_running_attempt(
     assert len(rig.gateway.calls) == count  # nothing retried
 
 
+INTERFACE_GATEWAY = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
+
+
+def stored_topics(rig: Rig) -> dict[str, Any]:
+    """The firmware's topics as control reads them: the connection's, one copy (I8.4b)."""
+    from custom_components.vtherm_smart_boiler.control_config import with_interface_topics
+
+    assert rig.entry is not None
+    return dict(
+        with_interface_topics(rig.entry.options["control"], rig.entry.options.get("boiler"))
+    )
+
+
 async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """T-13 (P-12, R4): two gateways. The control steps pass with nothing owed and pick gw2;
-    before the save, the unit starts owing a hand-back through gw1. The save goes back to the
-    control step with the reason, the options stay, and the hand-back goes on through gw1.
-    Negative: with nothing owed at the save, gw2 is saved."""
+    """T-13 (P-12, R4): two gateways. The "Boiler interface" item passes with nothing owed and
+    picks gw2 (I8, decision D2); before the save, the unit starts owing a hand-back through gw1.
+    The save goes back to the interface with the reason, the options stay, and the hand-back
+    goes on through gw1. Negative: with nothing owed at the save, gw2 is saved."""
     MockConfigEntry(domain="opentherm_gw", data={"id": "gw2"}).add_to_hass(rig.hass)
     integrations_running(rig)
     await start(rig)
     assert rig.entry is not None
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
-    assert flow["step_id"] == "control_gateway"
-    flow = await rig.hass.config_entries.options.async_configure(
-        flow["flow_id"], {"gateway_id": "gw2"}
-    )
-    assert flow["step_id"] == "control_curve"
+    configure = control_chain.chained(rig.hass.config_entries.options)
+    flow = await _interface_step(rig, INTERFACE_GATEWAY | {"gateway_id": "gw2"})
+    assert flow["type"] == "menu"
     # Before the save: control takes the boiler, the gateway drops, control is switched off.
     await rig.switch(True)
     await rig.advance(20)
@@ -6166,9 +6333,8 @@ async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
     rig.live()
     await rig.switch(False)
     assert unit_of(rig).hand_back_owed
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
-    flow = await _through_alarms(rig, flow)
-    assert flow["step_id"] == "control"
+    flow = await configure(flow["flow_id"], {"next_step_id": "save"})
+    assert flow["step_id"] == "interface"
     assert flow["errors"] == {"base": "hand_back_pending"}
     await rig.hass.async_block_till_done()
     assert rig.entry.options["control"]["gateway_id"] == "gw"
@@ -6182,12 +6348,8 @@ async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
         and data["temperature"] == 0
     }
     assert released == {"gw"}
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
-    flow = await rig.hass.config_entries.options.async_configure(
-        flow["flow_id"], {"gateway_id": "gw2"}
-    )
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
-    flow = await _through_alarms(rig, flow)
+    flow = await _interface_step(rig, INTERFACE_GATEWAY | {"gateway_id": "gw2"})
+    flow = await configure(flow["flow_id"], {"next_step_id": "save"})
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
     assert rig.entry.options["control"]["gateway_id"] == "gw2"
@@ -6199,9 +6361,9 @@ async def test_gateway_id_cannot_change_while_a_hand_back_is_owed(
 async def test_mqtt_topics_cannot_change_while_control_holds_the_boiler(
     rig: Rig, node: str, saved: bool
 ) -> None:
-    """T-14 (P-12, R4): the MQTT step passes while control is off; before the save control takes
-    the boiler. A changed node is refused at the save, back at the control step, the options
-    kept; the same node with spaces around it passes."""
+    """T-14 (P-12, R4): the "Boiler interface" item passes while control is off; before the
+    save control takes the boiler. A changed node is refused at the save, back at the interface,
+    the options kept; the same node with spaces around it passes."""
 
     async def publish(call: ServiceCall) -> None:
         if call.data["topic"].endswith("/ctrlsetpt"):
@@ -6214,36 +6376,28 @@ async def test_mqtt_topics_cannot_change_while_control_holds_the_boiler(
     # Without the opentherm_gw path's gateway: the flow drops what another path left.
     await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1", gateway_id=None)
     assert rig.entry is not None
-    flow = await _first_control_step(
-        rig,
-        {"write_path": "otgw_mqtt", "topology": "gateway_with_thermostat"}
-        | {"thermostat_kind": "opentherm", "confirmed_entity": CONFIRMED},
-    )
-    assert flow["step_id"] == "control_mqtt"
-    flow = await rig.hass.config_entries.options.async_configure(
-        flow["flow_id"], {"mqtt_top": "OTGW", "mqtt_node": node}
-    )
-    assert flow["step_id"] == "control_curve"
+    flow = await _interface_step(rig, INTERFACE_GATEWAY | {"mqtt_top": "OTGW", "mqtt_node": node})
+    assert flow["type"] == "menu"
     await rig.switch(True)  # control takes the boiler before the save
     await rig.advance(20)
     assert unit_of(rig).holding
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
-    flow = await _through_alarms(rig, flow)
+    configure = control_chain.chained(rig.hass.config_entries.options)
+    flow = await configure(flow["flow_id"], {"next_step_id": "save"})
     if saved:
         assert flow["type"] == "create_entry"
     else:
-        assert flow["step_id"] == "control"
+        assert flow["step_id"] == "interface"
         assert flow["errors"] == {"base": "control_holds_boiler"}
     await rig.hass.async_block_till_done()
-    assert rig.entry.options["control"]["mqtt_node"] == "otgw-1"
+    assert stored_topics(rig)["mqtt_node"] == "otgw-1"
 
 
-async def test_the_gateway_step_refuses_another_gateway_while_control_holds_the_boiler(
+async def test_the_interface_refuses_another_gateway_while_control_holds_the_boiler(
     rig: Rig,
 ) -> None:
     """P-34 (T-13 at its own step): control holds the boiler through gw when the options reach
-    the gateway step — another gateway is refused there, with the reason; the same gateway
-    passes on to the curve. Negative: control off, holding nothing — gw2 passes."""
+    the "Boiler interface" item — another gateway is refused there, with the reason; the same
+    gateway passes on to the menu. Negative: control off, holding nothing — gw2 passes."""
     MockConfigEntry(domain="opentherm_gw", data={"id": "gw2"}).add_to_hass(rig.hass)
     integrations_running(rig)
     await start(rig)
@@ -6251,27 +6405,24 @@ async def test_the_gateway_step_refuses_another_gateway_while_control_holds_the_
     await rig.switch(True)
     await rig.advance(20)
     assert unit_of(rig).holding
-    configure = rig.hass.config_entries.options.async_configure
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
-    assert flow["step_id"] == "control_gateway"
-    refused = await configure(flow["flow_id"], {"gateway_id": "gw2"})
+    configure = control_chain.chained(rig.hass.config_entries.options)
+    refused = await _interface_step(rig, INTERFACE_GATEWAY | {"gateway_id": "gw2"})
     assert (refused["step_id"], refused["errors"]) == (
-        "control_gateway",
+        "interface",
         {"base": "control_holds_boiler"},
     )
-    passed = await configure(flow["flow_id"], {"gateway_id": "gw"})
-    assert passed["step_id"] == "control_curve"
+    passed = await configure(refused["flow_id"], INTERFACE_GATEWAY | {"gateway_id": "gw"})
+    assert passed["type"] == "menu"
     await rig.switch(False)
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
-    passed = await configure(flow["flow_id"], {"gateway_id": "gw2"})
-    assert passed["step_id"] == "control_curve"
+    passed = await _interface_step(rig, INTERFACE_GATEWAY | {"gateway_id": "gw2"})
+    assert passed["type"] == "menu"
     assert rig.entry.options["control"]["gateway_id"] == "gw"  # nothing saved by the steps
 
 
-async def test_the_mqtt_step_refuses_other_topics_while_a_hand_back_is_owed(rig: Rig) -> None:
+async def test_the_interface_refuses_other_topics_while_a_hand_back_is_owed(rig: Rig) -> None:
     """P-34 (T-14 at its own step): a hand-back owed through the firmware's topics when the
-    options reach the MQTT step — another node is refused there, with the reason; the same
-    topics, spaces around them dropped, pass on to the curve."""
+    options reach the "Boiler interface" item — another node is refused there, with the reason;
+    the same topics, spaces around them dropped, pass on to the menu."""
 
     async def publish(call: ServiceCall) -> None:
         if call.data["topic"].endswith("/ctrlsetpt"):
@@ -6288,51 +6439,48 @@ async def test_the_mqtt_step_refuses_other_topics_while_a_hand_back_is_owed(rig:
     rig.live()
     await rig.switch(False)
     assert unit_of(rig).hand_back_owed
-    configure = rig.hass.config_entries.options.async_configure
-    answer = {"write_path": "otgw_mqtt", "topology": "gateway_with_thermostat"}
-    flow = await _first_control_step(
-        rig, answer | {"thermostat_kind": "opentherm", "confirmed_entity": CONFIRMED}
+    configure = control_chain.chained(rig.hass.config_entries.options)
+    refused = await _interface_step(
+        rig, INTERFACE_GATEWAY | {"mqtt_top": OTGW_TOP, "mqtt_node": "otgw-2"}
     )
-    assert flow["step_id"] == "control_mqtt"
-    refused = await configure(flow["flow_id"], {"mqtt_top": OTGW_TOP, "mqtt_node": "otgw-2"})
     assert (refused["step_id"], refused["errors"]) == (
-        "control_mqtt",
+        "interface",
         {"base": "hand_back_pending"},
     )
-    passed = await configure(flow["flow_id"], {"mqtt_top": OTGW_TOP, "mqtt_node": " otgw-1 "})
-    assert passed["step_id"] == "control_curve"
+    passed = await configure(
+        refused["flow_id"], INTERFACE_GATEWAY | {"mqtt_top": OTGW_TOP, "mqtt_node": " otgw-1 "}
+    )
+    assert passed["type"] == "menu"
 
 
 async def test_the_gateways_read_back_cannot_change_at_the_save(rig: Rig) -> None:
     """R4: the gateway's read-back, which judges its release, re-picked while nothing was owed;
-    owed before the save: refused there. Negative, a missing control section: "no control"
-    stays possible at the save, the hand-back going through what took the boiler."""
+    owed before the save: refused there, on the signals step — a boiler signal now (I8.5b).
+    Negative, a missing control section: "no control" stays possible at the save, the hand-back
+    going through what took the boiler."""
     integrations_running(rig)
     await start(rig)
     assert rig.entry is not None
     other = "sensor.somewhere_else_temperature"
     rig.hass.states.async_set(other, "20.0", {"unit_of_measurement": "°C"})
-    flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": other})
-    assert flow["step_id"] == "control_gateway"
-    flow = await rig.hass.config_entries.options.async_configure(
-        flow["flow_id"], {"gateway_id": "gw"}
-    )
+    flow = await _signals_step(rig, {"confirmed_entity": other})
+    assert flow["type"] is FlowResultType.MENU  # nothing owed yet: taken, not saved
     await rig.switch(True)
     await rig.advance(20)
     rig.gateway.connected = False
     rig.live()
     await rig.switch(False)
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], CURVE_ANSWER)
-    flow = await _through_alarms(rig, flow)
+    flow = await _saved(rig, flow)
+    assert flow["step_id"] == "signals"
     assert flow["errors"] == {"base": "hand_back_pending"}
-    assert rig.entry.options["control"]["confirmed_entity"] == CONFIRMED
-    flow = await rig.hass.config_entries.options.async_configure(
-        flow["flow_id"], {"write_path": "none"}
-    )
+    assert rig.entry.options["signals"]["ch_setpoint"] == CONFIRMED
+    rig.hass.config_entries.options.async_abort(flow["flow_id"])
+    flow = await _first_control_step(rig, {"write_path": "none"})
     flow = await _saved(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
-    assert "control" not in rig.entry.options
+    # Control taken out; the interface's answers stay (I8, decision D2).
+    assert "write_path" not in rig.entry.options.get("control", {})
 
 
 async def test_a_stop_during_the_save_leaves_no_unawaited_write(
@@ -7437,7 +7585,7 @@ async def test_an_external_switch_of_unknown_write_type_blocks_control(
     assert number.writes == []
     assert external.writes == []
     flow = await _first_control_step(
-        rig, {"write_path": "entity", "topology": "virtual", "confirmed_entity": number.entity_id}
+        rig, {"write_path": "entity", "confirmed_entity": number.entity_id}
     )
     answer = {
         "setpoint_entity": number.entity_id,
@@ -7446,11 +7594,11 @@ async def test_an_external_switch_of_unknown_write_type_blocks_control(
         "hand_back_entity": external.entity_id,
         "hand_back_entity_write_type": write_type or "unknown",
     }
-    flow = await rig.hass.config_entries.options.async_configure(flow["flow_id"], answer)
+    flow = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], answer)
     assert flow["errors"] == {
         "hand_back_entity_write_type": "hand_back_entity_write_type_not_supported"
     }
-    flow = await rig.hass.config_entries.options.async_configure(
+    flow = await control_chain.chained(rig.hass.config_entries.options)(
         flow["flow_id"], answer | {"hand_back_entity_write_type": "held"}
     )
     assert flow["step_id"] == "control_curve"
@@ -7520,17 +7668,22 @@ async def test_a_hand_back_value_above_the_maximum_is_refused(rig: Rig) -> None:
         "hand_back": "value",
         "hand_back_value_effect": "own_control",
     }
-    configure = rig.hass.config_entries.options.async_configure
+    configure = control_chain.chained(rig.hass.config_entries.options)
     flow = await configure(flow["flow_id"], answer | {"hand_back_value": 75})
     assert flow["errors"] == {"hand_back_value": "hand_back_value_above_max"}
     flow = await configure(flow["flow_id"], answer | {"hand_back_value": 60})
     assert flow["step_id"] == "control_curve"
-    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
-    flow = await _through_alarms(rig, flow)
+    flow = await configure(flow["flow_id"], CURVE_ANSWER)
+    if flow.get("step_id") == "control_alarms":
+        flow = await configure(flow["flow_id"], {})
+    # A later step lowers the maximum: the circuit's highest water temperature (I8, F2).
+    flow = await configure(flow["flow_id"], {"next_step_id": "circuit_1"})
+    flow = await configure(flow["flow_id"], {"control": "unmixed_shared", "max_flow": 55})
+    flow = await _saved(rig, flow)
     assert flow["step_id"] == "control_entity"  # the save found the lowered maximum
     assert flow["errors"] == {"base": "hand_back_value_above_max"}
     flow = await configure(flow["flow_id"], answer | {"hand_back_value": 50})
-    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
+    flow = await configure(flow["flow_id"], CURVE_ANSWER)
     flow = await _through_alarms(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()
@@ -7575,15 +7728,19 @@ async def test_off_near_an_own_control_hand_back_value_is_refused(
         "hand_back_value": 10.3,
         "hand_back_value_effect": "own_control",
     }
-    configure = rig.hass.config_entries.options.async_configure
+    manager = rig.hass.config_entries.options
+    configure = control_chain.chained(manager)
     flow = await configure(flow["flow_id"], answer)
-    flow = await configure(flow["flow_id"], CURVE_ANSWER)  # the simple level: then the save
-    flow = await _through_alarms(rig, flow)
+    # The curve saved to the menu without a look at the behaviour, then the save: back to the
+    # behaviour item, "off" shown there at the simple level while it is refused (I8.9a).
+    flow = await manager.async_configure(flow["flow_id"], CURVE_ANSWER)
+    flow = await _saved(rig, flow)
     assert flow["step_id"] == "control_behaviour"
     assert flow["errors"] == {"base": "off_setpoint_near_hand_back_value"}
-    flow = await configure(flow["flow_id"], {"off_setpoint": 10.5})
+    assert "off_setpoint" in {str(marker) for marker in flow["data_schema"].schema}
+    flow = await configure(flow["flow_id"], {"activation_delay_s": 0, "off_setpoint": 10.5})
     assert flow["errors"] == {"off_setpoint": "off_setpoint_near_hand_back_value"}
-    flow = await configure(flow["flow_id"], {"off_setpoint": 5})
+    flow = await configure(flow["flow_id"], {"activation_delay_s": 0, "off_setpoint": 5})
     assert flow["step_id"] == "control_alarms"
     flow = await _through_alarms(rig, flow)
     assert flow["type"] == "create_entry"
@@ -9868,7 +10025,10 @@ async def test_hot_water_flags_count_by_their_own_limits(rig: Rig, limits: bool)
     from custom_components.vtherm_smart_boiler.core.readings import BoilerSnapshot, Reading
 
     freshness = {"dhw_active": 600.0, "flame": 600.0, "ch_active": 600.0} if limits else {}
-    entry = add_entry(rig, options(rig.zones) | {"freshness": freshness})
+    base = options(rig.zones)
+    # I8 (decision D7): a limit belongs to a mapped signal — heating active mapped too.
+    signals = base["signals"] | {"ch_active": BOILER_ENTITIES[Signal.CH_ACTIVE]}
+    entry = add_entry(rig, base | {"signals": signals, "freshness": freshness})
     await set_up(rig, entry)
     coordinator = entry.runtime_data
     now = START.timestamp()
@@ -9959,7 +10119,7 @@ async def test_a_renamed_entity_carries_what_control_stored_for_it(
     registry.async_update_entity(living, new_entity_id="climate.lounge")
     await hass.async_block_till_done()
     assert rig.entry is not None
-    assert rig.entry.options["zones"] == [{"entity_id": "climate.lounge"}]
+    assert rig.entry.options["circuits"][0]["zones"] == ["climate.lounge"]  # I8 (F4)
     control = rig.entry.options["control"]
     assert control["frost_zone"] == "climate.lounge"
     kept = stored_control(hass_storage, rig)
@@ -9969,7 +10129,9 @@ async def test_a_renamed_entity_carries_what_control_stored_for_it(
     # The curve as control runs it: with the building's design outdoor temperature (I6).
     design_outdoor = rig.entry.options["parameters"]["design_outdoor"]
     curve = control["curve"] | {"design_outdoor": design_outdoor}
-    assert kept["taken_with"] == control | {"curve": curve}
+    # And the read-back, a boiler signal now (I8.5b).
+    read_back = rig.entry.options["signals"]["ch_setpoint"]
+    assert kept["taken_with"] == control | {"curve": curve, "confirmed_entity": read_back}
     assert {"entity_id": living, "learning_enabled": True} not in learning
     assert {"entity_id": "climate.lounge", "learning_enabled": True} in learning
 
@@ -11068,69 +11230,6 @@ async def test_one_room_short_at_the_limit_is_named_with_its_radiator_and_heat_l
     assert found.translation_placeholders["entities"] == rig.zones.entities["living"]
 
 
-def short_at(rig: Rig, temperature: float) -> None:
-    """``short_room`` at another room temperature."""
-    rig.zones.set(
-        "living",
-        current_temperature=temperature,
-        temperature=21.0,
-        hvac_action="heating",
-        valve_open_percent=100,
-        on_percent=1.0,
-    )
-
-
-async def test_a_room_falling_fast_while_it_heats_stops_the_rise_until_it_warms(
-    rig: Rig,
-) -> None:
-    """G11 F: a room short with its valve open and the correction rising falls 0.6 K within a
-    few minutes while it heats — a window probably open. The information sensor says so,
-    naming the room, and the correction stops rising (it holds: the room is not satisfied).
-    Once the room has warmed 0.2 K over its lowest reading and 30 minutes have passed, the
-    sensor goes off and the rise resumes."""
-    short_room(rig)
-    await start(rig, comfort_correction=True)
-    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
-    await rig.switch(True)
-    await rig.advance(1800, step=60)
-    assert correction(rig) >= 0.8
-    assert rig.state("binary_sensor", "window_probably_open").state == "off"
-    short_at(rig, 18.4)  # 0.6 K down
-    await rig.advance(120, step=60)
-    window = rig.state("binary_sensor", "window_probably_open")
-    assert window.state == "on"
-    assert window.attributes["zones"] == [rig.zones.entities["living"]]
-    held = correction(rig)
-    await rig.advance(1200, step=60)
-    assert correction(rig) == pytest.approx(held, abs=0.01)  # no rise, no fall
-    short_at(rig, 18.7)  # warmed 0.3 K over its lowest
-    await rig.advance(900, step=60)  # past the 30 minutes
-    assert rig.state("binary_sensor", "window_probably_open").state == "off"
-    await rig.advance(1800, step=60)
-    assert correction(rig) > held + 0.5  # rising again
-
-
-async def test_a_room_vt_holds_for_a_window_does_not_raise_the_water(rig: Rig) -> None:
-    """G11 F: VT's own window detection reads "on" for a short room — its action may lower the
-    room's setpoint (frost, eco) rather than turn it off: the room is left out, and the
-    correction does not rise for it."""
-    short_room(rig)
-    rig.zones.set(
-        "living",
-        current_temperature=19.0,
-        temperature=21.0,
-        hvac_action="heating",
-        valve_open_percent=100,
-        on_percent=1.0,
-        window_manager={"window_state": "off", "window_auto_state": "on"},
-    )
-    await start(rig, comfort_correction=True)
-    await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
-    await rig.switch(True)
-    await rig.advance(1800, step=60)
-    assert correction(rig) == 0.0
-
-
 LIVING_SMARTPI = "sensor.living_smartpi_diagnostics"
 
 
@@ -11369,6 +11468,39 @@ async def test_the_circuit_too_hot_alarm_is_information_on_the_measured_flow(rig
     assert alarm.attributes["reason"] == "no_flow_reading"
 
 
+@pytest.mark.parametrize("priority", [True, False], ids=["priority", "no_priority"])
+async def test_the_circuit_too_hot_alarm_skips_hot_water_on_a_straight_circuit(
+    rig: Rig, priority: bool
+) -> None:
+    """The user's decision of 2026-10-12: a circuit fed straight from the boiler, measured by
+    the boiler's flow — 9 minutes at 46 °C, then 20 minutes of hot water at 75 °C, then 46 °C
+    again: where hot water has priority the circuit gets none of it, so the alarm does not count
+    those minutes and comes on only 10 minutes after the hot water; without priority the rooms
+    keep the boiler's water, so the hot water counts and the alarm comes on during it."""
+    entry_options = with_circuit(rig, {"max_flow": 40})
+    entry_options["boiler"] = entry_options["boiler"] | {"dhw_priority": priority}
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    rig.flow = 46.0
+    await rig.advance(540, step=30)
+    rig.dhw = True
+    rig.flow = 75.0
+    await rig.advance(1200, step=30)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == ("off" if priority else "on")
+    rig.dhw = False
+    rig.flow = 46.0
+    if not priority:
+        return
+    assert alarm.attributes["reason"] == "held"  # the state known before the hot water, kept
+    await rig.advance(540, step=30)
+    assert rig.state("binary_sensor", "alarm_circuit_too_hot").state == "off"
+    await rig.advance(90, step=30)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == "on"
+    assert alarm.attributes.get("reason") is None
+
+
 async def test_no_circuit_alarm_without_a_circuit_maximum(rig: Rig) -> None:
     await start(rig)
     assert rig.entry is not None
@@ -11427,37 +11559,23 @@ async def test_learning_reads_the_flow_by_its_own_age_limit(
     assert resumed is (limit is not None)
 
 
-async def test_the_correction_freezes_while_foreign_heat_warms_a_zone(rig: Rig) -> None:
-    """Principle 13 (5): foreign heat — the monitor's view of a zone's source — freezes the
-    comfort correction. Negative: the source off, it rises."""
-    rig.hass.states.async_set("switch.fireplace", "on")
-    entry_options = options(rig.zones, comfort_correction=True)  # off by default since K4.1
-    entry_options["zones"][0]["foreign_heat"] = [
-        {"entity_id": "switch.fireplace", "kind": "switch"}
-    ]
-    short_room(rig)
-    entry = add_entry(rig, entry_options)
-    await set_up(rig, entry)
-    await rig.switch(True)
-    await rig.advance(2400, step=60)
-    assert correction(rig) == 0.0
-    rig.hass.states.async_set("switch.fireplace", "off")
-    await rig.advance(3600 + 2400, step=60)  # its hold of an hour, then heat flows
-    assert correction(rig) > 0.5
-
-
 @pytest.mark.parametrize(
     ("causes", "resumed"),
-    [(["foreign_heat"], True), (None, False), (["a_cause_of_a_later_version"], False)],
-    ids=["foreign_heat", "not_stored", "unknown"],
+    [
+        (["water_swing"], True),
+        (None, False),
+        (["a_cause_of_a_later_version"], False),
+        (["foreign_heat"], False),  # gone since I8.1c: unknown now
+    ],
+    ids=["water_swing", "not_stored", "unknown", "foreign_heat"],
 )
 async def test_a_pauses_causes_come_back_after_a_restart(
     rig: Rig, hass_storage: dict[str, Any], causes: list[str] | None, resumed: bool
 ) -> None:
-    """P-89 with V3: the causes of a pause are stored, and a restart resumes by them — after
-    foreign heat once it is gone and the minimum pause has passed, whatever the flow. A pause
-    stored without its causes, or with causes this version does not know, is taken for hot
-    water: it waits for the flow to come back."""
+    """P-89 with V3: the causes of a pause are stored, and a restart resumes by them — after a
+    water swing once it is gone and the minimum pause has passed, whatever the flow. A pause
+    stored without its causes, or with causes this version does not know (foreign heat since
+    I8.1c), is taken for hot water: it waits for the flow to come back."""
     calls = smartpi_learner(rig)
     smartpi_zone(rig, False)  # paused by the last run
     zone = rig.zones.entities["living"]
@@ -11504,6 +11622,43 @@ async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_se
         feature = entry.runtime_data.data.features[Feature.CIRCUIT_OVERSHOOT_ALARM]
         assert feature.status is FeatureStatus.INACTIVE
         assert feature.missing == ("flow",)
+
+
+FLOOR_ASKS = "input_boolean.floor_asks"
+
+
+async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Rig) -> None:
+    """I8.8 (decisions F3, F6): the living room fed straight from the boiler, idle; a floor
+    circuit whose mixer another automation runs asks through its entity: heating goes on for
+    it, and the water holds its need, 60 °C, plus the margin. Its entity unavailable: it does
+    not ask, and the control state says why (the user's answer of 2026-10-12)."""
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    rig.hass.states.async_set(FLOOR_ASKS, "on")
+    floor = {
+        "id": "floor",
+        "control": "separate",
+        "max_flow": 45,
+        "request_entity": FLOOR_ASKS,
+        "needed_temperature": 60,
+    }
+    entry_options = with_circuit(rig, {}) | {
+        "zones": [{"entity_id": rig.zones.entities["living"], "circuit": "main"}]
+    }
+    entry_options["circuits"].append(floor)
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    await rig.advance(30)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert "circuit_asks" in state.attributes["reasons"]
+    assert ("ch", True) in rig.gateway.calls
+    assert rig.gateway.setpoints()[-1] == 65.0 > EXPECTED
+    rig.hass.states.async_set(FLOOR_ASKS, "unavailable")
+    await rig.advance(30)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "idle"
+    assert "circuit_request_unknown" in state.attributes["reasons"]
+    assert [call for call in rig.gateway.calls if call[0] == "ch"][-1] == ("ch", False)
 
 
 async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
@@ -12042,27 +12197,35 @@ def suggestion_sensor(rig: Rig) -> State:
     return rig.state("sensor", "lowest_water_suggestion")
 
 
-async def test_under_control_the_suggestion_is_the_settings_own(rig: Rig) -> None:
+@pytest.mark.parametrize("own", [False, True], ids=["signal", "section_own"])
+async def test_under_control_the_suggestion_is_the_settings_own(rig: Rig, own: bool) -> None:
     """While the plugin sets the water: the reference is the lowest water temperature set, the
-    source the control's setpoint read-back (the setpoint signal is not mapped), recorded into
-    the history as control writes; thirty short burns at it suggest it + 2 K, with the issue
-    worded for the plugin's option. Nothing is written for it."""
-    await start(rig)
+    source the setpoint the boiler received, recorded into the history as control writes —
+    the CH setpoint signal, which the read-back is (I8.5b, decision D3), or a control section's
+    own read-back (a hand edit) where the signal is not mapped; thirty short burns at it suggest
+    it + 2 K, with the issue worded for the plugin's option. Nothing is written for it."""
+    if own:
+        stored = options(rig.zones)
+        stored["control"] = taken_with(rig)  # as its migrations left it (X6)
+        await set_up(rig, add_current_entry(rig, stored))
+    else:
+        await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
-    recorded = [s.value for s in coordinator.history.setpoint_read_back]
-    assert EXPECTED in recorded  # the read-back, recorded live
+    history = coordinator.history
+    series = history.setpoint_read_back if own else history.signals[Signal.CH_SETPOINT]
+    assert EXPECTED in [s.value for s in series]  # the read-back, recorded live
     written = list(rig.gateway.calls)
     now = dt_util.utcnow().timestamp()
-    short_burns(coordinator, now, LOWEST, read_back=True)
+    short_burns(coordinator, now, LOWEST, read_back=own)
     await analyse_now(coordinator)
     state = suggestion_sensor(rig)
     assert float(state.state) == LOWEST + 2.0
     attributes = state.attributes
     assert attributes["state"] == "suggestion"
-    assert attributes["source"] == "read_back"
+    assert attributes["source"] == ("read_back" if own else "ch_setpoint")
     assert attributes["reference"] == LOWEST
     assert attributes["counted_burns"] == 30
     assert attributes["short_share"] == 100.0
@@ -12086,10 +12249,10 @@ async def test_under_control_the_suggestion_is_the_settings_own(rig: Rig) -> Non
 
 
 async def test_with_control_off_the_read_back_is_no_source(rig: Rig) -> None:
-    """Control off: the boiler's own curve or its thermostat sets the water, and the control's
-    read-back counts only while the plugin sets it — without the CH setpoint signal the
-    suggestion is inactive, naming it, and nothing is told."""
-    await start(rig)
+    """Control off: the boiler's own curve or its thermostat sets the water, and a control
+    section's own read-back (a hand edit, I8.5b) counts only while the plugin sets it — without
+    the CH setpoint signal the suggestion is inactive, naming it, and nothing is told."""
+    await set_up(rig, add_current_entry(rig, options(rig.zones)))
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     short_burns(coordinator, dt_util.utcnow().timestamp(), 30.0, read_back=True)

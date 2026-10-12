@@ -98,13 +98,18 @@ CURVE_FORM = form_defaults(config_flow.control_curve_schema(ADVANCED))
 MONITOR_FORM = form_defaults(config_flow.monitor_schema({"signals": {"flue_gas": "sensor.flue"}}))
 BOILER_FORM = form_defaults(config_flow.boiler_schema({"signals": {"pressure": "sensor.water"}}))
 ENTITY_FORM = form_defaults(config_flow.control_entity_schema({}))
+# The hand-back value's own fields, shown once its method is picked (I8, decision H1).
+VALUE_FORM = form_defaults(config_flow.control_entity_schema({}, {"hand_back": "value"}))
 # The tick is offered on the entity path with the virtual topology (answers F, M).
 OWN_CONTROL_FORM = form_defaults(
     config_flow.control_entity_schema({"control": {"write_path": "entity", "topology": "virtual"}})
 )
 RELAY_FORM = form_defaults(config_flow.control_relay_schema({}))
-ZONE_FORM = form_defaults(config_flow.zone_schema({}, {}))
+# I8 (decision F5): the zones' one question, over the zones a circuit feeds.
+ZONE_FORM = form_defaults(config_flow.zones_schema({"circuits": [{"id": "a", "zones": ["c.a"]}]}))
+CIRCUIT_FORM = form_defaults(config_flow.circuit_schema({}, {"zones": ["c.a"]}))
 BEHAVIOUR_FORM = form_defaults(config_flow.control_behaviour_schema(ADVANCED))
+FROST_FORM = form_defaults(config_flow.control_frost_schema(ADVANCED))  # I8 (decision H4)
 SIGNALS_FORM = form_defaults(config_flow.signals_schema({}))
 # An entity field offers its entity as a suggested value, not a default.
 SIGNALS_SUGGESTED = {
@@ -129,19 +134,16 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("heating curve: the form's design outdoor", lambda: CURVE_DEFAULTS["design_outdoor"], -15.0),
     ("heating curve: the form's room", lambda: CURVE_DEFAULTS["room"], 20.0),
     ("heating curve: the form's offset", lambda: CURVE_DEFAULTS["offset"], 0.0),
-    # Emitter type | none — the user chooses
-    ("emitter type: none offered", lambda: ZONE_FORM["emitter"], vol.UNDEFINED),
+    # Emitter type | radiator, unless the circuit lists the zone as underfloor or convectors
+    ("emitter type: none listed (form)", lambda: CIRCUIT_FORM["underfloor"], []),
     # Lowest / highest water temperature | 20 °C (provisional, K4) / 70 °C
     ("lowest water temperature", lambda: CONTROL_DEFAULTS["hard_min"], 20.0),
     ("lowest water temperature (form)", lambda: CURVE_FORM["hard_min"], 20.0),
     ("lowest water temperature (parser)", lambda: BARE.loop.control.limits.hard_min, 20.0),
     ("highest water temperature", lambda: CONTROL_DEFAULTS["hard_max"], 70.0),
-    ("highest water temperature (form)", lambda: CURVE_FORM["hard_max"], 70.0),
-    ("highest water temperature (parser)", lambda: BARE.loop.control.limits.hard_max, 70.0),
-    # Weather ceiling | the curve + 10 K
-    ("weather ceiling", lambda: CONTROL_DEFAULTS["ceiling_band"], 10.0),
-    ("weather ceiling (form)", lambda: CURVE_FORM["ceiling_band"], 10.0),
-    ("weather ceiling (parser)", lambda: BARE.loop.control.limits.ceiling_band, 10.0),
+    # I8 (decision F2): the circuit's, this where its form gives none.
+    ("highest water temperature (form)", lambda: config_flow.highest_water_of({}), 70.0),
+    ("highest water temperature (parser)", lambda: BARE.loop.control.circuit_max, 70.0),
     # Ramp | 1 K per minute
     ("ramp", lambda: CONTROL_DEFAULTS["ramp_k_per_min"], 1.0),
     ("ramp (form)", lambda: BEHAVIOUR_FORM["ramp_k_per_min"], 1.0),
@@ -152,7 +154,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("decision interval (parser)", lambda: BARE.loop.control.decision_interval_s, 300.0),
     # Activation delay | 0 s
     ("activation delay", lambda: CONTROL_DEFAULTS["activation_delay_s"], 0),
-    ("activation delay (form)", lambda: CURVE_FORM["activation_delay_s"], 0),
+    ("activation delay (form)", lambda: BEHAVIOUR_FORM["activation_delay_s"], 0),
     ("activation delay (parser)", lambda: BARE.loop.control.activation_delay_s, 0.0),
     # Write type of a picked target | unknown — control stays off until declared
     ("write type (form)", lambda: ENTITY_FORM["write_type"], WriteType.UNKNOWN.value),
@@ -168,10 +170,10 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ('"off" setpoint (parser)', lambda: BARE.loop.off_setpoint, 10.0),
     ('"off" setpoint: never below 8 °C on the gateway', lambda: OTGW_MIN_SETPOINT, 8.0),
     # Hand-back value (entity) | none — entered with its effect
-    ("hand-back value (form)", lambda: ENTITY_FORM["hand_back_value"], vol.UNDEFINED),
+    ("hand-back value (form)", lambda: VALUE_FORM["hand_back_value"], vol.UNDEFINED),
     (
         "hand-back value's effect (form)",
-        lambda: ENTITY_FORM["hand_back_value_effect"],
+        lambda: VALUE_FORM["hand_back_value_effect"],
         vol.UNDEFINED,
     ),
     ("hand-back method (form)", lambda: ENTITY_FORM["hand_back"], vol.UNDEFINED),
@@ -194,14 +196,14 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ),
     # Frost limit / release | 5 / 7 °C
     ("frost limit", lambda: CONTROL_DEFAULTS["frost_limit"], 5.0),
-    ("frost limit (form)", lambda: CURVE_FORM["frost_limit"], 5.0),
+    ("frost limit (form)", lambda: FROST_FORM["frost_limit"], 5.0),
     ("frost limit (parser)", lambda: BARE.loop.control.frost.room_limit, 5.0),
     ("frost release", lambda: CONTROL_DEFAULTS["frost_release"], 7.0),
-    ("frost release (form)", lambda: CURVE_FORM["frost_release"], 7.0),
+    ("frost release (form)", lambda: FROST_FORM["frost_release"], 7.0),
     ("frost release (parser)", lambda: BARE.loop.control.frost.release, 7.0),
     # Frost protection | every zone, heated only where its emitter can take heat
     ("frost protection: every zone (parser)", lambda: BARE.loop.control.frost.zone, None),
-    ("frost protection: every zone (form)", lambda: CURVE_FORM["frost_zone"], vol.UNDEFINED),
+    ("frost protection: every zone (form)", lambda: FROST_FORM["frost_zone"], vol.UNDEFINED),
     (
         'frost protection: no zone "closes when off"',
         lambda: BARE.loop.control.frost.closes_when_off,
@@ -210,7 +212,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     (
         'frost protection: "closes when off" unticked (form)',
         lambda: ZONE_FORM["closes_when_off"],
-        False,
+        [],
     ),
     # Demand threshold | one zone calling
     ("demand threshold", lambda: CONTROL_DEFAULTS["count_threshold"], 1),
@@ -223,7 +225,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     # Comfort correction | on in full control (the user, 2026-10-10, G11 B); up to its limit,
     # 3 K by default (at most 10 K), rising at most 3 K a day
     ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], True),
-    ("comfort correction (form)", lambda: BEHAVIOUR_FORM["comfort_correction"], True),
+    ("comfort correction (form)", lambda: CURVE_FORM["comfort_correction"], True),
     ("comfort correction (parser)", lambda: BARE.loop.control.comfort_correction, True),
     (
         "comfort correction: not with the relay",
@@ -233,7 +235,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("comfort correction: its limit", lambda: CONTROL_DEFAULTS["comfort_correction_max_k"], 3.0),
     (
         "comfort correction: its limit (form)",
-        lambda: BEHAVIOUR_FORM["comfort_correction_max_k"],
+        lambda: CURVE_FORM["comfort_correction_max_k"],
         3.0,
     ),
     ("comfort correction: its limit (parser)", lambda: BARE.loop.control.correction_max_k, 3.0),

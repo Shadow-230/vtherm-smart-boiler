@@ -1,6 +1,6 @@
-"""Binary sensors: connection, hot water available and foreign heat per zone, alarms, and the
-alarms of control. An alarm exists only where its feature is not inactive (the missing-data
-rule, Y4)."""
+"""Binary sensors: the signals' connection, the monitor's alarms, a long burn without warming,
+the outdoor sensor's problem, and the alarms of control. An alarm exists only where its feature
+is not inactive (the missing-data rule, Y4)."""
 
 from __future__ import annotations
 
@@ -53,19 +53,9 @@ async def async_setup_entry(
 ) -> None:
     coordinator = entry.runtime_data
     entities: list[BinarySensorEntity] = [ConnectionSensor(coordinator)]
-    hot_water = feature_configured(coordinator, "hot_water")
-    for zone_config, zone in zip(
-        coordinator.config.zones, coordinator.config.installation.zones, strict=True
-    ):
-        if hot_water:
-            entities.append(HotWaterSensor(coordinator, zone.zone_id))
-        if zone_config.foreign_heat:
-            entities.append(ForeignHeatSensor(coordinator, zone.zone_id))
     entities += [AlarmSensor(coordinator, kind) for kind in _alarm_kinds(coordinator)]
     if feature_configured(coordinator, "outdoor_sensor_problem"):
         entities.append(OutdoorSensorProblem(coordinator))
-    if feature_configured(coordinator, "window_probably_open"):
-        entities.append(WindowSensor(coordinator))
     if feature_configured(coordinator, "long_burn"):
         entities.append(LongBurnSensor(coordinator))
     if coordinator.control is not None:
@@ -112,50 +102,6 @@ class ConnectionSensor(SmartBoilerEntity, BinarySensorEntity):
         }
 
 
-class HotWaterSensor(SmartBoilerEntity, BinarySensorEntity):
-    """Heat is reaching the zone's emitters; unknown when it cannot be told, with its reason.
-    How far the flow stands above the room is left to the diagnostics (P-72)."""
-
-    _attr_device_class = BinarySensorDeviceClass.HEAT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
-        super().__init__(coordinator, "hot_water", zone=zone)
-
-    @property
-    def is_on(self) -> bool | None:
-        return self.coordinator.data.zones[self.zone or ""].hot_water.available
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        hot = self.coordinator.data.zones[self.zone or ""].hot_water
-        return {"reason": None if hot.reason is None else hot.reason.value}
-
-
-class ForeignHeatSensor(SmartBoilerEntity, BinarySensorEntity):
-    _unrecorded_attributes = frozenset({"unknown", "holding"})
-
-    _attr_device_class = BinarySensorDeviceClass.HEAT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
-        super().__init__(coordinator, "foreign_heat", zone=zone)
-
-    @property
-    def is_on(self) -> bool | None:
-        state = self.coordinator.data.zones[self.zone or ""].foreign_heat
-        return None if state is None else state.active
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        state = self.coordinator.data.zones[self.zone or ""].foreign_heat
-        if state is None:
-            return {}
-        return {
-            "sources": list(state.sources),
-            "unknown": list(state.unknown),
-            "holding": state.holding,
-        }
-
-
 class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
     """An alarm or early warning: on while active, unknown while it cannot be judged once its
     hour's hold is over (S-16) — never "OK" for want of data. Information only: the monitor's
@@ -184,29 +130,6 @@ class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
             "level": None if alarm.level is None else alarm.level.value,
             "limit": alarm.limit,
             "reason": alarm.reason,
-        }
-
-
-class WindowSensor(SmartBoilerEntity, BinarySensorEntity):
-    """G11 F: a window probably open in a room — falling fast while it heats — seen without a
-    sensor. Information only: the room is left out of the comfort correction's rise and of the
-    long-run rule until it warms again; nothing else changes."""
-
-    _attr_device_class = BinarySensorDeviceClass.WINDOW
-
-    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
-        super().__init__(coordinator, "window_probably_open")
-
-    @property
-    def is_on(self) -> bool:
-        return bool(self.coordinator.window_suspected)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        zones = sorted(self.coordinator.window_suspected)
-        return {
-            "rooms": [self.coordinator.link.zone_name(zone) for zone in zones],
-            "zones": zones,
         }
 
 

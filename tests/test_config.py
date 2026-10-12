@@ -11,7 +11,6 @@ from custom_components.vtherm_smart_boiler.config import (
     named_entities,
     rename_entity,
 )
-from custom_components.vtherm_smart_boiler.core.foreign_heat import SourceKind
 from custom_components.vtherm_smart_boiler.core.installation import (
     BoilerClass,
     CircuitControl,
@@ -19,10 +18,93 @@ from custom_components.vtherm_smart_boiler.core.installation import (
 )
 from custom_components.vtherm_smart_boiler.core.metrics import ModulationScale
 from custom_components.vtherm_smart_boiler.core.parameters import ParameterKey, Source
-from custom_components.vtherm_smart_boiler.core.reference_room import Strategy
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
 MINIMAL = {"signals": {"flame": "binary_sensor.flame", "flow": "sensor.flow"}}
+
+
+def test_a_circuit_run_by_other_automation_names_its_request_and_need() -> None:
+    """I8 (decision F3): a circuit run by other automation's request and need entities and its
+    need entered are read — followed for changes, and renamed with the entity; another circuit
+    type's are kept in the options and read as nothing."""
+    from custom_components.vtherm_smart_boiler.config import rename_entity
+
+    options = MINIMAL | {
+        "circuits": [
+            {"id": "main", "control": "unmixed_shared", "zones": ["climate.a"]},
+            {
+                "id": "floor",
+                "control": "separate",
+                "zones": ["climate.b"],
+                "request_entity": "binary_sensor.mixer_wants",
+                "needed_entity": "sensor.mixer_target",
+                "needed_temperature": 35,
+            },
+            {"id": "hall", "control": "passive_fixed", "fixed_temperature": 40,
+             "request_entity": "binary_sensor.kept", "needed_temperature": 50},
+        ],
+    }  # fmt: skip
+    config = EntryConfig.from_options(options)
+    assert config.circuit_request_entities == {"floor": "binary_sensor.mixer_wants"}
+    assert config.circuit_need_entities == {"floor": "sensor.mixer_target"}
+    needed = {c.circuit_id: c.needed for c in config.installation.circuits}
+    assert needed == {"main": None, "floor": 35.0, "hall": None}
+    assert {"binary_sensor.mixer_wants", "sensor.mixer_target"} <= set(config.watched_entities)
+    renamed = rename_entity(options, "binary_sensor.mixer_wants", "binary_sensor.wants")
+    assert renamed["circuits"][1]["request_entity"] == "binary_sensor.wants"
+
+
+SPLIT = MINIMAL | {
+    "circuits": [
+        {"id": "main", "zones": ["climate.living", "climate.bath"],
+         "devices": {"climate.living": ["switch.radiator"]}},
+        {"id": "floor", "control": "separate", "zones": ["climate.living"],
+         "underfloor": ["climate.living"], "devices": {"climate.living": ["switch.loop"]}},
+    ],
+}  # fmt: skip
+
+
+def test_a_zone_split_by_its_devices_is_read_in_each_of_its_circuits() -> None:
+    """I8.8b (decision F2): a circuit lists the zones it feeds, and of a zone it feeds only in
+    part, those devices; the zone is watched once; the devices are followed in a rename and
+    named in a removal, as devices."""
+    from custom_components.vtherm_smart_boiler.config import rename_entity
+    from custom_components.vtherm_smart_boiler.core.installation import EmitterType, Zone
+
+    config = EntryConfig.from_options(SPLIT)
+    assert config.installation.zones == (
+        Zone("climate.living", "main", devices=frozenset({"switch.radiator"})),
+        Zone("climate.bath", "main"),
+        Zone("climate.living", "floor", EmitterType.UNDERFLOOR, devices=frozenset({"switch.loop"})),
+    )
+    assert config.zone_entities == ("climate.living", "climate.bath")
+    assert named_entities(SPLIT)["switch.loop"] == ("devices",)
+    renamed = rename_entity(SPLIT, "switch.loop", "switch.floor_loop")
+    assert renamed["circuits"][1]["devices"] == {"climate.living": ["switch.floor_loop"]}
+    moved = rename_entity(SPLIT, "climate.living", "climate.lounge")
+    assert moved["circuits"][0]["devices"] == {"climate.lounge": ["switch.radiator"]}
+    assert EntryConfig.from_options(moved).zone_entities == ("climate.lounge", "climate.bath")
+
+
+@pytest.mark.parametrize(
+    "devices",
+    [
+        ["switch.loop"],
+        {"climate.elsewhere": ["switch.loop"]},
+        {"climate.living": []},
+        {"climate.living": "switch.loop"},
+        {"climate.living": [None]},
+    ],
+    ids=["not_a_mapping", "zone_not_listed", "empty", "text", "foreign"],
+)
+def test_a_circuits_devices_of_another_shape_are_refused(devices: object) -> None:
+    """Devices only for a zone the circuit lists, as a list of entities — a hand edit of another
+    shape is refused, as a circuit's zones are."""
+    circuit = {"id": "main", "zones": ["climate.living"], "devices": devices}
+    options = MINIMAL | {"circuits": [circuit]}
+    with pytest.raises(ConfigError) as raised:
+        EntryConfig.from_options(options)
+    assert raised.value.code == "invalid_circuit"
 
 
 def test_minimal_options_get_cautious_defaults() -> None:
@@ -34,7 +116,6 @@ def test_minimal_options_get_cautious_defaults() -> None:
     assert config.zones == ()
     assert config.weather is None
     assert config.weather_max_age_s is None  # no age limit: availability only
-    assert config.reference_room.strategy is Strategy.LARGEST_DEFICIT
     assert config.monitor.monitoring_days == 7.0
     assert config.monitor.monitor.modulation_scale is ModulationScale.RANGE
     assert config.parameters.value(ParameterKey.HEATING_THRESHOLD) == 15.0  # class default
@@ -112,15 +193,10 @@ def test_full_options() -> None:
                 "entity_id": "climate.a",
                 "circuit": "c1",
                 "emitter": "underfloor",
-                "foreign_heat": [
-                    {"entity_id": "switch.fire", "kind": "switch"},
-                    {"entity_id": "sensor.stove", "kind": "temperature", "threshold": 60},
-                ],
             },
-            {"entity_id": "climate.b", "circuit": "c2", "reference_output_w": 1500},
+            {"entity_id": "climate.b", "circuit": "c2"},
         ],
-        "building": {"design_load_kw": 8.0, "thermal_mass": "heavy"},
-        "reference_room": {"strategy": "chosen_zone", "zone": "climate.b"},
+        "building": {"design_load_kw": 8.0},
         "monitor": {"condensing_return": 52, "short_burn_min": 8, "monitoring_days": 10},
         "freshness": {"flow": 600, "pressure": None},
     }
@@ -130,23 +206,15 @@ def test_full_options() -> None:
     assert config.installation.circuit("c2").control is CircuitControl.SEPARATE
     assert config.circuit_flow_entities == {"c2": "sensor.mixed_flow"}
     assert config.installation.zone("climate.a").emitter is EmitterType.UNDERFLOOR
-    assert config.zones[0].foreign_heat[1].kind is SourceKind.TEMPERATURE
-    assert config.zones[0].foreign_heat[1].threshold == 60.0
     # design load 8 kW between 20 °C indoor and a 0 °C design outdoor temperature
     loss = config.parameters.get(ParameterKey.LOSS_COEFFICIENT).effective()
     assert loss is not None
     assert loss.value == pytest.approx(0.4)
     assert loss.source is Source.ENTERED
-    mass = config.parameters.get(ParameterKey.THERMAL_TIME_CONSTANT).effective()
-    assert mass is not None
-    assert mass.value == 120.0
-    assert mass.source is Source.DEFAULT  # a coarse answer, until measured
-    assert config.reference_room.zone == "climate.b"
     assert config.monitor.monitor.condensing_return == 52.0
     assert config.monitor.monitor.short_burn_s == 480.0
     assert config.monitor.monitor.verdict.min_days == 10.0
     assert config.freshness == {Signal.FLOW: 600.0, Signal.PRESSURE: None}
-    assert "switch.fire" in config.watched_entities
     assert "sensor.mixed_flow" in config.watched_entities
     assert "weather.home" in config.watched_entities
 
@@ -171,13 +239,21 @@ def test_the_weather_entity_has_an_age_limit_of_its_own(
     assert config.weather_max_age_s == weather
 
 
-def test_coarse_building_answers_give_a_default_loss() -> None:
-    options = MINIMAL | {"building": {"floor_area": 140, "insulation": "good"}}
-    loss = EntryConfig.from_options(options).parameters.get(ParameterKey.LOSS_COEFFICIENT)
+def test_the_heat_loss_is_entered_as_the_design_load_only() -> None:
+    """I8 (decision B5): the floor area, the insulation and the thermal mass give nothing any
+    more; a stored loss coefficient (a hand edit) is left out — the design load is the one way
+    in."""
+    coarse = MINIMAL | {"building": {"floor_area": 140, "insulation": "good"}}
+    parameters = EntryConfig.from_options(coarse).parameters
+    assert parameters.get(ParameterKey.LOSS_COEFFICIENT).effective() is None
+    hand_edit = MINIMAL | {"parameters": {"loss_coefficient": 0.3}}
+    parameters = EntryConfig.from_options(hand_edit).parameters
+    assert parameters.get(ParameterKey.LOSS_COEFFICIENT).effective() is None
+    both = hand_edit | {"building": {"design_load_kw": 7.0}}
+    loss = EntryConfig.from_options(both).parameters.get(ParameterKey.LOSS_COEFFICIENT)
     effective = loss.effective()
     assert effective is not None
-    assert effective.source is Source.DEFAULT
-    assert effective.value == pytest.approx(140 * 50 / 1000 / 35)
+    assert effective.value == pytest.approx(0.2)  # 7 kW over 35 K
 
 
 @pytest.mark.parametrize(
@@ -193,10 +269,6 @@ def test_coarse_building_answers_give_a_default_loss() -> None:
         (
             MINIMAL | {"circuits": [{"id": "t", "control": "passive_fixed"}]},
             "fixed_temperature_missing",
-        ),
-        (
-            MINIMAL | {"reference_room": {"strategy": "chosen_zone", "zone": "climate.x"}},
-            "reference_zone_unknown",
         ),
         (MINIMAL | {"control": {"write_path": "carrier_pigeon"}}, "invalid_control"),
         (
@@ -443,11 +515,14 @@ def test_different_or_empty_signal_entities_are_kept(extra: dict) -> None:
 
 
 def test_the_form_lists_the_signals_in_their_precedence() -> None:
-    """The form's order and the parser's precedence are one list."""
+    """The form's order and the parser's precedence are one list — but for control's heating
+    on/off read-back, which no monitor feature reads (I8.5b)."""
     from custom_components.vtherm_smart_boiler.config_flow import SIGNAL_FIELDS
+    from custom_components.vtherm_smart_boiler.const import CH_ENABLED
     from custom_components.vtherm_smart_boiler.core.signals import SIGNAL_PRECEDENCE
 
-    assert tuple(SIGNAL_FIELDS) == tuple(signal.value for signal in SIGNAL_PRECEDENCE)
+    fields = tuple(key for key in SIGNAL_FIELDS if key != CH_ENABLED)
+    assert fields == tuple(signal.value for signal in SIGNAL_PRECEDENCE)
     assert set(SIGNAL_PRECEDENCE) == set(Signal)
 
 
@@ -473,36 +548,16 @@ def test_the_form_lists_the_signals_in_their_precedence() -> None:
             "invalid_zone",
             "emitter",
         ),
-        (
-            MINIMAL
-            | {
-                "zones": [
-                    {
-                        "entity_id": "climate.a",
-                        "foreign_heat": [{"entity_id": "x.y", "kind": "dragon"}],
-                    }
-                ]
-            },
-            "invalid_zone",
-            "foreign_heat",
-        ),
         (MINIMAL | {"zones": [{"emitter": "radiator"}]}, "invalid_zone", "entity_id"),
-        (MINIMAL | {"reference_room": {"strategy": "loudest"}}, "invalid_reference", "strategy"),
-        (
-            MINIMAL | {"reference_room": {"switch_margin": "wide"}},
-            "invalid_reference",
-            "switch_margin",
-        ),
         (
             MINIMAL | {"monitor": {"monitoring_days": "a week"}},
             "invalid_monitor",
             "monitoring_days",
         ),
-        (MINIMAL | {"building": {"thermal_mass": "granite"}}, "invalid_building", "thermal_mass"),
         (
-            MINIMAL | {"building": {"floor_area": 120, "insulation": "straw"}},
-            "invalid_building",
-            "insulation",
+            MINIMAL | {"building": {"design_load_kw": "large"}},
+            "implausible_parameter",
+            "design_load_kw",
         ),
         (MINIMAL | {"freshness": {"flow": "soon"}}, "invalid_freshness", "flow"),
     ],
@@ -537,10 +592,6 @@ def _floor_circuit(**values: object) -> dict:
     return UNDERFLOOR | {"circuits": [{"id": "floor", "max_flow": 40} | values]}
 
 
-def _zone(**values: object) -> dict:
-    return MINIMAL | {"zones": [{"entity_id": "climate.a", "emitter": "radiator"} | values]}
-
-
 @pytest.mark.parametrize(
     ("options", "code", "subject"),
     [
@@ -552,23 +603,6 @@ def _zone(**values: object) -> dict:
         (_floor_circuit(max_flow_alarm=101), "invalid_circuit", "max_flow_alarm"),
         (_floor_circuit(max_flow_alarm_min=0), "invalid_circuit", "max_flow_alarm_min"),
         (_floor_circuit(fixed_temperature="-inf"), "invalid_circuit", "fixed_temperature"),
-        (_zone(exponent="nan"), "invalid_zone", "exponent"),
-        (_zone(reference_output_w=0), "invalid_zone", "reference_output_w"),
-        (
-            _zone(foreign_heat=[{"entity_id": "sensor.p", "kind": "power", "threshold": NAN}]),
-            "invalid_zone",
-            "foreign_heat",
-        ),
-        (
-            _zone(foreign_heat=[{"entity_id": "sensor.t", "kind": "temperature", "threshold": 5}]),
-            "invalid_zone",
-            "foreign_heat",
-        ),
-        (
-            MINIMAL | {"reference_room": {"switch_margin": "nan"}},
-            "invalid_reference",
-            "switch_margin",
-        ),
         *(
             (MINIMAL | {"monitor": {"monitoring_days": v}}, "invalid_monitor", "monitoring_days")
             for v in ("nan", INF, 0, 6, 61, -7)
@@ -581,10 +615,8 @@ def _zone(**values: object) -> dict:
                 ("unstable_burns_limit", 0),
                 ("pressure_high_alarm", "nan"),
                 ("flue_gas_warning", 500),
-                ("near_room_k", -1),
                 ("condensing_return", NAN),
                 ("short_burn_min", 0),
-                ("foreign_heat_hold_min", -5),
             )
         ),
         (MINIMAL | {"freshness": {"flow": "nan"}}, "invalid_freshness", "flow"),
@@ -663,7 +695,6 @@ SECTIONS_OF_ANOTHER_SHAPE = [
     ("zones", [["climate.a"]], "invalid_zone"),
     ("parameters", [], "invalid_parameters"),
     ("building", "big", "invalid_building"),
-    ("reference_room", ["chosen_zone"], "invalid_reference"),
     ("monitor", [], "invalid_monitor"),
     ("freshness", [60], "invalid_freshness"),
     ("control", ["opentherm_gw"], "invalid_control"),
@@ -727,14 +758,9 @@ NAMING = {
     "boiler": {"class": "flow_setpoint"},
     "circuits": [{"id": "main", "flow_entity": "sensor.circuit_flow"}],
     "zones": [
-        {
-            "entity_id": "climate.living",
-            "circuit": "main",
-            "foreign_heat": [{"entity_id": "switch.stove", "kind": "switch"}],
-        },
+        {"entity_id": "climate.living", "circuit": "main"},
         {"entity_id": "climate.bedroom", "circuit": "main"},
     ],
-    "reference_room": {"strategy": "chosen_zone", "zone": "climate.living"},
     "freshness": {"flow": 600},
     "control": {
         "write_path": "entity",
@@ -759,8 +785,7 @@ def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
         "sensor.out": ("signals.outdoor",),
         "weather.home": ("weather",),
         "sensor.circuit_flow": ("circuits.main.flow_entity",),
-        "climate.living": ("zones", "reference_room.zone"),
-        "switch.stove": ("zones.foreign_heat (climate.living)",),
+        "climate.living": ("zones",),
         "climate.bedroom": ("zones", "control.frost_zone"),
         "number.setpoint": ("control.setpoint_entity",),
         "switch.heating": ("control.ch_entity",),
@@ -777,10 +802,9 @@ def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
 @pytest.mark.parametrize(
     ("old", "new", "changed"),
     [
-        ("climate.living", "climate.lounge", ("zones", "reference_room")),
+        ("climate.living", "climate.lounge", ("zones",)),
         ("climate.bedroom", "climate.guest_room", ("zones", "control")),
         ("sensor.flow", "sensor.boiler_flow", ("signals",)),
-        ("switch.stove", "switch.fireplace", ("zones",)),
         ("sensor.circuit_flow", "sensor.radiator_flow", ("circuits",)),
         ("weather.home", "weather.house", ("weather",)),
         ("number.setpoint", "number.boiler_setpoint", ("control",)),
@@ -817,8 +841,8 @@ def test_renaming_what_the_options_do_not_name_as_an_entity_changes_nothing(old:
     "broken",
     [
         {"signals": None, "zones": "climate.a", "circuits": {"id": "main"}},
-        {"zones": [None, {"entity_id": None}, {"entity_id": "climate.a", "foreign_heat": None}]},
-        {"reference_room": "climate.a", "control": ["setpoint_entity"], "weather": 5},
+        {"zones": [None, {"entity_id": None}, {"entity_id": "climate.a"}]},
+        {"control": ["setpoint_entity"], "weather": 5},
         {},
     ],
 )

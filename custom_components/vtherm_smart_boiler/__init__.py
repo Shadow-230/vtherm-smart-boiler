@@ -109,7 +109,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
             await unit.async_start()
         entry.runtime_data = coordinator
         await coordinator.async_load_texts()  # the coded lists' texts (P-39)
-        await _async_migrate_zone_unique_ids(hass, entry, config)
         forwarded = True  # before: a forward that fails part-way leaves platforms set up
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         feature_manager.async_attach(hass, coordinator)
@@ -231,6 +230,30 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_comfort_correction(hass, entry)
     if entry.minor_version < 8:
         _migrate_room_mode(hass, entry)
+    if entry.minor_version < 9:
+        _migrate_reference_room(hass, entry)
+    if entry.minor_version < 10:
+        _migrate_foreign_heat(hass, entry)
+    if entry.minor_version < 11:
+        _migrate_zone_values(hass, entry)
+    if entry.minor_version < 12:
+        _migrate_correction_range(hass, entry)
+    if entry.minor_version < 13:
+        _migrate_building(hass, entry)
+    if entry.minor_version < 14:
+        _migrate_room_values(hass, entry)
+    if entry.minor_version < 15:
+        _migrate_topics(hass, entry)
+    if entry.minor_version < 16:
+        _migrate_monitor_mode(hass, entry)
+    if entry.minor_version < 17:
+        _migrate_relay_reads(hass, entry)
+    if entry.minor_version < 18:
+        _migrate_read_backs(hass, entry)
+    if entry.minor_version < 19:
+        _migrate_highest_water(hass, entry)
+    if entry.minor_version < 20:
+        _migrate_circuit_zones(hass, entry)
     return True
 
 
@@ -259,14 +282,348 @@ def _migrate_room_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options=options, minor_version=8)
 
 
+def _migrate_reference_room(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.1 (minor version 9): the reference room is gone (`docs/plan-0.2-i8.md` B1) — the plugin
+    is for the boiler; its stored settings go with it. Its three sensors leave the registry at
+    the next setup, as entities the options no longer create."""
+    from .const import REFERENCE_ROOM
+
+    options = {key: value for key, value in entry.options.items() if key != REFERENCE_ROOM}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=9)
+
+
+def _migrate_foreign_heat(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.1c (minor version 10): foreign heat is gone (`docs/plan-0.2-i8.md` B3) — a room warmed
+    by something else is VT's and SmartPI's to handle; the zones' sources and the monitor's hold
+    time go. Their binary sensors leave the registry at the next setup."""
+    from .const import MONITOR, ZONES
+
+    options = dict(entry.options)
+    zones = options.get(ZONES)
+    if isinstance(zones, list):
+        options[ZONES] = [
+            {key: value for key, value in zone.items() if key != "foreign_heat"}
+            if isinstance(zone, Mapping)
+            else zone
+            for zone in zones
+        ]
+    monitor = options.get(MONITOR)
+    if isinstance(monitor, Mapping) and "foreign_heat_hold_min" in monitor:
+        options[MONITOR] = {k: v for k, v in monitor.items() if k != "foreign_heat_hold_min"}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=10)
+
+
+def _migrate_zone_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.1d (minor version 11): the per-zone values are gone (`docs/plan-0.2-i8.md` B4) — the
+    zones' emitter output and exponent, which only a per-zone sensor used, and the monitor's
+    "near room temperature". Their entities leave the registry at the next setup."""
+    from .const import MONITOR, ZONES
+
+    options = dict(entry.options)
+    zones = options.get(ZONES)
+    if isinstance(zones, list):
+        options[ZONES] = [
+            {k: v for k, v in zone.items() if k not in ("reference_output_w", "exponent")}
+            if isinstance(zone, Mapping)
+            else zone
+            for zone in zones
+        ]
+    monitor = options.get(MONITOR)
+    if isinstance(monitor, Mapping) and "near_room_k" in monitor:
+        options[MONITOR] = {k: v for k, v in monitor.items() if k != "near_room_k"}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=11)
+
+
+def _migrate_correction_range(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.3 (minor version 12): the curve's "correction range" is gone (`docs/plan-0.2-i8.md`
+    B6); the comfort correction's own limit is the only bound above the curve. A narrower
+    stored range becomes that limit, and one too small to let any correction through switches
+    the correction off — control runs as it did."""
+    from .control_config import without_correction_range
+
+    options = dict(entry.options)
+    if CONTROL in options:  # any section, set up or not: the key goes everywhere
+        options[CONTROL] = without_correction_range(options[CONTROL])
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=12)
+
+
+# The design load the form takes, in kW (I8.3b): a converted loss coefficient is kept within it.
+DESIGN_LOAD_BOUNDS = (0.5, 200.0)
+
+
+def _migrate_building(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.3b (minor version 13): the floor area, the insulation and the thermal mass are gone
+    (`docs/plan-0.2-i8.md` B5) — they gave only rules of thumb no function needed. An entered
+    loss coefficient becomes the design load it gives at the stored design outdoor temperature
+    and the indoor reference (20 °C unless stored), to 0.1 kW, so the heat loss stays as entered;
+    it replaced a stored design load before, and does so now (logged). A value outside the
+    form's range is brought into it (logged); one that is no positive number is dropped."""
+    import logging
+    import math
+
+    from .const import BUILDING, PARAMETERS
+
+    log = logging.getLogger(__name__)
+    options = dict(entry.options)
+    building = options.get(BUILDING)
+    if isinstance(building, Mapping):
+        gone = ("floor_area", "insulation", "thermal_mass")
+        building = {k: v for k, v in building.items() if k not in gone}
+        options[BUILDING] = building
+    params = options.get(PARAMETERS)
+    if isinstance(params, Mapping) and "loss_coefficient" in params:
+        raw = params["loss_coefficient"]
+        options[PARAMETERS] = {k: v for k, v in params.items() if k != "loss_coefficient"}
+        loss = raw if isinstance(raw, int | float) and not isinstance(raw, bool) else None
+        if loss is not None and math.isfinite(loss) and loss > 0:
+            design_outdoor = _stored_float(params.get("design_outdoor"), -15.0)
+            indoor = _stored_float(params.get("indoor_reference"), 20.0)
+            exact = loss * (indoor - design_outdoor)
+            low, high = DESIGN_LOAD_BOUNDS
+            load = round(min(max(exact, low), high), 1)
+            if not low <= exact <= high:
+                log.warning(
+                    "The entered loss coefficient %s kW/K gives a design load of %.1f kW, outside "
+                    "the form's %s to %s kW: %s kW is kept",
+                    raw, exact, low, high, load,
+                )  # fmt: skip
+            target = dict(building) if isinstance(building, Mapping) else {}
+            before = target.get("design_load_kw")
+            if before not in (None, "") and before != load:
+                log.info(
+                    "The entered loss coefficient replaces the design load %s kW: %s kW",
+                    before,
+                    load,
+                )
+            target["design_load_kw"] = load
+            options[BUILDING] = target
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=13)
+
+
+def _migrate_room_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.4 (minor version 14): "room temperature only" left the mode panel until it works
+    (`docs/plan-0.2-i8.md` C2); an entry with it reads as monitoring only — what it did. The
+    boiler class stays: both keep control off, and the class follows the connection alike."""
+    from .const import BOILER
+    from .control_config import ROOM_VALUES_FROM_BEFORE, ControlMode
+
+    options = dict(entry.options)
+    boiler = options.get(BOILER)
+    if isinstance(boiler, Mapping) and boiler.get("control_mode") == ROOM_VALUES_FROM_BEFORE:
+        options[BOILER] = {**boiler, "control_mode": ControlMode.MONITOR.value}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=14)
+
+
+def _migrate_topics(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.4b (minor version 15): the OTGW firmware's MQTT topics were stored twice — with the
+    connection, for the repeats, and in the control section, for the writes; they are stored
+    once now, with the connection (`docs/plan-0.2-i8.md` D2). Where the two differ, the control
+    section's go there — what the writes used (Claude's call), logged."""
+    import logging
+
+    from .const import BOILER
+    from .control_config import MQTT_TOPIC_KEYS
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    if isinstance(control, Mapping) and any(key in control for key in MQTT_TOPIC_KEYS):
+        boiler = dict(options.get(BOILER) or {}) if isinstance(options.get(BOILER), Mapping) else {}
+        for key in MQTT_TOPIC_KEYS:
+            value = control.get(key)
+            if value in (None, ""):
+                continue
+            if boiler.get(key) not in (None, "", value):
+                logging.getLogger(__name__).info(
+                    "The connection's MQTT %s %r is replaced by the control's %r, which the "
+                    "writes used",
+                    key,
+                    boiler[key],
+                    value,
+                )
+            boiler[key] = value
+        options[BOILER] = boiler
+        options[CONTROL] = {k: v for k, v in control.items() if k not in MQTT_TOPIC_KEYS}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=15)
+
+
+def _migrate_monitor_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.4c (minor version 16): a gateway that only listens ("monitor mode") was a topology;
+    it is the control mode "monitoring only" now (`docs/plan-0.2-i8.md` B7, Claude's call). The
+    control section is kept, without the topology, which allowed no control; the class follows
+    the connection where one is stored."""
+    from .const import BOILER
+    from .control_config import (
+        MONITOR_MODE_FROM_BEFORE,
+        Connection,
+        ControlMode,
+        boiler_class_for,
+    )
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    if isinstance(control, Mapping) and control.get("topology") == MONITOR_MODE_FROM_BEFORE:
+        options[CONTROL] = {k: v for k, v in control.items() if k != "topology"}
+        stored = options.get(BOILER)
+        boiler = dict(stored) if isinstance(stored, Mapping) else {}
+        boiler["control_mode"] = ControlMode.MONITOR.value
+        try:
+            connection = Connection(str(boiler.get("connection")))
+        except ValueError:
+            connection = None  # made before the question: its class stays
+        if connection is not None:
+            boiler["class"] = boiler_class_for(connection, ControlMode.MONITOR).value
+        options[BOILER] = boiler
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=16)
+
+
+def _migrate_relay_reads(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.5a (minor version 17): a relay asks whether the boiler is read through another
+    integration too (`docs/plan-0.2-i8.md` D4); an entry with a boiler signal mapped beyond what
+    a relay reads answers Yes, so none of them goes at the next save. An age limit stored for a
+    signal not mapped (or for a weather entity not set) judged nothing and goes (D7)."""
+    from .const import BOILER, FRESHNESS, RELAY_READS, RELAY_SIGNALS, SIGNALS, WEATHER
+    from .control_config import Connection
+
+    options = dict(entry.options)
+    stored = options.get(SIGNALS)
+    signals = stored if isinstance(stored, Mapping) else {}
+    stored = options.get(BOILER)
+    boiler = dict(stored) if isinstance(stored, Mapping) else {}
+    if (
+        boiler.get("connection") == Connection.RELAY.value
+        and not isinstance(boiler.get(RELAY_READS), bool)
+        and any(key not in RELAY_SIGNALS for key in signals)
+    ):
+        options[BOILER] = {**boiler, RELAY_READS: True}
+    freshness = options.get(FRESHNESS)
+    if isinstance(freshness, Mapping):
+        mapped = set(signals) | ({WEATHER} if options.get(WEATHER) else set())
+        options[FRESHNESS] = {k: v for k, v in freshness.items() if k in mapped}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=17)
+
+
+def _migrate_read_backs(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.5b (minor version 18): control's read-backs are boiler signals (`docs/plan-0.2-i8.md`
+    D3) — the setpoint read-back the "CH setpoint" signal, the heating on/off read-back a
+    signal field of its own; the control section keeps neither. Where the setpoint read-back
+    and the signal were set and differ, the read-back's entity, which control was judged with,
+    replaces the signal's — logged. Signals of another shape are left as stored, with the
+    read-backs where they were, for the options' check to report."""
+    import logging
+
+    from .const import READ_BACK_SIGNALS, SIGNALS
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    stored = options.get(SIGNALS)
+    if (
+        isinstance(control, Mapping)
+        and any(key in control for key in READ_BACK_SIGNALS.values())
+        and (stored is None or isinstance(stored, Mapping))  # another shape: left for the check
+    ):
+        signals = dict(stored or {})
+        for signal, key in READ_BACK_SIGNALS.items():
+            value = control.get(key)
+            if value in (None, ""):
+                continue
+            if signals.get(signal) not in (None, "", value):
+                logging.getLogger(__name__).info(
+                    "The signal %s %r is replaced by the control's read-back %r, which control "
+                    "was judged with",
+                    signal,
+                    signals[signal],
+                    value,
+                )
+            signals[signal] = value
+        options[SIGNALS] = signals
+        kept = READ_BACK_SIGNALS.values()
+        options[CONTROL] = {k: v for k, v in control.items() if k not in kept}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=18)
+
+
+def _migrate_highest_water(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.7a (minor version 19): the curve's highest water temperature is merged into the
+    circuits' (`docs/plan-0.2-i8.md` F2). Each circuit's maximum becomes the lower of its own and
+    the control section's — the boiler's water never went above that — and the section keeps
+    none. A section that writes and stores none ran with the default, which counts as its; one
+    that is no number in the circuits' range is the default too. The default is what a circuit
+    without a maximum gets now, so only another value is written there (no too-hot alarm the
+    user never set); where no circuit is stored, the one the options imply (``main``, fed
+    straight) gets it. Circuits of another shape are left as stored, and the section's value
+    with them, as is a circuit maximum that is no number in the circuits' range, for the
+    options' check to report."""
+    from .config import CIRCUIT_BOUNDS
+    from .const import CIRCUITS
+    from .control_config import CONTROL_DEFAULTS, HARD_MAX_FROM_BEFORE
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    circuits = options.get(CIRCUITS)
+    writes = isinstance(control, Mapping) and control.get("write_path") not in (None, "", "none")
+    if (
+        isinstance(control, Mapping)
+        and (HARD_MAX_FROM_BEFORE in control or writes)
+        and (circuits is None or isinstance(circuits, list))
+    ):
+        default = float(CONTROL_DEFAULTS["hard_max"])
+        low, high = CIRCUIT_BOUNDS["max_flow"]
+        highest = _stored_float(control.get(HARD_MAX_FROM_BEFORE), default)
+        if not low <= highest <= high:
+            highest = default
+        # The default is what a circuit without a maximum gets now: only another is written,
+        # so no circuit gains a too-hot alarm its user never set.
+        stored = circuits or (
+            [{"id": "main", "control": "unmixed_shared"}] if highest != default else []
+        )
+        merged: list[Any] = []
+        for item in stored:
+            raw = item.get("max_flow") if isinstance(item, Mapping) else None
+            # One that is no number in the circuits' range is left for the check to report.
+            readable = raw is None or low <= _stored_float(raw, high + 1.0) <= high
+            if isinstance(item, Mapping) and readable and (raw is not None or highest != default):
+                own = _stored_float(raw, highest)
+                item = {**item, "max_flow": min(own, highest)}
+            merged.append(item)
+        if merged or circuits is not None:
+            options[CIRCUITS] = merged
+        options[CONTROL] = {k: v for k, v in control.items() if k != HARD_MAX_FROM_BEFORE}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=19)
+
+
+def _migrate_circuit_zones(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.7c (minor version 20): the zones are the circuits' (`docs/plan-0.2-i8.md` F4) — each
+    circuit lists the zones it feeds, and of them those with underfloor heating and those with
+    convectors (F2); the zones' section keeps whether a zone's valves close when it is off
+    (``zones_on_circuits``). What cannot move safely is left as stored, for the options' check
+    to report."""
+    from .config import zones_on_circuits
+
+    options = dict(entry.options)
+    moved = zones_on_circuits(options)
+    if moved is not None:
+        options.update(moved)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=20)
+
+
+def _stored_float(raw: Any, default: float) -> float:
+    """A stored number, or ``default`` where none (or no finite number) is stored."""
+    import math
+
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw):
+        return default
+    return float(raw)
+
+
 def control_as_run(options: Mapping[str, Any]) -> Any:
     """The control section as control runs it, kept with what took the boiler and compared with
     it at a restart: the building's design outdoor temperature in its curve, where the curve has
-    none of its own (I6) — so the section compares as before the value moved, and a change to it
-    is a change to control's options."""
-    from .const import PARAMETERS
+    none of its own (I6), the connection's MQTT topics where it writes over MQTT (I8.4b) and the
+    signals' read-backs where it writes water temperatures (I8.5b) — so the section compares as
+    before the values moved, and a change to them is a change to control's options."""
+    from .const import BOILER, PARAMETERS, SIGNALS
+    from .control_config import with_boiler_inputs
 
-    section = options.get(CONTROL)
+    section = with_boiler_inputs(options.get(CONTROL), options.get(BOILER), options.get(SIGNALS))
     params = options.get(PARAMETERS)
     if not isinstance(section, Mapping) or not isinstance(params, Mapping):
         return section
@@ -683,7 +1040,7 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 def _remove_stale_entities(
     hass: HomeAssistant, entry: ConfigEntry, coordinator: SmartBoilerCoordinator
 ) -> None:
-    """Entities the options no longer create — a zone or circuit taken out, a signal unmapped,
+    """Entities the options no longer create — a circuit taken out, a signal unmapped,
     control removed — go from the registry. Disabled ones the platforms still create stay. Only
     a platform that set itself up in this setup says what is stale: one that failed or did not
     run keeps its registry entries — names, areas, disabled flags (PB-07)."""
@@ -696,29 +1053,6 @@ def _remove_stale_entities(
             registered.unique_id not in expected
         ):
             registry.async_remove(registered.entity_id)
-
-
-async def _async_migrate_zone_unique_ids(
-    hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig
-) -> None:
-    """Up to 0.2 a zone's entities were keyed on the thermostat's entity ID; they move to its
-    registry entry, keeping their entity and history."""
-    from homeassistant.core import callback
-    from homeassistant.helpers import entity_registry as er
-
-    from .entity import zone_key
-
-    old_keys = {zone: zone_key(hass, zone) for zone in config.zone_entities}
-
-    @callback
-    def migrate(registered: er.RegistryEntry) -> dict[str, str] | None:
-        for zone, key in old_keys.items():
-            suffix = f"_{zone}"
-            if zone != key and registered.unique_id.endswith(suffix):
-                return {"new_unique_id": registered.unique_id[: -len(suffix)] + f"_{key}"}
-        return None
-
-    await er.async_migrate_entries(hass, entry.entry_id, migrate)
 
 
 def _registry_ids(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]:
@@ -898,7 +1232,6 @@ def _follow_renames(
         logging.getLogger(__name__).info("%s is now %s: the plugin follows it", old, new)
         for unit in _units(coordinator):
             kept = unit.rename_entity(old, new) or kept
-        coordinator.rename_zone(old, new)
         options = rename_entity(options, old, new)
     if kept:
         coordinator.schedule_control_save()

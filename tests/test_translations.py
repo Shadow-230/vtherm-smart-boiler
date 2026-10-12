@@ -6,8 +6,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
+import voluptuous as vol
 
 TRANSLATIONS = (
     Path(__file__).resolve().parents[1] / "custom_components/vtherm_smart_boiler/translations"
@@ -51,11 +53,11 @@ def test_every_entity_key_has_a_name() -> None:
     binary = SOURCE["entity"]["binary_sensor"]
     for description in BOILER_SENSORS:
         assert "name" in sensors[description.key], description.key
-    for key in ("critical_zone", "emitter_power_factor", "features"):
+    for key in ("critical_zone", "features"):
         assert "name" in sensors[key]
     for kind in AlarmKind:
         assert "name" in binary[f"alarm_{kind.value}"], kind
-    for key in ("connection", "hot_water", "foreign_heat", "outdoor_sensor_problem"):
+    for key in ("connection", "outdoor_sensor_problem"):
         assert "name" in binary[key]
 
 
@@ -80,11 +82,11 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "name": flow.user_schema({}),
         "signals": flow.signals_schema(options),
         "boiler": flow.boiler_schema(options),
-        "circuit": flow.circuit_schema(options, {}),
-        "zones": flow.zones_schema(options),
-        "zone": flow.zone_schema(options, {}),
+        "circuit": flow.circuit_schema(
+            options, {}, {"control": "passive_fixed", "zones": ["c.a"]}, removable=True
+        ),
+        "zones": flow.zones_schema(options | {"circuits": [{"id": "a", "zones": ["c.a"]}]}),
         "building": flow.building_schema(options),
-        "reference": flow.reference_schema(options),
         "monitor": flow.monitor_schema(options),
     }
     options_only = {
@@ -93,21 +95,22 @@ def test_every_form_field_and_select_option_is_translated() -> None:
             options
             | {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x"), "weather": "weather.x"}
         ),
-        "control": flow.control_schema(options),
+        # I8 (decision B7): the write path, for an entry made before the connection question.
+        "control": flow.control_schema({"boiler": {"class": "flow_setpoint"}}),
         "control_entity": flow.control_entity_schema(
             options | {"control": {"write_path": "entity", "topology": "virtual"}}
         ),  # with the "own room controller" tick (answers F, M)
-        "control_gateway": flow.control_gateway_schema(options, ["gw"]),
-        "control_mqtt": flow.control_mqtt_schema(options),
+        # I8 (decision D2): the interface's form at its fullest — a gateway's, and MQTT's topics.
+        "interface": _interface_schemas(flow),
         "control_curve": flow.control_curve_schema(options),
         "control_behaviour": flow.control_behaviour_schema(options),
+        "control_frost": flow.control_frost_schema(options),  # I8 (decision H4)
         "control_alarms": flow.control_alarms_schema(options),
         "control_return_confirm": flow.control_return_confirm_schema(),
         "confirm_blocking": flow.confirm_blocking_schema(),  # X5.12
         # X8: the relay path's steps.
         "control_relay": flow.control_relay_schema(options),
         "control_relay_from_vt": flow.control_relay_schema(options),
-        "control_relay_behaviour": flow.control_relay_behaviour_schema(options),
     }
     for section in ("config", "options"):
         steps = schemas | (options_only if section == "options" else {})
@@ -137,7 +140,6 @@ def test_every_config_error_code_can_be_shown() -> None:
         "missing_signal",
         "implausible_parameter",
         "zone_without_circuit",
-        "reference_zone_unknown",
     } | {
         code.value
         for code in IssueCode
@@ -150,7 +152,6 @@ def test_every_config_error_code_can_be_shown() -> None:
         "invalid_boiler",
         "invalid_circuit",
         "invalid_zone",
-        "invalid_reference",
         "invalid_monitor",
         "invalid_building",
         "invalid_freshness",
@@ -159,7 +160,8 @@ def test_every_config_error_code_can_be_shown() -> None:
         "zone_not_vt",
         "entity_for_two_signals",
         "zone_on_boiler_thermostat",
-        "circuit_has_zones",
+        "zone_in_another_circuit",  # I8 (F4): a zone belongs to one circuit
+        "emitter_twice",
     }
     for section in ("config", "options"):
         errors = set(SOURCE[section]["error"])  # shown on the step that can fix them
@@ -231,8 +233,10 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}, advice
     assert SOURCE["entity"]["button"]["reset_comfort_correction"]["name"]  # answer J (X4)
     too_hot = SOURCE["entity"]["binary_sensor"]["alarm_circuit_too_hot"]["state_attributes"]
-    # Y1 (S-16): held through a gap in the flow, then unknown with its reason.
-    assert set(too_hot["reason"]["state"]) == {"no_flow_reading", "circuit_not_measured", "held"}
+    # Y1 (S-16): held through a gap in the flow, then unknown with its reason; not judged while
+    # hot water takes the boiler's heat from a circuit fed straight from it (2026-10-12).
+    reasons = {"no_flow_reading", "circuit_not_measured", "held", "hot_water"}
+    assert set(too_hot["reason"]["state"]) == reasons
 
 
 def _values(entity: dict, attribute: str) -> set[str]:
@@ -243,24 +247,16 @@ def test_coded_states_and_attributes_are_translated() -> None:
     """P50: no raw code reaches the user where Home Assistant can translate it."""
     from custom_components.vtherm_smart_boiler.control import CONFIRMED_BY_GATEWAY
     from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind, Level
-    from custom_components.vtherm_smart_boiler.core.emitters import FactorReason, FactorStatus
     from custom_components.vtherm_smart_boiler.core.guards import Confirmation
     from custom_components.vtherm_smart_boiler.core.hand_back import HandBackConfirmation
-    from custom_components.vtherm_smart_boiler.core.hot_water import HotWaterReason
     from custom_components.vtherm_smart_boiler.core.signal_check import OutdoorStatus
     from custom_components.vtherm_smart_boiler.core.zones import SelectionStatus
 
     sensors = SOURCE["entity"]["sensor"]
     binary = SOURCE["entity"]["binary_sensor"]
     confirmations = {c.value for c in Confirmation} | {CONFIRMED_BY_GATEWAY}
-    assert _values(binary["hot_water"], "reason") == {r.value for r in HotWaterReason}
-    factor = sensors["emitter_power_factor"]
-    assert _values(factor, "status") == {s.value for s in FactorStatus}
-    assert _values(factor, "reason") == {r.value for r in FactorReason}
     selection = {s.value for s in SelectionStatus}
     assert _values(sensors["critical_zone"], "status") == selection
-    assert _values(sensors["reference_room"], "status") == selection
-    assert set(sensors["reference_room"]["state"]) == (selection - {"ok"}) | {"average"}
     assert _values(binary["outdoor_sensor_problem"], "status") == {s.value for s in OutdoorStatus}
     for kind in AlarmKind:
         assert _values(binary[f"alarm_{kind.value}"], "level") == {lv.value for lv in Level}
@@ -338,11 +334,13 @@ def test_x6_texts_are_translated() -> None:
         assert issue["title"], key
         assert set(PLACEHOLDER.findall(issue["description"])) == placeholders, key
     held = "the plugin sends it again with the control setpoint, every 30 s"  # the follow-up
-    assert held in SOURCE["options"]["step"]["control_gateway"]["data_description"]["gateway_id"]
-    assert held in SOURCE["options"]["step"]["control_mqtt"]["description"]
+    interface = SOURCE["options"]["step"]["interface"]["data_description"]  # I8 (decision D2)
+    assert held in interface["gateway_id"]
+    assert held in interface["mqtt_top"]
     labels = SOURCE["options"]["step"]["control_curve"]["data"]
     assert labels["hard_min"] == "Lowest water temperature"  # the carry-over from X5
-    assert labels["hard_max"] == "Highest water temperature"
+    circuit = SOURCE["options"]["step"]["circuit"]["data"]  # I8 (F2): the curve's merged in
+    assert circuit["max_flow"] == "Highest water temperature"
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "flow setpoint" in text and "hard_" in key]
 
@@ -374,7 +372,6 @@ def test_x7_texts_are_translated() -> None:
     assert "even without a central boiler" in active
     state = SOURCE["entity"]["sensor"]["control_state"]["state_attributes"]["blockers"]["state"]
     assert "one restart of Home Assistant" in state["vt_central_boiler_active"]
-    assert SOURCE["entity"]["binary_sensor"]["hot_water"]["name"] == "{zone} heat available"
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "hot-water and emitter" in text]
 
@@ -579,8 +576,15 @@ def test_y3_texts_are_translated() -> None:
     assert buttons["reset_loss_coefficient"]["name"] == "Reset measured heat loss"
     for flow in ("config", "options"):
         building = SOURCE[flow]["step"]["building"]
-        assert "data never replace it; they show a mismatch" in building["description"]
+        assert "the data never replace it, they only show a mismatch" in building["description"]
         assert "never replace it" in building["data_description"]["design_load_kw"]
+        # I8 (decision E2): the threshold is for statistics and switches no heating.
+        assert building["data"]["heating_threshold"].endswith("(for statistics)")
+        assert "It switches no heating" in building["data_description"]["heating_threshold"]
+        for gone in ("floor_area", "insulation", "thermal_mass", "loss_coefficient"):
+            assert gone not in building["data"], gone
+        curve = SOURCE[flow]["step"]["control_curve"]["data"]["design_outdoor"]
+        assert curve == "Outdoor temperature at the hardest frost (curve point)"
         monitoring = SOURCE[flow]["step"]["monitor"]["data_description"]["monitoring_days"]
         assert "even without a verdict" in monitoring
     switch = SOURCE["entity"]["switch"]["control"]["state_attributes"]["verdict"]["state"]
@@ -707,24 +711,21 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "signals": flow.signals_schema(options),
                 "freshness": flow.freshness_schema(options),
                 "boiler": flow.boiler_schema(options),
-                "circuit": flow.circuit_schema(options, {}, more=True),
+                "circuit": flow.circuit_schema(options, {}, removable=True),
                 "zones": flow.zones_schema(options),
-                "zone": flow.zone_schema(options, {}),
                 "building": flow.building_schema(options),
-                "reference": flow.reference_schema(options),
                 "monitor": flow.monitor_schema(options),
                 "control": flow.control_schema(options),
                 "control_entity": flow.control_entity_schema(options),
-                "control_gateway": flow.control_gateway_schema(options, ["gw"]),
-                "control_mqtt": flow.control_mqtt_schema(options),
-                "control_curve": flow.control_curve_schema(options, 120.0),
-                "control_behaviour": flow.control_behaviour_schema(options),
+                "interface": _interface_schemas(flow),
+                "control_curve": flow.control_curve_schema(options),
+                "control_behaviour": flow.control_behaviour_schema(options, vt_delay=120.0),
+                "control_frost": flow.control_frost_schema(options),
                 "control_alarms": flow.control_alarms_schema(options),
                 "control_return_confirm": flow.control_return_confirm_schema(),
                 "confirm_blocking": flow.confirm_blocking_schema(),
                 "control_relay": flow.control_relay_schema(options),
                 "control_relay_from_vt": flow.control_relay_schema(options),
-                "control_relay_behaviour": flow.control_relay_behaviour_schema(options),
             }
             for step, schema in schemas.items():
                 for marker, validator in schema.schema.items():
@@ -735,17 +736,50 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                         offered = config["options"]
                         values = {o["value"] if isinstance(o, dict) else o for o in offered}
                         selectors.setdefault(key, set()).update(values)
-    # I6.5: the MQTT topics step, for the OTGW firmware and for EMS-ESP.
-    for connection in ("otgw_mqtt", "ems_esp"):
-        schema = flow.mqtt_topics_schema({"boiler": {"connection": connection}})
-        fields.setdefault("mqtt_topics", set()).update(str(m) for m in schema.schema)
+    # I8 (decision B7): the write path, asked only for an entry made before the connection
+    # question — the paths of a flow-setpoint boiler, and the relay of an on/off one.
+    for boiler_class in ("flow_setpoint", "on_off"):
+        schema = flow.control_schema({"boiler": {"class": boiler_class}})
+        for marker, validator in schema.schema.items():
+            fields.setdefault("control", set()).add(str(marker))
+            config = getattr(validator, "config", {})
+            if config.get("translation_key"):
+                selectors.setdefault(config["translation_key"], set()).update(config["options"])
+    # I8 (decision F2): the circuit's fields an answer reveals — a fixed valve's temperature, a
+    # mixed circuit's own flow sensor and, read by it, the too-hot alarm.
+    advanced = {"level": "advanced"}
+    fixed = {"control": "passive_fixed", "flow_entity": "sensor.x", "zones": ["climate.a"]}
+    fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, fixed).schema}
+    # I8 (decision F3): a circuit run by other automation's request and need.
+    other = {"control": "separate"}
+    fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, other).schema}
+    # I8.8c: the zones' own devices, where VT's lists offer any.
+    offered = flow.circuit_schema(advanced, {}, other, devices={"switch.x": "climate.a"})
+    fields["circuit"] |= {str(m) for m in offered.schema}
+    # I8 (decision E1): the gas rates, asked with the modulation and no gas meter.
+    no_meter = {k: v for k, v in signals["signals"].items() if k != "gas_meter"}
+    rates = {"level": "advanced", "signals": no_meter}
+    fields["boiler"] |= {str(m) for m in flow.boiler_schema(rates).schema}
     # I6.2: ESPHome's safe-start tick, asked on the writable-entity step for ESPHome only.
     esphome = {"boiler": {"connection": "esphome"}, "control": {"write_path": "entity"}}
     fields["control_entity"] |= {str(m) for m in flow.control_entity_schema(esphome).schema}
+    # I8 (decision H1): what an answer reveals — each hand-back method's own fields, the
+    # heating switch's write type; the relay's timer length, its repeat interval, and "boiler
+    # heats above" with the boiler's power mapped.
+    for method in ("value", "switch", "timeout"):
+        answers = {"hand_back": method, "ch_entity": "switch.x"}
+        schema = flow.control_entity_schema(options, answers)
+        fields["control_entity"] |= {str(m) for m in schema.schema}
+    powered = options | {"signals": {"boiler_power": "sensor.x"}}
+    relay = flow.control_relay_schema(powered, None, {"relay_off_timer": "minutes"})
+    for step in ("control_relay", "control_relay_from_vt"):
+        fields[step] |= {str(m) for m in relay.schema}
     # I6.2: the signals step reads its hint for the connection into its description.
     from custom_components.vtherm_smart_boiler.control_config import Connection
 
     selectors.setdefault(flow.SIGNAL_HINT, set()).update(c.value for c in Connection)
+    # I8 (decision D7): the freshness step reads what its limits judge, by the connection.
+    selectors.setdefault(flow.FRESHNESS_NOTE, set()).update(("water", "relay"))
     # I6.3: and the heat source's, where it changes what to pick.
     selectors.setdefault(flow.SOURCE_HINT, set()).update(("electric", "oil"))
     # I7: the menus read what is left, what to fix and what changed into their descriptions.
@@ -753,6 +787,24 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         ("left", "fix", "ready", "changed", "unchanged")
     )
     return fields, selectors
+
+
+def _interface_schemas(flow: Any) -> Any:
+    """I8 (decision D2): the "Boiler interface" form at its fullest — a gateway with a
+    thermostat among two gateways set up, and both MQTT connections' topics."""
+    gateway = {
+        "boiler": {"connection": "opentherm_gw", "control_mode": "full"},
+        "control": {"topology": "gateway_with_thermostat"},
+    }
+    fields: dict[Any, Any] = {}
+    for options, gateways in (
+        (gateway, ["gw1", "gw2"]),
+        ({"boiler": {"connection": "other_entity", "control_mode": "full"}}, []),  # virtual too
+        ({"boiler": {"connection": "otgw_mqtt"}}, []),
+        ({"boiler": {"connection": "ems_esp"}}, []),
+    ):
+        fields.update(flow.interface_schema(options, None, gateways).schema)
+    return vol.Schema(fields)
 
 
 def _unused_keys(texts: dict) -> list[str]:
@@ -950,16 +1002,20 @@ def test_entity_names_do_not_repeat_the_device(language: str) -> None:
 
 
 def test_y4_texts_are_translated() -> None:
-    """Y4: the room for correction says the correction's real bound (P-66); every freshness
+    """Y4: the correction's limit says it is the only bound above the curve (P-66; I8 B6, the
+    "correction range" gone); every freshness
     field has its own description (P-103); the resumes given up have their issue, naming the
     zones, and the control state its attribute; the verdict's low condensing through a relay
     says why it is not changed — in every language."""
     from custom_components.vtherm_smart_boiler.control import LEARNING_NOT_RESUMED_ISSUE
     from custom_components.vtherm_smart_boiler.core.controller import CORRECTION_MAX_K
 
-    band = SOURCE["options"]["step"]["control_curve"]["data_description"]["ceiling_band"]
-    assert f"stops at {CORRECTION_MAX_K:g} K" in band
-    assert "10 K" in band
+    curve = SOURCE["options"]["step"]["control_curve"]  # with the correction (I8, H2)
+    limit = curve["data_description"]["comfort_correction_max_k"]
+    assert f"Default {CORRECTION_MAX_K:g} K" in limit
+    assert "the only bound above the curve" in limit
+    assert "ceiling" not in limit
+    assert "ceiling_band" not in SOURCE["options"]["step"]["control_curve"]["data"]
     for language in ALL_LANGUAGES:
         texts = _texts(language)
         freshness = texts["options"]["step"]["freshness"]
@@ -1091,12 +1147,13 @@ def test_the_relay_not_taking_texts_count_through_command_changes() -> None:
 def test_the_heating_read_back_says_how_soon_it_must_report() -> None:
     """K4.3 (decided by the user 2026-10-03; Z4R3-03): the heating read-back field says to pick an
     entity that reports a change within about a minute — a slower one delays noticing a change,
-    one slower than 5 min can make the plugin wrongly step aside — in every language."""
+    one slower than 5 min can make the plugin wrongly step aside — in every language. I8.5b:
+    a boiler signal now."""
     for language in ALL_LANGUAGES:
-        step = _texts(language)["options"]["step"]["control"]
-        text = step["data_description"]["ch_confirmed_entity"]
+        step = _texts(language)["options"]["step"]["signals"]
+        text = step["data_description"]["ch_enabled"]
         assert "5 min" in text, language
-    text = SOURCE["options"]["step"]["control"]["data_description"]["ch_confirmed_entity"]
+    text = SOURCE["options"]["step"]["signals"]["data_description"]["ch_enabled"]
     assert "reports a change within about a minute" in text
     assert "a slower one delays noticing a change" in text
     assert "one slower than 5 min can make the plugin wrongly step aside" in text
@@ -1138,9 +1195,9 @@ def test_the_comfort_correction_says_it_is_on_and_what_it_costs() -> None:
     what it costs — more gas, possibly more starts — and the risk with VT's TPI zones: the
     water at its limit while a zone at full duty stays short by TPI's own offset, the burner
     stopped by every zone's cycle, 1.75 to 5 times the starts in the simulation — in the
-    behaviour step and in the simple level's curve step, in every language; its limit and the
-    "curve too low" issue have their texts."""
-    for step in ("control_behaviour", "control_curve"):
+    curve step — its one place at both levels (I8, decision H2) —, in every language; its limit
+    and the "curve too low" issue have their texts."""
+    for step in ("control_curve",):
         text = SOURCE["options"]["step"][step]["data_description"]["comfort_correction"]
         assert "On (default with full control)" in text, step
         assert "more gas" in text, step
@@ -1151,8 +1208,8 @@ def test_the_comfort_correction_says_it_is_on_and_what_it_costs() -> None:
         for language in LANGUAGES:
             translated = _texts(language)["options"]["step"][step]["data_description"]
             assert "1,75" in translated["comfort_correction"], (language, step)
-    behaviour = SOURCE["options"]["step"]["control_behaviour"]["data_description"]
-    assert "3 K a day" in behaviour["comfort_correction_max_k"]
+    curve = SOURCE["options"]["step"]["control_curve"]["data_description"]
+    assert "3 K a day" in curve["comfort_correction_max_k"]
     for key in ("curve_too_low", "room_short_at_limit"):  # additions 2 and 3: the causes
         issue = SOURCE["issues"][key]
         assert set(PLACEHOLDER.findall(issue["title"] + issue["description"])) == {
@@ -1184,11 +1241,10 @@ SAID: list[tuple[str, str, str]] = [
     ("SB-35", "max_flow", "own maximum is the only one"),
     ("SB-35", "topology", "own maximum, not the plugin's"),
     ("SB-35", "hand_back", "own maximum is the only one"),
-    ("SB-35", "hard_max", "own maximum holds"),
     ("SB-37", "setpoint_entity", "the water would not follow the curve"),
     ("SB-37", "hand_back_value_effect", "leaves the house unheated"),
     ("SB-37", "gateway_id", "another one would get the plugin's commands"),
-    ("SB-37", "hard_max", "too low: rooms stay cold"),
+    ("SB-37", "max_flow", "too low: rooms stay cold"),  # I8 (F2): the curve's merged in
     ("SB-37", "boiler_heats_above_w", "Too low:"),
     ("SB-38", "relay_is_separate_contact", "for a boiler thermostat entity"),
 ]
@@ -1227,8 +1283,6 @@ CELSIUS_ATTRIBUTES = (
     ("sensor", "control_setpoint", "requested"),
     ("sensor", "control_setpoint", "read_back"),
     ("sensor", "control_state", "target"),
-    ("sensor", "reference_room", "temperature"),
-    ("sensor", "reference_room", "setpoint"),
     ("sensor", "lowest_water_suggestion", "reference"),
     ("sensor", "lowest_water_suggestion", "estimate_from_power"),
     ("binary_sensor", "alarm_flue_gas_high", "limit"),

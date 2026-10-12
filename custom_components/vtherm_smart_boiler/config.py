@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -25,6 +25,7 @@ from typing import Any, SupportsFloat
 from .const import (
     BOILER,
     BUILDING,
+    CH_ENABLED,
     CIRCUITS,
     CONTROL,
     FRESHNESS,
@@ -32,7 +33,6 @@ from .const import (
     LEVEL_SIMPLE,
     MONITOR,
     PARAMETERS,
-    REFERENCE_ROOM,
     SIGNALS,
     WEATHER,
     ZONES,
@@ -48,6 +48,7 @@ from .control_config import (
     map_control_entities,
     mqtt_topic_valid,
     parse_control,
+    with_boiler_inputs,
 )
 from .core.alarms import (
     ADD_WATER_RANGE_BAR,
@@ -60,15 +61,7 @@ from .core.alarms import (
     add_water_band,
     pressure_high_band,
 )
-from .core.building import (
-    InsulationClass,
-    ThermalMass,
-    loss_from_coarse_answers,
-    loss_from_design_load,
-    time_constant_from_mass,
-)
-from .core.foreign_heat import DEFAULT_HOLD_S, ForeignHeatSource, SourceKind
-from .core.hot_water import DEFAULT_NEAR_ROOM_K
+from .core.building import loss_from_design_load
 from .core.installation import (
     Boiler,
     BoilerClass,
@@ -84,7 +77,6 @@ from .core.installation import (
 from .core.metrics import DEFAULT_CONDENSING_RETURN, ModulationScale
 from .core.monitor import MonitorOptions
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
-from .core.reference_room import DEFAULT_SWITCH_MARGIN_K, Strategy
 from .core.signals import SIGNAL_PRECEDENCE, Signal
 from .core.verdict import VerdictOptions
 
@@ -115,15 +107,9 @@ CIRCUIT_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "fixed_temperature": (20.0, 70.0),
         "max_flow_alarm": (20.0, 100.0),
         "max_flow_alarm_min": (1.0, 120.0),
+        "needed_temperature": (20.0, 90.0),  # I8 (F3): a circuit run by other automation's
     }
 )
-ZONE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
-    {"reference_output_w": (50.0, 20000.0), "exponent": (1.0, 2.0)}
-)
-FOREIGN_HEAT_THRESHOLDS: Mapping[SourceKind, tuple[float, float]] = MappingProxyType(
-    {SourceKind.POWER: (1.0, 10000.0), SourceKind.TEMPERATURE: (20.0, 300.0)}
-)
-SWITCH_MARGIN_BOUNDS = (0.1, 3.0)
 # Shorter would let control start before the monitoring period (X5); the integration tests lift
 # it in their one place to start control at once.
 MONITORING_DAYS_BOUNDS = (7.0, 60.0)
@@ -132,8 +118,6 @@ MONITOR_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "condensing_return": (40.0, 65.0),
         "short_burn_min": (1.0, 60.0),
         "verdict_window_days": (7.0, 365.0),
-        "near_room_k": (1.0, 10.0),
-        "foreign_heat_hold_min": (0.0, 720.0),
         "pressure_high_warning": (1.5, 4.0),
         "pressure_high_alarm": (1.5, 4.0),
         "flue_gas_warning": (40.0, 200.0),
@@ -156,7 +140,6 @@ SECTION_CODES: Mapping[str, str] = MappingProxyType(
         ZONES: "invalid_zone",
         PARAMETERS: "invalid_parameters",
         BUILDING: "invalid_building",
-        REFERENCE_ROOM: "invalid_reference",
         MONITOR: "invalid_monitor",
         FRESHNESS: "invalid_freshness",
         CONTROL: "invalid_control",
@@ -190,14 +173,6 @@ def _section(options: Mapping[str, Any], key: str) -> Any:
 @dataclass(frozen=True, slots=True)
 class ZoneConfig:
     entity_id: str
-    foreign_heat: tuple[ForeignHeatSource, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class ReferenceRoomConfig:
-    strategy: Strategy = Strategy.LARGEST_DEFICIT
-    zone: str | None = None
-    switch_margin: float = DEFAULT_SWITCH_MARGIN_K
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,8 +197,6 @@ class AlarmThresholds:
 class MonitorConfig:
     monitor: MonitorOptions = field(default_factory=MonitorOptions)
     monitoring_days: float = 7.0
-    near_room_k: float = DEFAULT_NEAR_ROOM_K
-    foreign_heat_hold_s: float = DEFAULT_HOLD_S
     alarms: AlarmThresholds = field(default_factory=AlarmThresholds)
 
 
@@ -312,7 +285,6 @@ class EntryConfig:
     parameters: ParameterSet
     zones: tuple[ZoneConfig, ...]
     circuit_flow_entities: dict[str, str]
-    reference_room: ReferenceRoomConfig
     monitor: MonitorConfig
     freshness: dict[Signal, float | None]
     control: ControlOptions = field(default_factory=ControlOptions)
@@ -324,6 +296,11 @@ class EntryConfig:
     # kept it (X5.2): inactive and named; control is blocked.
     shared_signals: Mapping[Signal, Signal] = field(default_factory=dict)
     panel: BoilerPanel = field(default_factory=BoilerPanel)  # the setup's first answers (I6)
+    # I8 (decision F3): circuits run by other automation's request and need entities.
+    circuit_request_entities: dict[str, str] = field(default_factory=dict)
+    # Each circuit as the user knows it — its name, else its number (I8, decision F2) — by ID.
+    circuit_names: dict[str, str] = field(default_factory=dict)
+    circuit_need_entities: dict[str, str] = field(default_factory=dict)
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -345,8 +322,9 @@ class EntryConfig:
             *self.signals.values(),
             *self.zone_entities,
             *self.circuit_flow_entities.values(),
+            *self.circuit_request_entities.values(),
+            *self.circuit_need_entities.values(),
         ]
-        entities += [source.source_id for zone in self.zones for source in zone.foreign_heat]
         if self.weather:
             entities.append(self.weather)
         if self.setpoint_read_back:
@@ -376,14 +354,17 @@ class EntryConfig:
             _flag("invalid_boiler", boiler_data, "condensing", True),
             _flag("invalid_boiler", boiler_data, "bypass", False),
         )
-        circuits, flow_entities = _circuits(_section(options, CIRCUITS))
-        zones, zone_configs = _zones(_section(options, ZONES), {c.circuit_id for c in circuits})
+        circuits, circuit_entities = _circuits(_section(options, CIRCUITS))
+        zones, zone_configs = _zones(
+            _section(options, ZONES),
+            {c.circuit_id for c in circuits},
+            options.get(CIRCUITS),
+        )
         installation = Installation(boiler, circuits, zones)
         errors = [i for i in installation.issues() if i.severity.value == "error"]
         if errors:
             raise ConfigError(errors[0].code.value, errors[0].subject)
         parameters = _parameters(_section(options, PARAMETERS), _section(options, BUILDING))
-        reference = _reference(_section(options, REFERENCE_ROOM), [z.zone_id for z in zones])
         freshness, weather_max_age = _freshness(_section(options, FRESHNESS))
         monitor = _monitor(
             _section(options, MONITOR),
@@ -392,7 +373,14 @@ class EntryConfig:
         )
         control_problem: str | None = None
         try:
-            control = _control(_section(options, CONTROL), installation, parameters, panel)
+            control = _control(
+                _section(options, CONTROL),
+                installation,
+                parameters,
+                panel,
+                _section(options, SIGNALS),
+                frozenset(circuit_entities.requests),
+            )
         except ConfigError as err:
             if strict_control:
                 raise
@@ -406,8 +394,10 @@ class EntryConfig:
             installation=installation,
             parameters=parameters,
             zones=tuple(zone_configs),
-            circuit_flow_entities=flow_entities,
-            reference_room=reference,
+            circuit_flow_entities=circuit_entities.flow,
+            circuit_request_entities=circuit_entities.requests,
+            circuit_names=circuit_names(options),
+            circuit_need_entities=circuit_entities.needs,
             monitor=monitor,
             freshness=freshness,
             control=control,
@@ -455,18 +445,10 @@ def _map_entities(options: Mapping[str, Any], visit: EntityVisit) -> dict[str, A
         result[WEATHER] = _visit(visit, WEATHER, options[WEATHER])
     circuits = options.get(CIRCUITS)
     if isinstance(circuits, list):
-        result[CIRCUITS] = [
-            _visit_item(visit, item, "flow_entity", f"{CIRCUITS}.{item.get('id')}.flow_entity")
-            if isinstance(item, Mapping)
-            else item
-            for item in circuits
-        ]
+        result[CIRCUITS] = [_circuit_entities(visit, item) for item in circuits]
     zones = options.get(ZONES)
     if isinstance(zones, list):
         result[ZONES] = [_zone_entities(visit, item) for item in zones]
-    reference = options.get(REFERENCE_ROOM)
-    if isinstance(reference, Mapping):
-        result[REFERENCE_ROOM] = _visit_item(visit, reference, "zone", f"{REFERENCE_ROOM}.zone")
     control = options.get(CONTROL)
     if isinstance(control, Mapping):
         result[CONTROL] = map_control_entities(
@@ -488,21 +470,37 @@ def _visit_item(
     return result
 
 
-def _zone_entities(visit: EntityVisit, item: Any) -> Any:
-    """A zone item with its thermostat and its foreign-heat sources visited."""
+def _circuit_entities(visit: EntityVisit, item: Any) -> Any:
+    """A circuit with its flow sensor and the zones it lists visited (I8, decision F4: the
+    zones are the circuits')."""
     if not isinstance(item, Mapping):
         return item
-    zone = _visit_item(visit, item, "entity_id", ZONES)
-    sources = item.get("foreign_heat")
-    if isinstance(sources, list):
-        field_name = f"{ZONES}.foreign_heat ({item.get('entity_id')})"
-        zone["foreign_heat"] = [
-            _visit_item(visit, source, "entity_id", field_name)
-            if isinstance(source, Mapping)
-            else source
-            for source in sources
-        ]
-    return zone
+    prefix = f"{CIRCUITS}.{item.get('id')}"
+    result = _visit_item(visit, item, "flow_entity", f"{prefix}.flow_entity")
+    for key in (REQUEST_ENTITY, NEEDED_ENTITY):  # I8 (F3)
+        result = _visit_item(visit, result, key, f"{prefix}.{key}")
+    for key in (CIRCUIT_ZONES, *CIRCUIT_EMITTERS):
+        listed = item.get(key)
+        if isinstance(listed, list):  # named as the zones, as before: no internal ID shown
+            result[key] = [_visit(visit, ZONES, entity) for entity in listed]
+    devices = item.get(CIRCUIT_DEVICES)
+    if isinstance(devices, Mapping):  # by zone (I8.8b): the zone and its devices both
+        result[CIRCUIT_DEVICES] = {
+            _visit(visit, ZONES, zone): (
+                [_visit(visit, CIRCUIT_DEVICES, e) for e in entities]
+                if isinstance(entities, list)
+                else entities
+            )
+            for zone, entities in devices.items()
+        }
+    return result
+
+
+def _zone_entities(visit: EntityVisit, item: Any) -> Any:
+    """A zone item with its thermostat visited."""
+    if not isinstance(item, Mapping):
+        return item
+    return _visit_item(visit, item, "entity_id", ZONES)
 
 
 def _enum[E: StrEnum](kind: type[E], data: Mapping[str, Any], key: str, default: E, code: str) -> E:
@@ -519,7 +517,7 @@ def _signals(data: Mapping[str, Any]) -> tuple[dict[Signal, str], dict[Signal, S
     left empty maps nothing."""
     given: dict[Signal, str] = {}
     for key, entity in data.items():
-        if not entity:
+        if not entity or key == CH_ENABLED:  # control's read-back only (I8.5b)
             continue
         try:
             signal = Signal(key)
@@ -593,11 +591,28 @@ def _circuit_number(item: Mapping[str, Any], key: str) -> float | None:
     return _bounded("invalid_circuit", item, key, CIRCUIT_BOUNDS[key])
 
 
-def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
+# What a circuit run by other automation reads (I8, decision F3): whether it asks for heat,
+# and the water it needs.
+REQUEST_ENTITY = "request_entity"
+NEEDED_ENTITY = "needed_entity"
+NEEDED_TEMPERATURE = "needed_temperature"
+
+
+@dataclass(frozen=True, slots=True)
+class CircuitEntities:
+    """The entities circuits name: a mixed or fixed circuit's own flow sensor, and a circuit
+    run by other automation's request and need (I8, decision F3) — each by circuit."""
+
+    flow: dict[str, str] = field(default_factory=dict)
+    requests: dict[str, str] = field(default_factory=dict)
+    needs: dict[str, str] = field(default_factory=dict)
+
+
+def _circuits(data: Any) -> tuple[tuple[Circuit, ...], CircuitEntities]:
     if not data:
-        return (Circuit("main"),), {}
+        return (Circuit("main"),), CircuitEntities()
     circuits: list[Circuit] = []
-    flow_entities: dict[str, str] = {}
+    entities = CircuitEntities()
     for item in data:
         circuit_id = _item_text(item, "id", "invalid_circuit")
         max_flow = _circuit_number(item, "max_flow")
@@ -610,49 +625,70 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
                 alarm_at = max_flow + CIRCUIT_ALARM_RISE_K
             minutes = _circuit_number(item, "max_flow_alarm_min")
             alarm_s = (CIRCUIT_ALARM_MIN if minutes is None else minutes) * 60.0
+        control = _enum(
+            CircuitControl, item, "control", CircuitControl.UNMIXED_SHARED, "invalid_circuit"
+        )
+        other = control is CircuitControl.SEPARATE  # its request and need, kept otherwise
         circuits.append(
             Circuit(
                 circuit_id,
-                _enum(
-                    CircuitControl,
-                    item,
-                    "control",
-                    CircuitControl.UNMIXED_SHARED,
-                    "invalid_circuit",
-                ),
+                control,
                 _circuit_number(item, "fixed_temperature"),
                 max_flow,
                 alarm_at,
                 alarm_s,
+                _circuit_number(item, NEEDED_TEMPERATURE) if other else None,
             )
         )
         if item.get("flow_entity"):
-            flow_entities[circuit_id] = str(item["flow_entity"])
-    return tuple(circuits), flow_entities
+            entities.flow[circuit_id] = str(item["flow_entity"])
+        for key, found in ((REQUEST_ENTITY, entities.requests), (NEEDED_ENTITY, entities.needs)):
+            if other and item.get(key):
+                found[circuit_id] = str(item[key])
+    return tuple(circuits), entities
 
 
-def _zone_number(item: Mapping[str, Any], key: str) -> float | None:
-    return _bounded("invalid_zone", item, key, ZONE_BOUNDS[key])
+def circuit_label(circuit: object, index: int) -> str:
+    """A circuit as the menu and its form name it: its name, else its number (I8, F2)."""
+    name = circuit.get("name") if isinstance(circuit, Mapping) else None
+    return str(name) if name not in (None, "") else str(index + 1)
 
 
-def _source(source: Mapping[str, Any]) -> ForeignHeatSource:
-    kind = SourceKind(source.get("kind", SourceKind.SWITCH))
-    threshold = _float_or_none(source.get("threshold"))
-    if threshold is not None:
-        low, high = FOREIGN_HEAT_THRESHOLDS.get(kind, (-math.inf, math.inf))
-        if isinstance(source.get("threshold"), bool) or not low <= threshold <= high:
-            raise ValueError(f"threshold {threshold!r} outside {low} to {high}")
-    return ForeignHeatSource(str(source["entity_id"]), kind, threshold)
+def circuit_names(options: Mapping[str, Any]) -> dict[str, str]:
+    """Each stored circuit's name as the user knows it, by its internal ID, which is never
+    shown; the one the options imply where none is stored."""
+    circuits = options.get(CIRCUITS)
+    if not isinstance(circuits, list) or not circuits:
+        return {"main": circuit_label(None, 0)}
+    return {
+        str(circuit["id"]): circuit_label(circuit, index)
+        for index, circuit in enumerate(circuits)
+        if isinstance(circuit, Mapping) and circuit.get("id") not in (None, "")
+    }
 
 
-def _sources(item: Mapping[str, Any]) -> tuple[ForeignHeatSource, ...]:
-    def read() -> tuple[ForeignHeatSource, ...]:
-        return tuple(_source(source) for source in item.get("foreign_heat") or [])
+def circuits_hold_zones(circuits: Any) -> bool:
+    """I8 (decision F4): the zones are the circuits' — each lists those it feeds; an entry from
+    before minor version 20 (or a hand edit) still names a circuit in each zone."""
+    return isinstance(circuits, list) and any(
+        isinstance(item, Mapping) and CIRCUIT_ZONES in item for item in circuits
+    )
 
-    return _read("invalid_zone", "foreign_heat", read)
+
+# I8 (decisions F2, F4): what a circuit lists — the VT zones it feeds, and of them those with
+# underfloor heating and those with convectors (the rest radiators).
+CIRCUIT_ZONES = "zones"
+CIRCUIT_EMITTERS = {"underfloor": EmitterType.UNDERFLOOR, "convectors": EmitterType.CONVECTOR}
+# I8.8b (decision F2): of a zone a circuit feeds only in part — a zone in two circuits — the
+# zone's devices it feeds, by zone; a zone without an entry is the circuit's whole.
+CIRCUIT_DEVICES = "devices"
 
 
-def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
+def _zones(
+    data: Any, circuit_ids: set[str], circuits: Any = None
+) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
+    if circuits_hold_zones(circuits):
+        return _circuit_zones(data, circuits)
     zones: list[Zone] = []
     configs: list[ZoneConfig] = []
     default_circuit = sorted(circuit_ids)[0] if len(circuit_ids) == 1 else None
@@ -666,14 +702,137 @@ def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[Zon
                 entity_id,
                 str(circuit),
                 _enum(EmitterType, item, "emitter", EmitterType.RADIATOR, "invalid_zone"),
-                _zone_number(item, "reference_output_w"),
-                _zone_number(item, "exponent"),
                 # Decision 4: only a clear "yes" counts; the zone step shows it (X5).
                 closes_when_off=item.get("closes_when_off") is True,
             )
         )
-        configs.append(ZoneConfig(entity_id, _sources(item)))
+        configs.append(ZoneConfig(entity_id))
     return tuple(zones), configs
+
+
+def zones_on_circuits(options: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The circuits and the zones' section as this version stores them (I8.7c, decisions F2 and
+    F4), from an entry that names a circuit in each zone: each circuit lists the zones it
+    feeds, and of them those with underfloor heating and with convectors; the zones' section
+    keeps whether a zone's valves close when it is off. A zone naming no circuit is the one
+    circuit's, where there is one; with none stored, the one the options imply (``main``, fed
+    straight) gets them. ``None`` where the circuits hold the zones already, or the stored
+    shapes leave nothing to move safely — zones or circuits of another shape, a zone naming a
+    circuit that is not there, or none among several: the check reports them."""
+    zones = options.get(ZONES)
+    circuits = options.get(CIRCUITS)
+    if circuits_hold_zones(circuits):
+        return None
+    if circuits is None or circuits == []:
+        if not isinstance(zones, list) or not zones:
+            return None
+        circuits = [{"id": "main", "control": CircuitControl.UNMIXED_SHARED.value}]
+    listed = [] if zones is None else zones
+    if not isinstance(circuits, list) or not isinstance(listed, list):
+        return None
+    if not all(isinstance(c, Mapping) and c.get("id") not in (None, "") for c in circuits):
+        return None
+    if not all(isinstance(z, Mapping) and z.get("entity_id") for z in listed):
+        return None
+    lists: dict[str, dict[str, list[str]]] = {
+        str(c["id"]): {CIRCUIT_ZONES: [], "underfloor": [], "convectors": []} for c in circuits
+    }
+    only = next(iter(lists)) if len(lists) == 1 else None
+    for zone in listed:
+        circuit = zone.get("circuit") or only
+        if circuit is None or str(circuit) not in lists:
+            return None
+        found = lists[str(circuit)]
+        entity = str(zone["entity_id"])
+        found[CIRCUIT_ZONES].append(entity)
+        for key, emitter in CIRCUIT_EMITTERS.items():
+            if zone.get("emitter") == emitter.value:
+                found[key].append(entity)
+    moved: dict[str, Any] = {
+        CIRCUITS: [
+            {**c, **{k: v for k, v in lists[str(c["id"])].items() if v or k == CIRCUIT_ZONES}}
+            for c in circuits
+        ]
+    }
+    if zones is not None:
+        moved[ZONES] = [
+            {"entity_id": str(z["entity_id"]), "closes_when_off": True}
+            for z in listed
+            if z.get("closes_when_off") is True
+        ]
+    return moved
+
+
+def _circuit_zones(data: Any, circuits: list[Any]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
+    """The zones as the circuits list them (I8, decision F4): each zone in its circuit, its
+    emitter as the circuit lists it (F2); whether its valves close when it is off from the
+    zones' own section (decision 4: only a clear "yes" counts). A zone in two circuits is the
+    installation check's to report."""
+    closes = {
+        str(item.get("entity_id")): item.get("closes_when_off") is True
+        for item in data or []
+        if isinstance(item, Mapping)
+    }
+    zones: list[Zone] = []
+    configs: list[ZoneConfig] = []
+    for circuit in circuits:
+        if not isinstance(circuit, Mapping):
+            raise ConfigError("invalid_circuit", "-")
+        circuit_id = _item_text(circuit, "id", "invalid_circuit")
+        listed = _zone_list(circuit, CIRCUIT_ZONES, circuit_id)
+        emitters = {
+            entity: emitter
+            for key, emitter in CIRCUIT_EMITTERS.items()
+            for entity in _zone_list(circuit, key, circuit_id)
+        }
+        devices = _device_lists(circuit, circuit_id, listed)
+        for entity_id in listed:
+            emitter = emitters.get(entity_id, EmitterType.RADIATOR)
+            zones.append(
+                Zone(
+                    entity_id,
+                    circuit_id,
+                    emitter,
+                    closes.get(entity_id, False),
+                    devices.get(entity_id, frozenset()),
+                )
+            )
+            if all(c.entity_id != entity_id for c in configs):  # a split zone is one zone
+                configs.append(ZoneConfig(entity_id))
+    return tuple(zones), configs
+
+
+def _device_lists(
+    circuit: Mapping[str, Any], circuit_id: str, listed: Sequence[str]
+) -> dict[str, frozenset[str]]:
+    """A circuit's devices by zone (I8.8b): only for a zone it lists, each a list of entities."""
+    raw = circuit.get(CIRCUIT_DEVICES)
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ConfigError("invalid_circuit", circuit_id)
+    devices: dict[str, frozenset[str]] = {}
+    for zone, entities in raw.items():
+        if zone not in listed or not isinstance(entities, list) or not entities:
+            raise ConfigError("invalid_circuit", circuit_id)
+        if not all(isinstance(e, str) and e for e in entities):
+            raise ConfigError("invalid_circuit", circuit_id)
+        devices[zone] = frozenset(entities)
+    return devices
+
+
+def _zone_list(circuit: Mapping[str, Any], key: str, circuit_id: str) -> list[str]:
+    raw = circuit.get(key)
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(e, str) and e for e in raw):
+        raise ConfigError("invalid_circuit", circuit_id)
+    return list(raw)
+
+
+# I8 (decision B5): the heat loss is entered as the design load only; a stored loss coefficient
+# (a hand edit — the migration turned the form's into the design load it gives) is left out.
+NOT_ENTERED = frozenset({ParameterKey.LOSS_COEFFICIENT})
 
 
 def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> ParameterSet:
@@ -686,56 +845,24 @@ def _parameters(data: Mapping[str, Any], building: Mapping[str, Any]) -> Paramet
         except ValueError:
             _ignore_unknown("parameters", key)
             continue
+        if parameter in NOT_ENTERED:
+            _LOGGER.warning(
+                "Ignoring the %s in the options: the heat loss is entered as the design load", key
+            )
+            continue
         try:
             parameters = parameters.with_estimate(parameter, Estimate(float(value), Source.ENTERED))
         except ValueError as err:
             raise ConfigError("implausible_parameter", key) from err
     design_outdoor = _value_or(parameters.value(ParameterKey.DESIGN_OUTDOOR), -15.0)
     indoor = _value_or(parameters.value(ParameterKey.INDOOR_REFERENCE), 20.0)
-    # The building's choices first: one this version does not know is named, not taken for an
-    # implausible house.
-    insulation = (
-        _enum(InsulationClass, building, "insulation", InsulationClass.AVERAGE, "invalid_building")
-        if building.get("insulation")
-        else None
-    )
-    mass = (
-        _enum(ThermalMass, building, "thermal_mass", ThermalMass.MEDIUM, "invalid_building")
-        if building.get("thermal_mass")
-        else None
-    )
-    if parameters.get(ParameterKey.LOSS_COEFFICIENT).estimate(Source.ENTERED) is None:
-        loss: Estimate | None = None
-        source = "design_load_kw" if building.get("design_load_kw") else "floor_area"
+    if building.get("design_load_kw"):
         try:
-            if building.get("design_load_kw"):
-                loss = loss_from_design_load(
-                    float(building["design_load_kw"]), design_outdoor, indoor
-                )
-            elif building.get("floor_area") and insulation is not None:
-                loss = loss_from_coarse_answers(
-                    float(building["floor_area"]), insulation, design_outdoor, indoor
-                )
-            if loss is not None:
-                parameters = parameters.with_estimate(ParameterKey.LOSS_COEFFICIENT, loss)
+            loss = loss_from_design_load(float(building["design_load_kw"]), design_outdoor, indoor)
+            parameters = parameters.with_estimate(ParameterKey.LOSS_COEFFICIENT, loss)
         except (TypeError, ValueError) as err:  # a heat loss no house has: they do not fit
-            raise ConfigError("implausible_parameter", source) from err
-    if mass is not None:
-        parameters = parameters.with_estimate(
-            ParameterKey.THERMAL_TIME_CONSTANT, time_constant_from_mass(mass)
-        )
+            raise ConfigError("implausible_parameter", "design_load_kw") from err
     return parameters
-
-
-def _reference(data: Mapping[str, Any], zone_ids: list[str]) -> ReferenceRoomConfig:
-    strategy = _enum(Strategy, data, "strategy", Strategy.LARGEST_DEFICIT, "invalid_reference")
-    zone = data.get("zone") or None
-    if strategy is Strategy.CHOSEN_ZONE and zone not in zone_ids:
-        raise ConfigError("reference_zone_unknown", zone)
-    margin = _bounded("invalid_reference", data, "switch_margin", SWITCH_MARGIN_BOUNDS)
-    return ReferenceRoomConfig(
-        strategy, zone, DEFAULT_SWITCH_MARGIN_K if margin is None else margin
-    )
 
 
 def _monitor_value(data: Mapping[str, Any], key: str, default: float | None) -> float:
@@ -787,9 +914,6 @@ def _monitor(
             ),
         ),
         monitoring_days=monitoring_days,
-        near_room_k=_monitor_value(data, "near_room_k", DEFAULT_NEAR_ROOM_K),
-        foreign_heat_hold_s=_monitor_value(data, "foreign_heat_hold_min", DEFAULT_HOLD_S / 60.0)
-        * 60.0,
         alarms=_alarm_thresholds(data),
     )
 
@@ -917,17 +1041,23 @@ def _control(
     installation: Installation,
     parameters: ParameterSet,
     panel: BoilerPanel | None = None,
+    signals: Mapping[str, Any] | None = None,
+    requests: frozenset[str] = frozenset(),
 ) -> ControlOptions:
     panel = BoilerPanel() if panel is None else panel
     entered = parameters.get(ParameterKey.DESIGN_OUTDOOR).estimate(Source.ENTERED)
+    # I8.4b: the firmware's topics are the connection's, stored once; I8.5b: the read-backs are
+    # boiler signals.
+    topics = {"mqtt_top": panel.mqtt_top, "mqtt_node": panel.mqtt_node}
     try:
         return parse_control(
-            data,
+            with_boiler_inputs(data, topics, signals),
             installation,
             parameters.value(ParameterKey.MAX_CH_SETPOINT),
             connection=panel.connection,
             control_mode=panel.control_mode,
             design_outdoor=None if entered is None else entered.value,
+            requests=requests,
         )
     except (AttributeError, KeyError, TypeError, ValueError) as err:
         raise ConfigError("invalid_control", str(err)) from err

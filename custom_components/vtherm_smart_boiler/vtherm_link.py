@@ -374,6 +374,24 @@ def is_vt_climate(hass: HomeAssistant, entity_id: str) -> bool:
     )
 
 
+def vt_zones_in_area(hass: HomeAssistant, area_id: str) -> list[str]:
+    """The VT climates in an area (I8, decision F2: a circuit's shortcut to its zones) — an
+    entity's own area, else its device's — in the registry's order."""
+    entities = er.async_get(hass)
+    devices = dr.async_get(hass)
+    found: list[str] = []
+    for entry in entities.entities.values():
+        if entry.domain != "climate" or entry.platform != VT_DOMAIN:
+            continue
+        area = entry.area_id
+        if area is None and entry.device_id is not None:
+            device = devices.async_get(entry.device_id)
+            area = device.area_id if device is not None else None
+        if area == area_id:
+            found.append(entry.entity_id)
+    return found
+
+
 def zones_of_another_kind(hass: HomeAssistant, zones: Sequence[str]) -> list[str]:
     """Zones known not to be VT climates (a hand edit): registered by another integration or of
     another domain, or not registered at all yet reported — VT registers every thermostat. A
@@ -416,6 +434,17 @@ def vt_climate_entities(hass: HomeAssistant) -> list[str]:
         for entry in registry.entities.values()
         if entry.platform == VT_DOMAIN and entry.domain == "climate"
     )
+
+
+def zone_devices(hass: HomeAssistant) -> dict[str, str]:
+    """Each VT zone's own devices with the zone, as a circuit's form offers them (I8.8c): what
+    each thermostat's entry lists; a zone whose list cannot be read offers none. A device two
+    zones name stays with the first, in the zones' order."""
+    found: dict[str, str] = {}
+    for zone in vt_climate_entities(hass):
+        for device in zone_underlying_entities(hass, zone) or ():
+            found.setdefault(device, zone)
+    return found
 
 
 def vt_central_entry(hass: HomeAssistant) -> ConfigEntry | None:
@@ -584,6 +613,7 @@ class VThermLink:
             reported_at=reported_at(state),
             auto_mode=values.auto_mode,
             device_active=values.device_active,
+            devices_active=values.devices_active,
             ready=values.ready,
             temperature_at=values.temperature_at,
             max_on_percent=values.max_on_percent,
@@ -591,7 +621,6 @@ class VThermLink:
             safety_on=values.safety_on,
             shedding=values.shedding,
             reported=values.reported,
-            window_open=values.window_open,
         )
 
     def zones(self) -> list[ZoneState]:

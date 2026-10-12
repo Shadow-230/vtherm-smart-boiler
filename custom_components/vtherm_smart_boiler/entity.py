@@ -7,8 +7,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -31,8 +29,6 @@ FEATURE_ENTITIES: Mapping[Feature, tuple[str, ...]] = MappingProxyType(
         Feature.CONDENSING: ("condensing_share",),
         Feature.GAS: ("gas_per_degree_day",),
         Feature.DEGREE_DAYS: ("degree_days", "change_report"),
-        Feature.HOT_WATER: ("hot_water",),
-        Feature.EMITTER_FACTOR: ("emitter_power_factor",),
         Feature.FLUE_GAS_WARNING: ("alarm_flue_gas_high", "alarm_flue_gas_rising"),
         Feature.PRESSURE_WARNING: ("alarm_pressure_high",),
         Feature.ADD_WATER: ("alarm_pressure_low",),
@@ -47,7 +43,6 @@ FEATURE_ENTITIES: Mapping[Feature, tuple[str, ...]] = MappingProxyType(
         Feature.LOWEST_WATER_SUGGESTION: ("lowest_water_suggestion",),
         Feature.RELAY_PROOF: ("alarm_boiler_not_responding",),
         Feature.FORECASTS: ("forecast_snapshots",),
-        Feature.WINDOW_GUARD: ("window_probably_open",),
         Feature.LONG_RUN: ("long_burn",),
     }
 )
@@ -107,15 +102,9 @@ def circuit_label(coordinator: SmartBoilerCoordinator, circuit_id: str) -> str:
     return str(circuits.index(circuit_id) + 1) if circuit_id in circuits else circuit_id
 
 
-def zone_key(hass: HomeAssistant, zone: str) -> str:
-    """What a zone's entities are keyed on: the thermostat's registry entry, which stays when
-    its entity ID is renamed; the entity ID only for a thermostat outside the registry."""
-    entry = er.async_get(hass).async_get(zone)
-    return entry.id if entry is not None else zone
-
-
 class SmartBoilerEntity(CoordinatorEntity[SmartBoilerCoordinator]):
-    """An entity of the plugin; ``zone`` or ``circuit`` make it one per zone or circuit."""
+    """An entity of the plugin; ``circuit`` makes it one per circuit. No entity is a zone's
+    (I8.1d): the zones are VT's."""
 
     _attr_has_entity_name = True
 
@@ -124,20 +113,15 @@ class SmartBoilerEntity(CoordinatorEntity[SmartBoilerCoordinator]):
         coordinator: SmartBoilerCoordinator,
         key: str,
         *,
-        zone: str | None = None,
         circuit: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         entry = coordinator.config_entry
         self.key = key
-        self.zone = zone
         self.circuit = circuit
-        scope = zone_key(coordinator.hass, zone) if zone is not None else circuit
-        self._attr_unique_id = f"{entry.entry_id}_{key}" + (f"_{scope}" if scope else "")
+        self._attr_unique_id = f"{entry.entry_id}_{key}" + (f"_{circuit}" if circuit else "")
         self._attr_translation_key = key
-        if zone is not None:
-            self._attr_translation_placeholders = {"zone": coordinator.link.zone_name(zone)}
-        elif circuit is not None:
+        if circuit is not None:
             self._attr_translation_placeholders = {"circuit": circuit_label(coordinator, circuit)}
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},

@@ -43,7 +43,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from custom_components.vtherm_smart_boiler.core.emitters import EMITTER_REFERENCE
 from custom_components.vtherm_smart_boiler.core.installation import EmitterType
 
 from .profiles import BoilerProfile, HouseProfile, ZoneProfile
@@ -59,6 +58,25 @@ EMITTER_TAU_S: dict[EmitterType, float] = {
     EmitterType.RADIATOR: 20 * 60.0,
     EmitterType.CONVECTOR: 20 * 60.0,
     EmitterType.UNDERFLOOR: 2 * HOUR,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class EmitterReference:
+    """An emitter type's rated condition: flow, return and room temperature, and the exponent
+    of its output (EN 442). The simulator's own physics: the plugin computes no emitter output
+    since I8.2."""
+
+    flow: float
+    return_: float
+    room: float
+    exponent: float
+
+
+EMITTER_REFERENCE: dict[EmitterType, EmitterReference] = {
+    EmitterType.RADIATOR: EmitterReference(75.0, 65.0, 20.0, 1.3),  # EN 442 nominal
+    EmitterType.CONVECTOR: EmitterReference(75.0, 65.0, 20.0, 1.4),
+    EmitterType.UNDERFLOOR: EmitterReference(35.0, 30.0, 20.0, 1.1),
 }
 
 

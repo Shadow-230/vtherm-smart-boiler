@@ -542,6 +542,26 @@ async def test_a_zones_underlying_entities_are_read_from_its_vt_entry(
     assert zone_underlying_entities(hass, living) is None
 
 
+async def test_each_vt_zones_devices_are_found_with_their_zone(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I8.8c: the devices a circuit's form offers — each VT zone's own, with the zone; a zone
+    whose list cannot be read offers none; a device two zones name stays the first's."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import zone_devices
+
+    registry = er.async_get(hass)
+    living, bedroom = zones.add("living"), zones.add("bedroom")
+    zones.add("hall")  # no entry: nothing to offer
+    assert zone_devices(hass) == {}
+    for zone, devices in ((living, ["switch.radiator", "switch.loop"]), (bedroom, ["switch.loop"])):
+        entry = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": devices})
+        entry.add_to_hass(hass)
+        registry.async_update_entity(zone, config_entry_id=entry.entry_id)
+    assert zone_devices(hass) == {"switch.loop": bedroom, "switch.radiator": living}
+
+
 async def test_only_climates_of_the_boilers_devices_count_as_its_thermostat(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:

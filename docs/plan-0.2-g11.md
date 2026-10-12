@@ -41,6 +41,9 @@ change to the plugin; N8's clean-up is the testing session's.
 
 ### B. The comfort correction: on by default in full control, a user limit, a warning at the edge
 
+(I8.1c, 2026-10-10: the correction no longer freezes for foreign heat — foreign heat removed,
+`docs/plan-0.2-i8.md` B3.)
+
 Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 
 1. **On by default where the control mode is full control** (a flow setpoint); not offered with
@@ -58,7 +61,8 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
      once, and the J4 runner's answers (the behaviour step) keep working.
 4. **The limit is the user's:** a new option, "Highest comfort correction", default 3 K, from
    0.5 to 10 K in steps of 0.5, at the advanced level. The weather ceiling's band (default 10 K)
-   still caps everything above the curve, so the lower of the two applies. The rise stays at
+   still caps everything above the curve, so the lower of the two applies (I8.3, 2026-10-11: the
+   band withdrawn — the limit is the only bound; a narrower stored band became the limit). The rise stays at
    most 3 K a day whatever the limit. (Claude's call: a clearer option rather than the band. Every
    saved entry stores the band, 10 K by default, so making the band carry the limit would turn
    it into a 10 K correction on upgrade.)
@@ -130,6 +134,9 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
 
 ### E. "A long run that does not reach the rooms" — a monitor rule, information and warnings only
 
+(I8.1b: rooms held for a window or with one probably open are no longer left out; I8.1c: nor
+rooms warmed by foreign heat. `docs/plan-0.2-i8.md` B2, B3.)
+
 1. **Judged once the flame has been on continuously for 3 h** (the flame known throughout;
    without a flame signal the rule does not run), and only while the rooms' temperatures have
    not risen over those 3 h: each counted room rose less than 0.2 K (provisional, K4: a room
@@ -170,6 +177,9 @@ Reverses K4.1 (`docs/plan-0.2.2.md`, open item 24; the user, 2026-10-03).
    diagnostics.
 
 ### F. An open window without a sensor
+
+(I8.1b, 2026-10-10: withdrawn by the user — windows are VT's to act on; the plugin's window
+guard, its binary sensor and every exclusion for a window removed. `docs/plan-0.2-i8.md` B2.)
 
 1. **VT's own detection:** a zone VT holds for a window is left out of B, C and E. "Held" means
    `hvac_off_reason` reads `hvac_off_window_detection`, or VT's `window_manager` shows

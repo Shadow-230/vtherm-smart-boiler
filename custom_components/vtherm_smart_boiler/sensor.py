@@ -1,4 +1,4 @@
-"""Sensors: boiler metrics, verdict, reference room, critical zones, emitter power factors, the
+"""Sensors: boiler metrics, verdict, critical zones, the
 building model's heat loss and heating threshold, the lowest water temperature's suggestion, the
 features and what each lacks (the missing-data rule), and the state and setpoint of control.
 
@@ -26,7 +26,6 @@ from homeassistant.util import dt as dt_util
 from .control_config import WritePath
 from .coordinator import MonitorData, SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .core.controller import ControlMode
-from .core.emitters import FactorStatus
 from .core.lowest_water import SuggestionState
 from .core.monitor import MonitorSummary
 from .core.parameters import ParameterKey, Source
@@ -164,38 +163,6 @@ def _signal_attributes(data: MonitorData) -> dict[str, Any]:
     """Each signal's health; the features have their own sensor (Y4)."""
     return {
         "signals": {signal.value: health.status.value for signal, health in data.health.items()},
-    }
-
-
-def _reference_value(field: str) -> Callable[[MonitorData], Value]:
-    def value(data: MonitorData) -> Value:
-        if data.reference.status is not SelectionStatus.OK:
-            return None  # never frozen at the last value
-        return _round(getattr(data.reference, field), 2)
-
-    return value
-
-
-def _reference_state(data: MonitorData) -> Value:
-    reference = data.reference
-    if reference.status is not SelectionStatus.OK:
-        return reference.status.value
-    if reference.zone_id is None:
-        return "average"
-    return (
-        data.zones[reference.zone_id].name if reference.zone_id in data.zones else reference.zone_id
-    )
-
-
-def _reference_attributes(data: MonitorData) -> dict[str, Any]:
-    reference = data.reference
-    return {
-        "status": reference.status.value,
-        "zone": reference.zone_id,
-        "zones": list(reference.zones),
-        "temperature": reference.temperature,
-        "setpoint": reference.target,
-        "deficit": _round(reference.deficit, 2),
     }
 
 
@@ -366,24 +333,6 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         attributes_fn=_signal_attributes,
     ),
     BoilerSensorDescription(
-        key="reference_room",
-        value_fn=_reference_state,
-        attributes_fn=_reference_attributes,
-    ),
-    BoilerSensorDescription(
-        key="reference_room_temperature",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=_reference_value("temperature"),
-    ),
-    BoilerSensorDescription(
-        key="reference_room_setpoint",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        value_fn=_reference_value("target"),
-    ),
-    BoilerSensorDescription(
         key="change_report",
         native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         entity_registry_visible_default=False,
@@ -442,11 +391,6 @@ async def async_setup_entry(
         CriticalZoneSensor(coordinator, circuit.circuit_id)
         for circuit in coordinator.config.installation.circuits
     ]
-    if feature_configured(coordinator, "emitter_power_factor"):
-        entities += [
-            EmitterFactorSensor(coordinator, zone.zone_id)
-            for zone in coordinator.config.installation.zones
-        ]
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))
         if coordinator.control.options.write_path is not WritePath.RELAY:
@@ -579,36 +523,6 @@ class CriticalZoneSensor(SmartBoilerEntity, SensorEntity):
             "demand": _percent(critical.demand),
             "deficit": _round(critical.deficit, 2),
             "saturated": critical.saturated,
-        }
-
-
-class EmitterFactorSensor(SmartBoilerEntity, SensorEntity):
-    _unrecorded_attributes = frozenset({"status", "reason", "computed_at", "output_w", "held"})
-    # A power user's diagnostic (SCOPE.md §4): there, but hidden until enabled.
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
-
-    _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator, zone: str) -> None:
-        super().__init__(coordinator, "emitter_power_factor", zone=zone)
-
-    @property
-    def native_value(self) -> float | None:
-        """Unknown (not unavailable) without a value, so the reason stays visible."""
-        view = self.coordinator.data.zones[self.zone or ""]
-        return _percent(view.factor.value)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        factor = self.coordinator.data.zones[self.zone or ""].factor
-        return {
-            "status": factor.status.value,
-            "reason": None if factor.reason is None else factor.reason.value,
-            "computed_at": _time(factor.at),
-            "output_w": _round(factor.output_w, 0),
-            "held": factor.status is FactorStatus.HELD,
         }
 
 

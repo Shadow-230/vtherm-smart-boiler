@@ -80,8 +80,7 @@ class Feature(StrEnum):
     DHW_DETECTION = "dhw_detection"
     GAS = "gas"
     DEGREE_DAYS = "degree_days"
-    HOT_WATER = "hot_water"
-    EMITTER_FACTOR = "emitter_factor"
+    HEAT_AVAILABLE = "heat_available"
     FLUE_GAS_WARNING = "flue_gas_warning"
     PRESSURE_WARNING = "pressure_warning"
     OUTDOOR_CHECK = "outdoor_check"
@@ -108,7 +107,6 @@ class Feature(StrEnum):
     RELAY_PROOF = "relay_proof"
     FORECASTS = "forecasts"
     # G11 F: a window probably open, seen without a sensor; G11 E: a long burn without warming.
-    WINDOW_GUARD = "window_guard"
     LONG_RUN = "long_run"
 
 
@@ -233,10 +231,12 @@ def features(
         Feature.PRESSURE_TREND: _state(lacking(Signal.PRESSURE, Signal.FLAME, Signal.FLOW)),
         Feature.VERDICT: _state(lacking(Signal.FLAME)),
     }
-    # The heat reaching a zone: the boiler's flow, or a circuit's own sensor for its zones.
-    for feature in (Feature.HOT_WATER, Feature.EMITTER_FACTOR):
-        flow = lacking(Signal.FLOW)
-        result[feature] = _state(flow if not circuit_flow else [], flow)
+    # The heat reaching a zone (I8, decision C1): the boiler's flow, or a circuit's own sensor
+    # for its zones; whole with the flame, and the return to judge the flow against.
+    flow = lacking(Signal.FLOW)
+    result[Feature.HEAT_AVAILABLE] = _state(
+        flow if not circuit_flow else [], flow + lacking(Signal.FLAME, Signal.RETURN)
+    )
     if Signal.DHW_ACTIVE in mapped:
         result[Feature.DHW_DETECTION] = _state([])
     elif Signal.CH_ACTIVE in mapped or Signal.FLOW in mapped:
@@ -269,11 +269,6 @@ def features(
     )
     result[Feature.HYSTERESIS_DRIFT] = _state(
         lacking(Signal.FLAME, Signal.FLOW) + ([] if zone_data else [ZONE_DATA])
-    )
-    # G11 F: a room falling fast while it heats — the flame shows the heat flowing, the zones
-    # their rooms.
-    result[Feature.WINDOW_GUARD] = _state(
-        lacking(Signal.FLAME) + ([] if zone_data else [ZONE_DATA])
     )
     # G11 E: the flame's run and the rooms; the flow, a setpoint (the boiler's, or control's
     # written one) and the modulation make every class judged.

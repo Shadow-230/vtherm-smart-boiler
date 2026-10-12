@@ -341,7 +341,8 @@ async def test_installation_warnings_raise_an_issue(
     hass: HomeAssistant, zones: FakeZones, freezer
 ) -> None:
     """P-94: a circuit without zones and underfloor heating on an unmixed circuit without a
-    maximum each raise a warning repair issue naming the circuits; fixed in the options, they
+    maximum each raise a warning repair issue naming the circuits — by their names, else their
+    number, as the menu names them, never the internal ID (I8.10); fixed in the options, they
     go; the entry's removal takes them."""
     freezer.move_to(NOW)
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
@@ -353,7 +354,7 @@ async def test_installation_warnings_raise_an_issue(
         data={},
         options={
             "signals": {s.value: boiler.entity(s) for s in boiler.signals},
-            "circuits": [{"id": "ground"}, {"id": "upstairs"}],
+            "circuits": [{"id": "ground", "name": "Ground floor"}, {"id": "upstairs"}],
             "zones": [{"entity_id": floor, "circuit": "ground", "emitter": "underfloor"}],
         },
     )
@@ -363,18 +364,16 @@ async def test_installation_warnings_raise_an_issue(
     assert empty is not None
     assert empty.severity is ir.IssueSeverity.WARNING
     assert empty.translation_key == "installation_empty_circuit"
-    assert empty.translation_placeholders == {"circuits": "upstairs"}
+    assert empty.translation_placeholders == {"circuits": "2"}  # no name: its number
     underfloor = registry.async_get_issue(
         DOMAIN, f"installation_underfloor_without_max_flow_{entry.entry_id}"
     )
     assert underfloor is not None
     assert underfloor.severity is ir.IssueSeverity.WARNING
-    assert underfloor.translation_placeholders == {"circuits": "ground"}
+    assert underfloor.translation_placeholders == {"circuits": "Ground floor"}
     # Fixed: the floor's maximum entered, the empty circuit gone — both issues go.
-    fixed = {
-        **entry.options,
-        "circuits": [{"id": "ground", "max_flow": 40.0}],
-    }
+    ground = {"id": "ground", "max_flow": 40.0, "zones": [floor], "underfloor": [floor]}
+    fixed = {**entry.options, "circuits": [ground]}  # the zones the circuits' (I8, F4)
     hass.config_entries.async_update_entry(entry, options=fixed)
     await hass.async_block_till_done()
     assert registry.async_get_issue(DOMAIN, f"installation_empty_circuit_{entry.entry_id}") is None
@@ -385,12 +384,12 @@ async def test_installation_warnings_raise_an_issue(
         is None
     )
     # A circuit added without zones, then the entry removed: its issue goes with it.
-    two = {**fixed, "circuits": [{"id": "ground", "max_flow": 40.0}, {"id": "attic"}]}
+    two = {**fixed, "circuits": [ground, {"id": "attic", "zones": []}]}
     hass.config_entries.async_update_entry(entry, options=two)
     await hass.async_block_till_done()
     again = registry.async_get_issue(DOMAIN, f"installation_empty_circuit_{entry.entry_id}")
     assert again is not None
-    assert again.translation_placeholders == {"circuits": "attic"}
+    assert again.translation_placeholders == {"circuits": "2"}  # its number, not its ID
     assert await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     assert registry.async_get_issue(DOMAIN, f"installation_empty_circuit_{entry.entry_id}") is None

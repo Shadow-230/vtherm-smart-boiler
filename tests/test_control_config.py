@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Any
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.control_config import (
@@ -137,7 +140,6 @@ def test_underfloor_exponent_and_circuit_cap() -> None:
         ({"write_path": "otgw_mqtt"}, "no_mqtt_topic"),
         ({"confirmed_entity": ""}, "no_confirmed_setpoint"),
         ({"topology": ""}, "no_topology"),
-        ({"topology": "monitor_mode"}, "topology_no_control"),
         ({"curve": {}}, "curve_not_entered"),
     ],
 )
@@ -147,15 +149,28 @@ def test_blockers(changes: dict, blocker: str) -> None:
 
 
 def test_one_direct_circuit_only_and_underfloor_needs_a_cap() -> None:
-    two = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT),
+    """I8 (decision F6): at most one circuit fed straight from the boiler, any behind a fixed
+    valve or run by other automation, none the boiler mixes (CH2, later)."""
+    blocked = [
+        (Circuit("a"), Circuit("b")),  # two straight circuits
+        (Circuit("a"), Circuit("b", CircuitControl.THROUGH_BOILER)),  # one the boiler mixes
+        (Circuit("a", CircuitControl.THROUGH_BOILER),),
+    ]
+    for circuits in blocked:
+        layout = Installation(Boiler(BoilerClass.FLOW_SETPOINT), circuits)
+        assert "one_direct_circuit_only" in config_blockers(
+            parse_control(OTGW, layout, None), layout
+        )
+    allowed = [
         (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
-    )
-    assert "one_direct_circuit_only" in config_blockers(parse_control(OTGW, two, None), two)
-    mixed = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("a", CircuitControl.SEPARATE),)
-    )
-    assert "one_direct_circuit_only" in config_blockers(parse_control(OTGW, mixed, None), mixed)
+        (Circuit("a", CircuitControl.SEPARATE),),
+        (Circuit("a"), Circuit("b", CircuitControl.PASSIVE_FIXED, 35.0)),
+    ]
+    for circuits in allowed:
+        layout = Installation(Boiler(BoilerClass.FLOW_SETPOINT), circuits)
+        assert "one_direct_circuit_only" not in config_blockers(
+            parse_control(OTGW, layout, None), layout
+        )
     floor = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
         (Circuit("main"),),
@@ -165,10 +180,16 @@ def test_one_direct_circuit_only_and_underfloor_needs_a_cap() -> None:
 
 
 def test_topologies() -> None:
+    """I8 (decision B7): every topology allows control — a gateway that only listens is the
+    control mode "monitoring only", no topology."""
+    assert {topology.value for topology in Topology} == {
+        "gateway_standalone",
+        "gateway_with_thermostat",
+        "virtual",
+    }
     for topology in Topology:
         options = parse_control(OTGW | {"topology": topology.value}, RADIATORS, None)
-        blocked = "topology_no_control" in config_blockers(options, RADIATORS)
-        assert blocked is (topology is Topology.MONITOR_MODE)
+        assert "no_topology" not in config_blockers(options, RADIATORS)
 
 
 def test_control_needs_a_boiler_it_can_control() -> None:
@@ -190,7 +211,7 @@ def test_every_blocker_is_listed() -> None:
     cases = [
         ({}, RADIATORS),
         (OTGW | {"write_path": "entity", "curve": {}, "topology": ""}, RADIATORS),
-        (OTGW | {"gateway_id": "", "confirmed_entity": "", "topology": "monitor_mode"}, RADIATORS),
+        (OTGW | {"gateway_id": "", "confirmed_entity": ""}, RADIATORS),
         (OTGW | {"write_path": "otgw_mqtt"}, RADIATORS),
         (
             OTGW | {"write_path": "entity", "setpoint_entity": "number.x", "hand_back": "timeout"},
@@ -222,7 +243,8 @@ def test_every_blocker_is_listed() -> None:
             RADIATORS,
         ),
         (OTGW | {"curve": {"design_outdoor": 10, "design_flow": 55, "room": 19.5}}, RADIATORS),
-        (OTGW | {"curve": {"design_outdoor": -15, "design_flow": 75}}, RADIATORS),
+        # I8 (F2): a hand-edited cap of the section's own below the design flow.
+        (OTGW | {"curve": {"design_outdoor": -15, "design_flow": 75}, "hard_max": 70}, RADIATORS),
         # X6: what is wired to the gateway's thermostat terminals (decision 1).
         (OTGW | {"thermostat_kind": "on_off"}, RADIATORS),
         (OTGW | {"thermostat_kind": "unknown"}, RADIATORS),
@@ -254,8 +276,8 @@ def test_every_blocker_is_listed() -> None:
         (RELAY, Installation(Boiler(BoilerClass.READ_ONLY), (Circuit("main"),))),
     ):
         found |= set(config_blockers(parse_control(data, installation, None), installation))
-    # I6.1 (decision 6): monitoring only, or room values until 0.3.
-    for mode in (ControlMode.MONITOR, ControlMode.ROOM_VALUES):
+    # I6.1 (decision 6): monitoring only.
+    for mode in (ControlMode.MONITOR,):
         control = parse_control(OTGW, RADIATORS, None, control_mode=mode)
         found |= set(config_blockers(control, RADIATORS))
     # I6.2 (decisions 2, 3): what the connection asks of the control section.
@@ -275,7 +297,6 @@ def test_every_blocker_is_listed() -> None:
         ({"topology": "gateway_with_thermostat"}, "thermostat_takes_over"),
         ({"topology": "gateway_standalone"}, "heating_stops"),
         ({"topology": "virtual"}, "device_decides"),
-        ({"topology": "monitor_mode"}, None),
         ({"topology": ""}, None),
     ],
 )
@@ -508,6 +529,16 @@ def test_the_count_threshold_must_fit_the_zones() -> None:
     options = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
     assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
     assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
+    # I8.8b: a zone split between circuits counts once.
+    split = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
+        (
+            Zone("climate.a", "main", devices=frozenset({"switch.radiator"})),
+            Zone("climate.a", "floor", devices=frozenset({"switch.loop"})),
+        ),
+    )
+    assert config_blockers(options, split) == ["count_threshold_above_zones"]
 
 
 def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
@@ -566,7 +597,10 @@ def test_off_as_a_low_setpoint_must_be_below_the_hard_minimum() -> None:
     assert config_blockers(otgw, RADIATORS) == []
 
 
-def test_a_passive_fixed_circuit_sets_the_floor_and_keeps_its_maximum() -> None:
+def test_a_passive_fixed_circuit_sets_the_floor_and_its_valve_guards_its_maximum() -> None:
+    """S-42 with the user's answers of 2026-10-12: a fixed valve's temperature and margin are
+    the water's floor; its own maximum is the valve's to keep — the boiler's water is capped by
+    the circuits fed straight from it, the default where there is none."""
     fixed = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
         (Circuit("main", CircuitControl.PASSIVE_FIXED, 40.0, 55.0),),
@@ -574,7 +608,50 @@ def test_a_passive_fixed_circuit_sets_the_floor_and_keeps_its_maximum() -> None:
     )
     control = parse_control(OTGW, fixed, None).loop.control
     assert control.circuit_floor == 45.0  # its temperature and the valve's margin (S-42)
-    assert control.circuit_max == 55.0
+    assert control.circuit_max == 70.0
+
+
+def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
+    """I8 (decision F6): the straight circuit's maximum caps the water; the highest fixed valve
+    sets the floor; a circuit run by other automation holds its need while it asks, with its
+    request entity where it has one; the curve reads the straight circuit's zones."""
+    layout = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (
+            Circuit("rads", max_flow=65.0),
+            Circuit("hall", CircuitControl.PASSIVE_FIXED, 35.0),
+            Circuit("bath", CircuitControl.PASSIVE_FIXED, 40.0),
+            Circuit("floor", CircuitControl.SEPARATE, needed=33.0),
+        ),
+        (
+            Zone("climate.a", "rads"),
+            Zone("climate.b", "floor", EmitterType.UNDERFLOOR),
+        ),
+    )
+    control = parse_control(OTGW, layout, None, requests=("floor",)).loop.control
+    assert control.circuit_max == 65.0
+    assert control.circuit_floor == 45.0
+    (mixer,) = control.other_automation
+    assert (mixer.circuit_id, mixer.zones, mixer.requests, mixer.needed) == (
+        "floor",
+        frozenset({"climate.b"}),
+        True,
+        33.0,
+    )
+    assert mixer.devices == {}
+    assert control.curve_zones == frozenset({"climate.a"})
+    # I8.8b: a zone the mixer's circuit feeds in part asks in it through those devices.
+    split = replace(
+        layout,
+        zones=(
+            Zone("climate.a", "rads", devices=frozenset({"switch.radiator"})),
+            Zone("climate.a", "floor", devices=frozenset({"switch.loop"})),
+        ),
+    )
+    (mixer,) = parse_control(OTGW, split, None).loop.control.other_automation
+    assert mixer.devices == {"climate.a": frozenset({"switch.loop"})}
+    single = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
+    assert parse_control(OTGW, single, None).loop.control.curve_zones is None
 
 
 # --- V5: the safe hand-back's options -----------------------------------------------------------
@@ -899,7 +976,6 @@ def test_the_offered_reaction_is_read_from_raw_options() -> None:
         (ENTITY | {"hand_back_value_effect": "heating_stops"}, "boiler"),
         (ENTITY | {"hand_back_value_effect": "own_control"}, "device"),
         (ENTITY | {"hand_back": "timeout", "write_type": "expiring"}, "device"),  # virtual
-        (OTGW | {"topology": "monitor_mode"}, None),  # control cannot run: nothing to say
         (OTGW | {"topology": ""}, None),  # the effect unknown
     ],
 )
@@ -1156,7 +1232,6 @@ def test_a_hand_back_switch_that_is_the_heating_switch_blocks(data: dict, blocke
         ("entity", "virtual", False),
         ("entity", "gateway_standalone", False),
         ("entity", "gateway_with_thermostat", False),
-        ("opentherm_gw", "monitor_mode", False),  # "topology_no_control" says it
         ("opentherm_gw", "", False),  # "no_topology" says it
     ],
 )
@@ -1216,7 +1291,10 @@ def test_the_heating_switch_block_is_lifted_in_one_place(monkeypatch: pytest.Mon
             "design_flow_too_low",
         ),
         ({"curve": {"design_outdoor": -15, "design_flow": 26, "room": 22}}, "design_flow_too_low"),
-        ({"curve": {"design_outdoor": -15, "design_flow": 72}}, "design_flow_above_hard_max"),
+        (  # I8 (F2): a cap of the section's own — a hand edit; the circuit's caps the curve
+            {"curve": {"design_outdoor": -15, "design_flow": 72}, "hard_max": 70},
+            "design_flow_above_hard_max",
+        ),
         ({"curve": CURVE, "hard_max": 50}, "design_flow_above_hard_max"),
         (
             {"curve": {"design_outdoor": 10, "design_flow": 55, "room": 19.5}},
@@ -1298,11 +1376,18 @@ def test_one_entity_for_two_signals_is_a_blocker() -> None:
 
 def test_the_option_key_lists_are_one_each() -> None:
     """P-71: the writable-entity step's answers and what a hand-back goes through are listed
-    once, in the control options — with what judges it (PB-09)."""
+    once, in the control options — with what judges it (PB-09); the gateway and the MQTT topics
+    among them are the "Boiler interface" item's (I8, decision D2)."""
     from custom_components.vtherm_smart_boiler import config_flow
-    from custom_components.vtherm_smart_boiler.control_config import HAND_BACK_KEYS, TARGET_KEYS
+    from custom_components.vtherm_smart_boiler.control_config import (
+        HAND_BACK_KEYS,
+        INTERFACE_CONTROL_KEYS,
+        MQTT_TOPIC_KEYS,
+        TARGET_KEYS,
+    )
 
-    assert set(HAND_BACK_KEYS) <= set(TARGET_KEYS)
+    assert set(HAND_BACK_KEYS) <= {*TARGET_KEYS, *INTERFACE_CONTROL_KEYS, *MQTT_TOPIC_KEYS}
+    assert not set(TARGET_KEYS) & {*INTERFACE_CONTROL_KEYS, *MQTT_TOPIC_KEYS}
     assert config_flow.fixed_keys is fixed_keys
     assert config_flow.TARGET_KEYS is TARGET_KEYS
     assert not hasattr(config_flow, "ENTITY_STEP_KEYS")
@@ -1416,7 +1501,7 @@ def test_no_kind_is_needed_without_a_gateway_topology(kind: str | None) -> None:
         data["thermostat_kind"] = kind
     assert _kind_blockers(data) == []
     assert config_blockers(parse_control(data, RADIATORS, None), RADIATORS) == []
-    for topology, own in (("monitor_mode", "topology_no_control"), ("", "no_topology")):
+    for topology, own in (("", "no_topology"),):
         blockers = config_blockers(
             parse_control(OTGW | {"topology": topology, "thermostat_kind": kind}, RADIATORS, None),
             RADIATORS,
@@ -1859,9 +1944,9 @@ def test_a_relay_not_picked_has_no_other_role() -> None:
 
 _NO_ZONES = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
 _READ_ONLY = Installation(Boiler(BoilerClass.READ_ONLY), ())
-_TWO_CIRCUITS = Installation(
+_TWO_CIRCUITS = Installation(  # two fed straight from the boiler (I8, F6)
     Boiler(BoilerClass.FLOW_SETPOINT),
-    (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
+    (Circuit("a"), Circuit("b")),
     (Zone("climate.a", "a"),),
 )
 _FLOOR = Installation(
@@ -1986,17 +2071,16 @@ BLOCKER_PRECEDENCE = [
         ["no_gateway", "no_confirmed_setpoint", "no_topology", "curve_not_entered"],
     ),
     (
-        "the firmware's topics missing, a monitor-mode topology",
+        "the firmware's topics missing, no topology",
         {
             "write_path": "otgw_mqtt",
-            "topology": "monitor_mode",
             "confirmed_entity": "sensor.x",
             "curve": CURVE,
         },
         RADIATORS,
         None,
         _ALL_SIGNALS,
-        ["no_mqtt_topic", "topology_no_control"],
+        ["no_mqtt_topic", "no_topology"],
     ),
     (
         "a topology the path does not suit",
@@ -2145,7 +2229,9 @@ def test_the_precedence_of_the_configuration_blockers(
 # A control section this version cannot read: a write path it does not know.
 UNREADABLE_SECTION = {"write_path": "carrier_pigeon"}
 NOT_HEATED, MAY_NOT_BE_HEATED = "setup_failed_not_heated", "setup_failed_may_not_be_heated"
-MONITOR = OTGW | {"topology": "monitor_mode"}
+# A gateway's monitor mode from before, migrated (I8.4c): monitoring only, the section kept
+# without its topology.
+MONITOR = {k: v for k, v in OTGW.items() if k != "topology"}
 
 
 @pytest.mark.parametrize(
@@ -2175,10 +2261,11 @@ MONITOR = OTGW | {"topology": "monitor_mode"}
         (UNREADABLE_SECTION, {"taken_with": UNREADABLE_SECTION}, MAY_NOT_BE_HEATED),
         (UNREADABLE_SECTION, {"enabled": True, "taken_with": "damaged"}, MAY_NOT_BE_HEATED),
         (UNREADABLE_SECTION, None, MAY_NOT_BE_HEATED),
-        # A stored monitor-only topology (refused by today's form): the plugin never takes the
-        # boiler with it, so nothing where the stored state shows no earlier session holding
-        # it (finding 6 of the part-1 check D); one taken with other options decides; a state
-        # not read, or options taken with that cannot be read, tell nothing — the cautious side.
+        # Monitoring only chosen, the section without its topology (a gateway's monitor mode
+        # from before, I8.4c): the plugin never takes the boiler with it, so nothing where the
+        # stored state shows no earlier session holding it (finding 6 of the part-1 check D);
+        # one taken with other options decides; a state not read, or options taken with that
+        # cannot be read, tell nothing — the cautious side.
         (MONITOR, {"enabled": True}, None),
         (MONITOR, {"enabled": True, "taken_with": None}, None),
         (MONITOR, {"enabled": True, "taken_with": OTGW}, NOT_HEATED),
@@ -2196,7 +2283,11 @@ def test_a_failed_setup_tells_of_a_house_not_heated(
 ) -> None:
     from custom_components.vtherm_smart_boiler.control_config import failed_setup_report
 
-    options = {"signals": {}} if section is None else {"signals": {}, "control": section}
+    options: dict[str, Any] = {"signals": {}}
+    if section is not None:
+        options["control"] = section
+    if section is MONITOR:
+        options["boiler"] = {"control_mode": "monitor"}
     found = failed_setup_report(options, state)
     assert (None if found is None else found.value) == report
 
@@ -2327,12 +2418,10 @@ def test_what_the_form_refuses_blocks_options_that_bypass_it(
 @pytest.mark.parametrize(
     ("mode", "section", "expected"),
     [
-        # Chosen on purpose: monitoring only, or room values (0.3) — the one reason, whatever
-        # else the control section lacks or has.
+        # Chosen on purpose: monitoring only — the one reason, whatever else the control
+        # section lacks or has.
         (ControlMode.MONITOR, {}, ["control_mode_monitor"]),
         (ControlMode.MONITOR, OTGW, ["control_mode_monitor"]),
-        (ControlMode.ROOM_VALUES, {}, ["control_mode_room_values"]),
-        (ControlMode.ROOM_VALUES, OTGW, ["control_mode_room_values"]),
         # Full control: judged as before.
         (ControlMode.FULL, {}, ["no_write_path"]),
         (ControlMode.FULL, OTGW, []),
@@ -2344,9 +2433,9 @@ def test_what_the_form_refuses_blocks_options_that_bypass_it(
 def test_a_control_mode_without_control_is_its_own_reason(
     mode: ControlMode | None, section: dict, expected: list[str]
 ) -> None:
-    """I6.1 (decision 6): monitoring only, or room-temperature mode until 0.3, keeps control
-    off with that reason alone — a control section stored beside it is not run, and its lacks
-    are not listed; with full control, or no answer yet, the blockers are as before."""
+    """I6.1 (decision 6): monitoring only keeps control off with that reason alone — a control
+    section stored beside it is not run, and its lacks are not listed; with full control, or no
+    answer yet, the blockers are as before."""
     control = parse_control(section, RADIATORS, None, control_mode=mode)
     assert control.control_mode is mode
     signals = (Signal.FLAME, Signal.FLOW)
@@ -2365,9 +2454,11 @@ def test_the_connection_is_carried_without_a_control_section() -> None:
 
 def test_each_connection_offers_the_modes_it_can_do() -> None:
     """I6.1 (decisions 1, 6): a relay switches on and off; a read-only integration only
-    monitors; every connection that can set a water temperature offers full control, room
-    values (0.3) and monitoring. Monitoring is always offered."""
-    water = (ControlMode.FULL, ControlMode.ROOM_VALUES, ControlMode.MONITOR)
+    monitors; every connection that can set a water temperature offers full control and
+    monitoring — "room temperature only" waits for 0.3 (I8, decision C2). Monitoring is always
+    offered."""
+    assert {mode.value for mode in ControlMode} == {"full", "on_off", "monitor"}
+    water = (ControlMode.FULL, ControlMode.MONITOR)
     assert dict(CONNECTION_MODES) == {
         Connection.OPENTHERM_GW: water,
         Connection.OTGW_MQTT: water,
@@ -2387,7 +2478,7 @@ def test_each_connection_offers_the_modes_it_can_do() -> None:
         # "worth enabling" for a gateway that only monitors.
         (Connection.OPENTHERM_GW, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
         (Connection.OPENTHERM_GW, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
-        (Connection.OTGW_MQTT, ControlMode.ROOM_VALUES, BoilerClass.FLOW_SETPOINT),
+        (Connection.OTGW_MQTT, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
         (Connection.ESPHOME, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
         (Connection.EMS_ESP, ControlMode.MONITOR, BoilerClass.FLOW_SETPOINT),
         (Connection.OTHER_ENTITY, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
@@ -2397,7 +2488,6 @@ def test_each_connection_offers_the_modes_it_can_do() -> None:
         # Decision 5: the boiler's own module monitors by default; control only on purpose.
         (Connection.BOILER_MODULE, ControlMode.FULL, BoilerClass.FLOW_SETPOINT),
         (Connection.BOILER_MODULE, ControlMode.MONITOR, BoilerClass.READ_ONLY),
-        (Connection.BOILER_MODULE, ControlMode.ROOM_VALUES, BoilerClass.READ_ONLY),
     ],
 )
 def test_the_boiler_class_follows_the_connection(

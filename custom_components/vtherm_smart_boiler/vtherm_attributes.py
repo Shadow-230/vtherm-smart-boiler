@@ -49,6 +49,7 @@ class ZoneValues:
     power: float | None = None  # kW, live only
     auto_mode: bool = False
     device_active: bool | None = None  # live only
+    devices_active: frozenset[str] | None = None  # the devices VT lists active, live only
     ready: bool | None = None  # VT's ``is_ready``; ``None``: not published
     temperature_at: float | None = None  # epoch seconds, live only
     max_on_percent: float | None = None  # 0 to 1, live only
@@ -56,7 +57,6 @@ class ZoneValues:
     safety_on: bool = False  # VT's safety mode, live only
     shedding: bool = False  # VT's power shedding holds the zone off, live only
     reported: bool = False  # VT shows it started, with its mode known
-    window_open: bool | None = None  # VT holds it for a window (G11 F); None: not known
 
 
 def zone_values(
@@ -89,6 +89,7 @@ def zone_values(
         power=_device_power(manager),
         auto_mode=state in AUTO_MODES,
         device_active=active if isinstance(active, bool) else None,
+        devices_active=_entity_ids(specific.get("device_actives")),
         # Published but not VT's true (false, ``None``, a string, a number): not started — the
         # cautious reading (SB-02). Not published: ``None``.
         ready=ready is True if "is_ready" in attributes else None,
@@ -98,30 +99,14 @@ def zone_values(
         safety_on=safety.get("safety_state") == "on",
         shedding=manager.get("overpowering_state") == "on",
         reported=started and heating_enabled is not None,
-        window_open=_window_open(attributes),
     )
 
 
-# VT 10.4.0 (``feature_window_manager.py``): its window detection — a sensor, or automatic by the
-# temperature's slope — shows under ``window_manager``, each state "on" or "off" (unavailable
-# where not configured); its action turning the zone off gives that reason too (G11 F).
-WINDOW_STATES = ("window_state", "window_auto_state")
-WINDOW_OFF_REASON = "hvac_off_window_detection"
-
-
-def _window_open(attributes: Mapping[str, Any]) -> bool | None:
-    """Whether VT holds the zone for a window: ``True`` where either detection reads "on" or
-    VT turned it off for one; ``False`` where a detection reads "off" and none "on"; ``None``
-    where VT shows neither — not configured, an older VT, a state not known."""
-    if attributes.get("hvac_off_reason") == WINDOW_OFF_REASON:
-        return True
-    manager = attributes.get("window_manager")
-    if not isinstance(manager, Mapping):
+def _entity_ids(raw: object) -> frozenset[str] | None:
+    """A list of entity IDs, as VT 10.4.0 lists a zone's active devices; else not known."""
+    if not isinstance(raw, list) or not all(isinstance(e, str) and e for e in raw):
         return None
-    states = [manager.get(key) for key in WINDOW_STATES]
-    if "on" in states:
-        return True
-    return False if "off" in states else None
+    return frozenset(raw)
 
 
 def _temperature(raw: object, unit: object) -> float | None:

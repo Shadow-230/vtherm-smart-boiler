@@ -36,7 +36,8 @@ writes that to the boiler and hands the boiler back on every exit.
   central configuration, and detects what is installed (VT and its version, `vtherm_api`,
   SmartPI) instead of assuming it. No other module looks up a zone's state by entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
-  `register_feature_manager`) shows two of the plugin's zone values on each VT thermostat. It is
+  `register_feature_manager`) shows on each VT thermostat whether the boiler's heat reaches its
+  zone now — one value, `heat_available`, from `core/heat.py` (I8, decision C1). It is
   registered only once VT is loaded; a thermostat already running sees it only after VT's next
   reload, which the plugin never triggers itself. Nothing in control depends on it.
 
@@ -99,6 +100,12 @@ the water temperature from the curve (`core/curve.py`), limits and ramp.
 plugin's job: zones calling, total power or valve opening, each zone counted only while VT
 reports it clearly.
 
+**Circuits run by other automation (`core/circuit_requests.py`, `circuits_asking`).** A circuit
+whose mixer or pump something else drives asks for heat through its own entity or its zones; an
+entity that cannot be read asks nothing and is named. While it asks, its need — an entity's
+reading first, else the value entered — plus 5 K is a lower bound of the water
+(`core/limits.py`, `limit_flow`), as a fixed valve's setting plus 5 K is.
+
 **Zone watch (`core/zone_watch.py`, `follow_zones`).** The recognition period after a start
 (at most 10 minutes), each zone's grace period, and the case where every zone is unknown.
 
@@ -121,7 +128,17 @@ never assumed applied. Reading the boiler is in `transport/entities.py`, which w
 
 **Configuration (`config_flow.py`, `config.py`, `control_config.py`).** The setup and options
 forms, and the control options as core objects with the blockers that keep control from
-starting. `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
+starting. Both flows are one menu of sections; control is five of its items, each one form —
+the control device, the heating curve, the control behaviour, frost protection, the alarm
+reactions (`CONTROL_ITEMS`) —, each shown where it applies and opened with the write path's
+own checks (`_control_path`). A form shows itself again with the fields an answer reveals
+(`entity_form_fields`, `relay_form_fields`); a value whose field is hidden is kept. Control reads its section with the connection's MQTT topics and the signals'
+read-backs put in (`with_boiler_inputs`): each value is stored once. The zones are the
+circuits': each circuit lists the VT zones it feeds and, of them, those with underfloor and
+with convectors, and, of a zone it feeds only in part, its devices (`devices`, by zone — the
+form resolves each device to its zone through `vtherm_link.zone_devices`); a zone may be in
+two circuits only so. The zones' own section keeps only whether a zone's valves close when it
+is off (`config._circuit_zones`). `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
 
 ## 4. One control step
 
@@ -135,7 +152,7 @@ flowchart TD
     B -- no --> Z[No decision this step]
     B -- yes --> C[Read inputs: boiler snapshot and freshness, zones via vtherm_link, hot water]
     C --> D[Blockers and latches]
-    D --> E[Zones' demand and frost protection: boiler_demand, follow_zones]
+    D --> E[Zones' demand, circuits asking and frost protection: boiler_demand, circuits_asking, follow_zones]
     E --> F{Controller decides: decide}
     F -- hand back --> H[Hand-back writes: lowest water, heating on where taken over, release]
     F -- heat, idle or frost --> G[Guards judge the read-back: plan_write, classify]
@@ -148,12 +165,17 @@ flowchart TD
     H --> F2
 ```
 
-- **Freshness:** nothing is written without fresh boiler data. The link is judged over a window
-  (lost once stale steps cover 5 minutes within 10; back after 60 seconds fresh).
+- **Freshness:** nothing is written without fresh boiler data — on a relay, the relay's own
+  state; the user's age limits belong to mapped signals and go with them. The link is judged
+  over a window (lost once stale steps cover 5 minutes within 10; back after 60 seconds fresh).
 - **Blockers and latches** come before demand: a latch, or an alarm set to hand back, hands
   back whatever the zones ask.
-- **Decide:** heating on or off is decided at every step; the water temperature every decision
-  interval (5 minutes by default) and at once after a blocker or fault ends.
+- **Decide:** heating on or off is decided at every step — the zones' demand, or a circuit run
+  by other automation asking; the water temperature every decision interval (5 minutes by
+  default), and at once after a blocker or fault ends or when a circuit's need changes: the
+  curve, never below a fixed valve's setting or an asking circuit's need plus 5 K, capped by
+  the circuits fed straight from the boiler and the boiler's maximum. With several circuits the
+  curve's room and the comfort correction read the zones of the circuit fed straight.
 - **Guards** see the read-back of every write; a hand-back is never held back by a guard.
 - **Follow-up:** an owed hand-back is retried every minute until confirmed; the control state is
   saved at once when it moves (see [Persistent state](#6-persistent-state)).

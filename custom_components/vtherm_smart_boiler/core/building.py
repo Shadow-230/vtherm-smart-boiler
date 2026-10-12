@@ -2,10 +2,11 @@
 
 The load at an outdoor temperature is ``H · max(0, threshold − outdoor)``: ``H`` is the loss
 coefficient (kW/K) and ``threshold`` the outdoor temperature above which the house needs no
-heating (internal and solar gains are folded into it). A first estimate comes from coarse
-answers or from a year of energy use, and recorded days of heating refine it. A value the user
-entered — the design load, the loss coefficient, the threshold — always wins: data never replace
-it; they show a mismatch (P-92, review question 12).
+heating (internal and solar gains are folded into it). Recorded days of heating give the
+values; a year of energy use may give a first one. A value the user entered — the design load,
+the threshold — always wins: data never replace it; they show a mismatch (P-92, review question
+12). Floor area, insulation and thermal mass gave only rules of thumb no function needed, and
+went in I8 (decision B5).
 
 The building model feeds the monitor only — the verdict's load criterion, degree-days, the
 lowest water temperature's "about" estimate; control never reads it (review question 11). The
@@ -18,7 +19,6 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 
 from .parameters import (
     MIN_CONFIDENCE,
@@ -32,32 +32,6 @@ from .parameters import (
 HOURS_PER_DAY = 24.0
 
 
-class InsulationClass(StrEnum):
-    POOR = "poor"
-    AVERAGE = "average"
-    GOOD = "good"
-    VERY_GOOD = "very_good"
-
-
-class ThermalMass(StrEnum):
-    LIGHT = "light"
-    MEDIUM = "medium"
-    HEAVY = "heavy"
-
-
-# Rules of thumb for coarse answers; a measured value replaces them as soon as there is one.
-SPECIFIC_DESIGN_LOAD_W_PER_M2: dict[InsulationClass, float] = {
-    InsulationClass.POOR: 120.0,
-    InsulationClass.AVERAGE: 80.0,
-    InsulationClass.GOOD: 50.0,
-    InsulationClass.VERY_GOOD: 30.0,
-}
-TIME_CONSTANT_H: dict[ThermalMass, float] = {
-    ThermalMass.LIGHT: 25.0,
-    ThermalMass.MEDIUM: 60.0,
-    ThermalMass.HEAVY: 120.0,
-}
-COARSE_CONFIDENCE = 0.3
 ANNUAL_ENERGY_CONFIDENCE = 0.4
 
 
@@ -67,17 +41,6 @@ def loss_from_design_load(design_load_kw: float, design_outdoor: float, indoor: 
     if design_load_kw <= 0 or span <= 0:
         raise ValueError("design load and indoor-minus-design-outdoor must be positive")
     return Estimate(design_load_kw / span, Source.ENTERED)
-
-
-def loss_from_coarse_answers(
-    floor_area_m2: float, insulation: InsulationClass, design_outdoor: float, indoor: float
-) -> Estimate:
-    """A rough first value from heated floor area and insulation class."""
-    span = indoor - design_outdoor
-    if floor_area_m2 <= 0 or span <= 0:
-        raise ValueError("floor area and indoor-minus-design-outdoor must be positive")
-    design_load_kw = floor_area_m2 * SPECIFIC_DESIGN_LOAD_W_PER_M2[insulation] / 1000.0
-    return Estimate(design_load_kw / span, Source.DEFAULT, COARSE_CONFIDENCE)
 
 
 def loss_from_annual_energy(heating_energy_kwh: float, degree_days: float) -> Estimate:
@@ -90,10 +53,6 @@ def loss_from_annual_energy(heating_energy_kwh: float, degree_days: float) -> Es
     return Estimate(
         heating_energy_kwh / (degree_days * HOURS_PER_DAY), Source.DEFAULT, ANNUAL_ENERGY_CONFIDENCE
     )
-
-
-def time_constant_from_mass(mass: ThermalMass) -> Estimate:
-    return Estimate(TIME_CONSTANT_H[mass], Source.DEFAULT, COARSE_CONFIDENCE)
 
 
 @dataclass(frozen=True, slots=True)

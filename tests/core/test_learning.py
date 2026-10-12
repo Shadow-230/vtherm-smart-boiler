@@ -19,10 +19,16 @@ MIN = 60.0
 CONFIG = LearningConfig(min_pause_s=10 * MIN, swing_k=5.0, swing_window_s=30 * MIN)
 
 
-def zone(
-    zid: str = "a", learning: bool | None = True, valve_open: bool = True, foreign: bool = False
-):
-    return ZoneLearning(zid, learning, valve_open, foreign)
+def zone(zid: str = "a", learning: bool | None = True, valve_open: bool = True):
+    return ZoneLearning(zid, learning, valve_open)
+
+
+def swung(state=None, zones=None):
+    """A water swing at minutes 0 and 1 — a cause that is not a draw or a fault (I8.1c: foreign
+    heat, the other such cause, is gone): the zones paused, the swing in its window to minute 31."""
+    zones = [zone("a")] if zones is None else zones
+    state = plan(LearningState() if state is None else state, zones, 0, setpoint=35.0).state
+    return plan(state, zones, 1, setpoint=45.0, flow=40.0).state
 
 
 def plan(state, zones, t, dhw=False, flow=45.0, setpoint=45.0, fault=False):
@@ -54,12 +60,6 @@ def test_the_users_own_pause_is_never_touched() -> None:
     assert later.resume == ()
 
 
-def test_foreign_heat_pauses_its_zone() -> None:
-    result = plan(LearningState(), [zone("a", foreign=True), zone("b")], 0)
-    assert result.pause == ("a",)
-    assert result.causes["a"] == (PauseCause.FOREIGN_HEAT,)
-
-
 def test_a_water_swing_pauses_every_zone() -> None:
     state = plan(LearningState(), [zone("a")], 0, setpoint=35.0).state
     result = plan(state, [zone("a"), zone("b")], 10, setpoint=45.0, flow=40.0)
@@ -68,10 +68,12 @@ def test_a_water_swing_pauses_every_zone() -> None:
 
 
 def test_no_toggling_faster_than_the_minimum_pause() -> None:
-    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
-    state = plan(state, [zone("a", learning=False)], 11).state  # resumed
-    again = plan(state, [zone("a", foreign=True)], 12)
-    assert again.pause == ()  # toggled only a minute ago
+    state = swung()
+    assert state.paused
+    state = plan(state, [zone("a", learning=False)], 40).state  # resumed: out of its window
+    state = plan(state, [zone("a")], 41, setpoint=35.0).state
+    again = plan(state, [zone("a")], 42, setpoint=45.0, flow=40.0)
+    assert again.pause == ()  # a swing again, but toggled only two minutes ago
 
 
 def test_unknown_flag_is_not_paused_but_resumed_when_ours() -> None:
@@ -162,23 +164,19 @@ def test_release_all_resumes_what_the_plugin_paused() -> None:
 
 
 def test_a_release_counts_as_a_toggle() -> None:
-    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
-    released, _ = release_all(state, 11 * MIN)
-    again = plan(released, [zone("a", foreign=True)], 12)
-    assert again.pause == ()  # resumed only a minute ago
-    assert plan(released, [zone("a", foreign=True)], 22).pause == ("a",)
+    released, _ = release_all(swung(), 11 * MIN)
+    again = plan(released, [zone("a")], 12, flow=40.0)
+    assert again.pause == ()  # resumed only a minute ago, the swing still in its window
+    assert plan(released, [zone("a")], 22, flow=40.0).pause == ("a",)
 
 
 def test_pauses_can_be_switched_off() -> None:
     config = LearningConfig(
         pause_on_dhw=False,
-        pause_on_foreign_heat=False,
         pause_on_water_swing=False,
         pause_on_fault=False,
     )
-    result = plan_learning(
-        LearningState(), [zone("a", foreign=True)], True, 45.0, 45.0, 0.0, config, fault=True
-    )
+    result = plan_learning(LearningState(), [zone("a")], True, 45.0, 45.0, 0.0, config, fault=True)
     assert result.pause == ()
 
 
@@ -239,16 +237,8 @@ def test_a_resume_planned_by_a_step_keeps_its_start() -> None:
 
 
 def test_the_flow_condition_applies_to_hot_water_only() -> None:
-    """P-89: after foreign heat — or a water swing — learning resumes once the cause is gone
-    and the minimum pause has passed, whatever the flow; after hot water the flow must be back
-    first."""
-    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
-    assert state.causes == {"a": (PauseCause.FOREIGN_HEAT,)}
-    early = plan(state, [zone("a", learning=False)], 5, flow=30.0, setpoint=45.0)
-    assert early.resume == ()  # the minimum pause
-    done = plan(state, [zone("a", learning=False)], 10, flow=30.0, setpoint=45.0)
-    assert done.resume == ("a",)
-    assert done.state.causes == {}
+    """P-89: after a water swing learning resumes once the cause is gone and the minimum pause
+    has passed, whatever the flow; after hot water the flow must be back first."""
     swing = plan(LearningState(), [zone("a")], 0, setpoint=35.0).state
     swing = plan(swing, [zone("a")], 1, setpoint=45.0, flow=40.0).state
     assert swing.causes == {"a": (PauseCause.WATER_SWING,)}
@@ -299,15 +289,12 @@ def test_a_new_draw_during_a_pause_does_not_lengthen_it() -> None:
     assert late.state.outlasted == {}  # nothing lasted: a later draw pauses again
 
 
-@pytest.mark.parametrize("cause", ["fault", "foreign"])
-def test_every_pause_ends_an_hour_after_it_began(cause: str) -> None:
-    """Decision 14: a fault "off" or foreign heat lasting hours keeps no pause beyond the hour,
-    and does not pause the zone again until it has ended."""
+def test_every_pause_ends_an_hour_after_it_began() -> None:
+    """Decision 14: a fault "off" lasting hours keeps no pause beyond the hour, and does not
+    pause the zone again until it has ended."""
 
     def step(state: LearningState, minute: float, on: bool, learning: bool):
-        if cause == "fault":
-            return plan(state, [zone("a", learning=learning)], minute, fault=on)
-        return plan(state, [zone("a", learning=learning, foreign=on)], minute)
+        return plan(state, [zone("a", learning=learning)], minute, fault=on)
 
     state = step(LearningState(), 0, True, True).state
     assert step(state, 59, True, False).resume == ()
@@ -323,11 +310,10 @@ def test_every_pause_ends_an_hour_after_it_began(cause: str) -> None:
 
 
 def test_hot_water_among_the_causes_keeps_its_flow_condition() -> None:
-    """A pause for foreign heat that also saw a draw ends by the hot-water rules."""
-    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
-    state = plan(state, [zone("a", learning=False, foreign=True)], 5, dhw=True).state
-    assert set(state.causes["a"]) == {PauseCause.FOREIGN_HEAT, PauseCause.DHW}
-    cold = plan(state, [zone("a", learning=False)], 20, flow=30.0, setpoint=45.0)
+    """A pause for a swing that also saw a draw ends by the hot-water rules."""
+    state = plan(swung(), [zone("a", learning=False)], 5, dhw=True, flow=40.0).state
+    assert set(state.causes["a"]) == {PauseCause.WATER_SWING, PauseCause.DHW}
+    cold = plan(state, [zone("a", learning=False)], 40, flow=30.0, setpoint=45.0)
     assert cold.resume == ()
 
 
@@ -468,20 +454,18 @@ def test_a_fault_off_not_known_pauses_nothing(fault: bool | None) -> None:
 @pytest.mark.parametrize("cause", ["dhw", "fault"])
 def test_a_draw_or_a_fault_pauses_even_right_after_a_resume(cause: str) -> None:
     """Decision 14 (SB-29): every draw pauses, also within the minimum pause after the plugin's
-    own resume — so does a fault "off"; foreign heat still waits for it (above)."""
-    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
-    state = plan(state, [zone("a", learning=False)], 11).state  # resumed
-    assert state.resumed == {"a": 11 * MIN}
-    again = plan(state, [zone("a")], 12, **{cause: True})
+    own resume — so does a fault "off"; a swing still waits for it (above)."""
+    state = plan(swung(), [zone("a", learning=False)], 40).state  # resumed
+    assert state.resumed == {"a": 40 * MIN}
+    again = plan(state, [zone("a")], 41, **{cause: True})
     assert again.pause == ("a",)
     assert again.state.resumed == {}
 
 
 def test_a_draw_signal_unknown_right_after_a_resume_pauses_nothing() -> None:
     """Negative: a draw signal unknown is no draw."""
-    state = plan(LearningState(), [zone("a", foreign=True)], 0).state
-    state = plan(state, [zone("a", learning=False)], 11).state
-    assert plan(state, [zone("a")], 12, dhw=None).pause == ()
+    state = plan(swung(), [zone("a", learning=False)], 40).state  # resumed
+    assert plan(state, [zone("a")], 41, dhw=None).pause == ()
 
 
 def test_a_draw_does_not_repeat_a_pause_that_did_not_take_or_follow_a_release() -> None:
