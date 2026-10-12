@@ -1,6 +1,6 @@
-"""Binary sensors: connection, hot water available and foreign heat per zone, alarms, and the
-alarms of control. An alarm exists only where its feature is not inactive (the missing-data
-rule, Y4)."""
+"""Binary sensors: the signals' connection, the monitor's alarms, a long burn without warming,
+the outdoor sensor's problem, and the alarms of control. An alarm exists only where its feature
+is not inactive (the missing-data rule, Y4)."""
 
 from __future__ import annotations
 

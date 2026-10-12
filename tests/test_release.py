@@ -138,7 +138,7 @@ def test_gateway_integrations_stay_optional_after_dependencies() -> None:
     without them. Home Assistant still installs an after-dependency's own requirements (its
     ``requirements.py`` walks ``dependencies + after_dependencies``), so on an installation
     without network a failed pip install of their client packages would block the plugin's
-    setup — accepted for the start order (a README note for non-container installs is open)."""
+    setup — accepted for the start order; the README's known limitations say so."""
     import inspect
 
     from homeassistant import requirements
