@@ -82,7 +82,7 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "name": flow.user_schema({}),
         "signals": flow.signals_schema(options),
         "boiler": flow.boiler_schema(options),
-        "circuit": flow.circuit_schema(options, {}),
+        "circuit": flow.circuit_schema(options, {}, answers={"control": "passive_fixed"}),
         "zones": flow.zones_schema(options),
         "zone": flow.zone_schema(options, {}),
         "building": flow.building_schema(options),
@@ -335,7 +335,8 @@ def test_x6_texts_are_translated() -> None:
     assert held in interface["mqtt_top"]
     labels = SOURCE["options"]["step"]["control_curve"]["data"]
     assert labels["hard_min"] == "Lowest water temperature"  # the carry-over from X5
-    assert labels["hard_max"] == "Highest water temperature"
+    circuit = SOURCE["options"]["step"]["circuit"]["data"]  # I8 (F2): the curve's merged in
+    assert circuit["max_flow"] == "Highest water temperature"
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "flow setpoint" in text and "hard_" in key]
 
@@ -741,6 +742,11 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             config = getattr(validator, "config", {})
             if config.get("translation_key"):
                 selectors.setdefault(config["translation_key"], set()).update(config["options"])
+    # I8 (decision F2): the circuit's fields an answer reveals — a fixed valve's temperature, a
+    # mixed circuit's own flow sensor and, read by it, the too-hot alarm.
+    advanced = {"level": "advanced"}
+    fixed = {"control": "passive_fixed", "flow_entity": "sensor.x"}
+    fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, True, fixed).schema}
     # I8 (decision E1): the gas rates, asked with the modulation and no gas meter.
     no_meter = {k: v for k, v in signals["signals"].items() if k != "gas_meter"}
     rates = {"level": "advanced", "signals": no_meter}
@@ -1215,11 +1221,10 @@ SAID: list[tuple[str, str, str]] = [
     ("SB-35", "max_flow", "own maximum is the only one"),
     ("SB-35", "topology", "own maximum, not the plugin's"),
     ("SB-35", "hand_back", "own maximum is the only one"),
-    ("SB-35", "hard_max", "own maximum holds"),
     ("SB-37", "setpoint_entity", "the water would not follow the curve"),
     ("SB-37", "hand_back_value_effect", "leaves the house unheated"),
     ("SB-37", "gateway_id", "another one would get the plugin's commands"),
-    ("SB-37", "hard_max", "too low: rooms stay cold"),
+    ("SB-37", "max_flow", "too low: rooms stay cold"),  # I8 (F2): the curve's merged in
     ("SB-37", "boiler_heats_above_w", "Too low:"),
     ("SB-38", "relay_is_separate_contact", "for a boiler thermostat entity"),
 ]

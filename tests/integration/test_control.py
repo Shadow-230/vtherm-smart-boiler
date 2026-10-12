@@ -2596,20 +2596,22 @@ async def test_the_lowest_may_change_while_control_holds_the_boiler(rig: Rig) ->
     assert rig.entry.options["control"]["hard_min"] == 30
 
 
-@pytest.mark.parametrize(("hard_min", "refused"), [(45, True), (40, False)])
+@pytest.mark.parametrize(("hard_min", "refused"), [(45, True), (35, False)])
 async def test_the_lowest_above_the_circuits_maximum_is_refused(
     rig: Rig, hard_min: int, refused: bool
 ) -> None:
-    """PB-26: the circuit's maximum 40 °C, the lowest water temperature 45 °C: refused at the
-    curve step — the hand-back would send 45 first, and control could never give it. At the
-    maximum itself it passes."""
+    """PB-26 with I8 (decision F2): the circuit's maximum, 40 °C, is the highest water
+    temperature: a lowest of 45 °C cannot pass the curve step — the hand-back would send 45
+    first, and control could never give it; the design flow between the two is refused. A
+    lowest below the maximum, with the design flow at it, passes."""
     integrations_running(rig)
     await set_up(rig, add_entry(rig, with_circuit(rig, {"max_flow": 40})))
     flow = await _first_control_step(rig, GATEWAY_ANSWER | {"confirmed_entity": CONFIRMED})
     configure = rig.hass.config_entries.options.async_configure
-    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_min": hard_min})
+    curve = CURVE_ANSWER | {"design_flow": 40, "hard_min": hard_min}
+    flow = await configure(flow["flow_id"], curve)
     if refused:
-        assert flow["errors"] == {"hard_min": "hard_min_above_max"}
+        assert flow["errors"] == {"hard_min": "hard_min_not_below_design_flow"}
     else:
         assert not flow.get("errors")
 
@@ -6020,7 +6022,7 @@ async def test_control_added_back_after_removal_starts_off(
 
 # --- V4: the hand-back's bookkeeping (P-12, P-42, P-49, P-50, P-51, P-52; Open after R6 #8) -----
 
-CURVE_ANSWER = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+CURVE_ANSWER = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25}
 
 
 async def _through_alarms(rig: Rig, flow: Any) -> Any:
@@ -7638,12 +7640,17 @@ async def test_a_hand_back_value_above_the_maximum_is_refused(rig: Rig) -> None:
     assert flow["errors"] == {"hand_back_value": "hand_back_value_above_max"}
     flow = await configure(flow["flow_id"], answer | {"hand_back_value": 60})
     assert flow["step_id"] == "control_curve"
-    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
-    flow = await _through_alarms(rig, flow)
+    flow = await configure(flow["flow_id"], CURVE_ANSWER)
+    if flow.get("step_id") == "control_alarms":
+        flow = await configure(flow["flow_id"], {})
+    # A later step lowers the maximum: the circuit's highest water temperature (I8, F2).
+    flow = await configure(flow["flow_id"], {"next_step_id": "circuit"})
+    flow = await configure(flow["flow_id"], {"control": "unmixed_shared", "max_flow": 55})
+    flow = await _saved(rig, flow)
     assert flow["step_id"] == "control_entity"  # the save found the lowered maximum
     assert flow["errors"] == {"base": "hand_back_value_above_max"}
     flow = await configure(flow["flow_id"], answer | {"hand_back_value": 50})
-    flow = await configure(flow["flow_id"], CURVE_ANSWER | {"hard_max": 55})
+    flow = await configure(flow["flow_id"], CURVE_ANSWER)
     flow = await _through_alarms(rig, flow)
     assert flow["type"] == "create_entry"
     await rig.hass.async_block_till_done()

@@ -825,11 +825,30 @@ def with_boiler_inputs(section: Any, boiler: Any, signals: Any) -> Any:
 
 
 def section_as_migrated(section: Any) -> Any:
-    """A control section as this version's entry migrations leave one (G11 B and D, I8 B6). The
-    entry migration writes each into the options; the options a stored session took the boiler
-    with (``taken_with``), which no migration reaches, are read through them, so a restart after
-    the update compares like with like."""
-    return without_correction_range(with_room_mode(with_correction_answer(section)))
+    """A control section as this version's entry migrations leave one (G11 B and D, I8 B6, F2).
+    The entry migration writes each into the options; the options a stored session took the
+    boiler with (``taken_with``), which no migration reaches, are read through them, so a
+    restart after the update compares like with like. The highest water temperature left the
+    section for the circuit's, which the restore's limits apply as they are now (PB-11)."""
+    section = without_correction_range(with_room_mode(with_correction_answer(section)))
+    if isinstance(section, Mapping) and HARD_MAX_FROM_BEFORE in section:
+        return {key: value for key, value in section.items() if key != HARD_MAX_FROM_BEFORE}
+    return section
+
+
+# I8 (decision F2): the curve's highest water temperature, merged into the circuit's — stored in
+# the control section before minor version 19.
+HARD_MAX_FROM_BEFORE = "hard_max"
+
+
+def _curve_cap(data: Mapping[str, Any]) -> float:
+    """The cap of the control section's own (I8, decision F2): none since the highest water
+    temperature became the circuit's — the circuit's cap, its default where it gives none,
+    applies — so the bounds' top; one the section still holds (a hand edit) is taken, within
+    its bounds, as it was."""
+    if data.get(HARD_MAX_FROM_BEFORE) is not None:
+        return _required(data, HARD_MAX_FROM_BEFORE)
+    return CONTROL_BOUNDS[HARD_MAX_FROM_BEFORE][1]
 
 
 class RoomMode(StrEnum):
@@ -958,9 +977,10 @@ def parse_control(
         curve=curve,
         limits=FlowLimits(
             hard_min=_required(value, "hard_min"),
-            hard_max=_required(value, "hard_max"),
+            hard_max=_curve_cap(data),
         ),
-        circuit_max=circuit_max,
+        # I8 (decision F2): the circuit's highest water temperature, else the default.
+        circuit_max=float(CONTROL_DEFAULTS["hard_max"]) if circuit_max is None else circuit_max,
         boiler_max=boiler_max,
         circuit_floor=circuit_floor,
         frost=FrostConfig(

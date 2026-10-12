@@ -938,33 +938,63 @@ def pressure_error(user_input: dict[str, Any]) -> dict[str, str]:
 
 
 def circuit_schema(
-    options: dict[str, Any], current: dict[str, Any], more: bool = False
+    options: dict[str, Any],
+    current: dict[str, Any],
+    more: bool = False,
+    answers: Mapping[str, Any] | None = None,
 ) -> vol.Schema:
     """``more``: another circuit follows this one — offered next, so none is dropped by default.
-    At the advanced level the maximum's too-hot alarm (decision 10): its temperature and time,
-    offered as stored — pre-filled once the maximum is entered."""
+    A field shows where it can work (I8, decision F2): the fixed temperature for a fixed valve;
+    at the advanced level the circuit's own flow sensor for a mixed or fixed-valve circuit, and
+    the maximum's too-hot alarm (decision 10) — its temperature and time, offered as stored,
+    pre-filled once the maximum is entered — with a flow reading. ``answers``: the form's so
+    far, which may reveal fields (A2)."""
+    given = {**current, **(answers or {})}
+    shown = circuit_fields(options, given)
     fields: dict[Any, Any] = {
         vol.Required(
             "control",
             default=_choice(
-                current.get("control"), CircuitControl, CircuitControl.UNMIXED_SHARED.value
+                given.get("control"), CircuitControl, CircuitControl.UNMIXED_SHARED.value
             ),
         ): _select("circuit_control", [c.value for c in CircuitControl]),
-        _optional("max_flow", current): _number(*CIRCUIT_BOUNDS["max_flow"], 1, "°C"),
-        _optional("fixed_temperature", current): _number(
-            *CIRCUIT_BOUNDS["fixed_temperature"], 1, "°C"
-        ),
+        _optional("max_flow", given): _number(*CIRCUIT_BOUNDS["max_flow"], 1, "°C"),
     }
-    if _advanced(options):
-        fields[_optional(MAX_FLOW_ALARM, current)] = _number(
-            *CIRCUIT_BOUNDS[MAX_FLOW_ALARM], 1, "°C"
+    if "fixed_temperature" in shown:
+        fields[_optional("fixed_temperature", given)] = _number(
+            *CIRCUIT_BOUNDS["fixed_temperature"], 1, "°C"
         )
-        fields[_optional(MAX_FLOW_ALARM_MIN, current)] = _number(
+    if "flow_entity" in shown:
+        fields[_optional("flow_entity", given)] = _entity(_TEMPERATURE)
+    if MAX_FLOW_ALARM in shown:
+        fields[_optional(MAX_FLOW_ALARM, given)] = _number(*CIRCUIT_BOUNDS[MAX_FLOW_ALARM], 1, "°C")
+        fields[_optional(MAX_FLOW_ALARM_MIN, given)] = _number(
             *CIRCUIT_BOUNDS[MAX_FLOW_ALARM_MIN], 1, "min"
         )
-        fields[_optional("flow_entity", current)] = _entity(_TEMPERATURE)
+    if _advanced(options):
         fields[vol.Required("add_another", default=more)] = selector.BooleanSelector()
     return vol.Schema(fields)
+
+
+def circuit_fields(options: Mapping[str, Any], circuit: Mapping[str, Any]) -> set[str]:
+    """The circuit form's fields that can work for ``circuit`` as answered so far (I8, decision
+    F2): its type and highest water temperature always; the fixed temperature for a fixed valve;
+    at the advanced level the own flow sensor for a mixed or fixed-valve circuit, and the
+    too-hot alarm with a flow reading — the own sensor, or the boiler's flow for a circuit fed
+    straight from it."""
+    kind = _known(CircuitControl, circuit.get("control")) or CircuitControl.UNMIXED_SHARED
+    shown = {"control", "max_flow"}
+    if kind is CircuitControl.PASSIVE_FIXED:
+        shown.add("fixed_temperature")
+    if not _advanced(options):
+        return shown
+    direct = kind is CircuitControl.UNMIXED_SHARED
+    if not direct:
+        shown.add("flow_entity")
+    own = not direct and circuit.get("flow_entity") not in (None, "")
+    if own or (direct and "flow" in _stored_signals(options)):
+        shown |= {MAX_FLOW_ALARM, MAX_FLOW_ALARM_MIN}
+    return shown
 
 
 MAX_FLOW_ALARM = "max_flow_alarm"
@@ -1499,9 +1529,7 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
         vol.Required("hard_min", default=default("hard_min")): _number(
             *CONTROL_BOUNDS["hard_min"], 0.5, "°C"
         ),
-        vol.Required("hard_max", default=default("hard_max")): _number(
-            *CONTROL_BOUNDS["hard_max"], 0.5, "°C"
-        ),
+        # I8 (decision F2): the highest water temperature is the circuit's.
         **activation_delay_field(control, vt_delay),
     }
     if not _advanced(options):
@@ -1865,10 +1893,29 @@ def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -
     options[CONTROL] = control
 
 
+def highest_water_of(options: Mapping[str, Any]) -> float:
+    """The highest water temperature control writes (I8, decision F2): the first circuit's —
+    the one control runs on — else the default; one the control section still holds (a hand
+    edit) first, as the parser takes it."""
+    stored = _plain_number(_mapping(options.get(CONTROL)).get("hard_max"))
+    if stored is not None:
+        return stored
+    circuits = options.get(CIRCUITS)
+    first = circuits[0] if isinstance(circuits, list) and circuits else None
+    own = _plain_number(first.get("max_flow")) if isinstance(first, Mapping) else None
+    return float(CONTROL_DEFAULTS["hard_max"]) if own is None else own
+
+
+def _plain_number(value: object) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
 def water_limits(options: Mapping[str, Any]) -> dict[str, str]:
     """The curve step's (decision 10 of I6): the boiler's and the first circuit's maxima, which
-    cap the water with the step's own highest temperature — the lowest of them applies; "—"
-    where one is not entered."""
+    cap the water — the lower applies (I8, decision F2: the circuit's is the highest water
+    temperature, its default where none); "—" where one is not entered."""
     params = options.get(PARAMETERS)
     circuits = options.get(CIRCUITS)
     boiler = params.get("max_ch_setpoint") if isinstance(params, Mapping) else None
@@ -1902,7 +1949,7 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
         else:
             curve[key] = value
     control["curve"] = curve
-    keys = ["hard_min", "hard_max", ACTIVATION_DELAY]
+    keys = ["hard_min", ACTIVATION_DELAY]
     if _advanced(options):
         keys += ["fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
     else:
@@ -2281,20 +2328,23 @@ def circuit_from_input(
     user_input: dict[str, Any],
     circuit_id: str,
     current: Mapping[str, Any] | None = None,
-    advanced: bool = True,
+    shown: Collection[str] | None = None,
 ) -> dict[str, Any]:
-    """A circuit as the options store it. With a maximum, its too-hot alarm (decision 10): at
-    the advanced level as entered, at the simple level as stored (its fields are hidden); where
-    none is given, the pre-fill — the maximum + 5 K and 10 min — so never empty, and not changed
-    by itself later. Without a maximum, no alarm."""
+    """A circuit as the options store it: each field ``shown`` (all where ``None``) as answered,
+    a hidden one as stored (I8, decision A3). With a maximum, its too-hot alarm (decision 10):
+    as entered where shown, else as stored; where none is given, the pre-fill — the maximum
+    + 5 K and 10 min — so never empty, and not changed by itself later. Without a maximum, no
+    alarm."""
+    current = current or {}
     circuit: dict[str, Any] = {"id": circuit_id, "control": user_input["control"]}
-    for key in ("max_flow", "fixed_temperature", "flow_entity"):
-        if user_input.get(key) not in (None, ""):
-            circuit[key] = user_input[key]
+    for key in ("name", "max_flow", "fixed_temperature", "flow_entity"):
+        given = user_input if shown is None or key in shown else current
+        if given.get(key) not in (None, ""):
+            circuit[key] = given[key]
     maximum = circuit.get("max_flow")
     if maximum is None:
         return circuit
-    given = user_input if advanced else (current or {})
+    given = user_input if shown is None or MAX_FLOW_ALARM in shown else current
     alarm, minutes = given.get(MAX_FLOW_ALARM), given.get(MAX_FLOW_ALARM_MIN)
     circuit[MAX_FLOW_ALARM] = maximum + CIRCUIT_ALARM_RISE_K if alarm in (None, "") else alarm
     circuit[MAX_FLOW_ALARM_MIN] = CIRCUIT_ALARM_MIN if minutes in (None, "") else minutes
@@ -2608,6 +2658,7 @@ class _Steps:
     _mode_due = False  # the mode must be answered again after the connection (I8, D1)
     _interface_draft: dict[str, Any] | None = None  # the interface form's answers so far (A2)
     _signals_draft: dict[str, Any] | None = None  # the signals form's answers so far (A2)
+    _circuit_draft: dict[str, Any] | None = None  # the circuit form's answers so far (A2)
     _changed: list[str]  # the sections whose answers changed the options, in that order
     _at_menu: dict[str, Any] | None  # the options as the menu last showed them
 
@@ -2814,23 +2865,37 @@ class _Steps:
         current = existing[index] if index < len(existing) else {}
         if user_input is not None:
             advanced = _advanced(self.options)
+            draft = {**current, **(self._circuit_draft or {})}
+            shown = circuit_fields(self.options, draft)
+            self._circuit_draft = dict(user_input)
+            # A sensor that is no temperature is refused before it reveals anything (P-79).
+            flow = entity_errors(self.hass, user_input, {"flow_entity": _TEMPERATURE})  # type: ignore[attr-defined]
+            if not flow and circuit_fields(self.options, {**current, **user_input}) - shown:
+                # The type or the flow sensor revealed fields: shown again with them (I8, A2).
+                return self._form(
+                    step_id="circuit",
+                    data_schema=circuit_schema(
+                        self.options, current, index + 1 < len(existing), user_input
+                    ),
+                    description_placeholders={"number": str(index + 1)},
+                )
+            shown = circuit_fields(self.options, {**current, **user_input})
             circuit = circuit_from_input(
-                user_input, current.get("id", f"circuit_{index + 1}"), current, advanced
+                user_input, current.get("id", f"circuit_{index + 1}"), current, shown
             )
             if index == 0 and not current:
                 circuit["id"] = "main"
-            if not advanced and current.get("flow_entity"):
-                circuit["flow_entity"] = current["flow_entity"]  # not shown: kept
-            if (
+            if flow:
+                errors = flow
+            elif (
                 circuit["control"] == CircuitControl.PASSIVE_FIXED
                 and "fixed_temperature" not in circuit
             ):
                 errors["fixed_temperature"] = "fixed_temperature_missing"
             elif alarm_error := circuit_alarm_error(circuit, advanced):
                 errors = alarm_error
-            elif flow := entity_errors(self.hass, user_input, {"flow_entity": _TEMPERATURE}):  # type: ignore[attr-defined]
-                errors = flow
             else:
+                self._circuit_draft = None
                 self._circuits_done.append(circuit)
                 if user_input.get("add_another"):
                     return await self.async_step_circuit()
@@ -2847,7 +2912,9 @@ class _Steps:
                     return await self._after("circuit")
         return self._form(
             step_id="circuit",
-            data_schema=circuit_schema(self.options, current, more=index + 1 < len(existing)),
+            data_schema=circuit_schema(
+                self.options, current, index + 1 < len(existing), user_input or self._circuit_draft
+            ),
             errors=errors,
             description_placeholders={"number": str(index + 1)},
         )
@@ -3213,12 +3280,11 @@ class _ControlSteps(_Steps):
         errors: dict[str, str] = {}
         if user_input is not None:
             bounds = self._setpoint_bounds()
-            if user_input["hard_min"] >= user_input["hard_max"]:
-                errors["hard_max"] = "hard_limits_out_of_order"
-            elif _outside(user_input["hard_min"], bounds):
+            highest = highest_water_of(self.options)  # the circuit's (I8, decision F2)
+            if _outside(user_input["hard_min"], bounds):
                 errors["hard_min"] = "limits_outside_entity_range"
-            elif _outside(user_input["hard_max"], bounds):
-                errors["hard_max"] = "limits_outside_entity_range"
+            elif _outside(highest, bounds):
+                errors["base"] = "highest_outside_entity_range"
             elif user_input.get("frost_limit", CONTROL_DEFAULTS["frost_limit"]) >= user_input.get(
                 "frost_release", CONTROL_DEFAULTS["frost_release"]
             ):
@@ -3306,7 +3372,7 @@ class _ControlSteps(_Steps):
             float(user_input["design_outdoor"]),
             float(room),
             float(user_input["hard_min"]),
-            float(user_input["hard_max"]),
+            highest_water_of(self.options),
         )
 
     def _lowest_above_max(self, user_input: dict[str, Any]) -> bool:
@@ -3432,7 +3498,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 18
+    MINOR_VERSION = 19
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

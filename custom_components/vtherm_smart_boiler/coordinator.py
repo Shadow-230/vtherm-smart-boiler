@@ -2129,7 +2129,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         limits = control.loop.control
         caps = [circuit.max_flow for circuit in config.installation.circuits if circuit.max_flow]
         if control.configured:
+            # The curve's own cap, and the circuit's — its default where it gives none (I8, F2).
             caps.append(limits.limits.hard_max)
+            if limits.circuit_max is not None:
+                caps.append(limits.circuit_max)
         boiler_max = self.parameters.value(ParameterKey.MAX_CH_SETPOINT)
         if boiler_max is not None:
             caps.append(boiler_max)

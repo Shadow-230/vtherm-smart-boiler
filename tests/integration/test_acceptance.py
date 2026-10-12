@@ -506,13 +506,14 @@ async def test_keep_alive_loss_lets_the_gateway_fall_back(rig: Rig) -> None:
 
 async def test_hard_limits_hold_in_hard_frost(rig: Rig) -> None:
     # Below the design outdoor temperature the curve asks for more than its design flow, which
-    # the hard maximum cuts (a design flow above the maximum itself is refused, P-68).
+    # the highest water temperature cuts (a design flow above the maximum itself is refused,
+    # P-68). I8 (F2): the circuit's, which minor version 19 moved the section's into.
     await start(rig, hard_max=48, curve={"design_outdoor": -15, "design_flow": 48})
     await rig.scenario("set_outdoor", temperature=-25)
     await rig.switch(True)
     await rig.advance(1800, step=30.0)
     assert max(rig.setpoints()) <= 48.0
-    assert "limit_hard_max" in rig.state("sensor", "control_state").attributes["reasons"]
+    assert "limit_circuit_max" in rig.state("sensor", "control_state").attributes["reasons"]
 
 
 async def test_stale_data_hands_back(rig: Rig) -> None:
@@ -1527,7 +1528,7 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     result = await options_step(rig, result, {"next_step_id": "control"})
     # The write path follows the connection (I8, decision B7): the step asks nothing.
     assert result["step_id"] == "control_curve"
-    curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25, "hard_max": 70}
+    curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25}  # the highest: the circuit's
     result = await options_step(rig, result, curve)
     if result.get("step_id") == "control_alarms":
         result = await options_step(rig, result, {})

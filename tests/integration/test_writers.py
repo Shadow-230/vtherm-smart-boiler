@@ -1294,7 +1294,9 @@ async def test_a_stored_lowest_above_what_a_writer_takes_fails_alone(
         section = GATEWAYS[path] | {"confirmed_entity": READ_BACK}
     parsed = options(**section)
     inner = parsed.loop.control
-    inner = replace(inner, limits=replace(inner.limits, hard_min=92.0, hard_max=95.0))
+    # The circuit's cap too (I8, F2: the highest water temperature is the circuit's).
+    limits = replace(inner.limits, hard_min=92.0, hard_max=95.0)
+    inner = replace(inner, limits=limits, circuit_max=95.0)
     writer = make_writer(hass, replace(parsed, loop=replace(parsed.loop, control=inner)))
     with pytest.raises(WriteError, match="92"):
         await writer.hand_back(release_from=45.0)
