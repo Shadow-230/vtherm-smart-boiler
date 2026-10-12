@@ -118,18 +118,22 @@ class Circuit:
 class Zone:
     """A VT thermostat assigned to a circuit. ``closes_when_off``: the user's declaration that
     the zone's emitter closes while VT has it off, for a zone whose valve state VT does not
-    publish (decision 4; off by default)."""
+    publish (decision 4; off by default). ``devices``: the zone's own devices this circuit
+    feeds, where it feeds only some — a zone in two circuits is listed in each by its devices
+    (I8.8b, decision F2); empty: the whole zone."""
 
     zone_id: str
     circuit_id: str
     emitter: EmitterType = EmitterType.RADIATOR
     closes_when_off: bool = False
+    devices: frozenset[str] = frozenset()
 
 
 class IssueCode(StrEnum):
     NO_CIRCUIT = "no_circuit"
     DUPLICATE_CIRCUIT = "duplicate_circuit"
     DUPLICATE_ZONE = "duplicate_zone"
+    DUPLICATE_DEVICE = "duplicate_device"
     UNKNOWN_CIRCUIT = "unknown_circuit"
     FIXED_TEMPERATURE_MISSING = "fixed_temperature_missing"
     EMPTY_CIRCUIT = "empty_circuit"
@@ -160,6 +164,11 @@ class Installation:
     def zone(self, zone_id: str) -> Zone | None:
         return next((z for z in self.zones if z.zone_id == zone_id), None)
 
+    @property
+    def zone_ids(self) -> tuple[str, ...]:
+        """Each zone once, in the order listed — a zone split between circuits is one zone."""
+        return tuple(dict.fromkeys(z.zone_id for z in self.zones))
+
     def zones_in(self, circuit_id: str) -> tuple[Zone, ...]:
         return tuple(z for z in self.zones if z.circuit_id == circuit_id)
 
@@ -177,10 +186,13 @@ class Installation:
             for cid, count in circuit_counts.items()
             if count > 1
         )
-        zone_counts = Counter(z.zone_id for z in self.zones)
         found.extend(
-            Issue(IssueCode.DUPLICATE_ZONE, Severity.ERROR, zid)
-            for zid, count in zone_counts.items()
+            Issue(IssueCode.DUPLICATE_ZONE, Severity.ERROR, zid) for zid in self._listed_twice()
+        )
+        device_counts = Counter(d for z in self.zones for d in z.devices)
+        found.extend(
+            Issue(IssueCode.DUPLICATE_DEVICE, Severity.ERROR, device)
+            for device, count in device_counts.items()
             if count > 1
         )
         found.extend(
@@ -205,6 +217,22 @@ class Installation:
             ):
                 found.append(Issue(IssueCode.UNDERFLOOR_WITHOUT_MAX_FLOW, Severity.WARNING, cid))
         return found
+
+    def _listed_twice(self) -> list[str]:
+        """Zones listed more than once where a zone may not be: whole in any of its listings,
+        or twice in one circuit (I8.8b: a zone split by its devices is listed once in each)."""
+        listings: dict[str, list[Zone]] = {}
+        for zone in self.zones:
+            listings.setdefault(zone.zone_id, []).append(zone)
+        return [
+            zone_id
+            for zone_id, listed in listings.items()
+            if len(listed) > 1
+            and (
+                any(not z.devices for z in listed)
+                or len({z.circuit_id for z in listed}) < len(listed)
+            )
+        ]
 
     @property
     def is_valid(self) -> bool:

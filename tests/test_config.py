@@ -54,6 +54,59 @@ def test_a_circuit_run_by_other_automation_names_its_request_and_need() -> None:
     assert renamed["circuits"][1]["request_entity"] == "binary_sensor.wants"
 
 
+SPLIT = MINIMAL | {
+    "circuits": [
+        {"id": "main", "zones": ["climate.living", "climate.bath"],
+         "devices": {"climate.living": ["switch.radiator"]}},
+        {"id": "floor", "control": "separate", "zones": ["climate.living"],
+         "underfloor": ["climate.living"], "devices": {"climate.living": ["switch.loop"]}},
+    ],
+}  # fmt: skip
+
+
+def test_a_zone_split_by_its_devices_is_read_in_each_of_its_circuits() -> None:
+    """I8.8b (decision F2): a circuit lists the zones it feeds, and of a zone it feeds only in
+    part, those devices; the zone is watched once; the devices are followed in a rename and
+    named in a removal, as devices."""
+    from custom_components.vtherm_smart_boiler.config import rename_entity
+    from custom_components.vtherm_smart_boiler.core.installation import EmitterType, Zone
+
+    config = EntryConfig.from_options(SPLIT)
+    assert config.installation.zones == (
+        Zone("climate.living", "main", devices=frozenset({"switch.radiator"})),
+        Zone("climate.bath", "main"),
+        Zone("climate.living", "floor", EmitterType.UNDERFLOOR, devices=frozenset({"switch.loop"})),
+    )
+    assert config.zone_entities == ("climate.living", "climate.bath")
+    assert named_entities(SPLIT)["switch.loop"] == ("devices",)
+    renamed = rename_entity(SPLIT, "switch.loop", "switch.floor_loop")
+    assert renamed["circuits"][1]["devices"] == {"climate.living": ["switch.floor_loop"]}
+    moved = rename_entity(SPLIT, "climate.living", "climate.lounge")
+    assert moved["circuits"][0]["devices"] == {"climate.lounge": ["switch.radiator"]}
+    assert EntryConfig.from_options(moved).zone_entities == ("climate.lounge", "climate.bath")
+
+
+@pytest.mark.parametrize(
+    "devices",
+    [
+        ["switch.loop"],
+        {"climate.elsewhere": ["switch.loop"]},
+        {"climate.living": []},
+        {"climate.living": "switch.loop"},
+        {"climate.living": [None]},
+    ],
+    ids=["not_a_mapping", "zone_not_listed", "empty", "text", "foreign"],
+)
+def test_a_circuits_devices_of_another_shape_are_refused(devices: object) -> None:
+    """Devices only for a zone the circuit lists, as a list of entities — a hand edit of another
+    shape is refused, as a circuit's zones are."""
+    circuit = {"id": "main", "zones": ["climate.living"], "devices": devices}
+    options = MINIMAL | {"circuits": [circuit]}
+    with pytest.raises(ConfigError) as raised:
+        EntryConfig.from_options(options)
+    assert raised.value.code == "invalid_circuit"
+
+
 def test_minimal_options_get_cautious_defaults() -> None:
     config = EntryConfig.from_options(MINIMAL)
     assert config.level == "simple"

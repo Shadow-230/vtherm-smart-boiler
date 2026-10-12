@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -480,6 +480,16 @@ def _circuit_entities(visit: EntityVisit, item: Any) -> Any:
         listed = item.get(key)
         if isinstance(listed, list):  # named as the zones, as before: no internal ID shown
             result[key] = [_visit(visit, ZONES, entity) for entity in listed]
+    devices = item.get(CIRCUIT_DEVICES)
+    if isinstance(devices, Mapping):  # by zone (I8.8b): the zone and its devices both
+        result[CIRCUIT_DEVICES] = {
+            _visit(visit, ZONES, zone): (
+                [_visit(visit, CIRCUIT_DEVICES, e) for e in entities]
+                if isinstance(entities, list)
+                else entities
+            )
+            for zone, entities in devices.items()
+        }
     return result
 
 
@@ -647,6 +657,9 @@ def circuits_hold_zones(circuits: Any) -> bool:
 # underfloor heating and those with convectors (the rest radiators).
 CIRCUIT_ZONES = "zones"
 CIRCUIT_EMITTERS = {"underfloor": EmitterType.UNDERFLOOR, "convectors": EmitterType.CONVECTOR}
+# I8.8b (decision F2): of a zone a circuit feeds only in part — a zone in two circuits — the
+# zone's devices it feeds, by zone; a zone without an entry is the circuit's whole.
+CIRCUIT_DEVICES = "devices"
 
 
 def _zones(
@@ -750,11 +763,40 @@ def _circuit_zones(data: Any, circuits: list[Any]) -> tuple[tuple[Zone, ...], li
             for key, emitter in CIRCUIT_EMITTERS.items()
             for entity in _zone_list(circuit, key, circuit_id)
         }
+        devices = _device_lists(circuit, circuit_id, listed)
         for entity_id in listed:
             emitter = emitters.get(entity_id, EmitterType.RADIATOR)
-            zones.append(Zone(entity_id, circuit_id, emitter, closes.get(entity_id, False)))
-            configs.append(ZoneConfig(entity_id))
+            zones.append(
+                Zone(
+                    entity_id,
+                    circuit_id,
+                    emitter,
+                    closes.get(entity_id, False),
+                    devices.get(entity_id, frozenset()),
+                )
+            )
+            if all(c.entity_id != entity_id for c in configs):  # a split zone is one zone
+                configs.append(ZoneConfig(entity_id))
     return tuple(zones), configs
+
+
+def _device_lists(
+    circuit: Mapping[str, Any], circuit_id: str, listed: Sequence[str]
+) -> dict[str, frozenset[str]]:
+    """A circuit's devices by zone (I8.8b): only for a zone it lists, each a list of entities."""
+    raw = circuit.get(CIRCUIT_DEVICES)
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ConfigError("invalid_circuit", circuit_id)
+    devices: dict[str, frozenset[str]] = {}
+    for zone, entities in raw.items():
+        if zone not in listed or not isinstance(entities, list) or not entities:
+            raise ConfigError("invalid_circuit", circuit_id)
+        if not all(isinstance(e, str) and e for e in entities):
+            raise ConfigError("invalid_circuit", circuit_id)
+        devices[zone] = frozenset(entities)
+    return devices
 
 
 def _zone_list(circuit: Mapping[str, Any], key: str, circuit_id: str) -> list[str]:

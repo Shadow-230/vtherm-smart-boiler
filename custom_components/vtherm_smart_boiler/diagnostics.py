@@ -54,6 +54,8 @@ class _Redactor:
             }
         if isinstance(value, list | tuple):
             return [self(item) for item in value]
+        if isinstance(value, set | frozenset):  # a zone's active devices (I8.8b), in order
+            return [self(item) for item in sorted(value, key=str)]
         return value
 
 
@@ -166,7 +168,7 @@ async def async_get_config_entry_diagnostics(
             "fit_since": {key.value: at for key, at in coordinator.fit_since.items()},
             "zones": {
                 zone_id: {
-                    "circuit": view.circuit_id,
+                    "circuits": list(view.circuit_ids),
                     "state": asdict(view.state),
                     "heat": asdict(view.heat),
                 }

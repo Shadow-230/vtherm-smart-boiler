@@ -123,6 +123,24 @@ def test_vt_readiness_device_activity_and_temperature_age() -> None:
     assert (bare.ready, bare.device_active, bare.temperature_at) == (None, None, None)
 
 
+@pytest.mark.parametrize(
+    ("raw", "active"),
+    [
+        (["switch.radiator", "switch.loop"], frozenset({"switch.radiator", "switch.loop"})),
+        ([], frozenset()),
+        (None, None),
+        ("switch.radiator", None),
+        (["switch.radiator", 3], None),
+    ],
+    ids=["two", "none_active", "missing", "text", "foreign"],
+)
+def test_the_devices_vt_lists_active(raw: object, active: frozenset[str] | None) -> None:
+    """I8.8b: VT 10.4.0's `specific_states.device_actives`, the entity IDs of the zone's active
+    devices; anything else tells nothing."""
+    specific = {} if raw is None else {"device_actives": raw}
+    assert zone_values("heat", {"specific_states": specific}).devices_active == active
+
+
 @pytest.mark.parametrize(("raw", "cap"), [(0.8, 0.8), (80, 0.8), (1, 1.0), (None, None), (0, None)])
 def test_vt_cap_on_the_duty_cycle(raw: object, cap: float | None) -> None:
     values = zone_values("heat", {"configuration": {"max_on_percent": raw}})

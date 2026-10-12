@@ -2658,6 +2658,7 @@ _PROBLEM_STEPS = {
     "unknown_circuit": "circuit",
     "fixed_temperature_missing": "circuit",
     "duplicate_zone": "circuit",
+    "duplicate_device": "circuit",
     "zone_without_circuit": "circuit",
     "alarm_limits_out_of_order": "monitor",
     # A stored value this version does not know: its section's step (P-70).

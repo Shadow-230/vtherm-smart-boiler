@@ -23,7 +23,15 @@ async def test_diagnostics_are_redacted(
 ) -> None:
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.PRESSURE))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0, Signal.PRESSURE: 1.5})
-    living = zones.add("living", hvac_action="heating", valve_open_percent=40)
+    # I8.8b: the devices VT lists active are entity IDs too.
+    radiator = "switch.living_radiator"
+    hass.states.async_set(radiator, "on")
+    living = zones.add(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=40,
+        specific_states={"device_actives": [radiator]},
+    )
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Boiler",
@@ -40,8 +48,10 @@ async def test_diagnostics_are_redacted(
     await analyse_now(entry.runtime_data)
     result = await async_get_config_entry_diagnostics(hass, entry)
     text = json.dumps(result)
-    for entity in (*boiler.mapping().values(), living, WEATHER_ENTITY):
+    for entity in (*boiler.mapping().values(), living, WEATHER_ENTITY, radiator):
         assert entity not in text
+    (zone,) = result["zones"].values()
+    assert [e[:7] for e in zone["state"]["devices_active"]] == ["entity_"]
     assert result["options"]["signals"]["flame"].startswith("entity_")
     assert result["signals"]["flow"]["status"] == "ok"
     assert result["parameters"]["boiler_min_power"]["effective"] == 4.0

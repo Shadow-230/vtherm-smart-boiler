@@ -49,6 +49,7 @@ class ZoneValues:
     power: float | None = None  # kW, live only
     auto_mode: bool = False
     device_active: bool | None = None  # live only
+    devices_active: frozenset[str] | None = None  # the devices VT lists active, live only
     ready: bool | None = None  # VT's ``is_ready``; ``None``: not published
     temperature_at: float | None = None  # epoch seconds, live only
     max_on_percent: float | None = None  # 0 to 1, live only
@@ -88,6 +89,7 @@ def zone_values(
         power=_device_power(manager),
         auto_mode=state in AUTO_MODES,
         device_active=active if isinstance(active, bool) else None,
+        devices_active=_entity_ids(specific.get("device_actives")),
         # Published but not VT's true (false, ``None``, a string, a number): not started — the
         # cautious reading (SB-02). Not published: ``None``.
         ready=ready is True if "is_ready" in attributes else None,
@@ -98,6 +100,13 @@ def zone_values(
         shedding=manager.get("overpowering_state") == "on",
         reported=started and heating_enabled is not None,
     )
+
+
+def _entity_ids(raw: object) -> frozenset[str] | None:
+    """A list of entity IDs, as VT 10.4.0 lists a zone's active devices; else not known."""
+    if not isinstance(raw, list) or not all(isinstance(e, str) and e for e in raw):
+        return None
+    return frozenset(raw)
 
 
 def _temperature(raw: object, unit: object) -> float | None:

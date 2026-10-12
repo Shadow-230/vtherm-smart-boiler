@@ -135,7 +135,7 @@ from .core.daily import (
     summarize_day,
 )
 from .core.freshness import Rhythm, automatic_limit, observe
-from .core.heat import Heat, heat_available
+from .core.heat import Heat, heat_available, heat_through_any
 from .core.history import History, ZoneSeries, with_downtime
 from .core.installation import CircuitControl, IssueCode, Severity
 from .core.long_run import LongRun, LongRunClass, RoomLook, follow_long_run, tally
@@ -301,7 +301,7 @@ MONITOR_REFRESH = "The monitor refresh"  # the quick path, as its failure and re
 class ZoneView:
     zone_id: str
     name: str
-    circuit_id: str
+    circuit_ids: tuple[str, ...]  # one, or each a zone split by its devices is in (I8.8b)
     state: ZoneState
     heat: Heat
 
@@ -395,7 +395,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # change of them is written there at once too.
         self._main_owed: tuple[bool, bool] | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
-        self._heat: dict[str, bool | None] = {}
+        self._heat: dict[tuple[str, str], bool | None] = {}  # by zone and circuit
         # What each source has shown of its rhythm in this run, by signal and "weather" (I6).
         self._rhythms: dict[str, Rhythm] = {}
         # G11 E: the flame's run, and the counts kept for 0.4's tuning (stored).
@@ -1229,7 +1229,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_long_run(snapshot, zone_states, flame, now)
-        views: dict[str, ZoneView] = {}
+        heats: dict[str, list[Heat]] = {}
+        circuits_of: dict[str, list[str]] = {}
         for zone in config.installation.zones:
             state = zone_states[zone.zone_id]
             circuit = config.installation.circuit(zone.circuit_id)
@@ -1247,17 +1248,23 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 circuit_return(circuit, return_temp),  # a mixed circuit's is not the boiler's
                 state.temperature,
                 dhw,
-                self._heat.get(zone.zone_id),
+                self._heat.get((zone.zone_id, zone.circuit_id)),
                 flame_mapped=Signal.FLAME in mapped,
             )
-            self._heat[zone.zone_id] = heat.available
-            views[zone.zone_id] = ZoneView(
-                zone.zone_id,
-                self.link.zone_name(zone.zone_id),
-                zone.circuit_id,
-                state,
-                heat,
+            self._heat[zone.zone_id, zone.circuit_id] = heat.available
+            heats.setdefault(zone.zone_id, []).append(heat)
+            circuits_of.setdefault(zone.zone_id, []).append(zone.circuit_id)
+        # A zone split between circuits takes heat through either (I8.8b).
+        views = {
+            zone_id: ZoneView(
+                zone_id,
+                self.link.zone_name(zone_id),
+                tuple(circuits_of[zone_id]),
+                zone_states[zone_id],
+                heat_through_any(found),
             )
+            for zone_id, found in heats.items()
+        }
 
         for circuit in config.installation.circuits:
             members = [

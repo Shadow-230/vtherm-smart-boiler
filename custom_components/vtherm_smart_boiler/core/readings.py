@@ -84,7 +84,8 @@ class ZoneState:
     ``heating_enabled``: the zone is in a mode that may heat (``None``: its mode is not known,
     e.g. the entity is unavailable); ``auto_mode``: "auto" or heat_cool, where its action says
     whether it heats. ``calling``: its heater or valve is active now (VT's action).
-    ``device_active``: VT's own view of its devices (what its central boiler counts).
+    ``device_active``: VT's own view of its devices (what its central boiler counts);
+    ``devices_active``: those it lists active (``None``: not published — an older VT).
     ``on_percent`` and ``valve_open`` are fractions from 0 to 1. ``power`` is the device power
     as configured in VT, in kW — above 0, or unknown; ``mean_power`` VT's mean power over the
     zone's cycle, in kW (live only). ``ready``: VT's ``is_ready``, it has finished starting the
@@ -123,6 +124,7 @@ class ZoneState:
     shedding: bool = False
     reported: bool | None = None
     smartpi_learning_phase: bool | None = None
+    devices_active: frozenset[str] | None = None
 
     @property
     def started(self) -> bool:

@@ -443,6 +443,40 @@ async def test_heat_available_is_the_flame_and_the_flow_against_the_return(
     assert manager.heat_available is expected
 
 
+async def test_a_zone_split_between_circuits_has_heat_through_either(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I8.8b: the living room's radiator on the straight circuit — its water as warm back as
+    out, no heat there — and its floor loop behind a mixer whose own sensor reads 35 °C: heat
+    reaches the room through the loop. One zone, in both circuits."""
+    api = vt_is_set_up(hass)
+    living = zones.add("living", current_temperature=20.0, hvac_action="heating")
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
+    hass.states.async_set(boiler.entity(Signal.FLAME), "on")
+    for signal, value in ((Signal.FLOW, "45"), (Signal.RETURN, "44.5")):
+        hass.states.async_set(boiler.entity(signal), value, {"unit_of_measurement": "°C"})
+    hass.states.async_set("sensor.loop_flow", "35", {"unit_of_measurement": "°C"})
+    circuits = [
+        {"id": "main", "zones": [living], "devices": {living: ["switch.radiator"]}},
+        {"id": "floor", "control": "separate", "flow_entity": "sensor.loop_flow",
+         "zones": [living], "devices": {living: ["switch.loop"]}},
+    ]  # fmt: skip
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={"signals": boiler.mapping(), "circuits": circuits, "zones": []},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    view = entry.runtime_data.data.zones[living]
+    assert view.circuit_ids == ("main", "floor")
+    assert view.heat.available is True
+    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
+    assert manager.heat_available is True
+
+
 def test_the_attribute_changes_only_when_the_value_changes(hass: HomeAssistant) -> None:
     """P-63: VT records its thermostats' attributes, so the plugin's is replaced only when heat
     availability changes. Negative: a value that goes away takes the attribute with it; back, it
