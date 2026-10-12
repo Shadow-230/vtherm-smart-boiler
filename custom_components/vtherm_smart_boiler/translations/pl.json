@@ -179,6 +179,9 @@
           "convectors": "Z nich: konwektory",
           "max_flow": "Najwyższa temperatura wody",
           "fixed_temperature": "Temperatura stała",
+          "request_entity": "Obieg prosi o ciepło",
+          "needed_temperature": "Potrzebna temperatura wody",
+          "needed_entity": "Potrzebna temperatura wody (encja)",
           "max_flow_alarm": "Alarm za gorąco od",
           "max_flow_alarm_min": "Przez co najmniej",
           "flow_entity": "Czujnik zasilania obiegu",
@@ -186,13 +189,16 @@
         },
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
-          "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
+          "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa z najwyżej jednym obiegiem zasilanym prosto z kotła i bez obiegu mieszanego przez kocioł. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
           "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
           "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: dla nich pytamy o wykładnik krzywej i najwyższą temperaturę wody obiegu. Pozostałe to grzejniki, chyba że wskazano je jako konwektory.",
           "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
+          "request_entity": "Opcjonalnie: encja włączona, gdy własny sterownik obiegu (mieszacz, pompa) chce ciepła. Kocioł grzeje dla niego jak dla strefy VT, która prosi. Gdy nie da się jej odczytać, obieg nie prosi, a stan sterowania to pokazuje. Wtyczka nigdy nie steruje mieszaczem ani pompą.",
+          "needed_temperature": "Opcjonalnie: gdy obieg prosi, woda z kotła ma co najmniej tyle plus 5 K — zapas, który mieszacz obniża. Puste: wodę wyznacza krzywa.",
+          "needed_entity": "Opcjonalnie: encja podająca, jakiej wody obieg potrzebuje teraz — ma pierwszeństwo przed wartością powyżej; gdy nie da się jej odczytać, użyta jest wartość.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
@@ -774,6 +780,9 @@
           "convectors": "Z nich: konwektory",
           "max_flow": "Najwyższa temperatura wody",
           "fixed_temperature": "Temperatura stała",
+          "request_entity": "Obieg prosi o ciepło",
+          "needed_temperature": "Potrzebna temperatura wody",
+          "needed_entity": "Potrzebna temperatura wody (encja)",
           "max_flow_alarm": "Alarm za gorąco od",
           "max_flow_alarm_min": "Przez co najmniej",
           "flow_entity": "Czujnik zasilania obiegu",
@@ -781,13 +790,16 @@
         },
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
-          "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
+          "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa z najwyżej jednym obiegiem zasilanym prosto z kotła i bez obiegu mieszanego przez kocioł. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
           "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
           "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: dla nich pytamy o wykładnik krzywej i najwyższą temperaturę wody obiegu. Pozostałe to grzejniki, chyba że wskazano je jako konwektory.",
           "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
+          "request_entity": "Opcjonalnie: encja włączona, gdy własny sterownik obiegu (mieszacz, pompa) chce ciepła. Kocioł grzeje dla niego jak dla strefy VT, która prosi. Gdy nie da się jej odczytać, obieg nie prosi, a stan sterowania to pokazuje. Wtyczka nigdy nie steruje mieszaczem ani pompą.",
+          "needed_temperature": "Opcjonalnie: gdy obieg prosi, woda z kotła ma co najmniej tyle plus 5 K — zapas, który mieszacz obniża. Puste: wodę wyznacza krzywa.",
+          "needed_entity": "Opcjonalnie: encja podająca, jakiej wody obieg potrzebuje teraz — ma pierwszeństwo przed wartością powyżej; gdy nie da się jej odczytać, użyta jest wartość.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
@@ -1678,7 +1690,10 @@
               "limit_fixed_circuit": "Podniesiona dla obiegu ze stałym zaworem mieszającym",
               "comfort_correction": "Zastosowana korekta komfortu",
               "activation_delay": "Czeka na opóźnienie włączenia",
-              "boiler_fault": "Kocioł zgłasza własną usterkę: grzanie wyłączone"
+              "boiler_fault": "Kocioł zgłasza własną usterkę: grzanie wyłączone",
+              "circuit_asks": "Obieg sterowany przez inną automatykę prosi o ciepło",
+              "circuit_request_unknown": "Prośby obiegu nie da się odczytać: nie prosi",
+              "limit_circuit_need": "Podniesiona dla obiegu sterowanego przez inną automatykę: jego potrzeba plus 5 K"
             }
           },
           "reasons_text": {
@@ -1701,7 +1716,7 @@
               "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
               "no_topology": "Nie zadeklarowano podłączenia bramki",
               "curve_not_entered": "Nie wpisano krzywej grzewczej",
-              "one_direct_circuit_only": "Sterować można tylko jednym obiegiem zasilanym wprost z kotła",
+              "one_direct_circuit_only": "Sterować można najwyżej jednym obiegiem zasilanym wprost z kotła i żadnym mieszanym przez kocioł",
               "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
               "no_zones": "Brak strefy Versatile Thermostat",
               "count_threshold_above_zones": "Próg zapotrzebowania przekracza liczbę stref",
@@ -2697,7 +2712,7 @@
               "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
               "no_topology": "Nie zadeklarowano podłączenia bramki",
               "curve_not_entered": "Nie wpisano krzywej grzewczej",
-              "one_direct_circuit_only": "Sterować można tylko jednym obiegiem zasilanym wprost z kotła",
+              "one_direct_circuit_only": "Sterować można najwyżej jednym obiegiem zasilanym wprost z kotła i żadnym mieszanym przez kocioł",
               "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
               "no_zones": "Brak strefy Versatile Thermostat",
               "count_threshold_above_zones": "Próg zapotrzebowania przekracza liczbę stref",
@@ -2818,7 +2833,7 @@
       "message": "Wpisz krzywą grzewczą, co najmniej projektową temperaturę zasilania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_one_direct_circuit_only": {
-      "message": "Ta wersja steruje tylko jednym obiegiem zasilanym wprost z kotła (bez mieszania albo z termostatycznym zaworem mieszającym). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Ta wersja steruje najwyżej jednym obiegiem zasilanym wprost z kotła, razem z obiegami za termostatycznym zaworem mieszającym albo sterowanymi przez inną automatykę — nie drugim obiegiem wprost z kotła ani obiegiem mieszanym przez kocioł (CH2). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_underfloor_without_max_flow": {
       "message": "Ogrzewanie podłogowe na obiegu bez mieszania wymaga maksymalnej temperatury zasilania tego obiegu. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."

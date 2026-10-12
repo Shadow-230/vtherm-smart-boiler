@@ -109,6 +109,9 @@ class Circuit:
     max_flow: float | None = None
     max_flow_alarm: float | None = None  # °C; only with a maximum
     max_flow_alarm_s: float | None = None  # seconds above it before the alarm rises
+    # I8 (decision F3): a circuit run by other automation — the water it needs while it asks,
+    # entered (an entity's reading comes first; the control options hold which).
+    needed: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

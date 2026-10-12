@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-11: the plan approved by the user; I8.0 to I8.6 done; I8.7 next.
+Status on 2026-10-12: the plan approved by the user; I8.0 to I8.7 and I8.8a done; I8.8b next.
 
 ## How to read this plan
 
@@ -577,6 +577,50 @@ temperature, I8.7b the circuits as menu items, I8.7c the zones on the circuits' 
 - J4 impact: every scenario that sets circuits or zones; the runner's circuit and zone answers.
 
 ### I8.8 Circuits in control (F3, F6)
+
+The user's answers of 2026-10-12 (asked at this step, as they change what control does):
+- **A circuit's request unknown:** a circuit run by other automation whose "Circuit asks for
+  heat" entity is unavailable or unknown does not ask; the control state says why. Its VT
+  zones still ask, and frost protection holds.
+- **A fixed valve:** as before — the water by the curve, never below the valve's setting plus
+  its margin (5 K), while heating; not the setting plus margin alone.
+- **What caps the boiler's water:** the highest water temperature of the circuits fed straight
+  from the boiler (each its default, 70 °C, where empty; the default where there is none) and
+  the boiler's maximum heating setpoint. A circuit behind a mixer or a fixed valve is guarded
+  by them; its too-hot alarm, on its own flow sensor, tells.
+
+Claude's calls (cautious, provisional, K4):
+- Control runs with at most one circuit fed straight from the boiler (it has the curve) and
+  any of the others but one the boiler mixes (CH2, still later); a second straight circuit, or
+  one the boiler mixes, keeps the blocker, its text saying what is controlled.
+- The water is the curve (with the comfort correction), never below the fixed valves'
+  settings plus 5 K, nor below each other-automation circuit's need plus 5 K while that circuit
+  asks — its need a value or an entity (the entity first; unknown, the value; neither, no
+  floor) — under the caps above.
+- A circuit run by other automation that asks turns heating on by itself, as a zone asking
+  does at the default count of one: the mixer needs the water whatever the zones' count.
+- The comfort correction, the curve's room (Auto) and the critical zone read the zones of the
+  circuit fed straight from the boiler; with none, every zone, as before.
+- A zone's single devices in a circuit (a zone in two circuits) come in I8.8b, the device-level
+  model with them: core first, with tests (moved from I8.7, whose step had no core to hold it).
+
+- I8.8a ✅ (2026-10-12): circuits in control. Core: `core/circuit_requests.py` — which circuits
+  run by other automation ask (their entity on, or one of their zones asking; an unreadable
+  entity asks nothing and is named) and the water their needs hold; the controller turns
+  heating on for a circuit asking (reason `circuit_asks`, in both modes, VT's activation delay
+  kept), names an unreadable request (`circuit_request_unknown`), holds the water at the need
+  plus 5 K (`limit_circuit_need`) and decides the water at once when the need changes; the
+  curve's room, the comfort correction and the rooms short read the zones of the circuit fed
+  straight (`curve_zones`) where there are several circuits. Control options: the caps from the
+  circuits fed straight only (70 °C each where empty or none), the floor from the highest fixed
+  valve, the blocker kept for a second straight circuit or one the boiler mixes (its text
+  saying what is controlled). The circuit form asks, for a circuit run by other automation,
+  "Circuit asks for heat" (a binary sensor, input boolean or switch), "Water temperature
+  needed" (20–90 °C) and its entity; both entities are watched and renamed with the circuit.
+  No migration: the fields are new and optional. `SCOPE.md` (§5 the 0.2 circuits and the
+  circuits table, §9, the K4 list), `docs/plan-0.2.3.md` item 52, both user guides (setup,
+  control's conditions, heating on and off, the water temperature, the diagram), both
+  technical documents (the components, one control step and its diagram).
 
 - Core first, with tests: the boiler's water as the highest need of the circuits asking; the
   floor of a circuit run by other automation; its heat request in the demand (both modes); the

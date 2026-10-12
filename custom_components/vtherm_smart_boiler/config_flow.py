@@ -56,6 +56,9 @@ from .config import (
     FRESHNESS_BOUNDS_MIN,
     MONITOR_BOUNDS,
     MONITORING_DAYS_BOUNDS,
+    NEEDED_ENTITY,
+    NEEDED_TEMPERATURE,
+    REQUEST_ENTITY,
     SECTION_CODES,
     ConfigError,
     EntryConfig,
@@ -990,6 +993,12 @@ def circuit_schema(
         fields[_optional("fixed_temperature", given)] = _number(
             *CIRCUIT_BOUNDS["fixed_temperature"], 1, "°C"
         )
+    if REQUEST_ENTITY in shown:  # run by other automation (I8, decision F3)
+        fields[_optional(REQUEST_ENTITY, given)] = _entity(_REQUEST_FILTER)
+        fields[_optional(NEEDED_TEMPERATURE, given)] = _number(
+            *CIRCUIT_BOUNDS[NEEDED_TEMPERATURE], 1, "°C"
+        )
+        fields[_optional(NEEDED_ENTITY, given)] = _entity(_NEEDED_FILTER)
     if "flow_entity" in shown:
         fields[_optional("flow_entity", given)] = _entity(_TEMPERATURE)
     if MAX_FLOW_ALARM in shown:
@@ -1072,6 +1081,8 @@ def circuit_fields(options: Mapping[str, Any], circuit: Mapping[str, Any]) -> se
         shown |= set(EMITTER_LISTS)  # of its zones, those with underfloor and convectors
     if kind is CircuitControl.PASSIVE_FIXED:
         shown.add("fixed_temperature")
+    if kind is CircuitControl.SEPARATE:  # whether it asks, and the water it needs (I8, F3)
+        shown |= {REQUEST_ENTITY, NEEDED_TEMPERATURE, NEEDED_ENTITY}
     if not _advanced(options):
         return shown
     direct = kind is CircuitControl.UNMIXED_SHARED
@@ -1097,6 +1108,16 @@ def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str,
 
 
 _ZONE_FILTER = {"domain": "climate", "integration": VT_DOMAIN}
+# I8 (decision F3): a circuit run by other automation's request — on while it asks — and the
+# water it needs, a temperature.
+_REQUEST_FILTER = {"domain": ["binary_sensor", "input_boolean", "switch"]}
+_NEEDED_FILTER = {"domain": ["sensor", "number", "input_number"]}
+# The circuit form's entity fields and what each takes (checked again on submit, P-79).
+_CIRCUIT_ENTITY_FIELDS: Mapping[str, EntityFilter] = {
+    "flow_entity": _TEMPERATURE,
+    REQUEST_ENTITY: _REQUEST_FILTER,
+    NEEDED_ENTITY: _NEEDED_FILTER,
+}
 CLOSES_WHEN_OFF = "closes_when_off"
 
 
@@ -2448,7 +2469,10 @@ def circuit_from_input(
     alarm."""
     current = current or {}
     circuit: dict[str, Any] = {"id": circuit_id, "control": user_input["control"]}
-    for key in ("name", "max_flow", "fixed_temperature", "flow_entity"):
+    for key in (
+        "name", "max_flow", "fixed_temperature", "flow_entity",
+        REQUEST_ENTITY, NEEDED_TEMPERATURE, NEEDED_ENTITY,
+    ):  # fmt: skip
         given = user_input if shown is None or key in shown else current
         if given.get(key) not in (None, ""):
             circuit[key] = given[key]
@@ -3015,7 +3039,7 @@ class _Steps:
             self._circuit_draft = dict(user_input)
             # A sensor that is no temperature, a zone the circuit cannot take, are refused
             # before they reveal anything (P-79).
-            flow = entity_errors(self.hass, user_input, {"flow_entity": _TEMPERATURE})  # type: ignore[attr-defined]
+            flow = entity_errors(self.hass, user_input, _CIRCUIT_ENTITY_FIELDS)  # type: ignore[attr-defined]
             zones, zone_error, named = self._circuit_zones(user_input, circuits, index)
             # Zones the emitter lists did not offer yet: shown again with them (I8, A2, F2).
             offered = set(_listed(draft.get(CIRCUIT_ZONES))) if EMITTER_LISTS[0] in shown else set()

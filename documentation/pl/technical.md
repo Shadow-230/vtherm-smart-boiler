@@ -102,6 +102,12 @@ wyłączenie grzania z ochrony przed mrozem i zapotrzebowania stref, a temperatu
 VT, teraz zadanie wtyczki: strefy potrzebujące ciepła, łączna moc albo otwarcie zaworów, przy czym
 każda strefa liczy się tylko wtedy, gdy VT podaje jej stan jednoznacznie.
 
+**Obiegi sterowane przez inną automatykę (`core/circuit_requests.py`, `circuits_asking`).**
+Obieg, którego mieszaczem albo pompą steruje coś innego, prosi o ciepło przez własną encję albo
+przez swoje strefy; encja, której nie da się odczytać, o nic nie prosi i jest wskazana. Gdy obieg
+prosi, jego potrzeba — najpierw odczyt encji, inaczej wpisana wartość — plus 5 K jest dolną
+granicą wody (`core/limits.py`, `limit_flow`), tak jak nastawa stałego zaworu plus 5 K.
+
 **Pilnowanie stref (`core/zone_watch.py`, `follow_zones`).** Okres rozpoznania po starcie
 (najwyżej 10 minut), okres przejściowy każdej strefy i przypadek, gdy wszystkie strefy są
 nieznane.
@@ -147,7 +153,7 @@ flowchart TD
     B -->|"nie"| Z["Brak decyzji w tym kroku"]
     B -->|"tak"| C["Odczyt: migawka i świeżość kotła, strefy przez vtherm_link, ciepła woda"]
     C --> D["Blokady i zatrzaski"]
-    D --> E["Zapotrzebowanie stref i ochrona przed mrozem: boiler_demand, follow_zones"]
+    D --> E["Zapotrzebowanie stref, prośby obiegów i ochrona przed mrozem: boiler_demand, circuits_asking, follow_zones"]
     E --> F{"Sterownik decyduje: decide"}
     F -->|"oddanie kotła"| H["Oddanie: najniższa woda, grzanie, gdzie ktoś przejmuje, zwolnienie"]
     F -->|"grzanie, spoczynek, mróz"| G["Zabezpieczenia oceniają odczyt: plan_write, classify"]
@@ -166,8 +172,13 @@ flowchart TD
   nieświeże kroki pokryją 5 minut w ciągu 10; wraca po 60 sekundach świeżych danych).
 - **Blokady i zatrzaski** idą przed zapotrzebowaniem: zatrzask albo alarm ustawiony na oddanie
   kotła oddaje kocioł, o cokolwiek proszą strefy.
-- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku; temperatura wody
-  co odstęp decyzji (domyślnie 5 minut) i od razu po końcu blokady albo usterki.
+- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku — zapotrzebowanie
+  stref albo prośba obiegu sterowanego przez inną automatykę; temperatura wody co odstęp decyzji
+  (domyślnie 5 minut) i od razu po końcu blokady albo usterki lub gdy zmienia się potrzeba
+  obiegu: krzywa, nigdy poniżej nastawy stałego zaworu ani potrzeby proszącego obiegu plus 5 K,
+  ograniczona przez obiegi zasilane prosto z kotła i maksimum kotła. Przy kilku obiegach
+  temperatura pokojowa krzywej i korekta komfortu biorą pod uwagę strefy obiegu zasilanego
+  prosto z kotła.
 - **Zabezpieczenia** widzą odczyt zwrotny każdego zapisu; oddania kotła żadne zabezpieczenie
   nigdy nie wstrzymuje.
 - **Dalsze kroki:** zaległe oddanie kotła jest ponawiane co minutę, aż zostanie potwierdzone;

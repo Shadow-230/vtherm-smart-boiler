@@ -179,6 +179,9 @@
           "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
+          "request_entity": "Circuit asks for heat",
+          "needed_temperature": "Water temperature needed",
+          "needed_entity": "Water temperature needed (entity)",
           "max_flow_alarm": "Too hot alarm at",
           "max_flow_alarm_min": "For at least",
           "flow_entity": "Circuit flow sensor",
@@ -186,13 +189,16 @@
         },
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
-          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one circuit fed straight from the boiler, and not with one the boiler mixes. The wrong type makes control refuse, or misjudge what reaches the rooms.",
           "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
           "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
           "underfloor": "The zones of this circuit with underfloor heating: the curve's exponent and the circuit's highest water temperature are asked for them. The rest are radiators unless listed as convectors.",
           "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
+          "request_entity": "Optional: an entity that is on while the circuit's own controller (a mixer, a pump) wants heat. The boiler heats for it as for a VT zone asking. Unreadable, it does not ask and the control state says so. The plugin never drives the mixer or the pump.",
+          "needed_temperature": "Optional: while the circuit asks, the boiler's water stays at or above this plus 5 K — the margin its mixer mixes down from. Empty, the curve gives the water.",
+          "needed_entity": "Optional: an entity reporting the water the circuit needs now, taken before the value above; unreadable, the value is used.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
@@ -774,6 +780,9 @@
           "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
+          "request_entity": "Circuit asks for heat",
+          "needed_temperature": "Water temperature needed",
+          "needed_entity": "Water temperature needed (entity)",
           "max_flow_alarm": "Too hot alarm at",
           "max_flow_alarm_min": "For at least",
           "flow_entity": "Circuit flow sensor",
@@ -781,13 +790,16 @@
         },
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
-          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one circuit fed straight from the boiler, and not with one the boiler mixes. The wrong type makes control refuse, or misjudge what reaches the rooms.",
           "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
           "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
           "underfloor": "The zones of this circuit with underfloor heating: the curve's exponent and the circuit's highest water temperature are asked for them. The rest are radiators unless listed as convectors.",
           "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
+          "request_entity": "Optional: an entity that is on while the circuit's own controller (a mixer, a pump) wants heat. The boiler heats for it as for a VT zone asking. Unreadable, it does not ask and the control state says so. The plugin never drives the mixer or the pump.",
+          "needed_temperature": "Optional: while the circuit asks, the boiler's water stays at or above this plus 5 K — the margin its mixer mixes down from. Empty, the curve gives the water.",
+          "needed_entity": "Optional: an entity reporting the water the circuit needs now, taken before the value above; unreadable, the value is used.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
@@ -1678,7 +1690,10 @@
               "limit_fixed_circuit": "Raised for the circuit with a fixed mixing valve",
               "comfort_correction": "Comfort correction applied",
               "activation_delay": "Waiting for the activation delay",
-              "boiler_fault": "The boiler reports its own fault: heating off"
+              "boiler_fault": "The boiler reports its own fault: heating off",
+              "circuit_asks": "A circuit run by other automation asks for heat",
+              "circuit_request_unknown": "A circuit's request cannot be read: it does not ask",
+              "limit_circuit_need": "Raised for a circuit run by other automation: its need plus 5 K"
             }
           },
           "reasons_text": {
@@ -1701,7 +1716,7 @@
               "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
               "no_topology": "The gateway's connection is not declared",
               "curve_not_entered": "The heating curve is not entered",
-              "one_direct_circuit_only": "Only one circuit fed straight from the boiler can be controlled",
+              "one_direct_circuit_only": "At most one circuit fed straight from the boiler and none the boiler mixes can be controlled",
               "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
               "no_zones": "No Versatile Thermostat zone",
               "count_threshold_above_zones": "The demand threshold asks for more zones than there are",
@@ -2697,7 +2712,7 @@
               "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
               "no_topology": "The gateway's connection is not declared",
               "curve_not_entered": "The heating curve is not entered",
-              "one_direct_circuit_only": "Only one circuit fed straight from the boiler can be controlled",
+              "one_direct_circuit_only": "At most one circuit fed straight from the boiler and none the boiler mixes can be controlled",
               "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
               "no_zones": "No Versatile Thermostat zone",
               "count_threshold_above_zones": "The demand threshold asks for more zones than there are",
@@ -2818,7 +2833,7 @@
       "message": "Enter the heating curve, at least the design flow temperature. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_one_direct_circuit_only": {
-      "message": "This version controls only one circuit fed straight from the boiler (unmixed, or with a fixed thermostatic mixing valve). Other reasons: {count} (all are listed on the control state)."
+      "message": "This version controls at most one circuit fed straight from the boiler, with circuits behind a fixed thermostatic mixing valve or run by other automation — not a second straight circuit, nor one the boiler mixes (CH2). Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_underfloor_without_max_flow": {
       "message": "Underfloor heating on an unmixed circuit needs a maximum flow temperature for that circuit. Other reasons: {count} (all are listed on the control state)."

@@ -107,6 +107,7 @@ CIRCUIT_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "fixed_temperature": (20.0, 70.0),
         "max_flow_alarm": (20.0, 100.0),
         "max_flow_alarm_min": (1.0, 120.0),
+        "needed_temperature": (20.0, 90.0),  # I8 (F3): a circuit run by other automation's
     }
 )
 # Shorter would let control start before the monitoring period (X5); the integration tests lift
@@ -295,6 +296,9 @@ class EntryConfig:
     # kept it (X5.2): inactive and named; control is blocked.
     shared_signals: Mapping[Signal, Signal] = field(default_factory=dict)
     panel: BoilerPanel = field(default_factory=BoilerPanel)  # the setup's first answers (I6)
+    # I8 (decision F3): circuits run by other automation's request and need entities.
+    circuit_request_entities: dict[str, str] = field(default_factory=dict)
+    circuit_need_entities: dict[str, str] = field(default_factory=dict)
 
     @property
     def zone_entities(self) -> tuple[str, ...]:
@@ -316,6 +320,8 @@ class EntryConfig:
             *self.signals.values(),
             *self.zone_entities,
             *self.circuit_flow_entities.values(),
+            *self.circuit_request_entities.values(),
+            *self.circuit_need_entities.values(),
         ]
         if self.weather:
             entities.append(self.weather)
@@ -346,7 +352,7 @@ class EntryConfig:
             _flag("invalid_boiler", boiler_data, "condensing", True),
             _flag("invalid_boiler", boiler_data, "bypass", False),
         )
-        circuits, flow_entities = _circuits(_section(options, CIRCUITS))
+        circuits, circuit_entities = _circuits(_section(options, CIRCUITS))
         zones, zone_configs = _zones(
             _section(options, ZONES),
             {c.circuit_id for c in circuits},
@@ -371,6 +377,7 @@ class EntryConfig:
                 parameters,
                 panel,
                 _section(options, SIGNALS),
+                frozenset(circuit_entities.requests),
             )
         except ConfigError as err:
             if strict_control:
@@ -385,7 +392,9 @@ class EntryConfig:
             installation=installation,
             parameters=parameters,
             zones=tuple(zone_configs),
-            circuit_flow_entities=flow_entities,
+            circuit_flow_entities=circuit_entities.flow,
+            circuit_request_entities=circuit_entities.requests,
+            circuit_need_entities=circuit_entities.needs,
             monitor=monitor,
             freshness=freshness,
             control=control,
@@ -465,6 +474,8 @@ def _circuit_entities(visit: EntityVisit, item: Any) -> Any:
         return item
     prefix = f"{CIRCUITS}.{item.get('id')}"
     result = _visit_item(visit, item, "flow_entity", f"{prefix}.flow_entity")
+    for key in (REQUEST_ENTITY, NEEDED_ENTITY):  # I8 (F3)
+        result = _visit_item(visit, result, key, f"{prefix}.{key}")
     for key in (CIRCUIT_ZONES, *CIRCUIT_EMITTERS):
         listed = item.get(key)
         if isinstance(listed, list):  # named as the zones, as before: no internal ID shown
@@ -567,11 +578,28 @@ def _circuit_number(item: Mapping[str, Any], key: str) -> float | None:
     return _bounded("invalid_circuit", item, key, CIRCUIT_BOUNDS[key])
 
 
-def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
+# What a circuit run by other automation reads (I8, decision F3): whether it asks for heat,
+# and the water it needs.
+REQUEST_ENTITY = "request_entity"
+NEEDED_ENTITY = "needed_entity"
+NEEDED_TEMPERATURE = "needed_temperature"
+
+
+@dataclass(frozen=True, slots=True)
+class CircuitEntities:
+    """The entities circuits name: a mixed or fixed circuit's own flow sensor, and a circuit
+    run by other automation's request and need (I8, decision F3) — each by circuit."""
+
+    flow: dict[str, str] = field(default_factory=dict)
+    requests: dict[str, str] = field(default_factory=dict)
+    needs: dict[str, str] = field(default_factory=dict)
+
+
+def _circuits(data: Any) -> tuple[tuple[Circuit, ...], CircuitEntities]:
     if not data:
-        return (Circuit("main"),), {}
+        return (Circuit("main"),), CircuitEntities()
     circuits: list[Circuit] = []
-    flow_entities: dict[str, str] = {}
+    entities = CircuitEntities()
     for item in data:
         circuit_id = _item_text(item, "id", "invalid_circuit")
         max_flow = _circuit_number(item, "max_flow")
@@ -584,25 +612,27 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
                 alarm_at = max_flow + CIRCUIT_ALARM_RISE_K
             minutes = _circuit_number(item, "max_flow_alarm_min")
             alarm_s = (CIRCUIT_ALARM_MIN if minutes is None else minutes) * 60.0
+        control = _enum(
+            CircuitControl, item, "control", CircuitControl.UNMIXED_SHARED, "invalid_circuit"
+        )
+        other = control is CircuitControl.SEPARATE  # its request and need, kept otherwise
         circuits.append(
             Circuit(
                 circuit_id,
-                _enum(
-                    CircuitControl,
-                    item,
-                    "control",
-                    CircuitControl.UNMIXED_SHARED,
-                    "invalid_circuit",
-                ),
+                control,
                 _circuit_number(item, "fixed_temperature"),
                 max_flow,
                 alarm_at,
                 alarm_s,
+                _circuit_number(item, NEEDED_TEMPERATURE) if other else None,
             )
         )
         if item.get("flow_entity"):
-            flow_entities[circuit_id] = str(item["flow_entity"])
-    return tuple(circuits), flow_entities
+            entities.flow[circuit_id] = str(item["flow_entity"])
+        for key, found in ((REQUEST_ENTITY, entities.requests), (NEEDED_ENTITY, entities.needs)):
+            if other and item.get(key):
+                found[circuit_id] = str(item[key])
+    return tuple(circuits), entities
 
 
 def circuits_hold_zones(circuits: Any) -> bool:
@@ -948,6 +978,7 @@ def _control(
     parameters: ParameterSet,
     panel: BoilerPanel | None = None,
     signals: Mapping[str, Any] | None = None,
+    requests: frozenset[str] = frozenset(),
 ) -> ControlOptions:
     panel = BoilerPanel() if panel is None else panel
     entered = parameters.get(ParameterKey.DESIGN_OUTDOOR).estimate(Source.ENTERED)
@@ -962,6 +993,7 @@ def _control(
             connection=panel.connection,
             control_mode=panel.control_mode,
             design_outdoor=None if entered is None else entered.value,
+            requests=requests,
         )
     except (AttributeError, KeyError, TypeError, ValueError) as err:
         raise ConfigError("invalid_control", str(err)) from err

@@ -283,6 +283,8 @@ Left on purpose for a later release; what a step leaves open is added here by na
 52. Step 3.1 (SB-14): the circuit control "controlled separately" (an external mixing controller, a
     mixer driven by Home Assistant, a separate weather controller; `SCOPE.md` §5) has no code — no
     release yet, unless the user names one at K4; it sits beside item 1 of "Open after 0.2.2".
+    Built in 0.2 as the circuit "controlled by other automation" (`docs/plan-0.2-i8.md`, I8.8,
+    decisions F3 and F6).
 53. Step 3.1 (SB-33): the freshness guard writes nothing while the boiler link's data are stale, so
     a stand-alone gateway's `CS` lapses within about a minute (an extra start) and a held command
     stays up to 5 min against VT (`SCOPE.md` principle 12, exception 7); whether "heating off" is

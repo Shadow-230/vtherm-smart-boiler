@@ -99,10 +99,11 @@ warm; a zone without an opening never blocks the fall. A clip is never learned a
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
+from .circuit_requests import CircuitsAsking, OtherAutomation, circuits_asking
 from .comfort_rules import (
     Readings,
     StartsBaseline,
@@ -121,7 +122,7 @@ from .curve import (
     auto_room,
     update_outdoor,
 )
-from .demand import Demand, DemandConfig, boiler_demand
+from .demand import Demand, DemandConfig, boiler_demand, zone_wants_heat
 from .limits import (
     FlowLimits,
     FrostConfig,
@@ -196,6 +197,12 @@ class Reason(StrEnum):
     COMFORT_CORRECTION = "comfort_correction"
     ACTIVATION_DELAY = "activation_delay"  # heating waits VT's activation delay (decision 5)
     BOILER_FAULT = "boiler_fault"  # the boiler reports its own fault that stops it (Y1)
+    # I8 (decision F3): a circuit run by other automation asks for heat; one cannot say
+    # (its entity unreadable: it does not ask, the user's answer of 2026-10-12); its need
+    # holds the water.
+    CIRCUIT_ASKS = "circuit_asks"
+    CIRCUIT_REQUEST_UNKNOWN = "circuit_request_unknown"
+    LIMIT_CIRCUIT_NEED = "limit_circuit_need"
 
 
 _OUTDOOR_REASON = {
@@ -210,6 +217,7 @@ _LIMIT_REASON = {
     LimitCode.CIRCUIT_MAX: Reason.LIMIT_CIRCUIT_MAX,
     LimitCode.BOILER_MAX: Reason.LIMIT_BOILER_MAX,
     LimitCode.FIXED_CIRCUIT: Reason.LIMIT_FIXED_CIRCUIT,
+    LimitCode.CIRCUIT_NEED: Reason.LIMIT_CIRCUIT_NEED,
 }
 
 
@@ -231,6 +239,12 @@ class ControlConfig:
     circuit_max: float | None = None
     boiler_max: float | None = None
     circuit_floor: float | None = None  # a fixed circuit's temperature: the boiler flow's floor
+    # I8 (decisions F3, F6): circuits run by other automation — they ask for heat, and while
+    # asking hold the water above their need; and the zones of the circuit the curve serves
+    # (the one fed straight from the boiler), which its comfort correction, room and short
+    # rooms read — ``None``: every zone.
+    other_automation: tuple[OtherAutomation, ...] = ()
+    curve_zones: frozenset[str] | None = None
     frost: FrostConfig = field(default_factory=FrostConfig)
     demand: DemandConfig = field(default_factory=DemandConfig)
     fallback_setpoint: float | None = None  # None: the curve at its design point
@@ -308,6 +322,10 @@ class ControlInputs:
     # Boiler protection (Y1): the boiler has reported its own fault that stops it for five
     # minutes — the control unit holds it on its clock; an unknown fault counts as none.
     boiler_fault: bool = False
+    # I8 (decision F3): each circuit run by other automation's request (``None``: unreadable)
+    # and need as their entities read now (``None``: unreadable, the value entered then).
+    circuit_requests: Mapping[str, bool | None] = field(default_factory=dict)
+    circuit_needs: Mapping[str, float | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +355,7 @@ class ControlState:
     water_s: float = 0.0  # seconds counted since the last water decision (P-46)
     last_step_at: float | None = None
     upper: float | None = None  # the highest setpoint the limits allow, at the last decision
+    circuit_need: float | None = None  # the circuits' need held then (I8, F3): its change decides
     correction_limit_s: float = 0.0  # seconds at the band's edge, a cap's time left out
     # The correction's rises within the last day, (time, K): at most ``CORRECTION_DAY_K``. Kept
     # through a hand-back (the day's rate is not reset by one); a new session starts afresh.
@@ -825,7 +844,8 @@ def _heating_decision(
     # A step counts a minute at most: a wall clock jumping forward must not count an hour of
     # heat flow or of fall, which would move the comfort correction past its rate at once.
     counted_s = min(MAX_STEP_S, step_s)
-    wanted, heat_reason = _want_heat(demand, frost, fault)
+    asks = _circuits(inputs, config)
+    wanted, heat_reason = _want_heat(demand, frost, fault, bool(asks.asking))
     pending, want_heat = _activation(state, inputs, config, wanted)
     waiting = pending is not None and wanted
     activation_at = None if pending is None else now + max(0.0, config.activation_delay_s - pending)
@@ -861,7 +881,7 @@ def _heating_decision(
         )
     # Decision 3's "off": every zone unknown, or no criterion that can be judged, and no working
     # thermostat to hand the boiler to — nothing asks for heat.
-    nobody_asks = not frost and demand.wanted is None
+    nobody_asks = not frost and demand.wanted is None and not asks.asking
     dhw = inputs.dhw is True
     # "Heat flows" (S-24): the flame burning without hot water; the flame unknown, heating
     # commanded without hot water.
@@ -876,7 +896,10 @@ def _heating_decision(
     frost_stuck = frost_on and _frost_stuck(state, now, coldest)
 
     prior_target, prior_upper = state.target, state.upper
-    if _water_due(state, now, config, frost, nobody_asks and outdoor.effective is None):
+    # A circuit's need changing — one starting or ending to ask — is decided at once (I8, F3).
+    need_changed = asks.floor != state.circuit_need
+    lowest_now = nobody_asks and outdoor.effective is None
+    if need_changed or _water_due(state, now, config, frost, lowest_now):
         water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
         room = _curve_room(state, inputs, config)
         state = replace(state, curve_room=room)
@@ -889,6 +912,7 @@ def _heating_decision(
         upper = limit_flow(
             1e6, config.limits, config.circuit_max, config.boiler_max, config.circuit_floor
         ).value
+        state = replace(state, circuit_need=asks.floor)
         # An upper cap — the hard maximum, the circuit's, the boiler's — or a clip holds the
         # setpoint: a rise could not show, so it is not learned (S-25).
         held = inputs.clipped or curve_value + state.correction >= upper - _EPSILON
@@ -905,7 +929,7 @@ def _heating_decision(
             water.append(Reason.COMFORT_CORRECTION)
         limited = limit_flow(
             curve_value + correction, config.limits, config.circuit_max, config.boiler_max,
-            config.circuit_floor,
+            config.circuit_floor, asks.floor,
         )  # fmt: skip
         water.extend(_LIMIT_REASON[code] for code in limited.applied)
         target: float = limited.value
@@ -923,6 +947,8 @@ def _heating_decision(
 
     mode = _heating_mode(fault, frost_on, want_heat, outdoor.effective is None)
     reasons = (*water_reasons[:1], heat_reason, *water_reasons[1:])
+    if asks.unknown:
+        reasons = (*reasons, Reason.CIRCUIT_REQUEST_UNKNOWN)
     if waiting:
         reasons = (*reasons, Reason.ACTIVATION_DELAY)
     if ramping:
@@ -974,7 +1000,8 @@ def _on_off_decision(
     coldest = min(
         watched_temperatures(inputs.zones, now, config.zone_max_age_s, config.frost), default=None
     )
-    wanted, heat_reason = _want_heat(demand, frost, fault)
+    asks = _circuits(inputs, config)
+    wanted, heat_reason = _want_heat(demand, frost, fault, bool(asks.asking))
     pending, want_heat = _activation(state, inputs, config, wanted)
     waiting = pending is not None and wanted
     activation_at = None if pending is None else now + max(0.0, config.activation_delay_s - pending)
@@ -987,6 +1014,8 @@ def _on_off_decision(
     reasons: tuple[Reason, ...] = (
         (heat_reason, Reason.ACTIVATION_DELAY) if waiting else (heat_reason,)
     )
+    if asks.unknown:
+        reasons = (*reasons, Reason.CIRCUIT_REQUEST_UNKNOWN)
     if waiting and state.command is None:
         # Taking the relay afresh: nothing is written while the start waits (as for the water).
         idle = replace(state, mode=ControlMode.IDLE, frost=frost, reasons=reasons, last_step_at=now)
@@ -1052,18 +1081,40 @@ def _activation(
     return waited, False
 
 
-def _want_heat(demand: Demand, frost: bool, fault: bool = False) -> tuple[bool, Reason]:
+def _want_heat(
+    demand: Demand, frost: bool, fault: bool = False, asking: bool = False
+) -> tuple[bool, Reason]:
     """Whether to heat now and why: never while the boiler reports its own fault that stops it
     (Y1); frost protection, else the zones' demand — VT's central mode and summer or winter act
-    on the zones themselves. Demand unknown asks for nothing (decision 3): heating off, or the
-    working thermostat's, before this."""
+    on the zones themselves — else a circuit run by other automation asking (``asking``, I8,
+    decision F3: by itself, as a zone asking at the default count). Demand unknown and nothing
+    asking asks for nothing (decision 3): heating off, or the working thermostat's, before
+    this."""
     if fault:
         return False, Reason.BOILER_FAULT
     if frost:
         return True, Reason.FROST
+    if demand.wanted:
+        return True, Reason.DEMAND
+    if asking:
+        return True, Reason.CIRCUIT_ASKS
     if demand.wanted is None:
         return False, Reason.ZONES_UNKNOWN
-    return demand.wanted, Reason.DEMAND if demand.wanted else Reason.NO_DEMAND
+    return False, Reason.NO_DEMAND
+
+
+def _circuits(inputs: ControlInputs, config: ControlConfig) -> CircuitsAsking:
+    """The circuits run by other automation that ask now (I8, decision F3): their entity on,
+    or one of their known zones wanting heat."""
+    now = inputs.now
+    wanting = {
+        z.zone_id
+        for z in inputs.zones
+        if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z, config.demand.zone_opening)
+    }
+    return circuits_asking(
+        config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting
+    )
 
 
 SATISFIED = 0.7  # every zone below this opening is clearly satisfied
@@ -1079,10 +1130,13 @@ def _counted(inputs: ControlInputs, config: ControlConfig) -> list[ZoneState]:
     """The zones the correction judges: heating enabled, and known. A window is VT's to act on
     (I8.1b): a zone it holds off or lowers for one no longer asks, nor looks short."""
     now = inputs.now
+    curve = config.curve_zones  # the curve's circuit's zones (I8, F6); None: every zone
     return [
         z
         for z in inputs.zones
-        if z.heating_enabled is True and z.is_known(now, config.zone_max_age_s)
+        if z.heating_enabled is True
+        and z.is_known(now, config.zone_max_age_s)
+        and (curve is None or z.zone_id in curve)
     ]
 
 

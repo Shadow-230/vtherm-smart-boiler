@@ -15,6 +15,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     fault_stops,
     follow_fault,
 )
+from custom_components.vtherm_smart_boiler.core.circuit_requests import OtherAutomation
 from custom_components.vtherm_smart_boiler.core.controller import (
     _LIMIT_REASON,
     CORRECTION_DAY_K,
@@ -411,6 +412,87 @@ def test_a_fixed_circuit_keeps_the_flow_above_its_temperature() -> None:
     _state, [mild] = run([inputs(0.0, outdoor_sensor=15.0)], config)
     assert mild.command.setpoint == 45.0
     assert Reason.LIMIT_FIXED_CIRCUIT in mild.reasons
+
+
+# --- I8.8: circuits run by other automation (decisions F3, F6) --------------------------------
+
+MIXER = OtherAutomation("floor", requests=True, needed=35.0)
+MIXED = replace(CONFIG, other_automation=(MIXER,))
+
+
+def not_asking(t: float) -> ZoneState:
+    """A zone in its heating mode that does not ask."""
+    return zone(t, valve_open=0.0)
+
+
+def test_a_circuit_asking_heats_and_holds_its_need() -> None:
+    """A circuit run by other automation asking turns heating on by itself — no zone asks —
+    and holds the water at its need plus the margin over a cooler curve."""
+    step = inputs(
+        0.0, outdoor_sensor=15.0, zones=(not_asking(0.0),), circuit_requests={"floor": True}
+    )
+    _state, [decision] = run([step], MIXED)
+    assert decision.command is not None
+    assert decision.command.ch_enable is True
+    assert decision.command.setpoint == 40.0
+    assert Reason.CIRCUIT_ASKS in decision.reasons
+    assert Reason.LIMIT_CIRCUIT_NEED in decision.reasons
+
+
+def test_an_unreadable_request_asks_nothing_and_says_so() -> None:
+    """The user's answer of 2026-10-12: a request that cannot be read does not ask; the reasons
+    say so. Its need holds nothing."""
+    step = inputs(
+        0.0, outdoor_sensor=15.0, zones=(not_asking(0.0),), circuit_requests={"floor": None}
+    )
+    _state, [decision] = run([step], MIXED)
+    assert decision.command is None or decision.command.ch_enable is False
+    assert Reason.CIRCUIT_ASKS not in decision.reasons
+    assert Reason.CIRCUIT_REQUEST_UNKNOWN in decision.reasons
+
+
+def test_a_circuit_starting_to_ask_raises_the_water_at_once() -> None:
+    """The need changing is decided at once, not at the next decision interval: the zones heat
+    by the curve, then the mixer asks — the water rises in the next step."""
+    slow = replace(MIXED, decision_interval_s=3600.0)
+    hot = replace(MIXER, needed=50.0)
+    config = replace(slow, other_automation=(hot,))
+    steps = [
+        inputs(0.0, outdoor_sensor=15.0, circuit_requests={"floor": False}),
+        inputs(10.0, outdoor_sensor=15.0, circuit_requests={"floor": True}),
+    ]
+    _state, [before, after] = run(steps, config)
+    assert before.command is not None
+    assert after.command is not None
+    assert before.command.setpoint is not None
+    assert before.command.setpoint < 55.0
+    assert after.command.setpoint == 55.0
+
+
+def test_the_relay_heats_for_a_circuit_asking_too() -> None:
+    """On/off control through a relay: a circuit asking turns heating on, no water held."""
+    relay = replace(MIXED, on_off=True)
+    step = inputs(0.0, zones=(not_asking(0.0),), circuit_requests={"floor": True})
+    _state, [decision] = run([step], relay)
+    assert decision.command is not None
+    assert decision.command.ch_enable is True
+    unknown = inputs(0.0, zones=(not_asking(0.0),), circuit_requests={"floor": None})
+    _state, [decision] = run([unknown], relay)
+    assert Reason.CIRCUIT_REQUEST_UNKNOWN in decision.reasons
+
+
+def test_the_curves_room_reads_its_own_circuits_zones() -> None:
+    """I8 (decision F6): in Auto the curve's room is the warmest setpoint among the zones of the
+    circuit the curve serves — a zone of another circuit, warmer, is not read."""
+    config = replace(CONFIG, room_auto=True, curve_zones=frozenset({"a"}))
+    zones = (
+        replace(zone(0.0, target=21.0), zone_id="a"),
+        replace(zone(0.0, target=22.0), zone_id="b"),
+    )
+    state, _ = run([inputs(0.0, zones=zones)], config)
+    assert state.curve_room == 21.0
+    state, _ = run([inputs(0.0, zones=zones)], replace(config, curve_zones=None))
+    assert state.curve_room == 22.0
 
 
 @pytest.mark.parametrize("kwargs", [{"decision_interval_s": 0.0}, {"ramp_k_per_min": 0.0}])

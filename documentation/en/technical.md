@@ -100,6 +100,12 @@ the water temperature from the curve (`core/curve.py`), limits and ramp.
 plugin's job: zones calling, total power or valve opening, each zone counted only while VT
 reports it clearly.
 
+**Circuits run by other automation (`core/circuit_requests.py`, `circuits_asking`).** A circuit
+whose mixer or pump something else drives asks for heat through its own entity or its zones; an
+entity that cannot be read asks nothing and is named. While it asks, its need — an entity's
+reading first, else the value entered — plus 5 K is a lower bound of the water
+(`core/limits.py`, `limit_flow`), as a fixed valve's setting plus 5 K is.
+
 **Zone watch (`core/zone_watch.py`, `follow_zones`).** The recognition period after a start
 (at most 10 minutes), each zone's grace period, and the case where every zone is unknown.
 
@@ -140,7 +146,7 @@ flowchart TD
     B -- no --> Z[No decision this step]
     B -- yes --> C[Read inputs: boiler snapshot and freshness, zones via vtherm_link, hot water]
     C --> D[Blockers and latches]
-    D --> E[Zones' demand and frost protection: boiler_demand, follow_zones]
+    D --> E[Zones' demand, circuits asking and frost protection: boiler_demand, circuits_asking, follow_zones]
     E --> F{Controller decides: decide}
     F -- hand back --> H[Hand-back writes: lowest water, heating on where taken over, release]
     F -- heat, idle or frost --> G[Guards judge the read-back: plan_write, classify]
@@ -158,8 +164,12 @@ flowchart TD
   over a window (lost once stale steps cover 5 minutes within 10; back after 60 seconds fresh).
 - **Blockers and latches** come before demand: a latch, or an alarm set to hand back, hands
   back whatever the zones ask.
-- **Decide:** heating on or off is decided at every step; the water temperature every decision
-  interval (5 minutes by default) and at once after a blocker or fault ends.
+- **Decide:** heating on or off is decided at every step — the zones' demand, or a circuit run
+  by other automation asking; the water temperature every decision interval (5 minutes by
+  default), and at once after a blocker or fault ends or when a circuit's need changes: the
+  curve, never below a fixed valve's setting or an asking circuit's need plus 5 K, capped by
+  the circuits fed straight from the boiler and the boiler's maximum. With several circuits the
+  curve's room and the comfort correction read the zones of the circuit fed straight.
 - **Guards** see the read-back of every write; a hand-back is never held back by a guard.
 - **Follow-up:** an owed hand-back is retried every minute until confirmed; the control state is
   saved at once when it moves (see [Persistent state](#6-persistent-state)).

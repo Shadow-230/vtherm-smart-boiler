@@ -11554,6 +11554,43 @@ async def test_a_fixed_circuit_is_judged_by_its_own_flow_sensor(rig: Rig, own_se
         assert feature.missing == ("flow",)
 
 
+FLOOR_ASKS = "input_boolean.floor_asks"
+
+
+async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Rig) -> None:
+    """I8.8 (decisions F3, F6): the living room fed straight from the boiler, idle; a floor
+    circuit whose mixer another automation runs asks through its entity: heating goes on for
+    it, and the water holds its need, 60 °C, plus the margin. Its entity unavailable: it does
+    not ask, and the control state says why (the user's answer of 2026-10-12)."""
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    rig.hass.states.async_set(FLOOR_ASKS, "on")
+    floor = {
+        "id": "floor",
+        "control": "separate",
+        "max_flow": 45,
+        "request_entity": FLOOR_ASKS,
+        "needed_temperature": 60,
+    }
+    entry_options = with_circuit(rig, {}) | {
+        "zones": [{"entity_id": rig.zones.entities["living"], "circuit": "main"}]
+    }
+    entry_options["circuits"].append(floor)
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    await rig.advance(30)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert "circuit_asks" in state.attributes["reasons"]
+    assert ("ch", True) in rig.gateway.calls
+    assert rig.gateway.setpoints()[-1] == 65.0 > EXPECTED
+    rig.hass.states.async_set(FLOOR_ASKS, "unavailable")
+    await rig.advance(30)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "idle"
+    assert "circuit_request_unknown" in state.attributes["reasons"]
+    assert [call for call in rig.gateway.calls if call[0] == "ch"][-1] == ("ch", False)
+
+
 async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
     short_room(rig)
     await start(rig, comfort_correction=True)  # off by default since K4.1
