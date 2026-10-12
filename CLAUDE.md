@@ -11,7 +11,8 @@ next starts), then in [`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line 
 build stands — its step I6 is planned step by step in [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md),
 its step G11 in [`docs/plan-0.2-g11.md`](docs/plan-0.2-g11.md), its step I7 in
 [`docs/plan-0.2-i7.md`](docs/plan-0.2-i7.md), its step I8 in
-[`docs/plan-0.2-i8.md`](docs/plan-0.2-i8.md); phases run in order. A 🔒 step whose plan says it
+[`docs/plan-0.2-i8.md`](docs/plan-0.2-i8.md), its step I9 in
+[`docs/plan-0.2-i9.md`](docs/plan-0.2-i9.md); phases run in order. A 🔒 step whose plan says it
 holds nothing up is noted in the
 report and passed; work goes on with the next step. 0.1 and 0.2 are built in one go; the first
 published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; provisionally
@@ -24,7 +25,7 @@ published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; pr
   [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-details.md),
   [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md), [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md),
   [`docs/plan-0.2-g11.md`](docs/plan-0.2-g11.md), [`docs/plan-0.2-i7.md`](docs/plan-0.2-i7.md),
-  [`docs/plan-0.2-i8.md`](docs/plan-0.2-i8.md)
+  [`docs/plan-0.2-i8.md`](docs/plan-0.2-i8.md), [`docs/plan-0.2-i9.md`](docs/plan-0.2-i9.md)
 - **Research** (network reads, and the notes and raw results of every analysis and check, dated):
   `research/`
 - **Author's own assessment**, private — never a source of values for code, defaults, tests or

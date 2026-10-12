@@ -55,11 +55,14 @@ SmartPI i Auto-TPI z VT (samouczący się algorytm VT, sterujący proporcjonalni
 opcjonalne; wtyczka działa z każdym algorytmem stref VT.
 
 **Co pokazują termostaty VT.** Każdy termostat strefy obsługiwanej przez wtyczkę dostaje atrybut
-`smart_boiler` z jedną wartością, `heat_available`: czy ciepło z kotła dociera teraz do strefy.
+`smart_boiler` z wartością `heat_available`: czy ciepło z kotła dociera teraz do strefy.
 Jest „tak”, gdy pali się płomień, a zasilanie jest wyraźnie cieplejsze od powrotu (od
 pomieszczenia, gdy powrót nie jest znany), „nie”, gdy płomień zgasł albo ciepło zabiera ciepła
-woda z priorytetem, i puste, gdy nie da się tego ocenić. Nic w VT ani w sterowaniu od tego nie
-zależy.
+woda z priorytetem, i puste, gdy nie da się tego ocenić. Obok niej `supply_temperature`: woda
+docierająca do obiegu strefy, zaokrąglona do 1 °C i odświeżana po zmianie o 1 K, pusta, gdy nie
+jest znana. Algorytm strefy może czytać pełne dane ([interfejs danych o wodzie, po
+angielsku](../en/water-interface.md)); SmartPI 0.4.0 z nich nie korzysta. Nic w VT ani w
+sterowaniu od tego nie zależy.
 
 ## 2. Instalacja
 

@@ -51,10 +51,13 @@ SmartPI and VT's Auto-TPI (VT's self-learning time-proportional algorithm) are o
 plugin works with any VT zone algorithm.
 
 **What VT's thermostats show.** Each thermostat of a zone the plugin serves gets the attribute
-`smart_boiler` with one value, `heat_available`: whether the boiler's heat reaches the zone now.
+`smart_boiler` with `heat_available`: whether the boiler's heat reaches the zone now.
 It is "yes" while the flame burns and the flow is clearly warmer than the return (than the room,
 where no return is known), "no" while the flame is out or hot water with priority takes the
-heat, and empty when it cannot be told. Nothing in VT or in control depends on it.
+heat, and empty when it cannot be told. Beside it, `supply_temperature`: the water reaching the
+zone's circuit, rounded to 1 °C and updated after a change of 1 K, empty when it is not known.
+A zone algorithm can read the full data (the [water interface](water-interface.md)); SmartPI
+0.4.0 does not. Nothing in VT or in control depends on it.
 
 ## 2. Installation
 

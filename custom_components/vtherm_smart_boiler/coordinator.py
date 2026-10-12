@@ -172,7 +172,8 @@ from .core.signal_check import (
     link_connected,
 )
 from .core.signals import GatewayOutdoor, Signal
-from .core.supply import circuit_return, circuit_supply
+from .core.supply import Supply, circuit_return, circuit_supply
+from .core.water import ZoneWater, zone_water
 from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
 from .transport.entities import (
@@ -304,6 +305,7 @@ class ZoneView:
     circuit_ids: tuple[str, ...]  # one, or each a zone split by its devices is in (I8.8b)
     state: ZoneState
     heat: Heat
+    water: ZoneWater  # what the water interface exposes (I9; water-interface.md §4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1222,7 +1224,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         mapped = frozenset(config.signals)
         has_rates = self._has_rates()
         flow = snapshot.number(Signal.FLOW)
-        flow_fresh = snapshot.reading(Signal.FLOW).is_fresh(now, self._max_age(Signal.FLOW))
+        flow_reading = snapshot.reading(Signal.FLOW)
+        flow_fresh = flow_reading.is_fresh(now, self._max_age(Signal.FLOW))
         return_temp = snapshot.number(Signal.RETURN, self._max_age(Signal.RETURN))
         dhw = self.dhw_takes_heat(snapshot)
 
@@ -1230,18 +1233,35 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_long_run(snapshot, zone_states, flame, now)
         heats: dict[str, list[Heat]] = {}
+        supplies: dict[str, list[Supply]] = {}
         circuits_of: dict[str, list[str]] = {}
         for zone in config.installation.zones:
             state = zone_states[zone.zone_id]
             circuit = config.installation.circuit(zone.circuit_id)
             assert circuit is not None  # the config was validated
             circuit_flow = None
+            own_stale = False
+            own_at = None
             flow_entity = config.circuit_flow_entities.get(circuit.circuit_id)
             if flow_entity is not None:
                 reading = read_temperature(self.hass, flow_entity)
                 if reading.is_fresh(now, self._max_age(Signal.FLOW)):
                     circuit_flow = reading.value
-            supply = circuit_supply(circuit, flow, flow_fresh, circuit_flow)
+                    own_at = reading.reported_at
+                else:
+                    own_stale = reading.value is not None  # a value, too old: not unknown
+            supply = circuit_supply(
+                circuit,
+                flow,
+                flow_fresh,
+                circuit_flow,
+                flow_mapped=Signal.FLOW in mapped,
+                own_mapped=flow_entity is not None,
+                own_stale=own_stale,
+                flow_at=flow_reading.reported_at,
+                own_at=own_at,
+            )
+            supplies.setdefault(zone.zone_id, []).append(supply)
             heat = heat_available(
                 supply,
                 flame,
@@ -1255,16 +1275,17 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             heats.setdefault(zone.zone_id, []).append(heat)
             circuits_of.setdefault(zone.zone_id, []).append(zone.circuit_id)
         # A zone split between circuits takes heat through either (I8.8b).
-        views = {
-            zone_id: ZoneView(
+        views = {}
+        for zone_id, found in heats.items():
+            heat = heat_through_any(found)
+            views[zone_id] = ZoneView(
                 zone_id,
                 self.link.zone_name(zone_id),
                 tuple(circuits_of[zone_id]),
                 zone_states[zone_id],
-                heat_through_any(found),
+                heat,
+                zone_water(supplies[zone_id], heat),
             )
-            for zone_id, found in heats.items()
-        }
 
         for circuit in config.installation.circuits:
             members = [

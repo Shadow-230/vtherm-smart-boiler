@@ -5,6 +5,7 @@
 [![Commit activity on dev][commits-shield]][commits]
 [![License][license-shield]][license]
 [![HACS][hacs-shield]](#instalacja)
+[![Buy me a coffee][bmc-shield]][bmc]
 
 # Smart Boiler for Versatile Thermostat
 
@@ -87,8 +88,10 @@ Krok po kroku: [przewodnik użytkownika][guide-pl].
 ## Obok algorytmów stref VT
 
 Wtyczka czyta strefy VT i nigdy nie zmienia ich ustawień ani algorytmów. Termostat każdej strefy
-dostaje jeden atrybut, `smart_boiler` → `heat_available`: czy ciepło z kotła dociera teraz do
-strefy. Nic w VT od niego nie zależy.
+dostaje jeden atrybut, `smart_boiler`: `heat_available` — czy ciepło z kotła dociera teraz do
+strefy — i `supply_temperature`, zaokrągloną temperaturę wody, która do niej dociera. Algorytm
+strefy może czytać pełne dane o wodzie ([interfejs][water]); SmartPI 0.4.0 z nich nie korzysta.
+Nic w VT od niego nie zależy.
 
 Krzywa grzewcza już podnosi temperaturę wody, gdy na zewnątrz robi się zimniej. Niektóre algorytmy
 stref też liczą temperaturę zewnętrzną, więc pogoda działa wtedy dwa razy:
@@ -425,6 +428,7 @@ Cele są zamierzeniami, nie zobowiązaniami; każde wydanie zbiera dane dla nast
 | [`docs/`][docs] | plan każdego wydania i przeglądy kodu (po angielsku) |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | wymagania, instalacja, szybki start, jak to działa, podłączenie kotła, bezpieczeństwo, alarmy |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | części integracji, jeden krok sterowania, cykl życia, stan trwały, testy |
+| [Dane o wodzie dla algorytmów stref][water] | interfejs, który daje SmartPI i innym algorytmom stref temperaturę wody docierającej do każdej strefy (po angielsku; streszczenie w dokumentacji technicznej, rozdz. 8) |
 | [`CHANGELOG.md`][changelog] | co zmienia każde wydanie (po angielsku) |
 | [`CONTRIBUTING.md`][contributing] | jak współtworzyć: gałęzie, testy, zasady (po angielsku) |
 | [`LICENSE`][license] | Apache License 2.0 |
@@ -438,6 +442,10 @@ Wkład jest mile widziany — otwieraj pull requesty do `dev`. Najpierw przeczyt
 [`CONTRIBUTING.md`][contributing]: ta integracja steruje ogrzewaniem domu, więc każda zmiana jest
 mała, przetestowana i przejrzana. Jakie automatyczne sprawdzenia działają i kiedy, opisuje jego
 część [Checks](CONTRIBUTING.md#checks).
+
+# Wsparcie
+
+Jeśli wtyczka pomaga w Twoim ogrzewaniu, możesz postawić mi kawę: [buymeacoffee.com/shadow23][bmc].
 
 # Autorzy
 
@@ -462,6 +470,7 @@ część [Checks](CONTRIBUTING.md#checks).
 [guide-pl-alarms]: documentation/pl/user-guide.md#7-alarmy-i-zgłoszenia-w-naprawach
 [technical]: documentation/en/technical.md
 [technical-pl]: documentation/pl/technical.md
+[water]: documentation/en/water-interface.md
 [changelog]: CHANGELOG.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE
@@ -472,3 +481,5 @@ część [Checks](CONTRIBUTING.md#checks).
 [commits-shield]: https://img.shields.io/github/commit-activity/m/Shadow-230/vtherm-smart-boiler/dev.svg?style=for-the-badge
 [license-shield]: https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge
 [hacs-shield]: https://img.shields.io/badge/HACS-not%20yet-lightgrey.svg?style=for-the-badge
+[bmc]: https://buymeacoffee.com/shadow23
+[bmc-shield]: https://img.shields.io/badge/buy%20me%20a%20coffee-shadow23-ffdd00.svg?style=for-the-badge&logo=buymeacoffee&logoColor=black

@@ -166,6 +166,29 @@ async def test_zone_algorithm_from_live_attributes(hass: HomeAssistant, zones: F
     assert link.zone_algorithm("climate.missing").proportional_function is None
 
 
+async def test_a_zone_algorithm_using_the_water_data_is_told_by_its_key(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I9 (water-interface.md §3.4): the key a zone algorithm writes into VT's
+    `specific_states` — SmartPI's `water_factor`, whatever its value, `None` included — says it
+    uses the plugin's water data. Negative: SmartPI 0.4.0 writes no such key, nor does a zone
+    VT does not show."""
+    water = zones.add(
+        "water",
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": True, "water_factor": None},
+    )
+    plain = zones.add(
+        "plain",
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"smartpi_learning_enabled": True},
+    )
+    link = VThermLink(hass, [water, plain])
+    assert link.zone_algorithm(water).uses_water_data
+    assert not link.zone_algorithm(plain).uses_water_data
+    assert not link.zone_algorithm("climate.missing").uses_water_data
+
+
 def vt_central_entry(
     hass: HomeAssistant,
     feature: bool | None,
