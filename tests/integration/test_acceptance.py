@@ -1488,10 +1488,10 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     """T-23 (P-37): the plugin past its monitoring and no control yet; the simulated gateway set
     up through the stub's config flow, as at J4 — options → the connection (an entry made before
     the question answers it first, then the mode) → "Boiler interface" (I8, decision D2: the one
-    gateway ``sim`` taken without asking, the topology and the thermostat terminals) → Control →
-    "Save and finish" (I7): the flow completes; the plugin then controls the simulated boiler
-    through it, its setpoint confirmed by the gateway's read-back and its heating switch by the
-    boiler's "Central heating 1"."""
+    gateway ``sim`` taken without asking, the topology and the thermostat terminals) → the
+    heating curve's item → "Save and finish" (I7): the flow completes; the plugin then controls
+    the simulated boiler through it, its setpoint confirmed by the gateway's read-back and its
+    heating switch by the boiler's "Central heating 1"."""
     await start(rig, with_control=False)
     assert rig.entry is not None
     hass = rig.hass
@@ -1525,13 +1525,13 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     read_backs = {"ch_setpoint": CONFIRMED, "ch_enabled": CH_ENABLED}
     result = await options_step(rig, result, signals | read_backs)
     assert result["type"] == "menu"
-    result = await options_step(rig, result, {"next_step_id": "control"})
-    # The write path follows the connection (I8, decision B7): the step asks nothing.
+    # The write path follows the connection (I8, decision B7): the control device asks
+    # nothing, and its item is not on the menu (I8, decision H) — the curve's item is.
+    assert "control" not in result["menu_options"]
+    result = await options_step(rig, result, {"next_step_id": "control_curve"})
     assert result["step_id"] == "control_curve"
     curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25}  # the highest: the circuit's
     result = await options_step(rig, result, curve)
-    if result.get("step_id") == "control_alarms":
-        result = await options_step(rig, result, {})
     assert result["type"] == "menu"  # I7: back at the menu, nothing saved yet
     assert "control" not in rig.entry.options
     result = await options_step(rig, result, {"next_step_id": "save"})

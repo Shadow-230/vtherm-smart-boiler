@@ -1383,7 +1383,6 @@ CONTROL_ADVANCED_KEYS = (
     "decision_interval_min",
     "off_setpoint",
     "learning_pauses",
-    "comfort_correction_max_k",
     "alarm_reactions",
     "return_after_outside_change",
     "return_after_switch_hand_back",
@@ -1688,7 +1687,11 @@ def activation_delay_field(
     }
 
 
-def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None) -> vol.Schema:
+def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
+    """The "Heating curve" item (I8, decision H2): the curve's point and the lowest water
+    temperature; the comfort correction and its limit together, at both levels; at the advanced
+    level the curve's room, the rooms Auto leaves out, the exponent, the offset and the fallback
+    setpoint."""
     control = options.get(CONTROL, {})
     curve = control.get("curve", {})
 
@@ -1707,14 +1710,14 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
             *CONTROL_BOUNDS["hard_min"], 0.5, "°C"
         ),
         # I8 (decision F2): the highest water temperature is the circuit's.
-        **activation_delay_field(control, vt_delay),
-    }
-    if not _advanced(options):
-        # G11 B: on by default, so shown at the simple level too — here, where that level has
-        # no behaviour step; the advanced level shows it there, beside its limit.
-        fields[vol.Required("comfort_correction", default=default("comfort_correction"))] = (
+        # G11 B, I8 (H2): on by default; with its limit, in one place at both levels.
+        vol.Required("comfort_correction", default=default("comfort_correction")): (
             selector.BooleanSelector()
-        )
+        ),
+        vol.Required("comfort_correction_max_k", default=default("comfort_correction_max_k")): (
+            _number(*CONTROL_BOUNDS["comfort_correction_max_k"], 0.5, "K")
+        ),
+    }
     if _advanced(options):
         fields |= {
             # G11 D: Auto follows the warmest room; Manual keeps the value below.
@@ -1738,17 +1741,31 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
             _optional("fallback_setpoint", control): _number(
                 *CONTROL_BOUNDS["fallback_setpoint"], 0.5, "°C"
             ),
-            vol.Required("frost_limit", default=default("frost_limit")): _number(
-                *CONTROL_BOUNDS["frost_limit"], 0.5, "°C"
-            ),
-            vol.Required("frost_release", default=default("frost_release")): _number(
-                *CONTROL_BOUNDS["frost_release"], 0.5, "°C"
-            ),
-            _optional("frost_zone", control): selector.EntitySelector(
-                selector.EntitySelectorConfig(include_entities=_zone_entities(options))
-            ),
         }
     return vol.Schema(fields)
+
+
+# The "Frost protection" item's fields (I8, decision H4), at the advanced level as before.
+FROST_KEYS = ("frost_limit", "frost_release", "frost_zone")
+
+
+def control_frost_schema(options: dict[str, Any]) -> vol.Schema:
+    """The "Frost protection" item (I8, decision H4): the room limit, the release, the zone
+    watched — every zone where none is picked."""
+    control = options.get(CONTROL, {})
+    return vol.Schema(
+        {
+            vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): _number(
+                *CONTROL_BOUNDS[key], 0.5, "°C"
+            )
+            for key in FROST_KEYS[:2]
+        }
+        | {
+            _optional("frost_zone", control): selector.EntitySelector(
+                selector.EntitySelectorConfig(include_entities=_zone_entities(options))
+            )
+        }
+    )
 
 
 def _zone_entities(options: dict[str, Any]) -> list[str]:
@@ -1848,32 +1865,33 @@ def apply_control_relay(options: dict[str, Any], user_input: dict[str, Any]) -> 
 
 # The relay path's behaviour step: its demand thresholds, learning pauses and frost fields at the
 # advanced level (``CONTROL_ADVANCED_KEYS``), VT's activation delay at every level (decision 5).
-RELAY_BEHAVIOUR_KEYS = (
-    "count_threshold",
-    "power_threshold_kw",
-    "opening_threshold",
-    "learning_pauses",
-    "frost_limit",
-    "frost_release",
-    "frost_zone",
-)
-
-
-def control_relay_behaviour_schema(
-    options: dict[str, Any], prefill: VtCentralBoiler | None = None
+def control_behaviour_schema(
+    options: dict[str, Any],
+    prefill: VtCentralBoiler | None = None,
+    vt_delay: float | None = None,
 ) -> vol.Schema:
-    """The relay path's behaviour (R5, R14): VT's activation delay, shown at every level and
-    pre-filled from VT's own; at the advanced level the demand thresholds — pre-filled with VT's
-    as it used them — learning pauses and frost protection, moved here from the curve step,
-    which the relay path does not have."""
+    """The "Control behaviour" item (I8, decision H3), one form for both modes: VT's activation
+    delay at every level, pre-filled from VT's own (R14); at the advanced level the demand
+    criteria — on the relay path pre-filled with VT's thresholds as it used them — and the
+    learning pauses; with full control also the ramp, the decision interval and the "off"
+    setpoint (none where "off" is the connection's own, as EMS-ESP's 0). ``vt_delay``: VT's
+    own activation delay, else the one ``prefill`` read."""
     control = options.get(CONTROL, {})
-    vt_delay = None if prefill is None else prefill.activation_delay_s
+    if vt_delay is None and prefill is not None:
+        vt_delay = prefill.activation_delay_s
     fields: dict[Any, Any] = {**activation_delay_field(control, vt_delay)}
-    if not _advanced(options):
-        return vol.Schema(fields)
 
-    def default(key: str) -> Any:
-        return control.get(key, CONTROL_DEFAULTS[key])
+    def required(key: str, field: Any) -> dict[Any, Any]:
+        return {vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): field}
+
+    if not _advanced(options):
+        # S-49 at the simple level: "off" next to a hand-back value that returns the boiler to
+        # its own control is refused at the save, which comes back here — shown, to be fixed.
+        if not _relay_path(options) and hand_back_value_problem(
+            options, "off_setpoint_near_hand_back_value"
+        ):
+            fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
+        return vol.Schema(fields)
 
     count = control.get("count_threshold")
     if count is None and prefill is not None and prefill.count_threshold is not None:
@@ -1892,64 +1910,19 @@ def control_relay_behaviour_schema(
         _optional("opening_threshold", control): _number(
             *CONTROL_BOUNDS["opening_threshold"], 1, "%"
         ),
-        vol.Required("learning_pauses", default=default("learning_pauses")): (
-            selector.BooleanSelector()
-        ),
-        vol.Required("frost_limit", default=default("frost_limit")): _number(
-            *CONTROL_BOUNDS["frost_limit"], 0.5, "°C"
-        ),
-        vol.Required("frost_release", default=default("frost_release")): _number(
-            *CONTROL_BOUNDS["frost_release"], 0.5, "°C"
-        ),
-        _optional("frost_zone", control): selector.EntitySelector(
-            selector.EntitySelectorConfig(include_entities=_zone_entities(options))
+        **required("learning_pauses", selector.BooleanSelector()),
+    }
+    if _relay_path(options):
+        return vol.Schema(fields)
+    fields |= {
+        **required("ramp_k_per_min", _number(*CONTROL_BOUNDS["ramp_k_per_min"], 0.1, "K/min")),
+        **required(
+            "decision_interval_min", _number(*CONTROL_BOUNDS["decision_interval_min"], 1, "min")
         ),
     }
+    if not fixed_off(options):  # EMS-ESP's "off" is its own 0 (I6, decision 4)
+        fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
     return vol.Schema(fields)
-
-
-def apply_control_relay_behaviour(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    control = dict(options.get(CONTROL, {}))
-    keys: tuple[str, ...] = (ACTIVATION_DELAY,)
-    if _advanced(options):
-        keys += RELAY_BEHAVIOUR_KEYS
-    _set_or_drop(control, user_input, keys)
-    options[CONTROL] = control
-
-
-def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
-    control = options.get(CONTROL, {})
-
-    def required(key: str, field: Any) -> dict[Any, Any]:
-        return {vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): field}
-
-    return vol.Schema(
-        {
-            **required("ramp_k_per_min", _number(*CONTROL_BOUNDS["ramp_k_per_min"], 0.1, "K/min")),
-            **required(
-                "decision_interval_min", _number(*CONTROL_BOUNDS["decision_interval_min"], 1, "min")
-            ),
-            # EMS-ESP's "off" is its own 0 (I6, decision 4): nothing to choose there.
-            **(
-                {}
-                if fixed_off(options)
-                else required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
-            ),
-            **required("count_threshold", _number(*CONTROL_BOUNDS["count_threshold"], 1)),
-            _optional("power_threshold_kw", control): _number(
-                *CONTROL_BOUNDS["power_threshold_kw"], 0.1, "kW"
-            ),
-            _optional("opening_threshold", control): _number(
-                *CONTROL_BOUNDS["opening_threshold"], 1, "%"
-            ),
-            **required("learning_pauses", selector.BooleanSelector()),
-            **required("comfort_correction", selector.BooleanSelector()),
-            **required(
-                "comfort_correction_max_k",
-                _number(*CONTROL_BOUNDS["comfort_correction_max_k"], 0.5, "K"),
-            ),
-        }
-    )
 
 
 RETURN_KEY = "return_after_outside_change"
@@ -1958,8 +1931,8 @@ RETURN_SWITCH_KEY = "return_after_switch_hand_back"
 
 
 def _relay_path(options: Mapping[str, Any]) -> bool:
-    control = options.get(CONTROL)
-    return isinstance(control, Mapping) and control.get("write_path") == WritePath.RELAY
+    """Control runs through a relay: the connection's path, else the one stored."""
+    return control_path(options) == WritePath.RELAY
 
 
 def reaction_alarms(options: Mapping[str, Any]) -> tuple[str, ...]:
@@ -2139,12 +2112,16 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
         else:
             curve[key] = value
     control["curve"] = curve
-    keys = ["hard_min", ACTIVATION_DELAY]
+    keys = ["hard_min", "comfort_correction", "comfort_correction_max_k"]
     if _advanced(options):
-        keys += ["fallback_setpoint", "frost_limit", "frost_release", "frost_zone"]
-    else:
-        keys.append("comfort_correction")  # G11 B: the simple level's place for it
+        keys.append("fallback_setpoint")
     _set_or_drop(control, user_input, tuple(keys))
+    options[CONTROL] = control
+
+
+def apply_control_frost(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    control = dict(options.get(CONTROL, {}))
+    _set_or_drop(control, user_input, FROST_KEYS)
     options[CONTROL] = control
 
 
@@ -2651,7 +2628,8 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     alarm_defaults = _schema_defaults(control_alarms_schema(advanced))
     control_defaults = (
         curve_defaults
-        | _schema_defaults(control_behaviour_schema({}))
+        | _schema_defaults(control_behaviour_schema(advanced))
+        | _schema_defaults(control_frost_schema(advanced))
         | {RETURN_KEY: alarm_defaults[RETURN_KEY], RETURN_SWITCH_KEY: False}
     )
     return bool(
@@ -2784,12 +2762,48 @@ _SECTION_OF_STEP = {
 }
 
 
+# I8 (decision H): control's menu items, each one form, in the menu's order — the control
+# device, the heating curve, the control behaviour, frost protection, the alarm reactions.
+CONTROL_ITEMS = ("control", "control_curve", "control_behaviour", "control_frost", "control_alarms")
+# The forms an item opens after its first: the device's, by the write path; the alarms' second
+# confirmation.
+_CONTROL_ITEM_OF_STEP = {
+    "control_entity": "control",
+    "control_relay": "control",
+    "control_relay_from_vt": "control",
+    "control_return_confirm": "control_alarms",
+}
+
+
 def section_of(step: str) -> str:
-    """The menu's section a step belongs to: the control steps are one section, as are the
-    connection's panels and the zones' forms."""
-    if step.startswith("control"):
-        return "control"
-    return _SECTION_OF_STEP.get(step, step)
+    """The menu's section a step belongs to: each control item with the forms it opens (I8,
+    decision H), as the zones' forms are one section."""
+    return _CONTROL_ITEM_OF_STEP.get(step) or _SECTION_OF_STEP.get(step, step)
+
+
+def control_path(options: Mapping[str, Any]) -> str | None:
+    """The write path control runs: the connection's, else — an entry made before the
+    connection question — the one stored; ``None`` where none is picked yet."""
+    stored = _mapping(options.get(CONTROL)).get("write_path")
+    return connection_path(options) or (str(stored) if stored else None)
+
+
+def control_item_shown(options: Mapping[str, Any], item: str) -> bool:
+    """Whether a control item applies (I8, decision H): the device where it asks something —
+    the writable entity, the relay, or the path of an entry made before the connection
+    question —; once a path is known, the curve with full control, the behaviour always,
+    frost protection at the advanced level, the alarm reactions where any applies."""
+    if item == "control":
+        return connection_path(options) in (None, WritePath.ENTITY, WritePath.RELAY)
+    if control_path(options) in (None, NO_CONTROL):
+        return False  # an entry made before the connection question picks its path first
+    if item == "control_curve":
+        return control_path(options) != WritePath.RELAY
+    if item == "control_frost":
+        return _advanced(options)
+    if item == "control_alarms":
+        return alarm_step_offered(options)
+    return True
 
 
 def control_offered(options: Mapping[str, Any]) -> bool:
@@ -2811,8 +2825,8 @@ def section_shown(options: Mapping[str, Any], section: str) -> bool:
         return bool(interface_fields(options))  # where there is something to ask (I8, D2)
     if section == "zones":
         return bool(watched_zones(options))  # its question needs zones in a circuit (I8, F5)
-    if section == "control":
-        return control_offered(options)
+    if section in CONTROL_ITEMS:
+        return control_offered(options) and control_item_shown(options, section)
     return True
 
 
@@ -2823,7 +2837,7 @@ def _problem_shown_on(target: str, step_id: str) -> bool:
     """Whether a problem meant for ``target`` shows on the form ``step_id``: its own, or — for
     the first control step, which asks nothing where the connection decides the path (I8.5b) —
     the first control form after it."""
-    return step_id == target or (target == "control" and section_of(step_id) == "control")
+    return step_id == target or (target == "control" and step_id.startswith("control"))
 
 
 class _Steps:
@@ -3345,12 +3359,47 @@ class _ControlSteps(_Steps):
     # --- control: path and topology → path details → curve and limits → (advanced) behaviour
     # → alarm reactions → save
 
+    async def _path_errors(self, user_input: Mapping[str, Any]) -> dict[str, str]:
+        """What the write path answered still needs, or may not do now (a hand-back owed)."""
+        path = user_input["write_path"]
+        current = self._stored_control().get("write_path")
+        blocker = await self._async_hand_back_blocker()
+        errors = control_error(dict(user_input), self.options)
+        if (
+            path not in (NO_CONTROL, current)
+            and blocker
+            and errors.get("base") == ("interface_not_answered")
+        ):
+            # What the hand-back goes through cannot change now: said first, before what the
+            # new path would still need (I8, decision D2).
+            errors = {"write_path": blocker}
+        if not errors and path != NO_CONTROL and not _zone_entities(self.options):
+            errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
+        if not errors and path == WritePath.OTGW_MQTT and not mqtt_set_up(self.hass):
+            errors = {"base": "mqtt_not_set_up"}  # the commands would go nowhere (P-69)
+        if not errors and path not in (NO_CONTROL, current) and blocker:
+            # "No control" stays possible: the hand-back goes through the old path, retried
+            # by a unit that only hands back.
+            errors = {"write_path": blocker}
+        return errors
+
+    async def _control_path(self) -> ConfigFlowResult | None:
+        """A control item opened (I8, decision H): the write path's own checks first — made
+        until now at the chain's first step —, the path applied; ``None`` where all is well,
+        else the step that shows the problem or picks the path."""
+        path = control_path(self.options)
+        if path is None or await self._path_errors({"write_path": path}):
+            return await self._goto("control")
+        if _mapping(self.options.get(CONTROL)).get("write_path") != path:
+            apply_control(self.options, {"write_path": path})
+        return None
+
     async def async_step_control(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """The first control step. The connection decides the write path (I8, decision B7):
+        """The "Control device" item. The connection decides the write path (I8, decision B7):
         only an entry made before the question picks it. Otherwise the step asks nothing — the
-        read-backs are boiler signals (I8.5b) — and goes on to the path's own steps; a problem
+        read-backs are boiler signals (I8.5b) — and goes on to the path's own form; a problem
         is shown where it can be fixed."""
         fixed = connection_path(self.options)
         if user_input is None and fixed is not None:
@@ -3359,25 +3408,7 @@ class _ControlSteps(_Steps):
             if fixed is not None:
                 user_input = {**user_input, "write_path": fixed}
             path = user_input["write_path"]
-            current = self._stored_control().get("write_path")
-            blocker = await self._async_hand_back_blocker()
-            errors = control_error(user_input, self.options)
-            if (
-                path not in (NO_CONTROL, current)
-                and blocker
-                and errors.get("base") == ("interface_not_answered")
-            ):
-                # What the hand-back goes through cannot change now: said first, before what the
-                # new path would still need (I8, decision D2).
-                errors = {"write_path": blocker}
-            if not errors and path != NO_CONTROL and not _zone_entities(self.options):
-                errors = {"base": "no_zones"}  # nothing could ever ask for heat (S-04)
-            if not errors and path == WritePath.OTGW_MQTT and not mqtt_set_up(self.hass):
-                errors = {"base": "mqtt_not_set_up"}  # the commands would go nowhere (P-69)
-            if not errors and path not in (NO_CONTROL, current) and blocker:
-                # "No control" stays possible: the hand-back goes through the old path, retried
-                # by a unit that only hands back.
-                errors = {"write_path": blocker}
+            errors = await self._path_errors(user_input)
             if errors and fixed is not None:
                 # Nothing asked here: the problem goes where it can be fixed, else it is said.
                 code = next(iter(errors.values()))
@@ -3401,8 +3432,12 @@ class _ControlSteps(_Steps):
                 return await self._goto("control_relay_from_vt" if moving else "control_relay")
             if path == WritePath.ENTITY:
                 return await self._goto("control_entity")
-            # The gateway and the firmware's topics are the interface's (I8, decision D2).
-            return await self._goto("control_curve")
+            # The gateway and the firmware's topics are the interface's (I8, decision D2): no
+            # device form — a problem for control shows on the curve's.
+            problem = self._problem
+            if problem is not None and _problem_shown_on(problem[0], "control_curve"):
+                return await self._goto("control_curve")
+            return await self._after("control")
         return self._form(step_id="control", data_schema=control_schema(self.options))
 
     async def async_step_control_entity(
@@ -3442,7 +3477,7 @@ class _ControlSteps(_Steps):
                 errors = {"base": blocker}
             if not errors:
                 apply_control_details(self.options, user_input)
-                return await self.async_step_control_curve()
+                return await self._after("control")
         return self._form(
             step_id="control_entity",
             data_schema=control_entity_schema(self.options),
@@ -3496,7 +3531,7 @@ class _ControlSteps(_Steps):
                 errors = {"base": blocker}
             if not errors:
                 apply_control_relay(self.options, user_input)
-                return await self.async_step_control_relay_behaviour()
+                return await self._after("control")
         elif (
             prefill is not None
             and prefill.commands is VtCommands.NOT_SUPPORTED
@@ -3519,50 +3554,12 @@ class _ControlSteps(_Steps):
         self._contact_asked_for = relay if isinstance(relay, str) else None
         return True
 
-    async def async_step_control_relay_behaviour(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """The relay path's behaviour: VT's activation delay at every level; at the advanced
-        level the demand thresholds, learning pauses and frost fields, with the checks the
-        curve and behaviour steps make (T-37 among them)."""
-        prefill = self._vt_prefill()
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            if _advanced(self.options):
-                errors = self._relay_behaviour_error(user_input)
-            if not errors:
-                apply_control_relay_behaviour(self.options, user_input)
-                if alarm_step_offered(self.options):  # nothing is offered for relays (Y1)
-                    return await self.async_step_control_alarms()
-                return await self._after("control")
-        return self._form(
-            step_id="control_relay_behaviour",
-            data_schema=control_relay_behaviour_schema(self.options, prefill),
-            errors=errors,
-            description_placeholders=self._unfed_placeholders(errors),
-        )
-
-    def _relay_behaviour_error(self, user_input: dict[str, Any]) -> dict[str, str]:
-        count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
-        if user_input.get("frost_limit", CONTROL_DEFAULTS["frost_limit"]) >= user_input.get(
-            "frost_release", CONTROL_DEFAULTS["frost_release"]
-        ):
-            return {"frost_release": "frost_release_not_above_limit"}
-        if found := self._frost_zone_error(user_input):
-            return found
-        if count > len(watched_zones(self.options)):
-            return {"count_threshold": "count_threshold_above_zones"}
-        if count == 0 and not (
-            user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
-        ):
-            return {"count_threshold": "no_demand_criterion"}
-        if (unfed := self._criterion_no_zone_feeds(user_input)) is not None:
-            return {unfed: _UNFED[unfed]}
-        return {}
-
     async def async_step_control_curve(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The "Heating curve" item (I8, decision H2)."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
         errors: dict[str, str] = {}
         if user_input is not None:
             bounds = self._setpoint_bounds()
@@ -3571,10 +3568,6 @@ class _ControlSteps(_Steps):
                 errors["hard_min"] = "limits_outside_entity_range"
             elif _outside(highest, bounds):
                 errors["base"] = "highest_outside_entity_range"
-            elif user_input.get("frost_limit", CONTROL_DEFAULTS["frost_limit"]) >= user_input.get(
-                "frost_release", CONTROL_DEFAULTS["frost_release"]
-            ):
-                errors["frost_release"] = "frost_release_not_above_limit"
             elif problems := self._curve_problems(user_input):
                 field, key = problems[0]
                 errors[field] = key
@@ -3583,8 +3576,6 @@ class _ControlSteps(_Steps):
                 errors["hard_min"] = "off_setpoint_not_below_hard_min"
             elif self._lowest_above_max(user_input):
                 errors["hard_min"] = "hard_min_above_max"
-            elif found := self._frost_zone_error(user_input):
-                errors = found
             elif (blocker := await self._async_hand_back_blocker()) and self._changes_hand_back(
                 user_input, ("hard_min",), blocker
             ):
@@ -3592,42 +3583,50 @@ class _ControlSteps(_Steps):
                 errors["hard_min"] = blocker
             else:
                 apply_control_curve(self.options, user_input)
-                if _advanced(self.options):
-                    return await self.async_step_control_behaviour()
-                if alarm_step_offered(self.options):
-                    # Y1: the reaction to an ignored write, where offered, at both levels.
-                    return await self.async_step_control_alarms()
-                return await self._after("control")
-        # VT's own activation delay, where VT kept one, is offered for the user to confirm.
-        vt_delay = VThermLink(self.hass, _zone_entities(self.options)).vt_central_activation_delay()
+                return await self._after("control_curve")
         return self._form(
             step_id="control_curve",
-            data_schema=control_curve_schema(self.options, vt_delay),
+            data_schema=control_curve_schema(self.options),
             errors=errors,
             description_placeholders=water_limits(self.options),
         )
 
+    def _behaviour_schema(self) -> vol.Schema:
+        """The behaviour form: VT's own activation delay, where VT kept one, offered for the user
+        to confirm; on the relay path VT's thresholds too (R14)."""
+        if _relay_path(self.options):
+            return control_behaviour_schema(self.options, self._vt_prefill())
+        link = VThermLink(self.hass, _zone_entities(self.options))
+        return control_behaviour_schema(self.options, vt_delay=link.vt_central_activation_delay())
+
     async def async_step_control_behaviour(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The "Control behaviour" item (I8, decision H3), one form for both modes."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
         errors: dict[str, str] = {}
+        schema = self._behaviour_schema()
+        shown = {str(marker) for marker in schema.schema}
         if user_input is not None:
-            count = int(user_input.get("count_threshold", 1))
+            count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
             hard_min = float(
                 self.options.get(CONTROL, {}).get("hard_min", CONTROL_DEFAULTS["hard_min"])
             )
             off = float(user_input.get("off_setpoint", CONTROL_DEFAULTS["off_setpoint"]))
             # PB-69: with a heating switch "off" is never written as a setpoint, so neither its
             # range nor its distance to the lowest is checked (as ``off_too_close_in``).
-            as_setpoint = not heating_writes(self.options.get(CONTROL, {})) and not fixed_off(
-                self.options
+            as_setpoint = "off_setpoint" in shown and not heating_writes(
+                self.options.get(CONTROL, {})
             )
             if as_setpoint and _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
             elif as_setpoint and off_too_close_to_lowest(off, hard_min):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"  # 1 K below (P-43)
-            elif self._off_near_hand_back_value(user_input):
+            elif "off_setpoint" in shown and self._off_near_hand_back_value(user_input):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
+            elif "count_threshold" not in shown:
+                pass  # the demand is the advanced level's
             elif count > len(watched_zones(self.options)):
                 errors["count_threshold"] = "count_threshold_above_zones"
             elif count == 0 and not (
@@ -3636,16 +3635,33 @@ class _ControlSteps(_Steps):
                 errors["count_threshold"] = "no_demand_criterion"
             elif (unfed := self._criterion_no_zone_feeds(user_input)) is not None:
                 errors[unfed] = _UNFED[unfed]
-            else:
+            if not errors:
                 apply_control_behaviour(self.options, user_input)
-                if alarm_step_offered(self.options):
-                    return await self.async_step_control_alarms()
-                return await self._after("control")
+                return await self._after("control_behaviour")
         return self._form(
             step_id="control_behaviour",
-            data_schema=control_behaviour_schema(self.options),
+            data_schema=schema,
             errors=errors,
             description_placeholders=self._unfed_placeholders(errors),
+        )
+
+    async def async_step_control_frost(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The "Frost protection" item (I8, decision H4)."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input["frost_limit"] >= user_input["frost_release"]:
+                errors = {"frost_release": "frost_release_not_above_limit"}
+            elif found := self._frost_zone_error(user_input):
+                errors = found
+            else:
+                apply_control_frost(self.options, user_input)
+                return await self._after("control_frost")
+        return self._form(
+            step_id="control_frost", data_schema=control_frost_schema(self.options), errors=errors
         )
 
     def _curve_problems(self, user_input: dict[str, Any]) -> list[tuple[str, str]]:
@@ -3736,6 +3752,9 @@ class _ControlSteps(_Steps):
     async def async_step_control_alarms(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The "Alarm reactions" item (I8, decision H5)."""
+        if (elsewhere := await self._control_path()) is not None:
+            return elsewhere
         if user_input is not None:
             stored = self.options.get(CONTROL, {})
             if any(
@@ -3747,7 +3766,7 @@ class _ControlSteps(_Steps):
                 self._alarms_answer = user_input
                 return await self.async_step_control_return_confirm()
             apply_control_alarms(self.options, user_input)
-            return await self._after("control")
+            return await self._after("control_alarms")
         return self._form(step_id="control_alarms", data_schema=control_alarms_schema(self.options))
 
     async def async_step_control_return_confirm(
@@ -3759,7 +3778,7 @@ class _ControlSteps(_Steps):
             if user_input.get("understood") is True and self._alarms_answer is not None:
                 apply_control_alarms(self.options, self._alarms_answer)
                 self._alarms_answer = None
-                return await self._after("control")
+                return await self._after("control_alarms")
             errors = {"understood": "return_needs_confirmation"}
         return self._form(
             step_id="control_return_confirm",
@@ -3802,7 +3821,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # the menu, in this order, each section shown where it applies.
     SECTIONS = (
         "connection", "mode", "name", INTERFACE, "signals", "boiler", "circuit", "zones",
-        "building", "monitor", "control",
+        "building", "monitor", *CONTROL_ITEMS,
     )  # fmt: skip
 
     def _next_after(self, step: str) -> str:
@@ -3991,7 +4010,7 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             item
             for section in (
                 "connection", "mode", INTERFACE, "signals", "freshness", "boiler", "circuit",
-                "zones", "building", "control", "monitor",
+                "zones", "building", *CONTROL_ITEMS, "monitor",
             )
             if section_shown(self.options, section)
             for item in menu_items(self.options, section)
