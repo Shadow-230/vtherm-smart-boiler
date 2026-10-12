@@ -471,8 +471,9 @@ takes the emitter types of its zones (S-33); the burner is shared.
 ### Zone algorithms — any
 
 - Core uses VT data only: `on_percent`, valve positions, room temperature vs target, device power.
-- Detected extras: SmartPI — learning pause (its better signal and bootstrap state come later,
-  §9); Auto-TPI — detected, not paused, with a repair issue (§11; S-29).
+- Detected extras: SmartPI — learning pause, and its learning phase read (G11 C); its "better
+  signal" struck by the user on 2026-10-12 (§9); Auto-TPI — detected, not paused, with a repair
+  issue (§11; S-29).
 - A learning algorithm without a pause service gets an explicit warning, which states what its
   advice costs.
 - Per zone the plugin gives VT's thermostat one value as a feature-manager property (feature
@@ -1349,7 +1350,7 @@ estimated from the boiler's power where no gas rates are given.
 
 With no release yet, unless the user names one at K4 (S-60): the fresh flow read after a write;
 the overshoot calibration; the boiler's MemberID and supported messages; the condensing
-indicator; the boiler's installer settings; SmartPI's better signal and bootstrap state (S-29);
+indicator; the boiler's installer settings;
 relay commands beyond a switch and a boiler thermostat entity (VT's free-form actions), if asked;
 a separate echo entity for a relay; for the power user (§4) the raw cycle data, the building fit's rejected samples and manual
 edits of learned values; boiler data read from the integration as suggested parameter values (§6).
@@ -1363,6 +1364,10 @@ memory, nothing sent in the recognition period (0.3 at the earliest; `docs/plan-
 radiators and underfloor behind a mixing valve as one written circuit plus passive fixed circuits
 (0.3); a recorded "heating commanded" entity and event for users leaving VT's central boiler
 (0.3).
+
+**Struck by the user on 2026-10-12:** SmartPI's "better signal" — reading its controller's
+own output (`u_pi`, `u_ff`) instead of the zones' duty cycle (S-29); its learning phase is read
+since G11 C, so nothing of S-29's SmartPI part remains.
 
 **Struck by the user on 2026-10-10** (`docs/plan-0.2-i8.md` B): summer/winter switching of any
 kind (FC1), the warning for zones the boiler does not feed, the proposal to the SmartPI and
