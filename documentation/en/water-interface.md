@@ -3,8 +3,8 @@
 [Polska wersja: dokumentacja techniczna, rozdział 8](../pl/technical.md#8-dane-o-wodzie-dla-algorytmów-stref)
 
 Status: agreed with the owner on 2026-10-12; the requirements are closed. **Not built yet**: Smart
-Boiler builds its side as step I9 of `docs/plan-0.2.md`, before 0.3, only on the owner's go-ahead
-(section 10).
+Boiler builds its side as step I9 of `docs/plan-0.2.md`, before 0.3 (the owner's go-ahead of
+2026-10-12; `docs/plan-0.2-i9.md`).
 
 The normative part (sections 1–10) says what Smart Boiler exposes, under which names, with which
 values, what it reads from a zone algorithm and which service it calls. What a consumer does with
@@ -200,7 +200,7 @@ A consumer publishes no water temperature it would need, and Smart Boiler takes 
 need a large rebuild, and the water usually cannot be set per zone. Smart Boiler reads from a
 consumer only the key of 3.4.
 
-## 10. To build (Smart Boiler, only on the owner's go-ahead)
+## 10. To build (Smart Boiler: step I9, the owner's go-ahead of 2026-10-12)
 
 Planned as step I9 of plan 0.2, before 0.3: the fields of section 4 (with the new reason
 `not_mapped` and the fallback `several_circuits`), the manager's properties (3.1), the API (3.2),

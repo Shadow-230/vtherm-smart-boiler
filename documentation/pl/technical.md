@@ -276,7 +276,8 @@ scripts/env.sh mypy
 ## 8. Dane o wodzie dla algorytmów stref
 
 **Wyspecyfikowane, jeszcze niezbudowane** (decyzje użytkownika z 2026-10-12; krok I9 w
-[`docs/plan-0.2.md`](../../docs/plan-0.2.md), przed wersją 0.3, na polecenie użytkownika).
+[`docs/plan-0.2.md`](../../docs/plan-0.2.md), przed wersją 0.3; w budowie,
+[`docs/plan-0.2-i9.md`](../../docs/plan-0.2-i9.md)).
 Opcjonalny interfejs daje algorytmowi strefy — najpierw SmartPI — temperaturę wody, która dociera
 do obiegu każdej strefy, żeby jego model pomieszczenia uwzględniał krzywą grzewczą, mieszacz,
 taktowanie palnika i ciepłą wodę z priorytetem. Dane płyną w jedną stronę: od wtyczki do
