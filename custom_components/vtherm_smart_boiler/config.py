@@ -298,6 +298,8 @@ class EntryConfig:
     panel: BoilerPanel = field(default_factory=BoilerPanel)  # the setup's first answers (I6)
     # I8 (decision F3): circuits run by other automation's request and need entities.
     circuit_request_entities: dict[str, str] = field(default_factory=dict)
+    # Each circuit as the user knows it — its name, else its number (I8, decision F2) — by ID.
+    circuit_names: dict[str, str] = field(default_factory=dict)
     circuit_need_entities: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -394,6 +396,7 @@ class EntryConfig:
             zones=tuple(zone_configs),
             circuit_flow_entities=circuit_entities.flow,
             circuit_request_entities=circuit_entities.requests,
+            circuit_names=circuit_names(options),
             circuit_need_entities=circuit_entities.needs,
             monitor=monitor,
             freshness=freshness,
@@ -643,6 +646,25 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], CircuitEntities]:
             if other and item.get(key):
                 found[circuit_id] = str(item[key])
     return tuple(circuits), entities
+
+
+def circuit_label(circuit: object, index: int) -> str:
+    """A circuit as the menu and its form name it: its name, else its number (I8, F2)."""
+    name = circuit.get("name") if isinstance(circuit, Mapping) else None
+    return str(name) if name not in (None, "") else str(index + 1)
+
+
+def circuit_names(options: Mapping[str, Any]) -> dict[str, str]:
+    """Each stored circuit's name as the user knows it, by its internal ID, which is never
+    shown; the one the options imply where none is stored."""
+    circuits = options.get(CIRCUITS)
+    if not isinstance(circuits, list) or not circuits:
+        return {"main": circuit_label(None, 0)}
+    return {
+        str(circuit["id"]): circuit_label(circuit, index)
+        for index, circuit in enumerate(circuits)
+        if isinstance(circuit, Mapping) and circuit.get("id") not in (None, "")
+    }
 
 
 def circuits_hold_zones(circuits: Any) -> bool:
