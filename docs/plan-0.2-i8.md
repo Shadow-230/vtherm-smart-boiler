@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-12: the plan approved by the user; I8.0 to I8.8 done; I8.9 next.
+Status on 2026-10-12: the plan approved by the user; I8.0 to I8.8 and I8.9a done; I8.9b next.
 
 ## How to read this plan
 
@@ -684,6 +684,13 @@ Claude's calls (2026-10-12): two pull requests.
   both levels); the comfort correction and its limit to the curve, together, at both levels
   (the limit new at the simple level); frost protection to its item. No migration: the stored
   keys stay.
+- I8.9a ✅ (2026-10-12): as above. Found on the way: the relay path was told from the stored
+  write path only, so before it was stored the alarm item showed for a relay and opened empty —
+  now the connection's path counts; at the simple level the "off" setpoint shows in the
+  behaviour item while a hand-back value refuses it (S-49), as the save sends that problem
+  there and the form had shown every field before. The tests walk the items as the chain went
+  (`tests/integration/control_chain.py`). `SCOPE.md` (the wizard), both user guides (setting
+  up control, the comfort correction's limit), both technical documents (configuration).
 - I8.9b, what an answer reveals (A2): the hand-back method's own fields after it is picked;
   the write types only where the connection does not fix them; the relay's timer length only
   with a timer, its repeat interval only without state reports or with a timer, "boiler heats

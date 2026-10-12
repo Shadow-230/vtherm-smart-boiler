@@ -128,7 +128,10 @@ never assumed applied. Reading the boiler is in `transport/entities.py`, which w
 
 **Configuration (`config_flow.py`, `config.py`, `control_config.py`).** The setup and options
 forms, and the control options as core objects with the blockers that keep control from
-starting. Control reads its section with the connection's MQTT topics and the signals'
+starting. Both flows are one menu of sections; control is five of its items, each one form —
+the control device, the heating curve, the control behaviour, frost protection, the alarm
+reactions (`CONTROL_ITEMS`) —, each shown where it applies and opened with the write path's
+own checks (`_control_path`). Control reads its section with the connection's MQTT topics and the signals'
 read-backs put in (`with_boiler_inputs`): each value is stored once. The zones are the
 circuits': each circuit lists the VT zones it feeds and, of them, those with underfloor and
 with convectors, and, of a zone it feeds only in part, its devices (`devices`, by zone — the

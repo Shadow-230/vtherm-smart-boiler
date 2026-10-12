@@ -104,13 +104,13 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "interface": _interface_schemas(flow),
         "control_curve": flow.control_curve_schema(options),
         "control_behaviour": flow.control_behaviour_schema(options),
+        "control_frost": flow.control_frost_schema(options),  # I8 (decision H4)
         "control_alarms": flow.control_alarms_schema(options),
         "control_return_confirm": flow.control_return_confirm_schema(),
         "confirm_blocking": flow.confirm_blocking_schema(),  # X5.12
         # X8: the relay path's steps.
         "control_relay": flow.control_relay_schema(options),
         "control_relay_from_vt": flow.control_relay_schema(options),
-        "control_relay_behaviour": flow.control_relay_behaviour_schema(options),
     }
     for section in ("config", "options"):
         steps = schemas | (options_only if section == "options" else {})
@@ -716,14 +716,14 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "control": flow.control_schema(options),
                 "control_entity": flow.control_entity_schema(options),
                 "interface": _interface_schemas(flow),
-                "control_curve": flow.control_curve_schema(options, 120.0),
-                "control_behaviour": flow.control_behaviour_schema(options),
+                "control_curve": flow.control_curve_schema(options),
+                "control_behaviour": flow.control_behaviour_schema(options, vt_delay=120.0),
+                "control_frost": flow.control_frost_schema(options),
                 "control_alarms": flow.control_alarms_schema(options),
                 "control_return_confirm": flow.control_return_confirm_schema(),
                 "confirm_blocking": flow.confirm_blocking_schema(),
                 "control_relay": flow.control_relay_schema(options),
                 "control_relay_from_vt": flow.control_relay_schema(options),
-                "control_relay_behaviour": flow.control_relay_behaviour_schema(options),
             }
             for step, schema in schemas.items():
                 for marker, validator in schema.schema.items():
@@ -997,8 +997,8 @@ def test_y4_texts_are_translated() -> None:
     from custom_components.vtherm_smart_boiler.control import LEARNING_NOT_RESUMED_ISSUE
     from custom_components.vtherm_smart_boiler.core.controller import CORRECTION_MAX_K
 
-    behaviour = SOURCE["options"]["step"]["control_behaviour"]
-    limit = behaviour["data_description"]["comfort_correction_max_k"]
+    curve = SOURCE["options"]["step"]["control_curve"]  # with the correction (I8, H2)
+    limit = curve["data_description"]["comfort_correction_max_k"]
     assert f"Default {CORRECTION_MAX_K:g} K" in limit
     assert "the only bound above the curve" in limit
     assert "ceiling" not in limit
@@ -1182,9 +1182,9 @@ def test_the_comfort_correction_says_it_is_on_and_what_it_costs() -> None:
     what it costs — more gas, possibly more starts — and the risk with VT's TPI zones: the
     water at its limit while a zone at full duty stays short by TPI's own offset, the burner
     stopped by every zone's cycle, 1.75 to 5 times the starts in the simulation — in the
-    behaviour step and in the simple level's curve step, in every language; its limit and the
-    "curve too low" issue have their texts."""
-    for step in ("control_behaviour", "control_curve"):
+    curve step — its one place at both levels (I8, decision H2) —, in every language; its limit
+    and the "curve too low" issue have their texts."""
+    for step in ("control_curve",):
         text = SOURCE["options"]["step"][step]["data_description"]["comfort_correction"]
         assert "On (default with full control)" in text, step
         assert "more gas" in text, step
@@ -1195,8 +1195,8 @@ def test_the_comfort_correction_says_it_is_on_and_what_it_costs() -> None:
         for language in LANGUAGES:
             translated = _texts(language)["options"]["step"][step]["data_description"]
             assert "1,75" in translated["comfort_correction"], (language, step)
-    behaviour = SOURCE["options"]["step"]["control_behaviour"]["data_description"]
-    assert "3 K a day" in behaviour["comfort_correction_max_k"]
+    curve = SOURCE["options"]["step"]["control_curve"]["data_description"]
+    assert "3 K a day" in curve["comfort_correction_max_k"]
     for key in ("curve_too_low", "room_short_at_limit"):  # additions 2 and 3: the causes
         issue = SOURCE["issues"][key]
         assert set(PLACEHOLDER.findall(issue["title"] + issue["description"])) == {

@@ -166,10 +166,15 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 6. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie (zobacz [Monitorowanie i werdykt](#41-monitorowanie-i-werdykt)).
    Decyzja należy do ciebie.
-7. **Ustaw sterowanie.** Przy pełnym sterowaniu albo wł./wył. menu kreatora pokazuje też sekcję
-   **Sterowanie (eksperymentalne)**: jej kroki (na przykład **Krzywa grzewcza i limity** oraz
-   **Zachowanie sterowania**); ścieżkę zapisu wyznacza połączenie, a odczyty zwrotne są
-   sygnałami kotła (krok 3). Żeby zmienić je później, otwórz tę samą sekcję w opcjach integracji. Żeby ustawić
+7. **Ustaw sterowanie.** Przy pełnym sterowaniu albo wł./wył. menu kreatora pokazuje też
+   pozycje sterowania, każdą jako jeden formularz: **Urządzenie sterujące (eksperymentalne)** —
+   zapisywalna encja albo przekaźnik, gdy połączenie daje coś do wyboru —, **Krzywa grzewcza**
+   (pełne sterowanie; z korektą komfortu i jej limitem), **Zachowanie sterowania** (opóźnienie
+   włączenia VT; na poziomie zaawansowanym progi zapotrzebowania, pauzy nauki, a przy pełnym
+   sterowaniu rampa, interwał decyzji i nastawa „wyłącz”), **Ochrona przed mrozem** (poziom
+   zaawansowany) i **Reakcje na alarmy**, gdy któraś ma zastosowanie. Ścieżkę zapisu wyznacza
+   połączenie, a odczyty zwrotne są sygnałami kotła (krok 3). Żeby zmienić którąś później,
+   otwórz tę samą pozycję w opcjach integracji. Żeby ustawić
    sterowanie później, wybierz najpierw tryb sterowania „tylko monitorowanie”.
 8. **Włącz sterowanie** przełącznikiem **Sterowanie (eksperymentalne)** na urządzeniu
    integracji. Jeśli czegoś brakuje, przełącznik mówi czego, a monitor dalej działa.
@@ -316,8 +321,9 @@ krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 
 **Korekta komfortu** — **domyślnie włączona przy pełnym sterowaniu** (wpis ustawiony przed tą
 wersją zachowuje to, z czym działał). Gdy pomieszczenie nie dochodzi do swojej nastawy mimo w
-pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K, na
-poziomie zaawansowanym do 10 K, nigdy więcej niż 3 K na dobę. Dla pomieszczenia, którego SmartPI
+pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K, najwyżej
+10 K — ustawianego w **Krzywej grzewczej**, obok korekty, na obu poziomach —, nigdy więcej niż
+3 K na dobę. Dla pomieszczenia, którego SmartPI
 jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy + 0,5 K, gdzie SmartPI przestaje je
 grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej. Jedno niedogrzane pomieszczenie
 liczy się jak każde inne, w tych granicach — woda nigdy nie idzie wyżej dla jednego pokoju. Po
@@ -448,7 +454,7 @@ sterowanie jest proponowane tylko z typem zapisu, który jest znany i nie jest t
 ### 5.1 Ścieżki zapisu
 
 Wyznacza ją połączenie kotła; instalacja skonfigurowana przed pytaniem o połączenie nadal
-wybiera ją w kroku sterowania („Ścieżka zapisu”). Samo monitorowanie to tryb sterowania.
+wybiera ją w pozycji **Urządzenie sterujące** („Ścieżka zapisu”). Samo monitorowanie to tryb sterowania.
 
 - **Encja do zapisu** — interfejs kotła, który udostępnia encje z możliwością zapisu, na
   przykład EMS-ESP albo sterownik OpenTherm na ESPHome. Wtyczka zapisuje nastawę zasilania, a

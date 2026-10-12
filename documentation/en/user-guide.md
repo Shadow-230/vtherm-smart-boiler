@@ -155,10 +155,15 @@ Only one entry of the integration can exist: it runs one boiler.
 6. **Read the verdict.** Once it has these days of data, the sensor **Control verdict** says
    whether control is worth enabling (see
    [Monitoring and the verdict](#41-monitoring-and-the-verdict)). You decide.
-7. **Set up control.** With full control or on/off chosen, the setup's menu also offers the
-   section **Control (experimental)**: its steps (for example **Heating curve and limits** and
-   **Control behaviour**); the connection decides the write path, and the read-backs are boiler
-   signals (step 3). To change it later, open the same section in the integration's options. To set
+7. **Set up control.** With full control or on/off chosen, the setup's menu also offers
+   control's items, each one form: **Control device (experimental)** — the writable entity or
+   the relay, where the connection has one to pick —, **Heating curve** (full control; with the
+   comfort correction and its limit), **Control behaviour** (VT's activation delay; at the
+   advanced level the demand thresholds, the learning pauses and, with full control, the ramp,
+   the decision interval and the "off" setpoint), **Frost protection** (advanced level) and
+   **Alarm reactions** where one applies. The connection decides the write path, and the
+   read-backs are boiler signals (step 3). To change one later, open the same item in the
+   integration's options. To set
    control up later, choose monitoring only as the control mode first.
 8. **Switch control on** with the switch **Control (experimental)** of the integration's device.
    If something is missing, the switch says what, and the monitor keeps running.
@@ -297,8 +302,8 @@ outdoor sensor never means zero heat.
 
 **Comfort correction** — **on by default with full control** (an entry set up before this
 version keeps what it ran with). When a room stays short of its setpoint with its valve fully
-open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K at the
-advanced level, never more than 3 K a day. For a room whose SmartPI is in its learning phase,
+open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K —
+set in **Heating curve**, beside the correction, at both levels —, never more than 3 K a day. For a room whose SmartPI is in its learning phase,
 "short" means below its setpoint + 0.5 K, where SmartPI stops heating it. It does not rise when
 the boiler starts more often than before. One room short counts like any other, within these
 limits — the water never goes higher for one room's sake. After three hours at its limit with a
@@ -424,7 +429,7 @@ persistent.
 ### 5.1 The write paths
 
 The boiler's connection decides it; an installation set up before the connection question
-still picks it in the control step ("Write path"). Monitoring only is a control mode.
+still picks it in the item **Control device** ("Write path"). Monitoring only is a control mode.
 
 - **Writable entity** — a boiler interface that offers writable entities, for example EMS-ESP
   or an ESPHome OpenTherm controller. The plugin writes the flow setpoint, and heating on and off
