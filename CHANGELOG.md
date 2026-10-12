@@ -39,7 +39,12 @@ version is decided then.
   connected is the setup's first question.
 - Frost protection; a fallback setpoint when no outdoor temperature is known; the comfort
   correction; SmartPI's learning paused while hot water or large swings disturb the rooms.
-- On each VT thermostat the plugin serves, the attribute `smart_boiler` → `heat_available`.
+- On each VT thermostat the plugin serves, the attribute `smart_boiler`: `heat_available` and
+  the water reaching the zone, rounded.
+- The water data for zone algorithms (`documentation/en/water-interface.md`): per VT thermostat,
+  the water reaching its circuit, why it is missing (lasting or momentary), when it was measured,
+  and whether heat reaches the zone — through the feature manager and a function in
+  `hass.data`. A zone algorithm that uses it says so, and is then not paused for water swings.
 
 **Safety**
 

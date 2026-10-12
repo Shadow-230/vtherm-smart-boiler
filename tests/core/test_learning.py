@@ -67,6 +67,28 @@ def test_a_water_swing_pauses_every_zone() -> None:
     assert PauseCause.WATER_SWING in result.causes["a"]
 
 
+def test_a_zone_using_the_water_data_is_not_paused_for_a_swing() -> None:
+    """I9 (water-interface.md §3.5): a zone whose algorithm uses the water data (its key in
+    VT's `specific_states`) is not paused for a water swing — the water factor explains it; the
+    zones without it are, as before."""
+    water = ZoneLearning("w", True, True, uses_water_data=True)
+    state = plan(LearningState(), [zone("a"), water], 0, setpoint=35.0).state
+    result = plan(state, [zone("a"), water], 10, setpoint=45.0, flow=40.0)
+    assert result.pause == ("a",)
+    assert result.causes["w"] == ()
+
+
+@pytest.mark.parametrize("cause", ["dhw", "fault"])
+def test_a_zone_using_the_water_data_still_pauses_for_hot_water_and_a_fault(cause: str) -> None:
+    """Negative, §3.5: hot water with priority and the boiler's fault still pause it while it
+    calls for heat (valve open), and still not while its valve is closed."""
+    calling = ZoneLearning("w", True, True, uses_water_data=True)
+    closed = ZoneLearning("c", True, False, uses_water_data=True)
+    result = plan(LearningState(), [calling, closed], 0, dhw=cause == "dhw", fault=cause == "fault")
+    assert result.pause == ("w",)
+    assert result.causes["c"] == ()
+
+
 def test_no_toggling_faster_than_the_minimum_pause() -> None:
     state = swung()
     assert state.paused

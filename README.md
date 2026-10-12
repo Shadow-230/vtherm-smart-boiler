@@ -5,6 +5,7 @@
 [![Commit activity on dev][commits-shield]][commits]
 [![License][license-shield]][license]
 [![HACS][hacs-shield]](#installation)
+[![Buy me a coffee][bmc-shield]][bmc]
 
 # Smart Boiler for Versatile Thermostat
 
@@ -82,8 +83,10 @@ Step by step: the [user guide][guide].
 ## Beside VT's zone algorithms
 
 The plugin reads VT's zones and never changes their settings or algorithms. Each zone's
-thermostat gets one attribute, `smart_boiler` → `heat_available`: whether the boiler's heat
-reaches the zone now. Nothing in VT depends on it.
+thermostat gets one attribute, `smart_boiler`: `heat_available` — whether the boiler's heat
+reaches the zone now — and `supply_temperature`, the water reaching it, rounded. A zone
+algorithm can read the full water data ([water interface][water]); SmartPI 0.4.0 does not.
+Nothing in VT depends on it.
 
 The heating curve already raises the water temperature as it gets colder outside. Some zone
 algorithms count the outdoor temperature as well, so the weather then acts twice:
@@ -416,6 +419,7 @@ Targets are aims, not commitments; each release collects data for the next. Deta
 | [`docs/`][docs] | the plan of each release and the reviews of the code |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | the integration's parts, one control step, lifecycle, stored state, tests |
+| [Water data for zone algorithms][water] | the interface that gives SmartPI and other zone algorithms the water reaching each zone |
 | [`CHANGELOG.md`][changelog] | what each release changes |
 | [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
 | [`LICENSE`][license] | Apache License 2.0 |
@@ -429,6 +433,10 @@ Contributions are welcome — open pull requests against `dev`. Read
 [`CONTRIBUTING.md`][contributing] first: this integration controls a home's heating, so every
 change is small, tested and reviewed. Which automatic checks run, and when, is in its section
 [Checks](CONTRIBUTING.md#checks).
+
+# Support
+
+If the plugin helps your heating, you can buy me a coffee: [buymeacoffee.com/shadow23][bmc].
 
 # Authors
 
@@ -453,6 +461,7 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [guide-pl]: documentation/pl/user-guide.md
 [technical]: documentation/en/technical.md
 [technical-pl]: documentation/pl/technical.md
+[water]: documentation/en/water-interface.md
 [changelog]: CHANGELOG.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE
@@ -463,3 +472,5 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [commits-shield]: https://img.shields.io/github/commit-activity/m/Shadow-230/vtherm-smart-boiler/dev.svg?style=for-the-badge
 [license-shield]: https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge
 [hacs-shield]: https://img.shields.io/badge/HACS-not%20yet-lightgrey.svg?style=for-the-badge
+[bmc]: https://buymeacoffee.com/shadow23
+[bmc-shield]: https://img.shields.io/badge/buy%20me%20a%20coffee-shadow23-ffdd00.svg?style=for-the-badge&logo=buymeacoffee&logoColor=black

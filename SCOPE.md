@@ -476,15 +476,20 @@ takes the emitter types of its zones (S-33); the burner is shared.
   issue (§11; S-29).
 - A learning algorithm without a pause service gets an explicit warning, which states what its
   advice costs.
-- Per zone the plugin gives VT's thermostat one value as a feature-manager property (feature
-  manager from 0.2): **heat available** (`heat_available`; named "hot water available" before
+- Per zone the plugin gives VT's thermostat, as feature-manager properties (feature manager from
+  0.2): **heat available** (`heat_available`; named "hot water available" before
   0.2.2, P-61) — the boiler's heat is reaching the zone: yes while the flame burns and the flow
   is clearly above the return (above the room, by a wider margin, only where no return is
   known: a mixed circuit's water goes back through its own mixing, and an installation may map
   no return); no while the flame is out or DHW is active on a boiler where hot water has
   priority; unknown while a mapped flame, the flow or what it is judged against is unknown or
-  stale. Without a flame signal the water alone decides (I8, decision C1). Zone algorithms do
-  not read this value today (§9). No entity of the plugin is a zone's, and a zone is no more
+  stale. Without a flame signal the water alone decides (I8, decision C1). Since I9 (the user's
+  decisions of 2026-10-12), also **the water reaching the zone's circuit**, with why it is
+  missing, when it was measured and why heat does not reach the zone — an optional, one-way
+  interface for zone algorithms, also through a function in `hass.data` and, rounded, in the
+  `smart_boiler` attribute (`documentation/en/water-interface.md`). A zone algorithm that uses it
+  says so by a key in VT's `specific_states` and is then not paused for a water swing; SmartPI
+  0.4.0 does not use it. No entity of the plugin is a zone's, and a zone is no more
   than its thermostat, its circuit, its emitter type and whether it closes when off: the
   per-zone entities, the zones' emitter output and exponent, the monitor's "near room
   temperature" (I8.1d) and the emitter power factor (I8.2) were removed

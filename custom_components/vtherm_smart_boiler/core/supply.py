@@ -9,9 +9,14 @@ from .installation import Circuit, CircuitControl
 
 
 class SupplyReason(StrEnum):
-    FLOW_UNKNOWN = "flow_unknown"
-    FLOW_STALE = "flow_stale"
-    CIRCUIT_NOT_MEASURED = "circuit_not_measured"
+    """Why a circuit's water is not known (documentation/en/water-interface.md, §4.1): lasting —
+    nothing to measure it with, or a zone in circuits with different water — or momentary."""
+
+    NOT_MAPPED = "not_mapped"  # lasting: no boiler flow mapped and no circuit sensor
+    CIRCUIT_NOT_MEASURED = "circuit_not_measured"  # lasting: a mixed circuit without its sensor
+    SEVERAL_CIRCUITS = "several_circuits"  # lasting: a zone's circuits differ, or one is unknown
+    FLOW_UNKNOWN = "flow_unknown"  # momentary: the sensor reads nothing usable now
+    FLOW_STALE = "flow_stale"  # momentary: its last reading is past its age limit
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +25,7 @@ class Supply:
 
     temperature: float | None
     reason: SupplyReason | None = None
+    measured_at: float | None = None  # when the reading used was taken; only with a temperature
 
 
 def circuit_return(circuit: Circuit, boiler_return: float | None) -> float | None:
@@ -33,21 +39,36 @@ def circuit_supply(
     boiler_flow: float | None,
     flow_fresh: bool,
     circuit_flow: float | None = None,
+    *,
+    flow_mapped: bool = True,
+    own_mapped: bool = False,
+    own_stale: bool = False,
+    flow_at: float | None = None,
+    own_at: float | None = None,
 ) -> Supply:
     """What the circuit's emitters receive.
 
-    A measured circuit flow wins. Otherwise an unmixed circuit gets the boiler flow, a passive
-    fixed circuit at most its declared temperature; a mixed circuit without its own sensor is
-    not known — the boiler flow says nothing about it.
+    A measured circuit flow (``circuit_flow``: its own sensor's fresh value) wins. Otherwise an
+    unmixed circuit gets the boiler flow, a passive fixed circuit at most its declared
+    temperature; a mixed circuit is not known — the boiler flow says nothing about it. Why not
+    known, lasting or momentary (I9): no water sensor at all (``flow_mapped`` false and no
+    ``own_mapped``) is ``not_mapped``; a circuit's own sensor that is mapped but gives nothing
+    now is ``flow_unknown``, or ``flow_stale`` (``own_stale``) — a straight circuit then takes the
+    boiler's flow. ``flow_at`` and ``own_at``: when each reading was taken.
     """
     if circuit_flow is not None:
-        return Supply(circuit_flow)
+        return Supply(circuit_flow, measured_at=own_at)
+    lost = None
+    if own_mapped:
+        lost = SupplyReason.FLOW_STALE if own_stale else SupplyReason.FLOW_UNKNOWN
     if circuit.control in (CircuitControl.THROUGH_BOILER, CircuitControl.SEPARATE):
-        return Supply(None, SupplyReason.CIRCUIT_NOT_MEASURED)
+        return Supply(None, lost or SupplyReason.CIRCUIT_NOT_MEASURED)
     if boiler_flow is None:
+        if not flow_mapped:
+            return Supply(None, lost or SupplyReason.NOT_MAPPED)
         return Supply(None, SupplyReason.FLOW_UNKNOWN)
     if not flow_fresh:
         return Supply(None, SupplyReason.FLOW_STALE)
     if circuit.control is CircuitControl.PASSIVE_FIXED and circuit.fixed_temperature is not None:
-        return Supply(min(boiler_flow, circuit.fixed_temperature))
-    return Supply(boiler_flow)
+        return Supply(min(boiler_flow, circuit.fixed_temperature), measured_at=flow_at)
+    return Supply(boiler_flow, measured_at=flow_at)
