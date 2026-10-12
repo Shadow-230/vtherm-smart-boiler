@@ -15,7 +15,7 @@ rule's trigger (F10). How reports are made: `docs/test-reports/README.md`.
 |---|---|
 | Version | 0.2.3b1 in the manifest (provisional, decided at K4 and K5) |
 | Plugin code tested | (a) `dev` at 9df2f06 — instance 1's first run, 2026-10-08/09; (b) `dev` through I6 (737b2db … b832a0e) — instances 6 to 8 and instance 1's second run, 2026-10-09/10; (c) `dev` through G11 (4378e02, with #51's F7 fix) — instances 1, 2–5, 7 and 8 from 2026-10-10 16:45 UTC; instance 6 runs `dev` through I7 (663983d) for the user to look at live, untested. `dev` has moved on since (I8, up to 1d6d724): not tested here |
-| Test tools | branch `claude/j4-results`: the runner (`devenv/j4/run.py`, `paths.py`, `restart.py`, `corrections.py`), the simulator's services for the relay, the write types, the boiler and its lockout, and the configurations in `devenv/config/` |
+| Test tools | branch `claude/j4-results`: the runner (`devenv/j4/run.py`, `paths.py`, `restart.py`, `corrections.py`), the simulator's services for the relay, the write types, the boiler and its lockout, and the configurations in `devenv/config/`. On 2026-10-12, after this run, the runner was brought to `dev` (#93) and its saving of the options adapted to I8's menu (`devenv/j4/walk.py`, `options.py`): each change goes through the item that asks it now — the read-backs among the boiler signals, the gateway's questions in the boiler interface, the hard maximum as the circuit's (E1), monitoring only as the control mode (G2), the underfloor zones in the circuit (U1, U2). Checked in-process against the real options flow over its REST API (`tests/integration/test_j4_walk.py`); not yet run in a test Home Assistant |
 | J4 started | 2026-10-08, by the user |
 
 ## 2. Environment
