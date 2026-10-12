@@ -47,9 +47,9 @@ Every pull request runs these checks on GitHub Actions:
   and needs a look.
 - Merging into `dev` needs both test checks green and the branch up to date with `dev`; merging
   into `qas` or `main` needs both test checks green and the repository owner's approval, and only
-  the owner merges. `qas` does not ask for the branch to be up to date: it takes pull requests
-  from `dev` only, and each merge leaves in `qas` an empty merge commit `dev` would otherwise have
-  to take back first (the owner's change, 2026-10-12); `main` still asks it.
+  the owner merges. Neither asks for the branch to be up to date: `qas` takes pull requests from
+  `dev` only and `main` from `qas` only, and each merge leaves an empty merge commit the source
+  branch would otherwise have to take back first (the owner's change, 2026-10-12).
 
 ## Before a pull request
 
