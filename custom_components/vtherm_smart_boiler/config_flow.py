@@ -51,6 +51,7 @@ from homeassistant.util import dt as dt_util
 
 from .config import (
     CIRCUIT_BOUNDS,
+    CIRCUIT_DEVICES,
     CIRCUIT_EMITTERS,
     CIRCUIT_ZONES,
     FRESHNESS_BOUNDS_MIN,
@@ -161,6 +162,7 @@ from .vtherm_link import (
     relay_used_by_zone,
     vt_central_boiler_settings,
     vt_zones_in_area,
+    zone_devices,
     zone_name,
     zones_on_boiler_thermostat,
 )
@@ -953,6 +955,7 @@ def circuit_schema(
     *,
     names: Sequence[str] = (),
     removable: bool = False,
+    devices: Mapping[str, str] | None = None,
 ) -> vol.Schema:
     """One circuit's form (I8, decisions F1 and F2): its name — ``names`` suggested, any text
     taken; the internal ID is never shown —, its type and highest water temperature; a field
@@ -960,7 +963,10 @@ def circuit_schema(
     circuit's own flow sensor for a mixed or fixed-valve circuit, and the maximum's too-hot
     alarm (decision 10) — its temperature and time, offered as stored, pre-filled once the
     maximum is entered — with a flow reading. ``answers``: the form's so far, which may reveal
-    fields (A2). ``removable``: a tick that removes it — never the only one."""
+    fields (A2). ``removable``: a tick that removes it — never the only one. ``current`` as the
+    form shows it (``circuit_form_view``). ``devices``: the VT zones' own devices offered, each
+    with its zone (I8.8c) — at the advanced level, where there are any; the emitter lists offer
+    their zones too."""
     given = {**current, **(answers or {})}
     shown = circuit_fields(options, given)
     fields: dict[Any, Any] = {
@@ -982,7 +988,13 @@ def circuit_schema(
         ),
         vol.Optional(AREA): selector.AreaSelector(selector.AreaSelectorConfig()),
     }
-    zones = [str(z) for z in _listed(given.get(CIRCUIT_ZONES))]
+    if devices and _advanced(options):
+        fields[vol.Optional(CIRCUIT_DEVICES, default=_listed(given.get(CIRCUIT_DEVICES)))] = (
+            selector.EntitySelector(
+                selector.EntitySelectorConfig(include_entities=sorted(devices), multiple=True)
+            )
+        )
+    zones = fed_zones(given, devices or {})
     for key in EMITTER_LISTS if zones else ():
         picked = [str(z) for z in _listed(given.get(key)) if z in zones]
         fields[vol.Optional(key, default=picked)] = selector.EntitySelector(
@@ -1077,7 +1089,7 @@ def circuit_fields(options: Mapping[str, Any], circuit: Mapping[str, Any]) -> se
     straight from it."""
     kind = _known(CircuitControl, circuit.get("control")) or CircuitControl.UNMIXED_SHARED
     shown = {"control", "max_flow", CIRCUIT_ZONES, AREA}
-    if _listed(circuit.get(CIRCUIT_ZONES)):
+    if _listed(circuit.get(CIRCUIT_ZONES)) or _listed(circuit.get(CIRCUIT_DEVICES)):
         shown |= set(EMITTER_LISTS)  # of its zones, those with underfloor and convectors
     if kind is CircuitControl.PASSIVE_FIXED:
         shown.add("fixed_temperature")
@@ -1096,6 +1108,39 @@ def circuit_fields(options: Mapping[str, Any], circuit: Mapping[str, Any]) -> se
 
 MAX_FLOW_ALARM = "max_flow_alarm"
 MAX_FLOW_ALARM_MIN = "max_flow_alarm_min"
+
+
+def circuit_form_view(circuit: Mapping[str, Any]) -> dict[str, Any]:
+    """A stored circuit as its form shows it (I8.8c): its zones fed whole, and the devices it
+    feeds of the others, in one list."""
+    stored = circuit.get(CIRCUIT_DEVICES)
+    by_zone = stored if isinstance(stored, Mapping) else {}
+    view = dict(circuit)
+    view[CIRCUIT_ZONES] = [z for z in _listed(circuit.get(CIRCUIT_ZONES)) if z not in by_zone]
+    view[CIRCUIT_DEVICES] = [d for listed in by_zone.values() for d in _listed(listed)]
+    return view
+
+
+def stored_device_zones(circuits: Sequence[Any]) -> dict[str, str]:
+    """Each device the circuits list, with its zone (I8.8c)."""
+    found: dict[str, str] = {}
+    for circuit in circuits:
+        stored = circuit.get(CIRCUIT_DEVICES) if isinstance(circuit, Mapping) else None
+        for zone, listed in (stored if isinstance(stored, Mapping) else {}).items():
+            for device in _listed(listed):
+                found[str(device)] = str(zone)
+    return found
+
+
+def fed_zones(answers: Mapping[str, Any], devices: Mapping[str, str]) -> list[str]:
+    """The zones a circuit's answers feed (I8.8c): those picked whole, then the zones of the
+    devices picked, each once."""
+    fed = [str(z) for z in _listed(answers.get(CIRCUIT_ZONES))]
+    for device in _listed(answers.get(CIRCUIT_DEVICES)):
+        zone = devices.get(str(device))
+        if zone is not None and zone not in fed:
+            fed.append(zone)
+    return fed
 
 
 def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str, str]:
@@ -3028,6 +3073,16 @@ class _Steps:
         removable = not new and len(circuits) > 1
         names = self._circuit_names()
         placeholders = {"name": circuit_label(current, index), "zone": "-"}
+        # I8.8c: the VT zones' own devices offered at the advanced level, each with its zone
+        # from VT — and this circuit's stored ones VT no longer drives, to be refused at the
+        # save; without the field, those stored are kept, their zones as stored.
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        live = zone_devices(hass) if _advanced(self.options) else {}
+        stored_zones = stored_device_zones(circuits)
+        view = circuit_form_view(current)
+        stale = {d: stored_zones[d] for d in view[CIRCUIT_DEVICES] if d not in live}
+        offered = {**stale, **live} if live else {}
+        devices = live or {**stored_zones, **zone_devices(hass)}
         if user_input is not None and user_input.get(REMOVE_CIRCUIT) and removable:
             # Its zones go with it: they are no longer watched (I8, decision F4).
             self.options[CIRCUITS] = [*circuits[:index], *circuits[index + 1 :]]
@@ -3035,23 +3090,33 @@ class _Steps:
             return await self._after("circuit")
         elif user_input is not None:
             advanced = _advanced(self.options)
-            draft = {**current, **(self._circuit_draft or {})}
+            draft = {**view, **(self._circuit_draft or {})}
             shown = circuit_fields(self.options, draft)
             self._circuit_draft = dict(user_input)
+            if not offered:  # no field for them: the devices stored are kept (I8, A3)
+                user_input = {**user_input, CIRCUIT_DEVICES: view[CIRCUIT_DEVICES]}
             # A sensor that is no temperature, a zone the circuit cannot take, are refused
             # before they reveal anything (P-79).
             flow = entity_errors(self.hass, user_input, _CIRCUIT_ENTITY_FIELDS)  # type: ignore[attr-defined]
-            zones, zone_error, named = self._circuit_zones(user_input, circuits, index)
+            zones, zone_error, named = self._circuit_zones(
+                user_input, circuits, index, devices, CIRCUIT_DEVICES if offered else CIRCUIT_ZONES
+            )
             # Zones the emitter lists did not offer yet: shown again with them (I8, A2, F2).
-            offered = set(_listed(draft.get(CIRCUIT_ZONES))) if EMITTER_LISTS[0] in shown else set()
-            added = set(_listed(user_input.get(CIRCUIT_ZONES))) - offered
-            revealed = circuit_fields(self.options, {**current, **user_input}) - shown
+            known = offered or devices  # as the form resolves them
+            listed = set(fed_zones(draft, known)) if EMITTER_LISTS[0] in shown else set()
+            added = set(fed_zones(user_input, known)) - listed
+            revealed = circuit_fields(self.options, {**view, **user_input}) - shown
             if not flow and not zone_error and (revealed or added):
                 # The type or the flow sensor revealed fields: shown again with them (I8, A2).
                 return self._form(
                     step_id="circuit",
                     data_schema=circuit_schema(
-                        self.options, current, user_input, names=names, removable=removable
+                        self.options,
+                        view,
+                        user_input,
+                        names=names,
+                        removable=removable,
+                        devices=offered,
                     ),
                     description_placeholders=placeholders,
                 )
@@ -3083,50 +3148,75 @@ class _Steps:
             step_id="circuit",
             data_schema=circuit_schema(
                 self.options,
-                current,
+                view,
                 user_input or self._circuit_draft,
                 names=names,
                 removable=removable,
+                devices=offered,
             ),
             errors=errors,
             description_placeholders=placeholders,
         )
 
     def _circuit_zones(
-        self, user_input: Mapping[str, Any], circuits: Sequence[Any], index: int
+        self,
+        user_input: Mapping[str, Any],
+        circuits: Sequence[Any],
+        index: int,
+        devices: Mapping[str, str],
+        devices_field: str,
     ) -> tuple[dict[str, Any], dict[str, str], str]:
-        """A circuit's zones as answered (I8, decisions F2 and F4): those picked, an area's
-        added — the shortcut filled in at the save — and of them those with underfloor and
-        with convectors; with the problem the answer has, and the zones it names. Refused:
-        a zone that is no VT climate (question 19), one built on the boiler's own thermostat
-        (X5.19), one another circuit feeds (whole zones), one in both emitter lists."""
+        """A circuit's zones as answered (I8, decisions F2 and F4): those picked whole, an
+        area's added — the shortcut filled in at the save —, those of the devices picked
+        (I8.8c; ``devices``: each device's zone), and of them those with underfloor and with
+        convectors; with the problem the answer has, and the zones or devices it names — a
+        device's on ``devices_field``, the field that shows them. Refused: a zone that is no VT
+        climate (question 19), one built on the boiler's own thermostat (X5.19), one another
+        circuit feeds — a zone may be in two only by its devices —, one in both emitter lists;
+        a device of no VT zone, one another circuit lists, one of a zone picked whole too."""
         hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
-        picked = [str(z) for z in _listed(user_input.get(CIRCUIT_ZONES))]
+        whole = [str(z) for z in _listed(user_input.get(CIRCUIT_ZONES))]
+        chosen = [str(d) for d in _listed(user_input.get(CIRCUIT_DEVICES))]
+        by_zone: dict[str, list[str]] = {}
+        for device in chosen:
+            if device in devices:
+                by_zone.setdefault(devices[device], []).append(device)
         area = user_input.get(AREA)
         for zone in vt_zones_in_area(hass, str(area)) if area else []:
-            if zone not in picked:
-                picked.append(zone)
+            if zone not in whole and zone not in by_zone:
+                whole.append(zone)
+        picked = fed_zones({CIRCUIT_ZONES: whole, CIRCUIT_DEVICES: chosen}, devices)
         lists: dict[str, Any] = {CIRCUIT_ZONES: picked}
+        if by_zone:
+            lists[CIRCUIT_DEVICES] = by_zone
         for key in EMITTER_LISTS:
             listed = [str(z) for z in _listed(user_input.get(key)) if z in picked]
             if listed:
                 lists[key] = listed
-        others = {
-            str(z)
-            for i, c in enumerate(circuits)
-            if i != index and isinstance(c, Mapping)
-            for z in _listed(c.get(CIRCUIT_ZONES))
-        }
-        if zones_not_vt(hass, picked):
+        others = [c for i, c in enumerate(circuits) if i != index and isinstance(c, Mapping)]
+        split = stored_device_zones(others)
+        held = {str(z) for c in others for z in _listed(c.get(CIRCUIT_ZONES))}
+        held_whole = held - set(split.values())
+
+        def named(entities: Sequence[str]) -> str:
+            return ", ".join(zone_name(hass, e) for e in entities)
+
+        if zones_not_vt(hass, whole):
             return lists, {CIRCUIT_ZONES: "zone_not_vt"}, "-"
+        if unknown := [d for d in chosen if d not in devices]:
+            return lists, {devices_field: "device_not_in_zone"}, named(unknown)
         thermostat = zones_on_boiler_thermostat(hass, picked, boiler_side_entities(self.options))
         if thermostat:
             # X5.19: it would ask for heat whenever the flame burns.
-            names = ", ".join(zone_name(hass, z) for z in thermostat)
-            return lists, {CIRCUIT_ZONES: "zone_on_boiler_thermostat"}, names
-        if shared := [z for z in picked if z in others]:
-            names = ", ".join(zone_name(hass, z) for z in shared)
-            return lists, {CIRCUIT_ZONES: "zone_in_another_circuit"}, names
+            return lists, {CIRCUIT_ZONES: "zone_on_boiler_thermostat"}, named(thermostat)
+        if shared := [z for z in whole if z in held]:
+            return lists, {CIRCUIT_ZONES: "zone_in_another_circuit"}, named(shared)
+        if both := [z for z in whole if z in by_zone]:
+            return lists, {devices_field: "zone_whole_and_devices"}, named(both)
+        if shared := [z for z in by_zone if z in held_whole]:
+            return lists, {devices_field: "zone_in_another_circuit"}, named(shared)
+        if taken := [d for d in chosen if d in split]:
+            return lists, {devices_field: "device_in_another_circuit"}, named(taken)
         if set(lists.get("underfloor", ())) & set(lists.get("convectors", ())):
             return lists, {"underfloor": "emitter_twice"}, "-"
         return lists, {}, "-"

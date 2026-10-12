@@ -175,6 +175,7 @@
           "control": "Typ obiegu",
           "zones": "Zasilane strefy VT",
           "area": "Dodaj strefy z obszaru",
+          "devices": "Pojedyncze urządzenia strefy",
           "underfloor": "Z nich: podłogówka",
           "convectors": "Z nich: konwektory",
           "max_flow": "Najwyższa temperatura wody",
@@ -190,8 +191,9 @@
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa z najwyżej jednym obiegiem zasilanym prosto z kotła i bez obiegu mieszanego przez kocioł. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
-          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
+          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu, chyba że niżej podzielono ją przez jej urządzenia; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
           "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
+          "devices": "Opcjonalnie: dla strefy, którą ten obieg zasila tylko w części — pokój z grzejnikiem na jednym obiegu i pętlą podłogówki na drugim — wybierz zamiast całej strefy jej urządzenia zasilane przez ten obieg. Strefa jest wtedy w każdym obiegu przez swoje urządzenia; w obiegu sterowanym przez inną automatykę prosi tylko wtedy, gdy któreś z tych urządzeń jest włączone. Dostępne są tylko urządzenia, którymi steruje Versatile Thermostat. Urządzenie przypisane do złego obiegu sprawia, że wtyczka źle ocenia, który obieg potrzebuje ciepła.",
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: dla nich pytamy o wykładnik krzywej i najwyższą temperaturę wody obiegu. Pozostałe to grzejniki, chyba że wskazano je jako konwektory.",
           "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
@@ -550,7 +552,10 @@
       "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
       "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia.",
       "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu.",
-      "zone_in_another_circuit": "Strefa należy do jednego obiegu: {zone} jest już na liście innego obiegu.",
+      "zone_in_another_circuit": "{zone} jest już na liście innego obiegu: strefa może być w dwóch obiegach tylko przez swoje pojedyncze urządzenia.",
+      "device_not_in_zone": "{zone} nie jest urządzeniem żadnej strefy Versatile Thermostat.",
+      "zone_whole_and_devices": "{zone} wybrano i jako całą strefę, i przez jej urządzenia: wybierz jedno.",
+      "device_in_another_circuit": "{zone} jest już na liście innego obiegu: urządzenie należy do jednego obiegu.",
       "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie."
     }
   },
@@ -777,6 +782,7 @@
           "control": "Typ obiegu",
           "zones": "Zasilane strefy VT",
           "area": "Dodaj strefy z obszaru",
+          "devices": "Pojedyncze urządzenia strefy",
           "underfloor": "Z nich: podłogówka",
           "convectors": "Z nich: konwektory",
           "max_flow": "Najwyższa temperatura wody",
@@ -792,8 +798,9 @@
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa z najwyżej jednym obiegiem zasilanym prosto z kotła i bez obiegu mieszanego przez kocioł. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
-          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
+          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu, chyba że niżej podzielono ją przez jej urządzenia; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
           "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
+          "devices": "Opcjonalnie: dla strefy, którą ten obieg zasila tylko w części — pokój z grzejnikiem na jednym obiegu i pętlą podłogówki na drugim — wybierz zamiast całej strefy jej urządzenia zasilane przez ten obieg. Strefa jest wtedy w każdym obiegu przez swoje urządzenia; w obiegu sterowanym przez inną automatykę prosi tylko wtedy, gdy któreś z tych urządzeń jest włączone. Dostępne są tylko urządzenia, którymi steruje Versatile Thermostat. Urządzenie przypisane do złego obiegu sprawia, że wtyczka źle ocenia, który obieg potrzebuje ciepła.",
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: dla nich pytamy o wykładnik krzywej i najwyższą temperaturę wody obiegu. Pozostałe to grzejniki, chyba że wskazano je jako konwektory.",
           "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
@@ -1162,7 +1169,10 @@
       "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
       "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia.",
       "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu.",
-      "zone_in_another_circuit": "Strefa należy do jednego obiegu: {zone} jest już na liście innego obiegu.",
+      "zone_in_another_circuit": "{zone} jest już na liście innego obiegu: strefa może być w dwóch obiegach tylko przez swoje pojedyncze urządzenia.",
+      "device_not_in_zone": "{zone} nie jest urządzeniem żadnej strefy Versatile Thermostat.",
+      "zone_whole_and_devices": "{zone} wybrano i jako całą strefę, i przez jej urządzenia: wybierz jedno.",
+      "device_in_another_circuit": "{zone} jest już na liście innego obiegu: urządzenie należy do jednego obiegu.",
       "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie."
     }
   },

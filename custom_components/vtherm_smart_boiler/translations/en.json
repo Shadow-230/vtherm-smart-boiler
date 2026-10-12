@@ -175,6 +175,7 @@
           "control": "Circuit type",
           "zones": "VT zones it feeds",
           "area": "Add an area's zones",
+          "devices": "Single devices of a zone",
           "underfloor": "Of them, underfloor",
           "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
@@ -190,8 +191,9 @@
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one circuit fed straight from the boiler, and not with one the boiler mixes. The wrong type makes control refuse, or misjudge what reaches the rooms.",
-          "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
+          "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit, unless it is split by its devices below; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
           "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
+          "devices": "Optional: for a zone this circuit feeds only in part — a room with a radiator on one circuit and a floor loop on another — pick the zone's own devices this circuit feeds, instead of the whole zone. The zone is then in each circuit by its devices; with a circuit run by other automation, it asks there only while one of those devices is on. Only devices Versatile Thermostat drives are offered. A device wrongly placed makes the plugin judge the wrong circuit's demand.",
           "underfloor": "The zones of this circuit with underfloor heating: the curve's exponent and the circuit's highest water temperature are asked for them. The rest are radiators unless listed as convectors.",
           "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
@@ -550,7 +552,10 @@
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
       "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
       "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu.",
-      "zone_in_another_circuit": "A zone belongs to one circuit: {zone} is already in another circuit's list.",
+      "zone_in_another_circuit": "{zone} is already in another circuit's list: a zone may be in two circuits only by its single devices.",
+      "device_not_in_zone": "{zone} is not a device of any Versatile Thermostat zone.",
+      "zone_whole_and_devices": "{zone} is picked both as a whole zone and by its devices: pick one.",
+      "device_in_another_circuit": "{zone} is already in another circuit's list: a device belongs to one circuit.",
       "emitter_twice": "A zone is underfloor or convectors, not both."
     }
   },
@@ -777,6 +782,7 @@
           "control": "Circuit type",
           "zones": "VT zones it feeds",
           "area": "Add an area's zones",
+          "devices": "Single devices of a zone",
           "underfloor": "Of them, underfloor",
           "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
@@ -792,8 +798,9 @@
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one circuit fed straight from the boiler, and not with one the boiler mixes. The wrong type makes control refuse, or misjudge what reaches the rooms.",
-          "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
+          "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit, unless it is split by its devices below; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
           "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
+          "devices": "Optional: for a zone this circuit feeds only in part — a room with a radiator on one circuit and a floor loop on another — pick the zone's own devices this circuit feeds, instead of the whole zone. The zone is then in each circuit by its devices; with a circuit run by other automation, it asks there only while one of those devices is on. Only devices Versatile Thermostat drives are offered. A device wrongly placed makes the plugin judge the wrong circuit's demand.",
           "underfloor": "The zones of this circuit with underfloor heating: the curve's exponent and the circuit's highest water temperature are asked for them. The rest are radiators unless listed as convectors.",
           "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
@@ -1162,7 +1169,10 @@
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
       "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
       "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu.",
-      "zone_in_another_circuit": "A zone belongs to one circuit: {zone} is already in another circuit's list.",
+      "zone_in_another_circuit": "{zone} is already in another circuit's list: a zone may be in two circuits only by its single devices.",
+      "device_not_in_zone": "{zone} is not a device of any Versatile Thermostat zone.",
+      "zone_whole_and_devices": "{zone} is picked both as a whole zone and by its devices: pick one.",
+      "device_in_another_circuit": "{zone} is already in another circuit's list: a device belongs to one circuit.",
       "emitter_twice": "A zone is underfloor or convectors, not both."
     }
   },

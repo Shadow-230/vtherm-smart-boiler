@@ -125,7 +125,12 @@ Only one entry of the integration can exist: it runs one boiler.
    other. A circuit's form lists the VT zones it feeds — an area adds its zones at the save —
    and, of them, those with underfloor heating and those with convectors; the rest are
    radiators. A zone belongs to one circuit; a zone in no circuit is neither watched nor asked
-   for heat. **Circuit type** says how the circuit gets its water: straight from the boiler,
+   for heat. A room fed by two circuits — a radiator on one, a floor loop on the other — goes
+   into each by its own devices: at the advanced level **Single devices of a zone** offers the
+   devices VT drives, and a circuit lists the zone's devices it feeds instead of the whole
+   zone. The room is still one zone: watched and counted once. A circuit controlled by other
+   automation hears it only while one of its devices there is on (where VT does not say which
+   are on, in each of its circuits). **Circuit type** says how the circuit gets its water: straight from the boiler,
    through a fixed thermostatic mixing valve (its setting asked), or **controlled by other
    automation** — a mixer or a pump that something else runs. Such a circuit may name an entity
    that is on while it wants heat (**Circuit asks for heat**) and the water it needs (**Water

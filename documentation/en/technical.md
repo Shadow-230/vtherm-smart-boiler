@@ -131,8 +131,10 @@ forms, and the control options as core objects with the blockers that keep contr
 starting. Control reads its section with the connection's MQTT topics and the signals'
 read-backs put in (`with_boiler_inputs`): each value is stored once. The zones are the
 circuits': each circuit lists the VT zones it feeds and, of them, those with underfloor and
-with convectors; the zones' own section keeps only whether a zone's valves close when it is
-off (`config._circuit_zones`). `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
+with convectors, and, of a zone it feeds only in part, its devices (`devices`, by zone — the
+form resolves each device to its zone through `vtherm_link.zone_devices`); a zone may be in
+two circuits only so. The zones' own section keeps only whether a zone's valves close when it
+is off (`config._circuit_zones`). `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
 
 ## 4. One control step
 
