@@ -260,7 +260,8 @@ scripts/env.sh mypy
 ## 8. Water data for zone algorithms
 
 **Specified, not built yet** (the user's decisions of 2026-10-12; step I9 of
-[`docs/plan-0.2.md`](../../docs/plan-0.2.md), before 0.3, on the user's go-ahead). An optional
+[`docs/plan-0.2.md`](../../docs/plan-0.2.md), before 0.3; being built,
+[`docs/plan-0.2-i9.md`](../../docs/plan-0.2-i9.md)). An optional
 interface gives a zone algorithm — SmartPI first — the water reaching each zone's circuit, so
 its room model can account for a weather-compensated boiler, a mixer, burner cycling and hot
 water with priority. Data flows one way, from the plugin to the zone algorithm.
