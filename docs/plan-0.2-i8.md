@@ -727,8 +727,13 @@ Claude's calls (2026-10-12): four pull requests.
 - I8.10a ✅ (2026-10-12): the installation's repair issues (a circuit without zones, underfloor
   without a maximum) name circuits as the user knows them — their name, else their number, as
   the menu does — never the internal ID (found at I8.7c).
-- I8.10b: the panel texts — forms, menu, errors, repair issues, exceptions — to A4's limits, EN
-  source and PL; the relay's texts (C3, C4) and the topics named above; the tests that read the
-  texts follow them.
-- I8.10c: both user guides rewritten plain, as above.
-- I8.10d: the check of every document against the code, as above; the result in `research/`.
+- I8.10b ✅ (2026-10-12): the forms' texts to A4's limits, EN source and PL — each field's what
+  it does, its default and its main risk; details left for the user guide. Kept, as earlier
+  reviews settled them: the safety facts the tests read (the boiler's own maximum after a
+  hand-back, the read-back's minute, the relay timer's rules, the safety valve read on the
+  valve, …). The relay's texts (C3, C4): no wiring advice — what happens without Home
+  Assistant, the manual way back through the relay's own app or page, and a relay in the
+  boiler's power supply cutting its pump overrun and frost protection, as neutral facts.
+- I8.10c: the repair issues, the exceptions and the forms' errors to A4's limits, EN and PL.
+- I8.10d: both user guides rewritten plain, as above.
+- I8.10e: the check of every document against the code, as above; the result in `research/`.
