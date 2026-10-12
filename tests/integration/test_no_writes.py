@@ -131,6 +131,7 @@ async def test_the_suggestion_calls_no_service(
     # The first analysis, started in the background at setup, done: one that is still running
     # when the test asks for its own would make the test skip it (Z1).
     await hass.async_block_till_done(wait_background_tasks=True)
+    stored = dict(entry.options)  # as the entry's migrations left them
     for _ in range(30):  # 3-minute burns, each ended because the water reached its setpoint
         freezer.tick(timedelta(minutes=5))
         boiler.set(Signal.FLAME, True)
@@ -155,7 +156,7 @@ async def test_the_suggestion_calls_no_service(
     found = ir.async_get(hass).async_get_issue(DOMAIN, f"lowest_water_suggestion_{entry.entry_id}")
     assert found is not None
     assert found.translation_key == "lowest_water_suggestion_boiler"
-    assert entry.options == options  # no setting changed
+    assert entry.options == stored  # no setting changed
     assert spy.plugin_calls() == []  # no weather entity: not even a forecast
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

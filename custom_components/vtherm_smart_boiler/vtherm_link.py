@@ -374,6 +374,24 @@ def is_vt_climate(hass: HomeAssistant, entity_id: str) -> bool:
     )
 
 
+def vt_zones_in_area(hass: HomeAssistant, area_id: str) -> list[str]:
+    """The VT climates in an area (I8, decision F2: a circuit's shortcut to its zones) — an
+    entity's own area, else its device's — in the registry's order."""
+    entities = er.async_get(hass)
+    devices = dr.async_get(hass)
+    found: list[str] = []
+    for entry in entities.entities.values():
+        if entry.domain != "climate" or entry.platform != VT_DOMAIN:
+            continue
+        area = entry.area_id
+        if area is None and entry.device_id is not None:
+            device = devices.async_get(entry.device_id)
+            area = device.area_id if device is not None else None
+        if area == area_id:
+            found.append(entry.entity_id)
+    return found
+
+
 def zones_of_another_kind(hass: HomeAssistant, zones: Sequence[str]) -> list[str]:
     """Zones known not to be VT climates (a hand edit): registered by another integration or of
     another domain, or not registered at all yet reported — VT registers every thermostat. A

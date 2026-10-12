@@ -550,6 +550,23 @@ temperature, I8.7b the circuits as menu items, I8.7c the zones on the circuits' 
   chain went. Claude's calls: a circuit added takes the first free ID (`main` for the first);
   a problem routed to the circuits opens the first. No migration: the name is new and optional.
   `SCOPE.md` (the wizard), both user guides (the setup).
+- I8.7c ✅ (2026-10-12): the zones are the circuits' (F4): each circuit's form lists the VT
+  zones it feeds — an area a shortcut filled in at the save — and, of them, those with
+  underfloor heating and with convectors, the rest radiators (F2); a zone belongs to one circuit
+  (whole zones; single devices are I8.7d); a zone that is no VT climate, one built on the
+  boiler's own thermostat (X5.19) or one another circuit lists is refused before anything is
+  revealed, the emitter lists shown again for zones they did not offer (A2). "VT zones" is one
+  form (F5): whose valves close while the zone is off, among the zones the circuits feed — shown
+  only where a circuit feeds one; the zone step went. A circuit removed takes its zones with it
+  (no longer watched). Minor version 20 moves each zone to its circuit's list (a zone naming
+  none the one circuit's, the implied `main` where none is stored), its emitter to the circuit's
+  lists, and keeps the "valves close" tick in the zones' section; what cannot move safely is
+  left for the check to report. Claude's calls: an entry from before is read and edited as the
+  circuits hold it (`zones_on_circuits`, the same move); the rename follower and the removed-
+  entity report reach the circuits' lists, named as the zones (no internal ID shown); the
+  emitter type's default is a radiator unless listed. Found for I8.10: the installation issues
+  name circuits by their internal IDs. `SCOPE.md` (the wizard, the defaults table), both user
+  guides (the setup), both technical documents (configuration).
 
 - Code: circuits as menu items (up to 4, add, remove, names), the circuit's zones and devices and
   emitters, the merged highest water temperature, the circuit type renamed, the zone form

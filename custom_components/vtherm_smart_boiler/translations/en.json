@@ -173,6 +173,10 @@
         "data": {
           "name": "Name",
           "control": "Circuit type",
+          "zones": "VT zones it feeds",
+          "area": "Add an area's zones",
+          "underfloor": "Of them, underfloor",
+          "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
           "max_flow_alarm": "Too hot alarm at",
@@ -183,36 +187,26 @@
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
+          "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
+          "underfloor": "The zones of this circuit with underfloor heating: the curve's exponent and the circuit's highest water temperature are asked for them. The rest are radiators unless listed as convectors.",
+          "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
-          "remove_circuit": "Removes the circuit at the save. Not offered for the only one, and refused while a zone still names it."
+          "remove_circuit": "Removes the circuit at the save, and its zones with it: they are no longer watched. Not offered for the only one."
         }
       },
       "zones": {
         "title": "VT zones",
-        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored.",
+        "description": "The Versatile Thermostat zones the circuits feed: {zones}. They are picked in each circuit's form; a zone in no circuit is neither watched nor asked for heat.",
         "data": {
-          "zones": "Zones"
+          "closes_when_off": "Valves close when the zone is off"
         },
         "data_description": {
-          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost. A zone built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns."
-        }
-      },
-      "zone": {
-        "title": "Zone {zone}",
-        "description": "How this zone is heated.",
-        "data": {
-          "circuit": "Circuit",
-          "emitter": "Emitter type",
-          "closes_when_off": "Closes when VT switches it off"
-        },
-        "data_description": {
-          "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
-          "emitter": "Radiators, underfloor or convectors. Sets the curve's default shape; the wrong type skews it.",
-          "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
+          "closes_when_off": "The zones whose valves close while VT has the zone off, for a zone whose valve state VT does not publish (decision 4). Off unless ticked: a wrong tick lets the plugin treat a closed zone as open."
         }
       },
       "building": {
@@ -480,7 +474,6 @@
       "zone_not_vt": "Only Versatile Thermostat thermostats can be zones.",
       "entity_for_two_signals": "One entity can feed only one signal: pick another entity, or leave this field empty.",
       "zone_on_boiler_thermostat": "The Versatile Thermostat zone {zone} is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead.",
-      "circuit_has_zones": "Zones still use a circuit you left out: move them to another circuit in the zones step first.",
       "invalid_boiler": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_circuit": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_zone": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
@@ -549,7 +542,9 @@
       "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
       "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
-      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu."
+      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu.",
+      "zone_in_another_circuit": "A zone belongs to one circuit: {zone} is already in another circuit's list.",
+      "emitter_twice": "A zone is underfloor or convectors, not both."
     }
   },
   "options": {
@@ -773,6 +768,10 @@
         "data": {
           "name": "Name",
           "control": "Circuit type",
+          "zones": "VT zones it feeds",
+          "area": "Add an area's zones",
+          "underfloor": "Of them, underfloor",
+          "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
           "max_flow_alarm": "Too hot alarm at",
@@ -783,36 +782,26 @@
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "zones": "The Versatile Thermostat zones this circuit heats: only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone in no circuit neither calls for heat nor is watched for frost; a zone belongs to one circuit; one built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns.",
+          "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
+          "underfloor": "The zones of this circuit with underfloor heating: the curve's exponent and the circuit's highest water temperature are asked for them. The rest are radiators unless listed as convectors.",
+          "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
-          "remove_circuit": "Removes the circuit at the save. Not offered for the only one, and refused while a zone still names it."
+          "remove_circuit": "Removes the circuit at the save, and its zones with it: they are no longer watched. Not offered for the only one."
         }
       },
       "zones": {
         "title": "VT zones",
-        "description": "Pick the Versatile Thermostat zones heated by this boiler. Zones not picked are ignored.",
+        "description": "The Versatile Thermostat zones the circuits feed: {zones}. They are picked in each circuit's form; a zone in no circuit is neither watched nor asked for heat.",
         "data": {
-          "zones": "Zones"
+          "closes_when_off": "Valves close when the zone is off"
         },
         "data_description": {
-          "zones": "Only VT climate entities are offered. The plugin reads them; with control and learning pauses on, it also pauses and resumes their SmartPI learning. A zone left out neither calls for heat nor is watched for frost. A zone built on the boiler's or gateway's own thermostat entity is refused: it would ask for heat whenever the flame burns."
-        }
-      },
-      "zone": {
-        "title": "Zone {zone}",
-        "description": "How this zone is heated.",
-        "data": {
-          "circuit": "Circuit",
-          "emitter": "Emitter type",
-          "closes_when_off": "Closes when VT switches it off"
-        },
-        "data_description": {
-          "circuit": "The heating circuit this zone is on. The wrong circuit attributes the zone's heat to the wrong water.",
-          "emitter": "Radiators, underfloor or convectors. Sets the curve's default shape; the wrong type skews it.",
-          "closes_when_off": "Tick if this zone's valve or emitter closes whenever Versatile Thermostat switches the zone off, although VT does not report its opening (e.g. a radiator thermostat VT turns off). Frost protection then does not heat for this zone while VT keeps it off, and raises a repair issue instead. Off (default): the zone is heated in frost as before, which may run the boiler against a closed valve."
+          "closes_when_off": "The zones whose valves close while VT has the zone off, for a zone whose valve state VT does not publish (decision 4). Off unless ticked: a wrong tick lets the plugin treat a closed zone as open."
         }
       },
       "building": {
@@ -1122,7 +1111,6 @@
       "zone_not_vt": "Only Versatile Thermostat thermostats can be zones.",
       "entity_for_two_signals": "One entity can feed only one signal: pick another entity, or leave this field empty.",
       "zone_on_boiler_thermostat": "The Versatile Thermostat zone {zone} is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead.",
-      "circuit_has_zones": "Zones still use a circuit you left out: move them to another circuit in the zones step first.",
       "invalid_boiler": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_circuit": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_zone": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
@@ -1159,7 +1147,9 @@
       "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
       "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
-      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu."
+      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu.",
+      "zone_in_another_circuit": "A zone belongs to one circuit: {zone} is already in another circuit's list.",
+      "emitter_twice": "A zone is underfloor or convectors, not both."
     }
   },
   "selector": {
@@ -1181,13 +1171,6 @@
         "through_boiler": "Mixed through the boiler",
         "separate": "Controlled by other automation (mixer, pump)",
         "passive_fixed": "Thermostatic mixing valve (fixed)"
-      }
-    },
-    "emitter": {
-      "options": {
-        "radiator": "Radiators",
-        "underfloor": "Underfloor",
-        "convector": "Convectors"
       }
     },
     "write_path": {

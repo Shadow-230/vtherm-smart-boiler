@@ -347,7 +347,11 @@ class EntryConfig:
             _flag("invalid_boiler", boiler_data, "bypass", False),
         )
         circuits, flow_entities = _circuits(_section(options, CIRCUITS))
-        zones, zone_configs = _zones(_section(options, ZONES), {c.circuit_id for c in circuits})
+        zones, zone_configs = _zones(
+            _section(options, ZONES),
+            {c.circuit_id for c in circuits},
+            options.get(CIRCUITS),
+        )
         installation = Installation(boiler, circuits, zones)
         errors = [i for i in installation.issues() if i.severity.value == "error"]
         if errors:
@@ -429,12 +433,7 @@ def _map_entities(options: Mapping[str, Any], visit: EntityVisit) -> dict[str, A
         result[WEATHER] = _visit(visit, WEATHER, options[WEATHER])
     circuits = options.get(CIRCUITS)
     if isinstance(circuits, list):
-        result[CIRCUITS] = [
-            _visit_item(visit, item, "flow_entity", f"{CIRCUITS}.{item.get('id')}.flow_entity")
-            if isinstance(item, Mapping)
-            else item
-            for item in circuits
-        ]
+        result[CIRCUITS] = [_circuit_entities(visit, item) for item in circuits]
     zones = options.get(ZONES)
     if isinstance(zones, list):
         result[ZONES] = [_zone_entities(visit, item) for item in zones]
@@ -456,6 +455,20 @@ def _visit_item(
     result = dict(item)
     if key in item:
         result[key] = _visit(visit, field_name, item[key])
+    return result
+
+
+def _circuit_entities(visit: EntityVisit, item: Any) -> Any:
+    """A circuit with its flow sensor and the zones it lists visited (I8, decision F4: the
+    zones are the circuits')."""
+    if not isinstance(item, Mapping):
+        return item
+    prefix = f"{CIRCUITS}.{item.get('id')}"
+    result = _visit_item(visit, item, "flow_entity", f"{prefix}.flow_entity")
+    for key in (CIRCUIT_ZONES, *CIRCUIT_EMITTERS):
+        listed = item.get(key)
+        if isinstance(listed, list):  # named as the zones, as before: no internal ID shown
+            result[key] = [_visit(visit, ZONES, entity) for entity in listed]
     return result
 
 
@@ -592,7 +605,25 @@ def _circuits(data: Any) -> tuple[tuple[Circuit, ...], dict[str, str]]:
     return tuple(circuits), flow_entities
 
 
-def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
+def circuits_hold_zones(circuits: Any) -> bool:
+    """I8 (decision F4): the zones are the circuits' — each lists those it feeds; an entry from
+    before minor version 20 (or a hand edit) still names a circuit in each zone."""
+    return isinstance(circuits, list) and any(
+        isinstance(item, Mapping) and CIRCUIT_ZONES in item for item in circuits
+    )
+
+
+# I8 (decisions F2, F4): what a circuit lists — the VT zones it feeds, and of them those with
+# underfloor heating and those with convectors (the rest radiators).
+CIRCUIT_ZONES = "zones"
+CIRCUIT_EMITTERS = {"underfloor": EmitterType.UNDERFLOOR, "convectors": EmitterType.CONVECTOR}
+
+
+def _zones(
+    data: Any, circuit_ids: set[str], circuits: Any = None
+) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
+    if circuits_hold_zones(circuits):
+        return _circuit_zones(data, circuits)
     zones: list[Zone] = []
     configs: list[ZoneConfig] = []
     default_circuit = sorted(circuit_ids)[0] if len(circuit_ids) == 1 else None
@@ -612,6 +643,97 @@ def _zones(data: Any, circuit_ids: set[str]) -> tuple[tuple[Zone, ...], list[Zon
         )
         configs.append(ZoneConfig(entity_id))
     return tuple(zones), configs
+
+
+def zones_on_circuits(options: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The circuits and the zones' section as this version stores them (I8.7c, decisions F2 and
+    F4), from an entry that names a circuit in each zone: each circuit lists the zones it
+    feeds, and of them those with underfloor heating and with convectors; the zones' section
+    keeps whether a zone's valves close when it is off. A zone naming no circuit is the one
+    circuit's, where there is one; with none stored, the one the options imply (``main``, fed
+    straight) gets them. ``None`` where the circuits hold the zones already, or the stored
+    shapes leave nothing to move safely — zones or circuits of another shape, a zone naming a
+    circuit that is not there, or none among several: the check reports them."""
+    zones = options.get(ZONES)
+    circuits = options.get(CIRCUITS)
+    if circuits_hold_zones(circuits):
+        return None
+    if circuits is None or circuits == []:
+        if not isinstance(zones, list) or not zones:
+            return None
+        circuits = [{"id": "main", "control": CircuitControl.UNMIXED_SHARED.value}]
+    listed = [] if zones is None else zones
+    if not isinstance(circuits, list) or not isinstance(listed, list):
+        return None
+    if not all(isinstance(c, Mapping) and c.get("id") not in (None, "") for c in circuits):
+        return None
+    if not all(isinstance(z, Mapping) and z.get("entity_id") for z in listed):
+        return None
+    lists: dict[str, dict[str, list[str]]] = {
+        str(c["id"]): {CIRCUIT_ZONES: [], "underfloor": [], "convectors": []} for c in circuits
+    }
+    only = next(iter(lists)) if len(lists) == 1 else None
+    for zone in listed:
+        circuit = zone.get("circuit") or only
+        if circuit is None or str(circuit) not in lists:
+            return None
+        found = lists[str(circuit)]
+        entity = str(zone["entity_id"])
+        found[CIRCUIT_ZONES].append(entity)
+        for key, emitter in CIRCUIT_EMITTERS.items():
+            if zone.get("emitter") == emitter.value:
+                found[key].append(entity)
+    moved: dict[str, Any] = {
+        CIRCUITS: [
+            {**c, **{k: v for k, v in lists[str(c["id"])].items() if v or k == CIRCUIT_ZONES}}
+            for c in circuits
+        ]
+    }
+    if zones is not None:
+        moved[ZONES] = [
+            {"entity_id": str(z["entity_id"]), "closes_when_off": True}
+            for z in listed
+            if z.get("closes_when_off") is True
+        ]
+    return moved
+
+
+def _circuit_zones(data: Any, circuits: list[Any]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
+    """The zones as the circuits list them (I8, decision F4): each zone in its circuit, its
+    emitter as the circuit lists it (F2); whether its valves close when it is off from the
+    zones' own section (decision 4: only a clear "yes" counts). A zone in two circuits is the
+    installation check's to report."""
+    closes = {
+        str(item.get("entity_id")): item.get("closes_when_off") is True
+        for item in data or []
+        if isinstance(item, Mapping)
+    }
+    zones: list[Zone] = []
+    configs: list[ZoneConfig] = []
+    for circuit in circuits:
+        if not isinstance(circuit, Mapping):
+            raise ConfigError("invalid_circuit", "-")
+        circuit_id = _item_text(circuit, "id", "invalid_circuit")
+        listed = _zone_list(circuit, CIRCUIT_ZONES, circuit_id)
+        emitters = {
+            entity: emitter
+            for key, emitter in CIRCUIT_EMITTERS.items()
+            for entity in _zone_list(circuit, key, circuit_id)
+        }
+        for entity_id in listed:
+            emitter = emitters.get(entity_id, EmitterType.RADIATOR)
+            zones.append(Zone(entity_id, circuit_id, emitter, closes.get(entity_id, False)))
+            configs.append(ZoneConfig(entity_id))
+    return tuple(zones), configs
+
+
+def _zone_list(circuit: Mapping[str, Any], key: str, circuit_id: str) -> list[str]:
+    raw = circuit.get(key)
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(e, str) and e for e in raw):
+        raise ConfigError("invalid_circuit", circuit_id)
+    return list(raw)
 
 
 # I8 (decision B5): the heat loss is entered as the design load only; a stored loss coefficient

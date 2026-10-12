@@ -51,13 +51,17 @@ from homeassistant.util import dt as dt_util
 
 from .config import (
     CIRCUIT_BOUNDS,
+    CIRCUIT_EMITTERS,
+    CIRCUIT_ZONES,
     FRESHNESS_BOUNDS_MIN,
     MONITOR_BOUNDS,
     MONITORING_DAYS_BOUNDS,
     SECTION_CODES,
     ConfigError,
     EntryConfig,
+    circuits_hold_zones,
     section_fits,
+    zones_on_circuits,
 )
 from .const import (
     BOILER,
@@ -140,7 +144,7 @@ from .core.alarms import (
 )
 from .core.demand import feeds_opening, feeds_power
 from .core.guards import WriteType
-from .core.installation import BoilerClass, BoilerType, CircuitControl, EmitterType, HeatSource
+from .core.installation import BoilerClass, BoilerType, CircuitControl, HeatSource
 from .core.metrics import ModulationScale
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
@@ -153,6 +157,7 @@ from .vtherm_link import (
     relay_of_boiler_interface,
     relay_used_by_zone,
     vt_central_boiler_settings,
+    vt_zones_in_area,
     zone_name,
     zones_on_boiler_thermostat,
 )
@@ -969,8 +974,18 @@ def circuit_schema(
                 given.get("control"), CircuitControl, CircuitControl.UNMIXED_SHARED.value
             ),
         ): _select("circuit_control", [c.value for c in CircuitControl]),
-        _optional("max_flow", given): _number(*CIRCUIT_BOUNDS["max_flow"], 1, "°C"),
+        vol.Optional(CIRCUIT_ZONES, default=_listed(given.get(CIRCUIT_ZONES))): _entity(
+            _ZONE_FILTER, multiple=True
+        ),
+        vol.Optional(AREA): selector.AreaSelector(selector.AreaSelectorConfig()),
     }
+    zones = [str(z) for z in _listed(given.get(CIRCUIT_ZONES))]
+    for key in EMITTER_LISTS if zones else ():
+        picked = [str(z) for z in _listed(given.get(key)) if z in zones]
+        fields[vol.Optional(key, default=picked)] = selector.EntitySelector(
+            selector.EntitySelectorConfig(include_entities=zones, multiple=True)
+        )
+    fields[_optional("max_flow", given)] = _number(*CIRCUIT_BOUNDS["max_flow"], 1, "°C")
     if "fixed_temperature" in shown:
         fields[_optional("fixed_temperature", given)] = _number(
             *CIRCUIT_BOUNDS["fixed_temperature"], 1, "°C"
@@ -1052,7 +1067,9 @@ def circuit_fields(options: Mapping[str, Any], circuit: Mapping[str, Any]) -> se
     too-hot alarm with a flow reading — the own sensor, or the boiler's flow for a circuit fed
     straight from it."""
     kind = _known(CircuitControl, circuit.get("control")) or CircuitControl.UNMIXED_SHARED
-    shown = {"control", "max_flow"}
+    shown = {"control", "max_flow", CIRCUIT_ZONES, AREA}
+    if _listed(circuit.get(CIRCUIT_ZONES)):
+        shown |= set(EMITTER_LISTS)  # of its zones, those with underfloor and convectors
     if kind is CircuitControl.PASSIVE_FIXED:
         shown.add("fixed_temperature")
     if not _advanced(options):
@@ -1083,39 +1100,58 @@ _ZONE_FILTER = {"domain": "climate", "integration": VT_DOMAIN}
 CLOSES_WHEN_OFF = "closes_when_off"
 
 
+# I8 (decisions F2, F4): what a circuit lists — the VT zones it feeds, an area as a shortcut
+# filled in at the save, and of the zones those with underfloor heating and with convectors.
+AREA = "area"
+EMITTER_LISTS = tuple(CIRCUIT_EMITTERS)
+
+
+def watched_zones(options: Mapping[str, Any]) -> list[str]:
+    """The zones the plugin watches (I8, decision F4): those in a circuit, in the circuits'
+    order; an entry from before minor version 20 lists them with the zones."""
+    circuits = options.get(CIRCUITS)
+    if circuits_hold_zones(circuits):
+        found: list[str] = []
+        for circuit in _circuit_list(options):
+            listed = circuit.get(CIRCUIT_ZONES) if isinstance(circuit, Mapping) else None
+            for zone in listed if isinstance(listed, list) else []:
+                if isinstance(zone, str) and zone and zone not in found:
+                    found.append(zone)
+        return found
+    zones = options.get(ZONES)
+    return [
+        str(z["entity_id"])
+        for z in (zones if isinstance(zones, list) else [])
+        if isinstance(z, Mapping) and z.get("entity_id")
+    ]
+
+
 def zones_schema(options: dict[str, Any]) -> vol.Schema:
-    current = [z["entity_id"] for z in options.get(ZONES, [])]
+    """The "VT zones" form (I8, decision F5): of the zones the circuits feed, those whose valves
+    close while the zone is off — decision 4, off unless ticked."""
+    watched = watched_zones(options)
+    ticked = [
+        str(z["entity_id"])
+        for z in options.get(ZONES, [])
+        if isinstance(z, Mapping)
+        and z.get(CLOSES_WHEN_OFF) is True
+        and z.get("entity_id") in watched
+    ]
     return vol.Schema(
-        {vol.Optional("zones", default=current): _entity(_ZONE_FILTER, multiple=True)}
-    )
-
-
-def zone_schema(options: dict[str, Any], current: dict[str, Any]) -> vol.Schema:
-    stored = options.get(CIRCUITS, [])
-    circuits = [c["id"] for c in stored] or ["main"]
-    fields: dict[Any, Any] = {}
-    if len(circuits) > 1:
-        # By the circuits' names: the internal ID is never shown (I8, decision F2).
-        offered = [
-            selector.SelectOptionDict(value=str(c["id"]), label=circuit_label(c, index))
-            for index, c in enumerate(stored)
-        ]
-        fields[vol.Required("circuit", default=current.get("circuit", circuits[0]))] = (
-            selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=offered, mode=selector.SelectSelectorMode.DROPDOWN
-                )
+        {
+            vol.Optional(CLOSES_WHEN_OFF, default=ticked): selector.EntitySelector(
+                selector.EntitySelectorConfig(include_entities=watched, multiple=True)
             )
-        )
-    # No default: underfloor needs its own maximum flow, and a wrong type would hide that.
-    fields[
-        vol.Required("emitter", default=_choice(current.get("emitter"), EmitterType, vol.UNDEFINED))
-    ] = _select("emitter", [e.value for e in EmitterType])
-    # Decision 4 (provisional, K4): at both levels, off unless the user ticked it.
-    fields[vol.Required(CLOSES_WHEN_OFF, default=current.get(CLOSES_WHEN_OFF) is True)] = (
-        selector.BooleanSelector()
+        }
     )
-    return vol.Schema(fields)
+
+
+def apply_zones(options: dict[str, Any], user_input: Mapping[str, Any]) -> None:
+    """The "VT zones" answers: the zones ticked, among those the circuits feed (the flows edit
+    an entry from before as the circuits hold its zones)."""
+    watched = watched_zones(options)
+    ticked = {str(z) for z in _listed(user_input.get(CLOSES_WHEN_OFF))}
+    options[ZONES] = [{"entity_id": z, CLOSES_WHEN_OFF: True} for z in watched if z in ticked]
 
 
 def has_curve(options: Mapping[str, Any]) -> bool:
@@ -1650,7 +1686,7 @@ def control_curve_schema(options: dict[str, Any], vt_delay: float | None = None)
 
 
 def _zone_entities(options: dict[str, Any]) -> list[str]:
-    return [zone["entity_id"] for zone in options.get(ZONES, []) if zone.get("entity_id")]
+    return watched_zones(options)
 
 
 # --- the relay path (X8) ------------------------------------------------------------------------
@@ -1914,7 +1950,7 @@ _CONTROL_PROBLEM_STEPS = {
     "confirmed_entity_missing": "signals",
     "thermostat_setpoint_same_as_read_back": "signals",
     "interface_not_answered": INTERFACE,
-    "no_zones": "zones",
+    "no_zones": "circuit",  # the zones are the circuits' (I8, decision F4)
 }
 
 
@@ -2426,17 +2462,6 @@ def circuit_from_input(
     return circuit
 
 
-def circuit_left_with_zones(options: dict[str, Any], circuits: list[dict[str, Any]]) -> bool:
-    """P-64: whether a zone still names a circuit the new list leaves out (a zone naming none
-    takes the one circuit there is)."""
-    ids = {str(circuit.get("id")) for circuit in circuits}
-    return any(
-        zone.get("circuit") not in (None, "") and str(zone["circuit"]) not in ids
-        for zone in options.get(ZONES, [])
-        if isinstance(zone, Mapping)
-    )
-
-
 # The control options that name an entity control writes to or reads (``ControlOptions.entities``).
 CONTROL_ENTITY_KEYS = (
     "setpoint_entity",
@@ -2608,8 +2633,8 @@ _PROBLEM_STEPS = {
     "duplicate_circuit": "circuit",
     "unknown_circuit": "circuit",
     "fixed_temperature_missing": "circuit",
-    "duplicate_zone": "zones",
-    "zone_without_circuit": "zones",
+    "duplicate_zone": "circuit",
+    "zone_without_circuit": "circuit",
     "alarm_limits_out_of_order": "monitor",
     # A stored value this version does not know: its section's step (P-70).
     "invalid_boiler": "boiler",
@@ -2696,11 +2721,13 @@ def control_offered(options: Mapping[str, Any]) -> bool:
 def section_shown(options: Mapping[str, Any], section: str) -> bool:
     """A section that does not apply is not on the menu (decision 2): the monitor's thresholds
     and the building (I8, decision E2) at the simple level, the interface where it asks
-    nothing, control as above."""
+    nothing, the zones' question where a circuit feeds a zone, control as above."""
     if section in ("monitor", "building"):
         return options.get(LEVEL) == LEVEL_ADVANCED
     if section == INTERFACE:
         return bool(interface_fields(options))  # where there is something to ask (I8, D2)
+    if section == "zones":
+        return bool(watched_zones(options))  # its question needs zones in a circuit (I8, F5)
     if section == "control":
         return control_offered(options)
     return True
@@ -2720,8 +2747,6 @@ class _Steps:
     """Steps shared by the config flow and the options flow."""
 
     options: dict[str, Any]
-    _zone_queue: list[str]
-    _zones_done: list[dict[str, Any]]
     _circuit_index: int | None = None  # the circuit the form edits (I8, decision F1)
     # A problem the last check found: shown on its step, which the flow goes back to.
     _problem: tuple[str, dict[str, str]] | None = None
@@ -2977,23 +3002,26 @@ class _Steps:
         current: dict[str, Any] = dict(stored) if isinstance(stored, Mapping) else {}
         removable = not new and len(circuits) > 1
         names = self._circuit_names()
-        placeholders = {"name": circuit_label(current, index)}
+        placeholders = {"name": circuit_label(current, index), "zone": "-"}
         if user_input is not None and user_input.get(REMOVE_CIRCUIT) and removable:
-            rest = [*circuits[:index], *circuits[index + 1 :]]
-            if circuit_left_with_zones(self.options, rest):
-                errors = {"base": "circuit_has_zones"}
-            else:
-                self.options[CIRCUITS] = rest
-                self._circuit_index = self._circuit_draft = None
-                return await self._after("circuit")
+            # Its zones go with it: they are no longer watched (I8, decision F4).
+            self.options[CIRCUITS] = [*circuits[:index], *circuits[index + 1 :]]
+            self._circuit_index = self._circuit_draft = None
+            return await self._after("circuit")
         elif user_input is not None:
             advanced = _advanced(self.options)
             draft = {**current, **(self._circuit_draft or {})}
             shown = circuit_fields(self.options, draft)
             self._circuit_draft = dict(user_input)
-            # A sensor that is no temperature is refused before it reveals anything (P-79).
+            # A sensor that is no temperature, a zone the circuit cannot take, are refused
+            # before they reveal anything (P-79).
             flow = entity_errors(self.hass, user_input, {"flow_entity": _TEMPERATURE})  # type: ignore[attr-defined]
-            if not flow and circuit_fields(self.options, {**current, **user_input}) - shown:
+            zones, zone_error, named = self._circuit_zones(user_input, circuits, index)
+            # Zones the emitter lists did not offer yet: shown again with them (I8, A2, F2).
+            offered = set(_listed(draft.get(CIRCUIT_ZONES))) if EMITTER_LISTS[0] in shown else set()
+            added = set(_listed(user_input.get(CIRCUIT_ZONES))) - offered
+            revealed = circuit_fields(self.options, {**current, **user_input}) - shown
+            if not flow and not zone_error and (revealed or added):
                 # The type or the flow sensor revealed fields: shown again with them (I8, A2).
                 return self._form(
                     step_id="circuit",
@@ -3005,8 +3033,12 @@ class _Steps:
             shown = circuit_fields(self.options, {**current, **user_input}) | {CIRCUIT_NAME}
             circuit_id = current.get("id") or _new_circuit_id(circuits)
             circuit = circuit_from_input(user_input, str(circuit_id), current, shown)
+            circuit |= zones
             if flow:
                 errors = flow
+            elif zone_error:
+                errors = zone_error
+                placeholders["zone"] = named
             elif (
                 circuit["control"] == CircuitControl.PASSIVE_FIXED
                 and "fixed_temperature" not in circuit
@@ -3035,6 +3067,45 @@ class _Steps:
             description_placeholders=placeholders,
         )
 
+    def _circuit_zones(
+        self, user_input: Mapping[str, Any], circuits: Sequence[Any], index: int
+    ) -> tuple[dict[str, Any], dict[str, str], str]:
+        """A circuit's zones as answered (I8, decisions F2 and F4): those picked, an area's
+        added — the shortcut filled in at the save — and of them those with underfloor and
+        with convectors; with the problem the answer has, and the zones it names. Refused:
+        a zone that is no VT climate (question 19), one built on the boiler's own thermostat
+        (X5.19), one another circuit feeds (whole zones), one in both emitter lists."""
+        hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
+        picked = [str(z) for z in _listed(user_input.get(CIRCUIT_ZONES))]
+        area = user_input.get(AREA)
+        for zone in vt_zones_in_area(hass, str(area)) if area else []:
+            if zone not in picked:
+                picked.append(zone)
+        lists: dict[str, Any] = {CIRCUIT_ZONES: picked}
+        for key in EMITTER_LISTS:
+            listed = [str(z) for z in _listed(user_input.get(key)) if z in picked]
+            if listed:
+                lists[key] = listed
+        others = {
+            str(z)
+            for i, c in enumerate(circuits)
+            if i != index and isinstance(c, Mapping)
+            for z in _listed(c.get(CIRCUIT_ZONES))
+        }
+        if zones_not_vt(hass, picked):
+            return lists, {CIRCUIT_ZONES: "zone_not_vt"}, "-"
+        thermostat = zones_on_boiler_thermostat(hass, picked, boiler_side_entities(self.options))
+        if thermostat:
+            # X5.19: it would ask for heat whenever the flame burns.
+            names = ", ".join(zone_name(hass, z) for z in thermostat)
+            return lists, {CIRCUIT_ZONES: "zone_on_boiler_thermostat"}, names
+        if shared := [z for z in picked if z in others]:
+            names = ", ".join(zone_name(hass, z) for z in shared)
+            return lists, {CIRCUIT_ZONES: "zone_in_another_circuit"}, names
+        if set(lists.get("underfloor", ())) & set(lists.get("convectors", ())):
+            return lists, {"underfloor": "emitter_twice"}, "-"
+        return lists, {}, "-"
+
     def _circuit_names(self) -> list[str]:
         """Names a circuit may take (I8, decision F2): Home Assistant's areas and the VT zones'."""
         hass: HomeAssistant = self.hass  # type: ignore[attr-defined]
@@ -3048,57 +3119,16 @@ class _Steps:
         return [*areas, *zones]
 
     async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        placeholders = {"zone": "-"}
+        """The "VT zones" form (I8, decision F5): whose valves close while the zone is off, among
+        the zones the circuits feed — they are picked in each circuit's form (F4)."""
         if user_input is not None:
-            picked = _listed(user_input.get("zones"))
-            on_thermostat: list[str] = []
-            if zones_not_vt(self.hass, picked):  # type: ignore[attr-defined]
-                errors = {"zones": "zone_not_vt"}  # question 19: VT climates only
-            elif on_thermostat := zones_on_boiler_thermostat(
-                self.hass,  # type: ignore[attr-defined]
-                [str(zone) for zone in picked],
-                boiler_side_entities(self.options),
-            ):
-                # X5.19: it would ask for heat whenever the flame burns.
-                errors = {"zones": "zone_on_boiler_thermostat"}
-                placeholders = {
-                    "zone": ", ".join(zone_name(self.hass, z) for z in on_thermostat)  # type: ignore[attr-defined]
-                }
-            else:
-                self._zone_queue = [str(zone) for zone in picked]
-                self._zones_done = []
-                return await self.async_step_zone()
+            apply_zones(self.options, user_input)
+            return await self._after("zones")
+        names = ", ".join(zone_name(self.hass, z) for z in watched_zones(self.options))  # type: ignore[attr-defined]
         return self._form(
             step_id="zones",
             data_schema=zones_schema(self.options),
-            errors=errors,
-            description_placeholders=placeholders,
-        )
-
-    async def async_step_zone(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if not self._zone_queue:
-            self.options[ZONES] = self._zones_done
-            return await self._after("zones")
-        entity_id = self._zone_queue[0]
-        previous = {z["entity_id"]: z for z in self.options.get(ZONES, [])}
-        current = previous.get(entity_id, {})
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            zone: dict[str, Any] = {"entity_id": entity_id, "emitter": user_input["emitter"]}
-            if user_input.get(CLOSES_WHEN_OFF) is True:
-                # Decision 4's per-zone option, stored when ticked; off is its default.
-                zone[CLOSES_WHEN_OFF] = True
-            circuits = [c["id"] for c in self.options.get(CIRCUITS, [])] or ["main"]
-            zone["circuit"] = user_input.get("circuit", current.get("circuit", circuits[0]))
-            self._zones_done.append(zone)
-            self._zone_queue.pop(0)
-            return await self.async_step_zone()
-        return self._form(
-            step_id="zone",
-            data_schema=zone_schema(self.options, current),
-            errors=errors,
-            description_placeholders={"zone": zone_name(self.hass, entity_id)},  # type: ignore[attr-defined]
+            description_placeholders={"zones": names or "-"},
         )
 
     async def async_step_building(
@@ -3392,7 +3422,7 @@ class _ControlSteps(_Steps):
             return {"frost_release": "frost_release_not_above_limit"}
         if found := self._frost_zone_error(user_input):
             return found
-        if count > len(self.options.get(ZONES, [])):
+        if count > len(watched_zones(self.options)):
             return {"count_threshold": "count_threshold_above_zones"}
         if count == 0 and not (
             user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
@@ -3470,7 +3500,7 @@ class _ControlSteps(_Steps):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"  # 1 K below (P-43)
             elif self._off_near_hand_back_value(user_input):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
-            elif count > len(self.options.get(ZONES, [])):
+            elif count > len(watched_zones(self.options)):
                 errors["count_threshold"] = "count_threshold_above_zones"
             elif count == 0 and not (
                 user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
@@ -3626,13 +3656,11 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 19
+    MINOR_VERSION = 20
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}
         self._title = DEFAULT_NAME
-        self._zone_queue = []
-        self._zones_done = []
         self._confirmed = set()
         self._changed = []
         self._at_menu = None
@@ -3729,8 +3757,6 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
     _CATEGORY = "options"
 
     def __init__(self) -> None:
-        self._zone_queue = []
-        self._zones_done = []
         self._confirmed = set()
         self._changed = []
         self._at_menu = None
@@ -3757,6 +3783,9 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             ]
             for key in self._unreadable:
                 options[key] = [] if key in (CIRCUITS, ZONES) else {}
+            # I8.7c: the zones are the circuits' — an entry from before is edited so (F4).
+            if (moved := zones_on_circuits(options)) is not None:
+                options.update(moved)
             self._options = options
             self._first = copy.deepcopy(options)
         return self._options

@@ -10082,7 +10082,7 @@ async def test_a_renamed_entity_carries_what_control_stored_for_it(
     registry.async_update_entity(living, new_entity_id="climate.lounge")
     await hass.async_block_till_done()
     assert rig.entry is not None
-    assert rig.entry.options["zones"] == [{"entity_id": "climate.lounge"}]
+    assert rig.entry.options["circuits"][0]["zones"] == ["climate.lounge"]  # I8 (F4)
     control = rig.entry.options["control"]
     assert control["frost_zone"] == "climate.lounge"
     kept = stored_control(hass_storage, rig)

@@ -129,7 +129,10 @@ zapisuje.
 **Konfiguracja (`config_flow.py`, `config.py`, `control_config.py`).** Formularze konfiguracji
 i opcji oraz opcje sterowania jako obiekty rdzenia, z blokadami, które nie pozwalają ruszyć
 sterowaniu. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
-zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
+zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Strefy należą do
+obiegów: każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką i z konwektorami;
+własna sekcja stref trzyma tylko to, czy zawory strefy zamykają się, gdy jest wyłączona
+(`config._circuit_zones`). `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
 zrobionego ręcznie).
 
 ## 4. Jeden krok sterowania

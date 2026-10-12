@@ -541,13 +541,14 @@ async def test_a_renamed_entity_is_followed(
     registry.async_update_entity(living, new_entity_id="climate.lounge")
     registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
     await hass.async_block_till_done()
-    assert entry.options["zones"] == [{"entity_id": "climate.lounge"}]
+    # I8 (F4): the zones are the circuits' — the one the options implied, after minor 20.
+    assert entry.options["circuits"][0]["zones"] == ["climate.lounge"]
     assert entry.options["signals"]["flow"] == "sensor.boiler_flow"
     assert setups == [entry.entry_id]  # one reload
     assert entry.state is ConfigEntryState.LOADED
     registry.async_update_entity("climate.lounge", new_entity_id="climate.salon")
     await hass.async_block_till_done()
-    assert entry.options["zones"] == [{"entity_id": "climate.salon"}]
+    assert entry.options["circuits"][0]["zones"] == ["climate.salon"]
     assert len(setups) == 2
 
 
@@ -716,9 +717,8 @@ async def test_a_removed_entity_raises_a_repair_issue(
     remove(bedroom)
     await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, gone) is not None
-    hass.config_entries.async_update_entry(
-        entry, options={**entry.options, "zones": [{"entity_id": living}]}
-    )
+    circuits = [{**entry.options["circuits"][0], "zones": [living]}]  # the zones: the circuit's
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "circuits": circuits})
     await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, gone) is None  # no longer named
     remove(living)
@@ -856,7 +856,7 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {
         "write_path": "entity",
@@ -910,7 +910,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -950,7 +950,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -986,7 +986,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1084,6 +1084,7 @@ STORED_BY_MINOR[16] = CURRENT_OPTIONS  # I8.4c: a gateway's monitor mode is a co
 STORED_BY_MINOR[17] = CURRENT_OPTIONS  # I8.5a: the relay's answer, the orphan limits; none here
 STORED_BY_MINOR[18] = CURRENT_OPTIONS  # I8.5b: the read-backs are signals; none here
 STORED_BY_MINOR[19] = CURRENT_OPTIONS  # I8.7a: the highest water temperature is the circuit's
+STORED_BY_MINOR[20] = CURRENT_OPTIONS  # I8.7c: the zones are the circuits'; none here
 
 
 @pytest.mark.parametrize(
@@ -1116,7 +1117,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1190,7 +1191,7 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert dict(entry.options) == expected
     assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
 
@@ -1227,7 +1228,7 @@ async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19  # through the later steps too
+    assert entry.minor_version == 20  # through the later steps too
     assert entry.options.get("control") == expected
 
 
@@ -1250,8 +1251,14 @@ async def test_an_upgraded_entry_drops_foreign_heat(hass: HomeAssistant) -> None
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
-    assert dict(entry.options) == {"zones": [zone], "monitor": {"monitoring_days": 7}}
+    assert entry.minor_version == 20
+    # I8.7c (minor version 20): the zone moved to the circuit the options implied.
+    implied = {"id": "main", "control": "unmixed_shared", "zones": ["climate.a"]}
+    assert dict(entry.options) == {
+        "zones": [],
+        "circuits": [implied],
+        "monitor": {"monitoring_days": 7},
+    }
 
 
 @pytest.mark.parametrize(
@@ -1307,7 +1314,7 @@ async def test_an_upgraded_entry_drops_the_correction_range(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["control"] == expected
 
 
@@ -1373,7 +1380,7 @@ async def test_an_upgraded_entry_keeps_the_heat_loss_it_entered(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert dict(entry.options) == expected
 
 
@@ -1400,7 +1407,7 @@ async def test_room_temperature_only_reads_as_monitoring_only(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["boiler"] == boiler | {"control_mode": expected}
 
 
@@ -1451,7 +1458,7 @@ async def test_the_mqtt_topics_are_stored_once(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["boiler"] == expected_boiler
     assert entry.options["control"] == expected_control
     assert ("is replaced by the control's" in caplog.text) is (boiler.get("mqtt_node") == "old")
@@ -1504,7 +1511,7 @@ async def test_a_gateways_monitor_mode_is_monitoring_only(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["boiler"] == expected_boiler
     assert entry.options["control"] == expected_control
 
@@ -1573,7 +1580,7 @@ async def test_a_relay_answers_and_limits_follow_the_signals(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert dict(entry.options) == expected
 
 
@@ -1622,7 +1629,7 @@ async def test_the_read_backs_become_boiler_signals(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["signals"] == expected_signals
     assert entry.options["control"] == {"write_path": "opentherm_gw", "hard_min": 25.0}
     assert ("is replaced by the control's read-back" in caplog.text) is (
@@ -1705,8 +1712,77 @@ async def test_the_highest_water_temperature_becomes_the_circuits(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
+    circuits = expected.get("circuits")
+    if isinstance(circuits, list) and all(isinstance(c, dict) for c in circuits):
+        # Minor version 20: each circuit lists its zones (none here); one of another shape
+        # leaves them all as stored.
+        expected = expected | {"circuits": [c | {"zones": []} for c in circuits]}
     assert dict(entry.options) == expected
+
+
+_TWO = [{"id": "main", "control": "unmixed_shared"}, {"id": "floor", "control": "separate"}]
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        (  # each zone to its circuit, its emitter to the circuit's list, the tick kept
+            {
+                "circuits": _TWO,
+                "zones": [
+                    {"entity_id": "climate.a", "circuit": "main", "emitter": "radiator"},
+                    {"entity_id": "climate.b", "circuit": "floor", "emitter": "underfloor"},
+                    {
+                        "entity_id": "climate.c",
+                        "circuit": "main",
+                        "emitter": "convector",
+                        "closes_when_off": True,
+                    },
+                ],
+            },
+            {
+                "circuits": [
+                    _TWO[0] | {"zones": ["climate.a", "climate.c"], "convectors": ["climate.c"]},
+                    _TWO[1] | {"zones": ["climate.b"], "underfloor": ["climate.b"]},
+                ],
+                "zones": [{"entity_id": "climate.c", "closes_when_off": True}],
+            },
+        ),
+        (  # no circuit named, one stored: its; none stored: the one implied
+            {"zones": [{"entity_id": "climate.a"}]},
+            {
+                "circuits": [{"id": "main", "control": "unmixed_shared", "zones": ["climate.a"]}],
+                "zones": [],
+            },
+        ),
+        (  # left for the check: a circuit not there, none among several, another shape
+            {"circuits": _TWO, "zones": [{"entity_id": "climate.a", "circuit": "gone"}]},
+            None,
+        ),
+        ({"circuits": _TWO, "zones": [{"entity_id": "climate.a"}]}, None),
+        ({"circuits": _TWO, "zones": ["climate.a"]}, None),
+        ({"circuits": [{"control": "separate"}], "zones": []}, None),
+        ({"circuits": "garbage", "zones": [{"entity_id": "climate.a"}]}, None),
+        ({}, None),  # nothing to move
+    ],
+    ids=["moved", "implied", "unknown", "ambiguous", "zone_garbage", "no_id", "garbage", "empty"],
+)
+async def test_the_zones_become_the_circuits(
+    hass: HomeAssistant, options: dict[str, Any], expected: dict[str, Any] | None
+) -> None:
+    """I8.7c (minor version 20, decisions F2 and F4): each circuit lists the zones it feeds and,
+    of them, those with underfloor and with convectors; the zones' section keeps the "valves
+    close" tick. What cannot move safely is left as stored, for the check to report."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=19
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 20
+    assert dict(entry.options) == (options if expected is None else expected)
 
 
 async def test_signals_of_another_shape_keep_the_read_backs_where_they_were(
@@ -1760,7 +1836,7 @@ async def test_an_upgraded_entry_drops_the_zone_values(hass: HomeAssistant) -> N
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert dict(entry.options) == {
         "zones": [zone, "climate.b"],
         "monitor": {"monitoring_days": 7},
@@ -1783,7 +1859,7 @@ async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert dict(entry.options) == kept
 
 
@@ -1829,7 +1905,7 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 19
+    assert entry.minor_version == 20
     assert entry.options["control"] == expected
 
 
@@ -1837,7 +1913,7 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 to 18 to this one (19), each step applied once and in
+    """P-124: from minor version 1 through 2 to 19 to this one (20), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
@@ -1847,9 +1923,9 @@ async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_optio
     (10, I8), the per-zone values (11, I8), the correction range (12, I8), the coarse building
     answers (13, I8), room temperature only (14, I8), the MQTT topics stored once (15, I8),
     the gateway's monitor mode as monitoring only (16, I8), the relay's answer with the age
-    limits of signals not mapped (17, I8), the read-backs as signals (18, I8) and the highest
-    water temperature as the circuit's (19, I8). Every starting point ends with the same
-    options;
+    limits of signals not mapped (17, I8), the read-backs as signals (18, I8), the highest
+    water temperature as the circuit's (19, I8) and the zones as the circuits' (20, I8). Every
+    starting point ends with the same options;
     an entry already current is left as it is, and warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
 

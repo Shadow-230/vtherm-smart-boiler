@@ -173,6 +173,10 @@
         "data": {
           "name": "Nazwa",
           "control": "Typ obiegu",
+          "zones": "Zasilane strefy VT",
+          "area": "Dodaj strefy z obszaru",
+          "underfloor": "Z nich: podłogówka",
+          "convectors": "Z nich: konwektory",
           "max_flow": "Najwyższa temperatura wody",
           "fixed_temperature": "Temperatura stała",
           "max_flow_alarm": "Alarm za gorąco od",
@@ -183,36 +187,26 @@
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
+          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
+          "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
+          "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: dla nich pytamy o wykładnik krzywej i najwyższą temperaturę wody obiegu. Pozostałe to grzejniki, chyba że wskazano je jako konwektory.",
+          "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
-          "remove_circuit": "Usuwa obieg przy zapisie. Niedostępne dla jedynego obiegu i odrzucane, póki strefa wskazuje ten obieg."
+          "remove_circuit": "Usuwa obieg przy zapisie, a z nim jego strefy: przestają być obserwowane. Niedostępne dla jedynego obiegu."
         }
       },
       "zones": {
         "title": "Strefy VT",
-        "description": "Wybierz strefy Versatile Thermostat ogrzewane tym kotłem. Strefy niewybrane są pomijane.",
+        "description": "Strefy Versatile Thermostat zasilane przez obiegi: {zones}. Wybiera się je w formularzu każdego obiegu; strefa poza obiegami nie jest obserwowana i nie prosi o ciepło.",
         "data": {
-          "zones": "Strefy"
+          "closes_when_off": "Zawory zamykają się, gdy strefa jest wyłączona"
         },
         "data_description": {
-          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem. Strefa zbudowana na encji termostatu samego kotła lub bramki jest odrzucana: prosiłaby o ciepło zawsze, gdy pali się płomień."
-        }
-      },
-      "zone": {
-        "title": "Strefa {zone}",
-        "description": "Jak ogrzewana jest ta strefa.",
-        "data": {
-          "circuit": "Obieg",
-          "emitter": "Typ grzejnika",
-          "closes_when_off": "Zamyka się, gdy VT ją wyłącza"
-        },
-        "data_description": {
-          "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
-          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala domyślny kształt krzywej; zły typ go wypacza.",
-          "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, przez co kocioł może pracować na zamknięty zawór."
+          "closes_when_off": "Strefy, których zawory zamykają się, gdy VT wyłącza strefę — dla strefy, której stanu zaworu VT nie publikuje (decyzja 4). Wyłączone, dopóki nie zaznaczysz: złe zaznaczenie sprawia, że wtyczka traktuje zamkniętą strefę jak otwartą."
         }
       },
       "building": {
@@ -480,7 +474,6 @@
       "zone_not_vt": "Strefą może być tylko termostat Versatile Thermostat.",
       "entity_for_two_signals": "Jedna encja może zasilać tylko jeden sygnał: wybierz inną encję albo zostaw to pole puste.",
       "zone_on_boiler_thermostat": "Strefa Versatile Thermostat {zone} jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach.",
-      "circuit_has_zones": "Strefy nadal używają pominiętego obiegu: najpierw przenieś je do innego obiegu w kroku stref.",
       "invalid_boiler": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_circuit": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_zone": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
@@ -549,7 +542,9 @@
       "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną.",
       "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
       "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia.",
-      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu."
+      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu.",
+      "zone_in_another_circuit": "Strefa należy do jednego obiegu: {zone} jest już na liście innego obiegu.",
+      "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie."
     }
   },
   "options": {
@@ -773,6 +768,10 @@
         "data": {
           "name": "Nazwa",
           "control": "Typ obiegu",
+          "zones": "Zasilane strefy VT",
+          "area": "Dodaj strefy z obszaru",
+          "underfloor": "Z nich: podłogówka",
+          "convectors": "Z nich: konwektory",
           "max_flow": "Najwyższa temperatura wody",
           "fixed_temperature": "Temperatura stała",
           "max_flow_alarm": "Alarm za gorąco od",
@@ -783,36 +782,26 @@
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
+          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg: dostępne są tylko encje climate VT. Wtyczka je odczytuje; przy sterowaniu i włączonych pauzach nauki także wstrzymuje i wznawia ich naukę SmartPI. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa należy do jednego obiegu; strefa zbudowana na własnym termostacie kotła albo bramki jest odrzucana: prosiłaby o ciepło przy każdym płomieniu.",
+          "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
+          "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: dla nich pytamy o wykładnik krzywej i najwyższą temperaturę wody obiegu. Pozostałe to grzejniki, chyba że wskazano je jako konwektory.",
+          "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
-          "remove_circuit": "Usuwa obieg przy zapisie. Niedostępne dla jedynego obiegu i odrzucane, póki strefa wskazuje ten obieg."
+          "remove_circuit": "Usuwa obieg przy zapisie, a z nim jego strefy: przestają być obserwowane. Niedostępne dla jedynego obiegu."
         }
       },
       "zones": {
         "title": "Strefy VT",
-        "description": "Wybierz strefy Versatile Thermostat ogrzewane tym kotłem. Strefy niewybrane są pomijane.",
+        "description": "Strefy Versatile Thermostat zasilane przez obiegi: {zones}. Wybiera się je w formularzu każdego obiegu; strefa poza obiegami nie jest obserwowana i nie prosi o ciepło.",
         "data": {
-          "zones": "Strefy"
+          "closes_when_off": "Zawory zamykają się, gdy strefa jest wyłączona"
         },
         "data_description": {
-          "zones": "Oferowane są tylko encje klimatu VT. Wtyczka je odczytuje; przy włączonym sterowaniu i wstrzymywaniu nauki także wstrzymuje i wznawia ich naukę SmartPI. Pominięta strefa nie zgłasza zapotrzebowania i nie jest pilnowana przed mrozem. Strefa zbudowana na encji termostatu samego kotła lub bramki jest odrzucana: prosiłaby o ciepło zawsze, gdy pali się płomień."
-        }
-      },
-      "zone": {
-        "title": "Strefa {zone}",
-        "description": "Jak ogrzewana jest ta strefa.",
-        "data": {
-          "circuit": "Obieg",
-          "emitter": "Typ grzejnika",
-          "closes_when_off": "Zamyka się, gdy VT ją wyłącza"
-        },
-        "data_description": {
-          "circuit": "Obieg grzewczy tej strefy. Zły obieg przypisuje ciepło strefy niewłaściwej wodzie.",
-          "emitter": "Grzejniki, podłogówka albo konwektory. Ustala domyślny kształt krzywej; zły typ go wypacza.",
-          "closes_when_off": "Zaznacz, jeśli zawór lub grzejnik tej strefy zamyka się zawsze, gdy Versatile Thermostat wyłącza strefę, choć VT nie podaje jej otwarcia (np. głowica, którą VT wyłącza). Ochrona przed mrozem nie grzeje wtedy dla tej strefy, dopóki VT trzyma ją wyłączoną, i zamiast tego zgłasza problem do naprawy. Wyłączone (domyślnie): strefa jest grzana w mróz jak dotąd, przez co kocioł może pracować na zamknięty zawór."
+          "closes_when_off": "Strefy, których zawory zamykają się, gdy VT wyłącza strefę — dla strefy, której stanu zaworu VT nie publikuje (decyzja 4). Wyłączone, dopóki nie zaznaczysz: złe zaznaczenie sprawia, że wtyczka traktuje zamkniętą strefę jak otwartą."
         }
       },
       "building": {
@@ -1122,7 +1111,6 @@
       "zone_not_vt": "Strefą może być tylko termostat Versatile Thermostat.",
       "entity_for_two_signals": "Jedna encja może zasilać tylko jeden sygnał: wybierz inną encję albo zostaw to pole puste.",
       "zone_on_boiler_thermostat": "Strefa Versatile Thermostat {zone} jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach.",
-      "circuit_has_zones": "Strefy nadal używają pominiętego obiegu: najpierw przenieś je do innego obiegu w kroku stref.",
       "invalid_boiler": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_circuit": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
       "invalid_zone": "Zapisanej tu wartości nie można użyć: ta wersja jej nie zna, leży poza zakresem formularza albo sekcja ma inny kształt. Wprowadź ją ponownie.",
@@ -1159,7 +1147,9 @@
       "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną.",
       "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
       "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia.",
-      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu."
+      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu.",
+      "zone_in_another_circuit": "Strefa należy do jednego obiegu: {zone} jest już na liście innego obiegu.",
+      "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie."
     }
   },
   "selector": {
@@ -1181,13 +1171,6 @@
         "through_boiler": "Mieszany przez kocioł",
         "separate": "Sterowany przez inną automatykę (mieszacz, pompa)",
         "passive_fixed": "Termostatyczny zawór mieszający (stały)"
-      }
-    },
-    "emitter": {
-      "options": {
-        "radiator": "Grzejniki",
-        "underfloor": "Podłogówka",
-        "convector": "Konwektory"
       }
     },
     "write_path": {

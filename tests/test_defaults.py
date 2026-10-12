@@ -103,7 +103,9 @@ OWN_CONTROL_FORM = form_defaults(
     config_flow.control_entity_schema({"control": {"write_path": "entity", "topology": "virtual"}})
 )
 RELAY_FORM = form_defaults(config_flow.control_relay_schema({}))
-ZONE_FORM = form_defaults(config_flow.zone_schema({}, {}))
+# I8 (decision F5): the zones' one question, over the zones a circuit feeds.
+ZONE_FORM = form_defaults(config_flow.zones_schema({"circuits": [{"id": "a", "zones": ["c.a"]}]}))
+CIRCUIT_FORM = form_defaults(config_flow.circuit_schema({}, {"zones": ["c.a"]}))
 BEHAVIOUR_FORM = form_defaults(config_flow.control_behaviour_schema(ADVANCED))
 SIGNALS_FORM = form_defaults(config_flow.signals_schema({}))
 # An entity field offers its entity as a suggested value, not a default.
@@ -129,8 +131,8 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("heating curve: the form's design outdoor", lambda: CURVE_DEFAULTS["design_outdoor"], -15.0),
     ("heating curve: the form's room", lambda: CURVE_DEFAULTS["room"], 20.0),
     ("heating curve: the form's offset", lambda: CURVE_DEFAULTS["offset"], 0.0),
-    # Emitter type | none — the user chooses
-    ("emitter type: none offered", lambda: ZONE_FORM["emitter"], vol.UNDEFINED),
+    # Emitter type | radiator, unless the circuit lists the zone as underfloor or convectors
+    ("emitter type: none listed (form)", lambda: CIRCUIT_FORM["underfloor"], []),
     # Lowest / highest water temperature | 20 °C (provisional, K4) / 70 °C
     ("lowest water temperature", lambda: CONTROL_DEFAULTS["hard_min"], 20.0),
     ("lowest water temperature (form)", lambda: CURVE_FORM["hard_min"], 20.0),
@@ -207,7 +209,7 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     (
         'frost protection: "closes when off" unticked (form)',
         lambda: ZONE_FORM["closes_when_off"],
-        False,
+        [],
     ),
     # Demand threshold | one zone calling
     ("demand threshold", lambda: CONTROL_DEFAULTS["count_threshold"], 1),

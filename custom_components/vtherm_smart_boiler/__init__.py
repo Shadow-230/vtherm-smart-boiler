@@ -252,6 +252,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_read_backs(hass, entry)
     if entry.minor_version < 19:
         _migrate_highest_water(hass, entry)
+    if entry.minor_version < 20:
+        _migrate_circuit_zones(hass, entry)
     return True
 
 
@@ -586,6 +588,21 @@ def _migrate_highest_water(hass: HomeAssistant, entry: ConfigEntry) -> None:
             options[CIRCUITS] = merged
         options[CONTROL] = {k: v for k, v in control.items() if k != HARD_MAX_FROM_BEFORE}
     hass.config_entries.async_update_entry(entry, options=options, minor_version=19)
+
+
+def _migrate_circuit_zones(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.7c (minor version 20): the zones are the circuits' (`docs/plan-0.2-i8.md` F4) — each
+    circuit lists the zones it feeds, and of them those with underfloor heating and those with
+    convectors (F2); the zones' section keeps whether a zone's valves close when it is off
+    (``zones_on_circuits``). What cannot move safely is left as stored, for the options' check
+    to report."""
+    from .config import zones_on_circuits
+
+    options = dict(entry.options)
+    moved = zones_on_circuits(options)
+    if moved is not None:
+        options.update(moved)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=20)
 
 
 def _stored_float(raw: Any, default: float) -> float:

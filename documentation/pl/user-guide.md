@@ -124,13 +124,16 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    gdy skonfigurowano więcej niż jedną, o to, jak bramka stoi między termostatem a kotłem i co
    jest podłączone do jej zacisków termostatu ([5.3](#53-sposób-podłączenia-bramki)), oraz o
    wskaźnik restartu.
-4. **Opisz instalację.** Sekcje **Kocioł**, obiegi i **Strefy VT** (z jednym krokiem **Strefa**
-   dla każdej wybranej strefy) pytają o to, co wiesz. Nieznane wartości zostaw puste: wtyczka
-   powie wtedy, czego nie może ocenić. Każdy obieg grzewczy jest osobną pozycją menu,
-   **Obieg: <nazwa>** — nazwa wybrana z obszarów Home Assistant albo stref VT albo wpisana;
-   numer, gdy jej nie podano — a na poziomie zaawansowanym **Dodaj obieg** dodaje kolejny, do
-   czterech; zaznaczenie w formularzu obiegu go usuwa, nigdy jedynego ani takiego, który
-   wskazuje jeszcze strefa. Poziom prosty pokazuje jeden obieg, a pozostałe zachowuje. Pole pojawia się tylko tam, gdzie
+4. **Opisz instalację.** Sekcje **Kocioł**, obiegi i **Strefy VT** pytają o to, co wiesz.
+   Nieznane wartości zostaw puste: wtyczka powie wtedy, czego nie może ocenić. Każdy obieg
+   grzewczy jest osobną pozycją menu, **Obieg: <nazwa>** — nazwa wybrana z obszarów Home
+   Assistant albo stref VT albo wpisana; numer, gdy jej nie podano — a na poziomie
+   zaawansowanym **Dodaj obieg** dodaje kolejny, do czterech; zaznaczenie w formularzu obiegu go
+   usuwa razem z jego strefami, nigdy jedynego. Poziom prosty pokazuje jeden obieg, a pozostałe
+   zachowuje. Formularz obiegu wymienia zasilane strefy VT — obszar dopisuje swoje strefy przy
+   zapisie — a z nich te z podłogówką i te z konwektorami; pozostałe to grzejniki. Strefa
+   należy do jednego obiegu; strefa poza obiegami nie jest obserwowana i nie prosi o ciepło.
+   **Strefy VT** pytają potem o jedno: których zawory zamykają się, gdy VT wyłącza strefę. Pole pojawia się tylko tam, gdzie
    może działać, zależnie od tego, co wskazano w **Sygnałach kotła**: w **Kotle** moc minimalna
    zawsze; moc maksymalna i znaczenie modulacji przy sygnale modulacji; zużycie gazu na godzinę
    przy mocy minimalnej i maksymalnej — z danych technicznych w instrukcji kotła, w m³/h (kg/h

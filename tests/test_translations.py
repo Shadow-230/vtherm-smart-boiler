@@ -82,9 +82,10 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "name": flow.user_schema({}),
         "signals": flow.signals_schema(options),
         "boiler": flow.boiler_schema(options),
-        "circuit": flow.circuit_schema(options, {}, {"control": "passive_fixed"}, removable=True),
-        "zones": flow.zones_schema(options),
-        "zone": flow.zone_schema(options, {}),
+        "circuit": flow.circuit_schema(
+            options, {}, {"control": "passive_fixed", "zones": ["c.a"]}, removable=True
+        ),
+        "zones": flow.zones_schema(options | {"circuits": [{"id": "a", "zones": ["c.a"]}]}),
         "building": flow.building_schema(options),
         "monitor": flow.monitor_schema(options),
     }
@@ -159,7 +160,8 @@ def test_every_config_error_code_can_be_shown() -> None:
         "zone_not_vt",
         "entity_for_two_signals",
         "zone_on_boiler_thermostat",
-        "circuit_has_zones",
+        "zone_in_another_circuit",  # I8 (F4): a zone belongs to one circuit
+        "emitter_twice",
     }
     for section in ("config", "options"):
         errors = set(SOURCE[section]["error"])  # shown on the step that can fix them
@@ -709,7 +711,6 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "boiler": flow.boiler_schema(options),
                 "circuit": flow.circuit_schema(options, {}, removable=True),
                 "zones": flow.zones_schema(options),
-                "zone": flow.zone_schema(options, {}),
                 "building": flow.building_schema(options),
                 "monitor": flow.monitor_schema(options),
                 "control": flow.control_schema(options),
@@ -745,7 +746,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     # I8 (decision F2): the circuit's fields an answer reveals — a fixed valve's temperature, a
     # mixed circuit's own flow sensor and, read by it, the too-hot alarm.
     advanced = {"level": "advanced"}
-    fixed = {"control": "passive_fixed", "flow_entity": "sensor.x"}
+    fixed = {"control": "passive_fixed", "flow_entity": "sensor.x", "zones": ["climate.a"]}
     fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, fixed).schema}
     # I8 (decision E1): the gas rates, asked with the modulation and no gas meter.
     no_meter = {k: v for k, v in signals["signals"].items() if k != "gas_meter"}
