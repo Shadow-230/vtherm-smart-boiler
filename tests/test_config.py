@@ -23,6 +23,37 @@ from custom_components.vtherm_smart_boiler.core.signals import Signal
 MINIMAL = {"signals": {"flame": "binary_sensor.flame", "flow": "sensor.flow"}}
 
 
+def test_a_circuit_run_by_other_automation_names_its_request_and_need() -> None:
+    """I8 (decision F3): a circuit run by other automation's request and need entities and its
+    need entered are read — followed for changes, and renamed with the entity; another circuit
+    type's are kept in the options and read as nothing."""
+    from custom_components.vtherm_smart_boiler.config import rename_entity
+
+    options = MINIMAL | {
+        "circuits": [
+            {"id": "main", "control": "unmixed_shared", "zones": ["climate.a"]},
+            {
+                "id": "floor",
+                "control": "separate",
+                "zones": ["climate.b"],
+                "request_entity": "binary_sensor.mixer_wants",
+                "needed_entity": "sensor.mixer_target",
+                "needed_temperature": 35,
+            },
+            {"id": "hall", "control": "passive_fixed", "fixed_temperature": 40,
+             "request_entity": "binary_sensor.kept", "needed_temperature": 50},
+        ],
+    }  # fmt: skip
+    config = EntryConfig.from_options(options)
+    assert config.circuit_request_entities == {"floor": "binary_sensor.mixer_wants"}
+    assert config.circuit_need_entities == {"floor": "sensor.mixer_target"}
+    needed = {c.circuit_id: c.needed for c in config.installation.circuits}
+    assert needed == {"main": None, "floor": 35.0, "hall": None}
+    assert {"binary_sensor.mixer_wants", "sensor.mixer_target"} <= set(config.watched_entities)
+    renamed = rename_entity(options, "binary_sensor.mixer_wants", "binary_sensor.wants")
+    assert renamed["circuits"][1]["request_entity"] == "binary_sensor.wants"
+
+
 def test_minimal_options_get_cautious_defaults() -> None:
     config = EntryConfig.from_options(MINIMAL)
     assert config.level == "simple"

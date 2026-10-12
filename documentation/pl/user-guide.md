@@ -133,6 +133,12 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    zachowuje. Formularz obiegu wymienia zasilane strefy VT — obszar dopisuje swoje strefy przy
    zapisie — a z nich te z podłogówką i te z konwektorami; pozostałe to grzejniki. Strefa
    należy do jednego obiegu; strefa poza obiegami nie jest obserwowana i nie prosi o ciepło.
+   **Typ obiegu** mówi, skąd obieg bierze wodę: prosto z kotła, przez stały termostatyczny
+   zawór mieszający (pyta o jego nastawę) albo **sterowany przez inną automatykę** — mieszacz
+   lub pompę, którymi steruje coś innego. Taki obieg może wskazać encję włączoną, gdy chce
+   ciepła (**Obieg prosi o ciepło**), i potrzebną mu wodę (**Potrzebna temperatura wody** —
+   wartość albo encja, której odczyt ma pierwszeństwo); wtyczka nigdy nie steruje jego
+   mieszaczem ani pompą.
    **Strefy VT** pytają potem o jedno: których zawory zamykają się, gdy VT wyłącza strefę. Pole pojawia się tylko tam, gdzie
    może działać, zależnie od tego, co wskazano w **Sygnałach kotła**: w **Kotle** moc minimalna
    zawsze; moc maksymalna i znaczenie modulacji przy sygnale modulacji; zużycie gazu na godzinę
@@ -214,8 +220,9 @@ przykład:
 - sposób zapisu do kotła i sposób jego oddania (zobacz
   [Podłączenie kotła](#5-podłączenie-kotła)), pasujące do połączenia kotła;
 - projektowa temperatura zasilania krzywej grzewczej (nie ma wartości domyślnej);
-- dokładnie jeden obieg grzewczy zasilany wprost z kotła (albo przez stały termostatyczny zawór
-  mieszający);
+- najwyżej jeden obieg grzewczy zasilany wprost z kotła; obok niego obiegi za stałym
+  termostatycznym zaworem mieszającym albo sterowane przez inną automatykę. Obiegu mieszanego
+  przez sam kocioł (drugiego obiegu grzewczego kotła) sterowanie jeszcze nie obsługuje;
 - własny kocioł centralny VT wyłączony w VT, a po tym ponowne uruchomienie Home Assistant, żeby
   tym samym kotłem nigdy nie sterowały dwa sterowniki. Centralna konfiguracja VT utworzona lub
   zmieniona po uruchomieniu Home Assistant, nawet bez kotła centralnego, też wymaga tego jednego
@@ -245,6 +252,12 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła; ochrona przed mrozem dalej
   czuwa.
 - Wtyczka nie ma przełącznika lato/zima. Jeśli strefy VT są wyłączone, kocioł nie grzeje.
+- Obieg sterowany przez inną automatykę prosi o ciepło, gdy jego encja **Obieg prosi o ciepło**
+  jest włączona albo gdy potrzebuje ciepła któraś z jego stref: grzanie włącza się wtedy dla
+  niego samego, bez względu na ustawioną liczbę stref — jego mieszacz potrzebuje wody. Gdy tej
+  encji nie da się odczytać (niedostępna, nieznana), obieg o nic nie prosi (jego strefy dalej
+  mogą, a ochrona przed mrozem dalej czuwa), a stan sterowania pokazuje powód
+  `circuit_request_unknown`.
 
 ### 4.4 Temperatura wody
 
@@ -265,15 +278,23 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
    przed tą wersją działa ręcznie ze swoją wartością. Stan sterowania pokazuje używaną
    temperaturę (`curve_room`). Przy krzywej projektowe obciążenie budynku jest odczytywane przy
    tej samej temperaturze. Krok krzywej pokazuje też najwyższą temperaturę wody obiegu
-   i maksymalną nastawę c.o. kotła — obowiązuje niższa.
+   i maksymalną nastawę c.o. kotła — obowiązuje niższa. Przy kilku obiegach krzywa służy
+   obiegowi zasilanemu prosto z kotła, a jej temperatura pokojowa (Auto) i korekta komfortu
+   biorą pod uwagę strefy tego obiegu.
 2. **Najniższa temperatura wody** — krzywa nigdy nie schodzi poniżej niej. Domyślnie 20 °C
    (wartość tymczasowa). Przy zbyt niskiej kocioł może w łagodną pogodę raz po raz sam się
    wyłączać; w kotle niekondensacyjnym może dojść do kondensacji w przewodzie spalinowym. Weź tę
    wartość z instrukcji kotła. Monitor może zaproponować wyższą wartość, jeśli widzi wiele
    krótkich cykli pracy palnika; nic nie zmienia się samo.
-3. **Najwyższa temperatura wody** — ta z obiegu, w jego formularzu (**Obieg: <nazwa>**):
-   nigdy powyżej niej, cokolwiek wyliczy krzywa lub korekta komfortu; 70 °C, gdy pole jest
-   puste. Wymagana dla podłogówki bez mieszacza. Ponad krzywą wodę podnosi tylko korekta
+3. **Czego potrzebują inne obiegi** — podczas grzania woda nigdy nie spada poniżej nastawy
+   stałego zaworu plus 5 K ani, gdy prosi, poniżej potrzeby obiegu sterowanego przez inną
+   automatykę plus 5 K (wartość tymczasowa): od tego jego mieszacz schodzi w dół. Gdy ta
+   potrzeba trzyma wodę, stan sterowania pokazuje powód `limit_circuit_need`.
+4. **Najwyższa temperatura wody** — ta z obiegu, w jego formularzu (**Obieg: <nazwa>**):
+   nigdy powyżej niej, cokolwiek wyliczy krzywa, korekta komfortu albo inny obieg; 70 °C, gdy
+   pole jest puste. Wodę ograniczają tylko obiegi zasilane prosto z kotła; obieg za mieszaczem
+   albo stałym zaworem chroni jego mieszacz lub zawór, a własny alarm za gorącej wody o tym
+   informuje. Wymagana dla podłogówki bez mieszacza. Ponad krzywą wodę podnosi tylko korekta
    komfortu, do własnego limitu (domyślnie 3 K, czyli kelwiny — różnica temperatur). Sam kocioł
    może ją nieco przekroczyć; alarm informuje, gdy zmierzone zasilanie długo jest za wysokie.
    (Wcześniej krok krzywej miał własną najwyższą temperaturę wody; aktualizacja zachowuje niższą
@@ -1030,7 +1051,7 @@ stateDiagram-v2
         state "Grzanie" as Heating
         state "Grzanie przeciwmrozowe" as Frost
         [*] --> Idle
-        Idle --> Heating: strefy potrzebują ciepła, po opóźnieniu włączenia
+        Idle --> Heating: strefy lub obiegi potrzebują ciepła, po opóźnieniu włączenia
         Heating --> Idle: zapotrzebowanie zniknęło
         Idle --> Frost: pilnowana strefa poniżej progu mrozu
         Frost --> Idle: każda pilnowana strefa znów ciepła

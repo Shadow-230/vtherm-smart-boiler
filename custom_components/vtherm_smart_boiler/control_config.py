@@ -45,6 +45,7 @@ from types import MappingProxyType
 from typing import Any
 
 from .const import CONTROL, READ_BACK_SIGNALS, has_control_section
+from .core.circuit_requests import OtherAutomation
 from .core.controller import OUTAGE_LOST_S, ControlConfig
 from .core.curve import (
     DESIGN_FLOW_OVER_ROOM_K,
@@ -923,6 +924,7 @@ def parse_control(
     connection: Connection | None = None,
     control_mode: ControlMode | None = None,
     design_outdoor: float | None = None,
+    requests: Collection[str] = (),
 ) -> ControlOptions:
     """The control options; an empty section means control is not configured. ``connection``,
     ``control_mode``: the setup's first answers (I6), ``None`` for an entry made before them.
@@ -934,7 +936,10 @@ def parse_control(
         return ControlOptions(connection=connection, control_mode=control_mode)
     path = WritePath(data["write_path"])
     curve_data = _mapping(data, "curve")
-    circuit = installation.circuits[0] if installation.circuits else None
+    # I8 (decision F6): the curve serves the circuit fed straight from the boiler — else, with
+    # none, the first, as before.
+    direct = [c for c in installation.circuits if c.control is CircuitControl.UNMIXED_SHARED]
+    circuit = direct[0] if direct else (installation.circuits[0] if installation.circuits else None)
     emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
     default_exponent = min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
     entered = {} if design_outdoor is None else {"design_outdoor": design_outdoor}
@@ -961,16 +966,39 @@ def parse_control(
     else:
         write_type = WriteType(data.get("write_type", WriteType.UNKNOWN))
         ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
-    circuit_max = circuit.max_flow if circuit is not None else None
-    circuit_floor = None
-    if (
-        circuit is not None
-        and circuit.control is CircuitControl.PASSIVE_FIXED
-        and circuit.fixed_temperature is not None
-    ):
-        # The mixing valve needs supply water above its own temperature (S-42); a maximum the
-        # user declared still applies, and wins.
-        circuit_floor = circuit.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
+    # The user's answer of 2026-10-12: the circuits fed straight from the boiler cap its water —
+    # each its highest water temperature, the default where empty, the default where there is
+    # none; one behind a mixer or a fixed valve is guarded by it.
+    default_max = float(CONTROL_DEFAULTS["hard_max"])
+    circuit_max = min(
+        (c.max_flow if c.max_flow is not None else default_max for c in direct),
+        default=default_max,
+    )
+    # A mixing valve needs supply water above its own temperature (S-42): the highest of the
+    # fixed valves', while heating (the user's answer of 2026-10-12: the curve, never below it).
+    circuit_floor = max(
+        (
+            c.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
+            for c in installation.circuits
+            if c.control is CircuitControl.PASSIVE_FIXED and c.fixed_temperature is not None
+        ),
+        default=None,
+    )
+    other = tuple(
+        OtherAutomation(
+            c.circuit_id,
+            frozenset(z.zone_id for z in installation.zones_in(c.circuit_id)),
+            c.circuit_id in requests,
+            c.needed,
+        )
+        for c in installation.circuits
+        if c.control is CircuitControl.SEPARATE
+    )
+    curve_zones = (
+        frozenset(z.zone_id for z in installation.zones_in(direct[0].circuit_id))
+        if direct and len(installation.circuits) > 1
+        else None
+    )
     ramp = _checked(value, "ramp_k_per_min")
     frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
@@ -980,9 +1008,11 @@ def parse_control(
             hard_max=_curve_cap(data),
         ),
         # I8 (decision F2): the circuit's highest water temperature, else the default.
-        circuit_max=float(CONTROL_DEFAULTS["hard_max"]) if circuit_max is None else circuit_max,
+        circuit_max=circuit_max,
         boiler_max=boiler_max,
         circuit_floor=circuit_floor,
+        other_automation=other,
+        curve_zones=curve_zones,
         frost=FrostConfig(
             room_limit=_required(value, "frost_limit"),
             release=_required(value, "frost_release"),
@@ -1779,19 +1809,21 @@ def _curve_blockers(control: ControlOptions) -> list[str]:
 
 
 def _circuit_blockers(installation: Installation) -> list[str]:
-    """One circuit fed straight by the boiler flow (unmixed, or passive fixed); underfloor on
-    an unmixed one needs its maximum flow."""
+    """I8 (decision F6): at most one circuit fed straight from the boiler — the curve's — with
+    any behind a fixed valve or run by other automation; not one the boiler mixes (CH2, later).
+    Underfloor on the straight one needs its highest water temperature."""
     circuits = installation.circuits
-    if len(circuits) != 1 or circuits[0].control not in (
-        CircuitControl.UNMIXED_SHARED,
-        CircuitControl.PASSIVE_FIXED,
+    direct = [c for c in circuits if c.control is CircuitControl.UNMIXED_SHARED]
+    if (
+        not circuits
+        or len(direct) > 1
+        or any(c.control is CircuitControl.THROUGH_BOILER for c in circuits)
     ):
         return ["one_direct_circuit_only"]
-    circuit = circuits[0]
     if (
-        circuit.control is CircuitControl.UNMIXED_SHARED
-        and EmitterType.UNDERFLOOR in installation.emitters_in(circuit.circuit_id)
-        and circuit.max_flow is None
+        direct
+        and EmitterType.UNDERFLOOR in installation.emitters_in(direct[0].circuit_id)
+        and direct[0].max_flow is None
     ):
         return ["underfloor_without_max_flow"]
     return []

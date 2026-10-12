@@ -370,12 +370,18 @@ What the plugin can do depends on what the integration can write:
     integration that reports availability; optionally the relay's own switch-off timer, renewed
     by every "on" and set only when control starts — whether a Shelly's timer restarts on a
     repeated "on" is not documented; one test in summer.
-- A second circuit controlled through the boiler (e.g. OpenTherm CH2) comes later; 0.2 writes
-  one circuit: control needs exactly one configured circuit fed by the boiler flow, unmixed or
-  passive fixed; with any other layout the monitor runs and a blocker says why. Radiators and
-  underfloor behind a mixing valve, as one written circuit plus passive fixed circuits, come in
-  0.3 (S-42). The data model covers several circuits from the start; in 0.2 one curve, in the
-  control options, serves the written circuit, and per-circuit curves come with CH2.
+- A second circuit controlled through the boiler (e.g. OpenTherm CH2) comes later. 0.2 controls
+  at most one circuit fed straight from the boiler, with any circuits behind a fixed valve or run
+  by other automation beside it (up to four in all; I8, decision F6): a circuit the boiler mixes,
+  or a second one fed straight, keeps the monitor running and a blocker says why. One curve, in
+  the control options, serves the circuit fed straight — with none, the first circuit; the
+  comfort correction and the curve's room (Auto) read that circuit's zones, every zone where it
+  is the only circuit or there is none. The water is the curve, never below a fixed valve's
+  setting plus 5 K, nor below the need of a circuit run by other automation plus 5 K while it
+  asks (provisional, K4); the highest water temperature of the circuits fed straight (70 °C
+  where empty or where there is none) and the boiler's maximum cap it — a circuit behind a
+  mixer or a fixed valve is guarded by them, and its too-hot alarm tells (the user's answers of
+  2026-10-12). Per-circuit curves come with CH2.
 
 ### Gateway topology
 
@@ -451,7 +457,7 @@ takes the emitter types of its zones (S-33); the burner is shared.
 |---|---|---|
 | Unmixed, shared | radiators and underfloor on one loop, no mixing valve | one curve for the loop, capped by the most sensitive emitter (underfloor maximum flow) |
 | Controlled through the boiler | OpenTherm CH2, EMS-ESP HC2, the boiler's mixing module | own curve and setpoint per circuit; boiler flow = highest circuit need + mixing margin |
-| Controlled separately | external mixing controller, a mixer driven by HA, a separate weather controller | reads (or is told) the circuit's target and keeps boiler flow above it + margin; never fights that controller |
+| Controlled by other automation (mixer, pump) | external mixing controller, a mixer driven by HA, a separate weather controller | heats while its "circuit asks for heat" entity is on or one of its zones asks — an entity that cannot be read asks nothing, and the control state says why; while it asks, keeps the boiler's water at or above its need (an entity's reading first, else the value entered) + 5 K (provisional, K4); never drives the mixer or the pump (I8, decisions F3, F6) |
 | Passive fixed | thermostatic mixing valve | declared fixed temperature; boiler flow kept at least 5 K above it (S-42; provisional, K4) |
 
 - Each VT zone is assigned to a circuit in the wizard; zone arbitration (the critical zone) runs
@@ -1344,8 +1350,9 @@ the overshoot calibration; the boiler's MemberID and supported messages; the con
 indicator; the boiler's installer settings; SmartPI's better signal and bootstrap state (S-29);
 relay commands beyond a switch and a boiler thermostat entity (VT's free-form actions), if asked;
 a separate echo entity for a relay; for the power user (§4) the raw cycle data, the building fit's rejected samples and manual
-edits of learned values; boiler data read from the integration as suggested parameter values (§6);
-the circuit control "controlled separately" (§5; `docs/plan-0.2.3.md`, Open after 0.2.3, item 52).
+edits of learned values; boiler data read from the integration as suggested parameter values (§6).
+The circuit control "controlled separately" (`docs/plan-0.2.3.md`, Open after 0.2.3, item 52) is
+built in 0.2 as a circuit "controlled by other automation" (§5; I8.8).
 With a release: the "apply" mode of the lowest water temperature (0.3, once the simulator
 shows it helps); the wall thermostat as a fallback for Home Assistant failing — one way, VT to
 the thermostat: the user picks the thermostat's setpoint entity and a VT zone, off by default;
@@ -1523,8 +1530,9 @@ Starts per hour count the hours with heating.
   controller" tick counts on the relay path only with the rest state "on", and is not offered on a
   gateway; N — a fourth relay restart within 24 h is another controller; O — "heating off" ignored
   from the start blocks control and hands back.
-- Provisional control decisions (K4): control only for one circuit fed by the boiler flow and a
-  boiler of the class "flow setpoint" or "on/off" (a relay); the curve's design flow is entered,
+- Provisional control decisions (K4): control for at most one circuit fed straight from the
+  boiler, with circuits behind a fixed valve or run by other automation beside it (each holding
+  the water at its setting or need plus 5 K), and a boiler of the class "flow setpoint" or "on/off" (a relay); the curve's design flow is entered,
   never defaulted; control refused while VT's own central boiler is configured (no monitoring
   period holds it: 2026-10-08); the first setpoint of a session is the curve's value, not ramped from the
   current flow; alarm reactions as decision 7; frost protection

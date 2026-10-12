@@ -3225,6 +3225,16 @@ class ControlUnit:
             zones=tuple(zones),
             boiler_fault=self._boiler_fault(now, snapshot),
             starts=coordinator.heating_starts(now),
+            # I8 (decision F3): circuits run by other automation — whether each asks (an
+            # unreadable entity: ``None``, it does not ask) and the water it needs.
+            circuit_requests={
+                circuit: read_on_off(self._hass, entity)
+                for circuit, entity in config.circuit_request_entities.items()
+            },
+            circuit_needs={
+                circuit: read_temperature(self._hass, entity).value
+                for circuit, entity in config.circuit_need_entities.items()
+            },
         )
 
     def _read_back_known(self) -> bool:

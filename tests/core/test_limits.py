@@ -66,6 +66,23 @@ def test_a_fixed_temperature_circuit_keeps_the_boiler_flow_above_it() -> None:
     )
 
 
+def test_a_circuit_asking_holds_the_water_at_its_need() -> None:
+    """I8.8 (decision F6): a circuit run by other automation that asks holds the water at its
+    need plus the margin, given here; above a fixed valve's floor it names its own code, at or
+    below it the valve's stands; the caps still win."""
+    assert limit_flow(32.0, LIMITS, need=45.0) == Limited(45.0, (LimitCode.CIRCUIT_NEED,))
+    assert limit_flow(32.0, LIMITS, floor=40.0, need=45.0) == Limited(
+        45.0, (LimitCode.CIRCUIT_NEED,)
+    )
+    assert limit_flow(32.0, LIMITS, floor=45.0, need=40.0) == Limited(
+        45.0, (LimitCode.FIXED_CIRCUIT,)
+    )
+    assert limit_flow(50.0, LIMITS, need=45.0) == Limited(50.0)  # the curve above it
+    assert limit_flow(32.0, LIMITS, need=60.0, circuit_max=55.0) == Limited(
+        55.0, (LimitCode.CIRCUIT_NEED, LimitCode.CIRCUIT_MAX)
+    )
+
+
 def test_a_value_goes_on_the_entitys_grid_inside_the_limits() -> None:
     """P-98: rounding to the entity's step stays inside the limits — the grid value just inside
     where the nearest falls outside; none without one."""

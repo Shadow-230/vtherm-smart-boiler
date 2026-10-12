@@ -32,6 +32,8 @@ class LimitCode(StrEnum):
     CIRCUIT_MAX = "circuit_max"
     BOILER_MAX = "boiler_max"
     FIXED_CIRCUIT = "fixed_circuit"  # a fixed circuit needs at least its temperature
+    # I8 (decision F3): a circuit run by other automation, asking, needs at least its need.
+    CIRCUIT_NEED = "circuit_need"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +60,10 @@ def limit_flow(
     circuit_max: float | None = None,
     boiler_max: float | None = None,
     floor: float | None = None,
+    need: float | None = None,
 ) -> Limited:
-    """``requested`` within the limits. ``floor``: what a fixed circuit needs from the boiler.
+    """``requested`` within the limits. ``floor``: what a fixed circuit needs from the boiler;
+    ``need``: what circuits run by other automation, asking, need (I8, decision F3).
     Installation caps win over the lower bounds."""
     caps = [(limits.hard_max, LimitCode.HARD_MAX)]
     if circuit_max is not None:
@@ -70,6 +74,8 @@ def limit_flow(
     lower, lower_code = limits.hard_min, LimitCode.HARD_MIN
     if floor is not None and floor > lower:
         lower, lower_code = floor, LimitCode.FIXED_CIRCUIT
+    if need is not None and need > lower:
+        lower, lower_code = need, LimitCode.CIRCUIT_NEED
     if requested > install:
         return Limited(install, (install_code,))
     if requested < lower:

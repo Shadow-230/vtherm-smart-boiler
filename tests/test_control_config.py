@@ -148,15 +148,28 @@ def test_blockers(changes: dict, blocker: str) -> None:
 
 
 def test_one_direct_circuit_only_and_underfloor_needs_a_cap() -> None:
-    two = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT),
+    """I8 (decision F6): at most one circuit fed straight from the boiler, any behind a fixed
+    valve or run by other automation, none the boiler mixes (CH2, later)."""
+    blocked = [
+        (Circuit("a"), Circuit("b")),  # two straight circuits
+        (Circuit("a"), Circuit("b", CircuitControl.THROUGH_BOILER)),  # one the boiler mixes
+        (Circuit("a", CircuitControl.THROUGH_BOILER),),
+    ]
+    for circuits in blocked:
+        layout = Installation(Boiler(BoilerClass.FLOW_SETPOINT), circuits)
+        assert "one_direct_circuit_only" in config_blockers(
+            parse_control(OTGW, layout, None), layout
+        )
+    allowed = [
         (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
-    )
-    assert "one_direct_circuit_only" in config_blockers(parse_control(OTGW, two, None), two)
-    mixed = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("a", CircuitControl.SEPARATE),)
-    )
-    assert "one_direct_circuit_only" in config_blockers(parse_control(OTGW, mixed, None), mixed)
+        (Circuit("a", CircuitControl.SEPARATE),),
+        (Circuit("a"), Circuit("b", CircuitControl.PASSIVE_FIXED, 35.0)),
+    ]
+    for circuits in allowed:
+        layout = Installation(Boiler(BoilerClass.FLOW_SETPOINT), circuits)
+        assert "one_direct_circuit_only" not in config_blockers(
+            parse_control(OTGW, layout, None), layout
+        )
     floor = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
         (Circuit("main"),),
@@ -573,7 +586,10 @@ def test_off_as_a_low_setpoint_must_be_below_the_hard_minimum() -> None:
     assert config_blockers(otgw, RADIATORS) == []
 
 
-def test_a_passive_fixed_circuit_sets_the_floor_and_keeps_its_maximum() -> None:
+def test_a_passive_fixed_circuit_sets_the_floor_and_its_valve_guards_its_maximum() -> None:
+    """S-42 with the user's answers of 2026-10-12: a fixed valve's temperature and margin are
+    the water's floor; its own maximum is the valve's to keep — the boiler's water is capped by
+    the circuits fed straight from it, the default where there is none."""
     fixed = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
         (Circuit("main", CircuitControl.PASSIVE_FIXED, 40.0, 55.0),),
@@ -581,7 +597,39 @@ def test_a_passive_fixed_circuit_sets_the_floor_and_keeps_its_maximum() -> None:
     )
     control = parse_control(OTGW, fixed, None).loop.control
     assert control.circuit_floor == 45.0  # its temperature and the valve's margin (S-42)
-    assert control.circuit_max == 55.0
+    assert control.circuit_max == 70.0
+
+
+def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
+    """I8 (decision F6): the straight circuit's maximum caps the water; the highest fixed valve
+    sets the floor; a circuit run by other automation holds its need while it asks, with its
+    request entity where it has one; the curve reads the straight circuit's zones."""
+    layout = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (
+            Circuit("rads", max_flow=65.0),
+            Circuit("hall", CircuitControl.PASSIVE_FIXED, 35.0),
+            Circuit("bath", CircuitControl.PASSIVE_FIXED, 40.0),
+            Circuit("floor", CircuitControl.SEPARATE, needed=33.0),
+        ),
+        (
+            Zone("climate.a", "rads"),
+            Zone("climate.b", "floor", EmitterType.UNDERFLOOR),
+        ),
+    )
+    control = parse_control(OTGW, layout, None, requests=("floor",)).loop.control
+    assert control.circuit_max == 65.0
+    assert control.circuit_floor == 45.0
+    (mixer,) = control.other_automation
+    assert (mixer.circuit_id, mixer.zones, mixer.requests, mixer.needed) == (
+        "floor",
+        frozenset({"climate.b"}),
+        True,
+        33.0,
+    )
+    assert control.curve_zones == frozenset({"climate.a"})
+    single = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
+    assert parse_control(OTGW, single, None).loop.control.curve_zones is None
 
 
 # --- V5: the safe hand-back's options -----------------------------------------------------------
@@ -1874,9 +1922,9 @@ def test_a_relay_not_picked_has_no_other_role() -> None:
 
 _NO_ZONES = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
 _READ_ONLY = Installation(Boiler(BoilerClass.READ_ONLY), ())
-_TWO_CIRCUITS = Installation(
+_TWO_CIRCUITS = Installation(  # two fed straight from the boiler (I8, F6)
     Boiler(BoilerClass.FLOW_SETPOINT),
-    (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
+    (Circuit("a"), Circuit("b")),
     (Zone("climate.a", "a"),),
 )
 _FLOOR = Installation(

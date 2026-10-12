@@ -2778,6 +2778,37 @@ async def test_a_circuit_is_removed_by_its_tick_with_its_zones(
     assert entities["bedroom"] not in EntryConfig.from_options(options).zone_entities
 
 
+async def test_a_circuit_run_by_other_automation_asks_its_request_and_need(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """I8 (decision F3): a circuit run by other automation — its type revealing them — asks
+    whether it wants heat (an on/off entity) and the water it needs (a value, an entity), at
+    both levels; an entity of the wrong kind is refused; another type keeps them hidden."""
+    hass.states.async_set("input_boolean.mixer_wants", "off")
+    hass.states.async_set("sensor.mixer_target", "35", {"unit_of_measurement": "°C"})
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_circuit(hass, entry_id)
+    assert "request_entity" not in result["data_schema"].schema
+    result = await options_step(hass, result, {"control": "separate"})
+    shown = {str(marker) for marker in result["data_schema"].schema}
+    assert {"request_entity", "needed_temperature", "needed_entity"} <= shown
+    answer = {"control": "separate", "request_entity": entities["flow"]}
+    result = await options_step(hass, result, answer)
+    assert result["errors"] == {"request_entity": "entity_not_suitable"}
+    answer = {
+        "control": "separate",
+        "request_entity": "input_boolean.mixer_wants",
+        "needed_temperature": 35,
+        "needed_entity": "sensor.mixer_target",
+    }
+    result = await options_step(hass, result, answer)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    circuit = circuits_of(hass, entry_id)[0]
+    assert circuit["request_entity"] == "input_boolean.mixer_wants"
+    assert (circuit["needed_temperature"], circuit["needed_entity"]) == (35, "sensor.mixer_target")
+
+
 async def test_the_only_circuit_has_no_tick_to_remove_it(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
@@ -2894,9 +2925,12 @@ async def test_confirming_names_the_new_blocker_and_asks_nothing_without_control
     hass.config_entries.options.async_abort(result["flow_id"])  # the window closed: nothing kept
     menu = await hass.config_entries.options.async_init(entry.entry_id)
     result = await options_step(hass, menu, {"next_step_id": "circuit_1"})
-    result = await options_step(hass, result, {"control": "separate"})
+    # I8 (F6): a circuit the boiler mixes (CH2) is not controlled yet.
+    result = await options_step(hass, result, {"control": "through_boiler"})
     assert result["step_id"] == "confirm_blocking"
-    assert result["description_placeholders"]["first"].startswith("This version controls only")
+    assert result["description_placeholders"]["first"].startswith(
+        "This version controls at most one"
+    )
     options = {k: v for k, v in controlled_options(entities).items() if k != "control"}
     hass.config_entries.async_update_entry(entry, options=options)
     menu = await hass.config_entries.options.async_init(entry.entry_id)

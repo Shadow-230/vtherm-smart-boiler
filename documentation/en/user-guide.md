@@ -125,7 +125,12 @@ Only one entry of the integration can exist: it runs one boiler.
    other. A circuit's form lists the VT zones it feeds — an area adds its zones at the save —
    and, of them, those with underfloor heating and those with convectors; the rest are
    radiators. A zone belongs to one circuit; a zone in no circuit is neither watched nor asked
-   for heat. **VT zones** then asks one thing: whose valves close while VT has the zone off. A field shows only where it can work, by
+   for heat. **Circuit type** says how the circuit gets its water: straight from the boiler,
+   through a fixed thermostatic mixing valve (its setting asked), or **controlled by other
+   automation** — a mixer or a pump that something else runs. Such a circuit may name an entity
+   that is on while it wants heat (**Circuit asks for heat**) and the water it needs (**Water
+   temperature needed**, a value, or an entity whose reading comes first); the plugin never
+   drives its mixer or pump. **VT zones** then asks one thing: whose valves close while VT has the zone off. A field shows only where it can work, by
    what is mapped in **Boiler signals**: in **Boiler** the minimum power always; the maximum
    power and the modulation's meaning with a modulation signal; the gas per hour at minimum and
    maximum power — from the technical data in the boiler's manual, in m³/h (kg/h for LPG) —
@@ -204,8 +209,9 @@ from the first day, once every required setting is filled in, for example:
 - a way to write to the boiler and a way to hand it back (see
   [Connecting the boiler](#5-connecting-the-boiler)), fitting the boiler's connection;
 - the heating curve's design flow temperature (it has no default);
-- exactly one heating circuit fed straight from the boiler (or through a fixed thermostatic
-  mixing valve);
+- at most one heating circuit fed straight from the boiler; beside it, circuits behind a fixed
+  thermostatic mixing valve or controlled by other automation. A circuit the boiler mixes itself
+  (a second heating circuit of the boiler) is not controlled yet;
 - VT's own central boiler switched off in VT, followed by a Home Assistant restart, so that two
   controllers never drive the same boiler. A VT central configuration created or changed after
   Home Assistant started, even without a central boiler, needs that one restart too.
@@ -233,6 +239,11 @@ same way VT's central boiler does. You choose one or more of these criteria:
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
   VT does not hand the boiler back; frost protection still watches.
 - There is no summer switch in the plugin. If VT's zones are off, the boiler does not heat.
+- A circuit controlled by other automation asks for heat while its **Circuit asks for heat**
+  entity is on, or one of its zones calls: heating goes on for it alone, whatever number of
+  zones is set — its mixer needs the water. If that entity is unavailable or unknown, the
+  circuit asks nothing (its zones still can, and frost protection still watches), and the
+  control state shows the reason `circuit_request_unknown`.
 
 ### 4.4 The water temperature
 
@@ -252,14 +263,22 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    control state shows the room temperature in use (`curve_room`).
    With a curve, the building's design load is read at this same temperature. The curve step
    also shows the circuit's highest water temperature and the boiler's maximum heating
-   setpoint — the lower applies.
+   setpoint — the lower applies. With several circuits, the curve serves the one fed straight
+   from the boiler, and its room temperature (Auto) and the comfort correction read that
+   circuit's zones.
 2. **Lowest water temperature** — the curve never goes below it. Default 20 °C (provisional).
    Too low, and the boiler may stop by itself again and again in mild weather; a boiler that does
    not condense may condense in its flue. Take the value from the boiler's manual. The monitor
    may suggest a higher value if it sees many short burns; nothing changes by itself.
-3. **Highest water temperature** — the circuit's, in its form (**Circuit: <name>**): never
-   above it, whatever the curve or the comfort correction asks; 70 °C where it is empty. Needed
-   for underfloor heating on an unmixed loop. Above the curve only the comfort correction raises
+3. **What other circuits need** — while heating, the water never goes below a fixed valve's
+   setting plus 5 K, nor, while it asks, below the need of a circuit controlled by other
+   automation plus 5 K (provisional): its mixer mixes down from there. The control state shows
+   the reason `limit_circuit_need` when that need holds the water.
+4. **Highest water temperature** — the circuit's, in its form (**Circuit: <name>**): never
+   above it, whatever the curve, the comfort correction or another circuit asks; 70 °C where it
+   is empty. Only the circuits fed straight from the boiler cap the water; one behind a mixer or
+   a fixed valve is guarded by them, and its own too-hot alarm tells. Needed for underfloor
+   heating on an unmixed loop. Above the curve only the comfort correction raises
    the water, up to its own limit (default 3 K). The boiler itself may overshoot it a little; an
    alarm tells you when the measured flow stays too high. (Before, the curve step had a highest
    water temperature of its own; an update keeps the lower of it and the circuit's.)
@@ -989,7 +1008,7 @@ stateDiagram-v2
         state "Heating" as Heating
         state "Frost heating" as Frost
         [*] --> Idle
-        Idle --> Heating: zones call, after the activation delay
+        Idle --> Heating: zones or circuits call, after the activation delay
         Heating --> Idle: demand gone
         Idle --> Frost: a watched zone below the frost limit
         Frost --> Idle: every watched zone warm again

@@ -748,6 +748,9 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     advanced = {"level": "advanced"}
     fixed = {"control": "passive_fixed", "flow_entity": "sensor.x", "zones": ["climate.a"]}
     fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, fixed).schema}
+    # I8 (decision F3): a circuit run by other automation's request and need.
+    other = {"control": "separate"}
+    fields["circuit"] |= {str(m) for m in flow.circuit_schema(advanced, {}, other).schema}
     # I8 (decision E1): the gas rates, asked with the modulation and no gas meter.
     no_meter = {k: v for k, v in signals["signals"].items() if k != "gas_meter"}
     rates = {"level": "advanced", "signals": no_meter}
