@@ -722,3 +722,13 @@ Claude's calls (2026-10-12): two pull requests.
   coefficient entered, near room, emitter power, correction range, monitor mode, parallel
   thermostat, summer/winter). The result in `research/`.
 - J4 impact: none beyond the texts; the testing session may read the new guides.
+
+Claude's calls (2026-10-12): four pull requests.
+- I8.10a ✅ (2026-10-12): the installation's repair issues (a circuit without zones, underfloor
+  without a maximum) name circuits as the user knows them — their name, else their number, as
+  the menu does — never the internal ID (found at I8.7c).
+- I8.10b: the panel texts — forms, menu, errors, repair issues, exceptions — to A4's limits, EN
+  source and PL; the relay's texts (C3, C4) and the topics named above; the tests that read the
+  texts follow them.
+- I8.10c: both user guides rewritten plain, as above.
+- I8.10d: the check of every document against the code, as above; the result in `research/`.

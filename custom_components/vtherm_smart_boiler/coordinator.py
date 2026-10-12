@@ -2014,9 +2014,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         on an unmixed circuit without a maximum — as a warning repair issue naming its circuits;
         one the options no longer hold goes. Not fixable here: the options fix it."""
         found: dict[IssueCode, list[str]] = {}
+        names = self.config.circuit_names  # as the user knows them, never the internal IDs
         for issue in self.config.installation.issues():
             if issue.severity is Severity.WARNING:
-                found.setdefault(issue.code, []).append(issue.subject or "-")
+                subject = issue.subject or "-"
+                found.setdefault(issue.code, []).append(names.get(subject, subject))
         entry_id = self.config_entry.entry_id
         for code in INSTALLATION_WARNINGS:
             issue_id = f"{INSTALLATION_ISSUE}_{code.value}_{entry_id}"

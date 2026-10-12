@@ -63,6 +63,7 @@ from .config import (
     SECTION_CODES,
     ConfigError,
     EntryConfig,
+    circuit_label,
     circuits_hold_zones,
     section_fits,
     zones_on_circuits,
@@ -1047,12 +1048,6 @@ def circuit_items(options: Mapping[str, Any]) -> list[str]:
     count = min(max(1, len(_circuit_list(options))), CIRCUITS_MAX)
     items = [f"circuit_{index + 1}" for index in range(count)]
     return [*items, ADD_CIRCUIT] if count < CIRCUITS_MAX else items
-
-
-def circuit_label(circuit: object, index: int) -> str:
-    """A circuit as the menu and its form name it: its name, else its number."""
-    name = circuit.get(CIRCUIT_NAME) if isinstance(circuit, Mapping) else None
-    return str(name) if name not in (None, "") else str(index + 1)
 
 
 def circuit_placeholders(options: Mapping[str, Any]) -> dict[str, str]:
