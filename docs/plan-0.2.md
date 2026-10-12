@@ -16,9 +16,12 @@ Status on 2026-10-12: built through 0.2.3 (`docs/plan-0.2.3.md`, done). The repo
 on GitHub since 2026-10-07 (K5's first half, below), with its checks green; J2 done (2026-10-08);
 I6 done (2026-10-09; `docs/plan-0.2-i6.md`); G11 done (2026-10-10; `docs/plan-0.2-g11.md`); I7
 done (2026-10-10; `docs/plan-0.2-i7.md`); I8 done (2026-10-12; `docs/plan-0.2-i8.md`); K1
-done (2026-10-12, the icons and logo left for the very end); J4 running (the scenarios I6, G11
-and I7 touch run again, each pull request names them); then K4, then K5's pre-release (provisionally 0.2.3b1, `docs/plan-0.2.2.md` decision 16), K6 and K7. S3 stays
-optional.
+done (2026-10-12, the icons and logo left for the very end); J4 on `dev` ended on 2026-10-11
+(`docs/test-reports/2026-10-11-test-report.md`; its three questions are for K4), and its runner
+saves the options through I8's menu since 2026-10-12 — the scenarios that save options run
+again before their results count. K4 and K5's pre-release (provisionally 0.2.3b1,
+`docs/plan-0.2.2.md` decision 16) come at the very end, together with the icons and logo (the
+user's decision, 2026-10-12); then K6 and K7. S3 stays optional.
 
 ## Rules that shape this release
 

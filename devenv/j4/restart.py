@@ -84,7 +84,9 @@ async def B6(notes):
             f"after start: switch {sw}, state {state}, override {ovr}, simulator's gateway commands since its start {p.get('gateway_commands')}, CH writes {p.get('ch_writes')}",
             f"log: {log.strip()[:800]}",
         ]
-        ok = held and not ovr and (p.get("gateway_commands") or 0) >= 3 and sw == "off"
+        # SCOPE.md §7: after a restart without a clean stop a hand-back is pending until
+        # control resumes, and the control switch comes back as the user left it — on.
+        ok = held and sw == "on" and ovr and state in ("heating", "idle")
         await r.reset()
     return ok
 
@@ -95,7 +97,7 @@ async def main(ids):
         start = dt.datetime.now(dt.UTC)
         doc = {
             "B3": "a clean Home Assistant restart: hand-back at the stop, control back as left",
-            "B6": "Home Assistant killed (docker kill, decision 15): at start the full hand-back first, control off",
+            "B6": "Home Assistant killed (docker kill, decision 15): the switch back as left, control resumed",
         }[sid]
         print(f"--- {sid} {start:%H:%M:%S} {doc}", flush=True)
         try:
