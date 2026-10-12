@@ -5,6 +5,7 @@
 [![Commit activity on dev][commits-shield]][commits]
 [![License][license-shield]][license]
 [![HACS][hacs-shield]](#installation)
+[![Buy me a coffee][bmc-shield]][bmc]
 
 # Smart Boiler for Versatile Thermostat
 
@@ -433,6 +434,10 @@ Contributions are welcome — open pull requests against `dev`. Read
 change is small, tested and reviewed. Which automatic checks run, and when, is in its section
 [Checks](CONTRIBUTING.md#checks).
 
+# Support
+
+If the plugin helps your heating, you can buy me a coffee: [buymeacoffee.com/shadow23][bmc].
+
 # Authors
 
 [@Shadow-230](https://github.com/Shadow-230)
@@ -467,3 +472,5 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [commits-shield]: https://img.shields.io/github/commit-activity/m/Shadow-230/vtherm-smart-boiler/dev.svg?style=for-the-badge
 [license-shield]: https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge
 [hacs-shield]: https://img.shields.io/badge/HACS-not%20yet-lightgrey.svg?style=for-the-badge
+[bmc]: https://buymeacoffee.com/shadow23
+[bmc-shield]: https://img.shields.io/badge/buy%20me%20a%20coffee-shadow23-ffdd00.svg?style=for-the-badge&logo=buymeacoffee&logoColor=black

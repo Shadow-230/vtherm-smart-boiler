@@ -5,6 +5,7 @@
 [![Commit activity on dev][commits-shield]][commits]
 [![License][license-shield]][license]
 [![HACS][hacs-shield]](#instalacja)
+[![Buy me a coffee][bmc-shield]][bmc]
 
 # Smart Boiler for Versatile Thermostat
 
@@ -442,6 +443,10 @@ Wkład jest mile widziany — otwieraj pull requesty do `dev`. Najpierw przeczyt
 mała, przetestowana i przejrzana. Jakie automatyczne sprawdzenia działają i kiedy, opisuje jego
 część [Checks](CONTRIBUTING.md#checks).
 
+# Wsparcie
+
+Jeśli wtyczka pomaga w Twoim ogrzewaniu, możesz postawić mi kawę: [buymeacoffee.com/shadow23][bmc].
+
 # Autorzy
 
 [@Shadow-230](https://github.com/Shadow-230)
@@ -476,3 +481,5 @@ część [Checks](CONTRIBUTING.md#checks).
 [commits-shield]: https://img.shields.io/github/commit-activity/m/Shadow-230/vtherm-smart-boiler/dev.svg?style=for-the-badge
 [license-shield]: https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge
 [hacs-shield]: https://img.shields.io/badge/HACS-not%20yet-lightgrey.svg?style=for-the-badge
+[bmc]: https://buymeacoffee.com/shadow23
+[bmc-shield]: https://img.shields.io/badge/buy%20me%20a%20coffee-shadow23-ffdd00.svg?style=for-the-badge&logo=buymeacoffee&logoColor=black
