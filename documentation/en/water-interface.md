@@ -2,9 +2,9 @@
 
 [Polska wersja: dokumentacja techniczna, rozdział 8](../pl/technical.md#8-dane-o-wodzie-dla-algorytmów-stref)
 
-Status: agreed with the owner on 2026-10-12; the requirements are closed. **Not built yet**: Smart
-Boiler builds its side as step I9 of `docs/plan-0.2.md`, before 0.3 (the owner's go-ahead of
-2026-10-12; `docs/plan-0.2-i9.md`).
+Status: agreed with the owner on 2026-10-12; the requirements are closed. Smart Boiler's side is
+built (step I9 of `docs/plan-0.2.md`, `docs/plan-0.2-i9.md`, 2026-10-12); a contract test
+(`tests/test_water_interface.py`) pins every name and value below.
 
 The normative part (sections 1–10) says what Smart Boiler exposes, under which names, with which
 values, what it reads from a zone algorithm and which service it calls. What a consumer does with
@@ -140,6 +140,10 @@ Which water is "the water reaching this thermostat's circuit":
 
 ### 5.1 By what is mapped (normative)
 
+In every row, `heat_available` is `False` with `dhw_active` while hot water with priority runs,
+and with `flame_off` while a mapped flame signal says the flame is out (section 4); the table
+shows the rest.
+
 | Situation | `supply_temperature` | `heat_available` |
 |---|---|---|
 | No water sensor for the circuit (no boiler flow, no circuit sensor) | `None`, `not_mapped` | `None`, `not_mapped` |
@@ -200,12 +204,12 @@ A consumer publishes no water temperature it would need, and Smart Boiler takes 
 need a large rebuild, and the water usually cannot be set per zone. Smart Boiler reads from a
 consumer only the key of 3.4.
 
-## 10. To build (Smart Boiler: step I9, the owner's go-ahead of 2026-10-12)
+## 10. Built
 
-Planned as step I9 of plan 0.2, before 0.3: the fields of section 4 (with the new reason
-`not_mapped` and the fallback `several_circuits`), the manager's properties (3.1), the API (3.2),
-the attribute (3.3), the read of the consumer's key (3.4), the pause conditions (3.5), the
-contract test (section 2), and the documents.
+Smart Boiler's side: step I9 (2026-10-12) — the fields (with the reasons `not_mapped` and
+`several_circuits`), the manager's properties (3.1), the API (3.2), the attribute (3.3), the read
+of the consumer's key (3.4), the pause conditions (3.5) and the contract test (section 2). The
+consumer's side is the consumer's: for SmartPI, Annex A.
 
 ## Annex A — SmartPI's use (agreed on 2026-10-12; belongs to SmartPI's own specification)
 

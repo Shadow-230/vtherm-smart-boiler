@@ -83,8 +83,10 @@ Step by step: the [user guide][guide].
 ## Beside VT's zone algorithms
 
 The plugin reads VT's zones and never changes their settings or algorithms. Each zone's
-thermostat gets one attribute, `smart_boiler` → `heat_available`: whether the boiler's heat
-reaches the zone now. Nothing in VT depends on it.
+thermostat gets one attribute, `smart_boiler`: `heat_available` — whether the boiler's heat
+reaches the zone now — and `supply_temperature`, the water reaching it, rounded. A zone
+algorithm can read the full water data ([water interface][water]); SmartPI 0.4.0 does not.
+Nothing in VT depends on it.
 
 The heating curve already raises the water temperature as it gets colder outside. Some zone
 algorithms count the outdoor temperature as well, so the weather then acts twice:
@@ -417,7 +419,7 @@ Targets are aims, not commitments; each release collects data for the next. Deta
 | [`docs/`][docs] | the plan of each release and the reviews of the code |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | the integration's parts, one control step, lifecycle, stored state, tests |
-| [Water data for zone algorithms][water] | the specified interface that gives SmartPI and other zone algorithms the water reaching each zone (not built yet) |
+| [Water data for zone algorithms][water] | the interface that gives SmartPI and other zone algorithms the water reaching each zone |
 | [`CHANGELOG.md`][changelog] | what each release changes |
 | [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
 | [`LICENSE`][license] | Apache License 2.0 |
