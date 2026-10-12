@@ -74,6 +74,9 @@ class ZoneLearning:
     zone_id: str
     learning: bool | None
     valve_open: bool
+    # Its algorithm uses the plugin's water data (I9; water-interface.md §3.4): a water swing is
+    # explained to it, so it is not paused for one (§3.5).
+    uses_water_data: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +153,7 @@ def _signals(
     return {
         PauseCause.DHW: dhw if config.pause_on_dhw else False,
         PauseCause.BOILER_FAULT: fault if config.pause_on_fault else False,
-        PauseCause.WATER_SWING: swing,
+        PauseCause.WATER_SWING: swing and not zone.uses_water_data,
     }
 
 

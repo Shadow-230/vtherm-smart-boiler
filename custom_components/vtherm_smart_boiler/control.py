@@ -4736,6 +4736,7 @@ class ControlUnit:
                     zone.zone_id,
                     algorithm.smartpi_learning,
                     demand is not None and demand > opening,
+                    uses_water_data=algorithm.uses_water_data,
                 )
             )
         plan = plan_learning(

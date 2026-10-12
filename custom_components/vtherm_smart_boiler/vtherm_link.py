@@ -90,6 +90,9 @@ VT_ACTIVATION_DELAY_MAX_S = 600.0
 ACTIVATION_SERVICE = "central_boiler_activation_service"
 DEACTIVATION_SERVICE = "central_boiler_deactivation_service"
 KEEP_ALIVE = "keep_alive_boiler_delay_sec"
+# The key a zone algorithm writes into VT's ``specific_states`` when it uses the plugin's water
+# data (I9; water-interface.md §3.4 — SmartPI's, Annex A).
+WATER_DATA_KEY = "water_factor"
 COUNT_THRESHOLD_UNIQUE_ID = "boiler_activation_threshold"
 POWER_THRESHOLD_UNIQUE_ID = "boiler_power_activation_threshold"
 # The plugin's repeat interval takes VT's keep-alive only within its own range (R3).
@@ -113,6 +116,9 @@ class ZoneAlgorithm:
     smartpi_learning: bool | None = None  # SmartPI's learning flag; None: not SmartPI
     auto_tpi: bool = False  # Auto-TPI learning is on (a session or continuous kext)
     used_by_central_boiler: bool | None = None
+    # I9 (water-interface.md §3.4): the zone's algorithm uses the plugin's water data — the key
+    # it writes into VT's ``specific_states`` is there.
+    uses_water_data: bool = False
     # PB-47: VT's state was read — the zone known and its configuration published; else none
     # of the above can be told (VT not started, the zone unknown or unavailable).
     known: bool = False
@@ -687,6 +693,7 @@ class VThermLink:
             auto_tpi="on"
             in (specific.get("auto_tpi_state"), specific.get("auto_tpi_continuous_kext")),
             used_by_central_boiler=used if isinstance(used, bool) else None,
+            uses_water_data=WATER_DATA_KEY in specific,
             known=known,
         )
 

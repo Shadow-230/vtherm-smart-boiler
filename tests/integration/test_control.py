@@ -5582,6 +5582,40 @@ def smartpi_zone(rig: Rig, learning: bool) -> None:
     )
 
 
+async def test_control_tells_the_pauses_which_zones_use_the_water_data(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I9 (water-interface.md §3.4, §3.5): a SmartPI zone whose thermostat carries the key
+    `water_factor` reaches the learning pauses as using the water data — so a water swing does
+    not pause it; one without the key, as before."""
+    seen: list[tuple[str, bool]] = []
+    original = control_module.plan_learning
+
+    def spy(state: Any, zones: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.extend((z.zone_id, z.uses_water_data) for z in zones)
+        return original(state, zones, *args, **kwargs)
+
+    monkeypatch.setattr(control_module, "plan_learning", spy)
+    await start(rig)
+    zone = rig.zones.entities["living"]
+    for uses in (True, False):
+        seen.clear()
+        rig.zones.set(
+            "living",
+            hvac_action="heating",
+            valve_open_percent=60,
+            on_percent=0.6,
+            configuration={"proportional_function": "smartpi"},
+            specific_states={"smartpi_learning_enabled": True}
+            | ({"water_factor": 0.8} if uses else {}),
+        )
+        await rig.switch(True)
+        await rig.advance(20)
+        assert (zone, uses) in seen
+        assert (zone, not uses) not in seen
+        await rig.switch(False)
+
+
 @pytest.mark.parametrize("stored_pause", [True, False], ids=["stored", "not_stored"])
 async def test_a_smartpi_pause_is_stored_before_the_call(
     rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, stored_pause: bool
