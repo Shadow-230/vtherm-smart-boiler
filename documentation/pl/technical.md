@@ -137,7 +137,8 @@ i opcji oraz opcje sterowania jako obiekty rdzenia, z blokadami, które nie pozw
 sterowaniu. Oba przepływy to jedno menu sekcji; sterowanie to pięć jego pozycji, każda jako jeden
 formularz — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, ochrona przed mrozem,
 reakcje na alarmy (`CONTROL_ITEMS`) —, każda pokazana tam, gdzie ma zastosowanie, i otwierana
-po sprawdzeniu ścieżki zapisu (`_control_path`). Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
+po sprawdzeniu ścieżki zapisu (`_control_path`). Formularz pokazuje się ponownie z polami, które
+odsłoniła odpowiedź (`entity_form_fields`, `relay_form_fields`); wartość ukrytego pola zostaje. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
 zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Strefy należą do
 obiegów: każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką i z konwektorami,
 a ze strefy zasilanej tylko w części — jej urządzenia (`devices`, według strefy; formularz

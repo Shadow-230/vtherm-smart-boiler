@@ -152,6 +152,7 @@ from .core.installation import BoilerClass, BoilerType, CircuitControl, HeatSour
 from .core.metrics import ModulationScale
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
+from .core.signals import Signal
 from .transport.entities import read_bounds, read_grid, relay_hvac_modes, temperature_unit_of
 from .vtherm_link import (
     VtCentralBoiler,
@@ -1599,55 +1600,104 @@ _ENTITY_DEFAULTS: Mapping[Connection, tuple[str, str, Any]] = {
 _NO_ENTITY_DEFAULTS = (WriteType.UNKNOWN.value, WriteType.UNKNOWN.value, vol.UNDEFINED)
 
 
-def control_entity_schema(options: dict[str, Any]) -> vol.Schema:
+# The hand-back method's own fields (I8, decision H1): shown once the method is picked.
+_HAND_BACK_FIELDS: Mapping[str, tuple[str, ...]] = {
+    HandBack.VALUE: ("hand_back_value", "hand_back_value_effect"),
+    HandBack.SWITCH: ("hand_back_entity", "hand_back_entity_write_type"),
+    HandBack.TIMEOUT: (HAND_BACK_TIMEOUT,),
+}
+
+
+def fixed_write_types(options: Mapping[str, Any]) -> dict[str, str]:
+    """The write types the connection fixes (I8, decision H1; Claude's call: what it is known
+    for, `_ENTITY_DEFAULTS`): ESPHome holds the setpoint and the heating switch, EMS-ESP's
+    setpoint lapses. Not asked; a value stored earlier is kept."""
+    connection = stored_connection(options)
+    defaults = _ENTITY_DEFAULTS.get(connection) if connection is not None else None
+    if defaults is None:
+        return {}
+    return {
+        key: value
+        for key, value in zip(("write_type", "ch_write_type"), defaults[:2], strict=True)
+        if value != WriteType.UNKNOWN.value
+    }
+
+
+def entity_form_fields(options: Mapping[str, Any], answers: Mapping[str, Any]) -> set[str]:
+    """The writable entity's form (I8, decisions A3, H1): a write type only where the connection
+    does not fix it — the heating switch's with a heating switch picked —, the hand-back
+    method's own fields once it is picked; the rest always, the ticks where they apply."""
+    given = {**_mapping(options.get(CONTROL)), **answers}
+    fixed = fixed_write_types(options)
+    shown = {"setpoint_entity", "ch_entity", "hand_back"}
+    if "write_type" not in fixed:
+        shown.add("write_type")
+    if given.get("ch_entity") and "ch_write_type" not in fixed:
+        shown.add("ch_write_type")
+    method = given.get("hand_back", _entity_hand_back_default(options))
+    shown |= set(_HAND_BACK_FIELDS.get(str(method), ()))
+    return shown
+
+
+def _entity_hand_back_default(options: Mapping[str, Any]) -> Any:
+    connection = stored_connection(options)
+    defaults = _ENTITY_DEFAULTS.get(connection) if connection is not None else None
+    return (defaults or _NO_ENTITY_DEFAULTS)[2]
+
+
+def control_entity_schema(
+    options: dict[str, Any], answers: Mapping[str, Any] | None = None
+) -> vol.Schema:
+    """The writable entity's form: the fields ``entity_form_fields`` shows for the answers so
+    far (A2), each with its stored value, else the connection's default."""
     control = options.get(CONTROL, {})
+    given = {**control, **(answers or {})}
+    shown = entity_form_fields(options, answers or {})
     connection = stored_connection(options)
     defaults = _ENTITY_DEFAULTS.get(connection) if connection is not None else None
     write_type, ch_write_type, hand_back = defaults or _NO_ENTITY_DEFAULTS
-    fields: dict[Any, Any] = {
+    every: dict[Any, Any] = {
         vol.Required(
-            "setpoint_entity", default=control.get("setpoint_entity", vol.UNDEFINED)
+            "setpoint_entity", default=given.get("setpoint_entity", vol.UNDEFINED)
         ): _entity(_SETPOINT_ENTITY),
-        vol.Required("write_type", default=control.get("write_type", write_type)): _select(
+        vol.Required("write_type", default=given.get("write_type", write_type)): _select(
             "write_type", [t.value for t in WriteType]
         ),
-        _optional("ch_entity", control): _entity(_ON_OFF_ENTITY),
-        vol.Required("ch_write_type", default=control.get("ch_write_type", ch_write_type)): (
+        _optional("ch_entity", given): _entity(_ON_OFF_ENTITY),
+        vol.Required("ch_write_type", default=given.get("ch_write_type", ch_write_type)): (
             _select("write_type", [t.value for t in WriteType])
         ),
-        vol.Required("hand_back", default=control.get("hand_back", hand_back)): _select(
+        vol.Required("hand_back", default=given.get("hand_back", hand_back)): _select(
             "hand_back", [h.value for h in HandBack]
         ),
-        _optional("hand_back_value", control): _number(
-            *CONTROL_BOUNDS["hand_back_value"], 0.5, "°C"
-        ),
-        _optional("hand_back_value_effect", control): _select(
+        _optional("hand_back_value", given): _number(*CONTROL_BOUNDS["hand_back_value"], 0.5, "°C"),
+        _optional("hand_back_value_effect", given): _select(
             "hand_back_value_effect", [e.value for e in ValueEffect]
         ),
-        _optional("hand_back_entity", control): _entity(_ON_OFF_ENTITY),
+        _optional("hand_back_entity", given): _entity(_ON_OFF_ENTITY),
         vol.Required(
             "hand_back_entity_write_type",
-            default=control.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
+            default=given.get("hand_back_entity_write_type", WriteType.UNKNOWN.value),
         ): _select("write_type", [t.value for t in WriteType]),
-        # The timeout method's device timeout (decision 5 of 0.2.3), shown with its cautious
-        # default; the form cannot hide it for the other methods, and the save drops it there.
+        # The timeout method's device timeout (decision 5 of 0.2.3), with its cautious default.
         vol.Optional(
             HAND_BACK_TIMEOUT,
             description={
-                "suggested_value": control.get(HAND_BACK_TIMEOUT, HAND_BACK_TIMEOUT_DEFAULT_MIN)
+                "suggested_value": given.get(HAND_BACK_TIMEOUT, HAND_BACK_TIMEOUT_DEFAULT_MIN)
             },
         ): _number(*HAND_BACK_TIMEOUT_MIN, 1, "min"),
     }
+    fields = {marker: field for marker, field in every.items() if str(marker) in shown}
     if _offers_own_room_controller(control):
         # Next to the hand-back fields, at the simple level; off by default (answers F, M).
         fields[
-            vol.Required(OWN_ROOM_CONTROLLER, default=control.get(OWN_ROOM_CONTROLLER) is True)
+            vol.Required(OWN_ROOM_CONTROLLER, default=given.get(OWN_ROOM_CONTROLLER) is True)
         ] = selector.BooleanSelector()
     if connection is Connection.ESPHOME:
         # Decision 3: never pre-filled, as the relay's separate-contact tick (answer G).
-        fields[
-            vol.Required(ESPHOME_SAFE_START, default=control.get(ESPHOME_SAFE_START) is True)
-        ] = selector.BooleanSelector()
+        fields[vol.Required(ESPHOME_SAFE_START, default=given.get(ESPHOME_SAFE_START) is True)] = (
+            selector.BooleanSelector()
+        )
     return vol.Schema(fields)
 
 
@@ -1780,14 +1830,39 @@ HEATS_ABOVE = "boiler_heats_above_w"
 RELAY_STEP_KEYS = (*RELAY_KEYS, OWN_ROOM_CONTROLLER)
 
 
+def relay_form_fields(options: Mapping[str, Any], answers: Mapping[str, Any]) -> set[str]:
+    """The relay's form (I8, decisions A3, H1): the timer's length only with a declared timer;
+    the repeat interval only where something is repeated — without state reports, or with a
+    timer that may lapse; "boiler heats above" at the advanced level with the boiler's power
+    mapped; the rest always."""
+    given = {**_mapping(options.get(CONTROL)), **answers}
+    timer = given.get("relay_off_timer", RELAY_DEFAULTS["relay_off_timer"])
+    reports = given.get("relay_reports_state", RELAY_DEFAULTS["relay_reports_state"])
+    shown = {
+        RELAY_ENTITY, "relay_is_separate_contact", "relay_reports_state", "relay_power_on_state",
+        "relay_off_timer", "relay_rest_state", OWN_ROOM_CONTROLLER,
+    }  # fmt: skip
+    if timer == RelayTimer.MINUTES:
+        shown.add(RELAY_TIMER_MIN)
+    if reports != RelayReports.YES or timer != RelayTimer.NONE:
+        shown.add("relay_repeat_s")
+    if _advanced(options) and Signal.BOILER_POWER.value in _stored_signals(options):
+        shown.add(HEATS_ABOVE)
+    return shown
+
+
 def control_relay_schema(
-    options: dict[str, Any], prefill: VtCentralBoiler | None = None
+    options: dict[str, Any],
+    prefill: VtCentralBoiler | None = None,
+    answers: Mapping[str, Any] | None = None,
 ) -> vol.Schema:
     """The relay and its own settings (R3) — the user's declaration, each with its cautious
-    default — and the tick "the boiler has its own room controller" (answer M). ``prefill``:
-    VT's central boiler, whose relay and repeat interval are offered for confirmation where
-    nothing is stored yet (R14). The separate-contact tick is never pre-filled (answer G)."""
-    control = options.get(CONTROL, {})
+    default — and the tick "the boiler has its own room controller" (answer M); the fields
+    ``relay_form_fields`` shows for the answers so far (A2). ``prefill``: VT's central boiler,
+    whose relay and repeat interval are offered for confirmation where nothing is stored yet
+    (R14). The separate-contact tick is never pre-filled (answer G)."""
+    control = {**options.get(CONTROL, {}), **(answers or {})}
+    shown = relay_form_fields(options, answers or {})
 
     def choice(key: str, kind: type[StrEnum]) -> Any:
         return _choice(control.get(key), kind, RELAY_DEFAULTS[key])
@@ -1820,10 +1895,9 @@ def control_relay_schema(
         vol.Required(
             OWN_ROOM_CONTROLLER, default=control.get(OWN_ROOM_CONTROLLER) is True
         ): selector.BooleanSelector(),
+        _optional(HEATS_ABOVE, control): _number(10, 10000, 10, "W"),
     }
-    if _advanced(options):
-        fields[_optional(HEATS_ABOVE, control)] = _number(10, 10000, 10, "W")
-    return vol.Schema(fields)
+    return vol.Schema({m: f for m, f in fields.items() if str(m) in shown})
 
 
 def relay_entity_error(
@@ -1853,18 +1927,16 @@ def relay_entity_error(
 
 
 def apply_control_relay(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The relay step's answers; the power threshold kept where its field is not shown, and a
-    timer's length only with a declared length."""
+    """The relay step's answers: each field shown as answered, a hidden one as stored (I8,
+    decision A3); a timer's length only with a declared length."""
     control = dict(options.get(CONTROL, {}))
-    shown = [key for key in RELAY_STEP_KEYS if key != HEATS_ABOVE or _advanced(options)]
-    _set_or_drop(control, user_input, tuple(shown))
+    shown = relay_form_fields(options, user_input)
+    _set_or_drop(control, user_input, tuple(key for key in RELAY_STEP_KEYS if key in shown))
     if control.get("relay_off_timer") != RelayTimer.MINUTES:
         control.pop(RELAY_TIMER_MIN, None)
     options[CONTROL] = control
 
 
-# The relay path's behaviour step: its demand thresholds, learning pauses and frost fields at the
-# advanced level (``CONTROL_ADVANCED_KEYS``), VT's activation delay at every level (decision 5).
 def control_behaviour_schema(
     options: dict[str, Any],
     prefill: VtCentralBoiler | None = None,
@@ -1874,8 +1946,9 @@ def control_behaviour_schema(
     delay at every level, pre-filled from VT's own (R14); at the advanced level the demand
     criteria — on the relay path pre-filled with VT's thresholds as it used them — and the
     learning pauses; with full control also the ramp, the decision interval and the "off"
-    setpoint (none where "off" is the connection's own, as EMS-ESP's 0). ``vt_delay``: VT's
-    own activation delay, else the one ``prefill`` read."""
+    setpoint where "off" is written as a low setpoint — not with a heating switch, nor where
+    "off" is the connection's own, as EMS-ESP's 0 (I8, decision H3). ``vt_delay``: VT's own
+    activation delay, else the one ``prefill`` read."""
     control = options.get(CONTROL, {})
     if vt_delay is None and prefill is not None:
         vt_delay = prefill.activation_delay_s
@@ -1920,7 +1993,7 @@ def control_behaviour_schema(
             "decision_interval_min", _number(*CONTROL_BOUNDS["decision_interval_min"], 1, "min")
         ),
     }
-    if not fixed_off(options):  # EMS-ESP's "off" is its own 0 (I6, decision 4)
+    if not fixed_off(options) and not heating_writes(control):
         fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
     return vol.Schema(fields)
 
@@ -2034,12 +2107,19 @@ def _gateway_topology(raw: object) -> bool:
 
 
 def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The writable-entity step's answers; the device's timeout only with the timeout method."""
+    """The writable-entity step's answers: each field shown as answered, a hidden one as
+    stored (I8, decision A3) — a write type the connection fixes its value where none is
+    stored; the device's timeout only with the timeout method."""
     control = dict(options.get(CONTROL, {}))
-    keys = TARGET_KEYS
-    _set_or_drop(control, user_input, tuple(k for k in keys if k in user_input or k in control))
+    shown = {str(marker) for marker in control_entity_schema(options, user_input).schema}
+    _set_or_drop(control, user_input, tuple(k for k in TARGET_KEYS if k in shown))
+    for key, value in fixed_write_types(options).items():
+        control.setdefault(key, value)
     if control.get("hand_back") != HandBack.TIMEOUT:
         control.pop(HAND_BACK_TIMEOUT, None)
+    for tick in (OWN_ROOM_CONTROLLER, ESPHOME_SAFE_START):
+        if tick not in shown:
+            control.pop(tick, None)  # a declaration only where it is asked (answers F, M)
     options[CONTROL] = control
 
 
@@ -2856,6 +2936,8 @@ class _Steps:
     _interface_draft: dict[str, Any] | None = None  # the interface form's answers so far (A2)
     _signals_draft: dict[str, Any] | None = None  # the signals form's answers so far (A2)
     _circuit_draft: dict[str, Any] | None = None  # the circuit form's answers so far (A2)
+    _entity_draft: dict[str, Any] | None = None  # the writable entity's answers so far (A2)
+    _relay_draft: dict[str, Any] | None = None  # the relay's answers so far (A2)
     _changed: list[str]  # the sections whose answers changed the options, in that order
     _at_menu: dict[str, Any] | None  # the options as the menu last showed them
 
@@ -3356,8 +3438,7 @@ class _ControlSteps(_Steps):
             if key in shown
         )
 
-    # --- control: path and topology → path details → curve and limits → (advanced) behaviour
-    # → alarm reactions → save
+    # --- control: its five items (I8, decision H), each one form saved to the menu
 
     async def _path_errors(self, user_input: Mapping[str, Any]) -> dict[str, str]:
         """What the write path answered still needs, or may not do now (a hand-back owed)."""
@@ -3443,8 +3524,16 @@ class _ControlSteps(_Steps):
     async def async_step_control_entity(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The writable entity's form; it shows itself again with the fields an answer reveals
+        — the hand-back method's own, the heating switch's write type (I8, decisions A2, H1)."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            shown = entity_form_fields(self.options, self._entity_draft or {})
+            self._entity_draft = dict(user_input)
+            # A write type the connection fixes is judged as it stands: stored, else fixed.
+            stored = _mapping(self.options.get(CONTROL))
+            fixed = {k: stored.get(k, v) for k, v in fixed_write_types(self.options).items()}
+            user_input = {**fixed, **user_input}
             grid = read_grid(self.hass, user_input["setpoint_entity"])
             found = entity_errors(self.hass, user_input, TARGET_ENTITY_FIELDS) or (
                 targets_used_by_zone(self.hass, user_input)  # PB-54
@@ -3456,6 +3545,12 @@ class _ControlSteps(_Steps):
             elif grid is not None and grid.too_coarse:
                 # A value rounded to so coarse a step could read back as ignored (P-15).
                 errors = {"setpoint_entity": "setpoint_step_too_coarse"}
+            elif entity_form_fields(self.options, user_input) - shown:
+                # Fields the answer revealed: shown again with them, nothing saved (A2).
+                return self._form(
+                    step_id="control_entity",
+                    data_schema=control_entity_schema(self.options, user_input),
+                )
             else:
                 errors = control_details_error(
                     user_input, read_bounds(self.hass, user_input["setpoint_entity"])
@@ -3471,16 +3566,17 @@ class _ControlSteps(_Steps):
                 not errors
                 and blocker
                 and self._changes_hand_back(
-                    user_input, control_entity_schema(self.options), blocker
+                    user_input, control_entity_schema(self.options, user_input), blocker
                 )
             ):
                 errors = {"base": blocker}
             if not errors:
                 apply_control_details(self.options, user_input)
+                self._entity_draft = None
                 return await self._after("control")
         return self._form(
             step_id="control_entity",
-            data_schema=control_entity_schema(self.options),
+            data_schema=control_entity_schema(self.options, user_input or self._entity_draft),
             errors=errors,
         )
 
@@ -3508,14 +3604,20 @@ class _ControlSteps(_Steps):
         zone, belongs to the boiler's gateway integration or to VT, or has another role; a
         declared timer needs its length, 10 min at least (K4.2). What the hand-back goes
         through — the relay and its rest state — cannot change while a hand-back is owed or
-        control holds the relay."""
+        control holds the relay. The form shows itself again with the fields an answer reveals
+        (I8, decisions A2, H1)."""
         prefill = self._vt_prefill()
-        schema = control_relay_schema(self.options, prefill)
+        schema = control_relay_schema(self.options, prefill, user_input or self._relay_draft)
         errors: dict[str, str] = {}
         if user_input is not None:
+            shown = relay_form_fields(self.options, self._relay_draft or {})
+            self._relay_draft = dict(user_input)
             problem = relay_entity_error(self.hass, self.options, user_input.get(RELAY_ENTITY))
             if problem is not None:
                 errors = {RELAY_ENTITY: problem}
+            elif relay_form_fields(self.options, user_input) - shown:
+                # Fields the answer revealed: shown again with them, nothing saved (A2).
+                return self._form(step_id=step_id, data_schema=schema)
             elif self._contact_to_confirm(user_input):
                 errors = {"relay_is_separate_contact": "relay_contact_confirm_again"}
             elif user_input.get("relay_off_timer") == RelayTimer.MINUTES:
@@ -3531,6 +3633,7 @@ class _ControlSteps(_Steps):
                 errors = {"base": blocker}
             if not errors:
                 apply_control_relay(self.options, user_input)
+                self._relay_draft = None
                 return await self._after("control")
         elif (
             prefill is not None

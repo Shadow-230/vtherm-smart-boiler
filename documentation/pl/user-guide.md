@@ -492,6 +492,10 @@ Wybierasz też **sposób oddania sterowania**:
 - **Wyłączenie przełącznika** — przełącznik „sterowania zewnętrznego”, który oddaje sterowanie
   urządzeniu.
 
+Formularz pokazuje pola danego sposobu dopiero po jego wybraniu, a typ zapisu przełącznika
+grzania dopiero po wybraniu przełącznika; typu zapisu, który ustala połączenie (ESPHome, nastawa
+EMS-ESP), nie pyta. Wartość, której pole zniknęło, zostaje taka, jak była.
+
 #### OpenTherm Gateway
 
 Wtyczka wysyła nastawę sterującą i powtarza ją co 30 sekund, bo inaczej bramka ją porzuca.
@@ -571,7 +575,10 @@ Wtyczka nie potrafi odczytać własnych ustawień przekaźnika, więc formularz 
   bez niego sterowanie nie ruszy;
 - jego stan po zaniku zasilania, jego własny wyłącznik czasowy i to, czy zgłasza swój
   rzeczywisty stan (każde domyślnie „Nie wiem”, traktowane ostrożnie);
-- odstęp powtórzeń (od 10 do 300 sekund, domyślnie 300);
+- odstęp powtórzeń (od 10 do 300 sekund, domyślnie 300) — pytany tylko tam, gdzie coś jest
+  powtarzane: przekaźnik nie podaje swojego stanu albo może mieć własny wyłącznik czasowy;
+  długość zadeklarowanego wyłącznika pytana jest razem z nim, a „kocioł grzeje powyżej” przy
+  wskazanej mocy kotła (poziom zaawansowany);
 - „Przekaźnik po oddaniu sterowania”: wyłączony (domyślnie) albo włączony.
 
 Teksty formularza zalecają: przekaźnik na zaciskach termostatu pokojowego kotła, nigdy w jego
@@ -657,9 +664,9 @@ binary_sensor:
       name: "Boiler flame"
 ```
 
-We wtyczce: liczba nastawy to encja nastawy, przełącznik grzania to przełącznik grzania; krok
-sterowania proponuje dla obu „Trzymany przez urządzenie”, a oddanie sterowania „Zapis wartości”,
-której wartość i skutek podajesz.
+We wtyczce: liczba nastawy to encja nastawy, przełącznik grzania to przełącznik grzania; oba
+są trzymane przez urządzenie, tak jak trzyma je ESPHome — formularz nie pyta o ich typ zapisu —,
+a oddanie sterowania to „Zapis wartości”, której wartość i skutek podajesz.
 
 Przy takich wartościach startowych dom, w którym Home Assistant nie wraca po restarcie ESP, **nie
 jest ogrzewany**, dopóki Home Assistant nie wróci. Alternatywą jest umiarkowany start:
@@ -679,8 +686,8 @@ dla nich dostępność.
 
 Nastawa zasilania EMS-ESP (`selflowtemp`) wygasa w ciągu około minuty, a EMS-ESP jej nie powtarza,
 więc wtyczka zapisuje ją co 30 sekund. Wybierz ją jako encję nastawy i jako jej odczyt zwrotny.
-Krok sterowania proponuje dla niej „Wygasający”, a oddanie sterowania „Limit czasu urządzenia”
-równy 1 minucie: wtyczka przestaje zapisywać, a kocioł w ciągu około minuty wraca do własnego
+Jest wygasająca, jak nastawa EMS-ESP — formularz nie pyta o jej typ zapisu —, a proponowane
+oddanie sterowania to „Limit czasu urządzenia” równy 1 minucie: wtyczka przestaje zapisywać, a kocioł w ciągu około minuty wraca do własnego
 ustawienia.
 
 - **„Wyłącz grzanie” to nastawa 0** — sposób, który opisuje sama dokumentacja EMS-ESP („Force

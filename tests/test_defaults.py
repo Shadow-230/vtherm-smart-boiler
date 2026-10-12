@@ -98,6 +98,8 @@ CURVE_FORM = form_defaults(config_flow.control_curve_schema(ADVANCED))
 MONITOR_FORM = form_defaults(config_flow.monitor_schema({"signals": {"flue_gas": "sensor.flue"}}))
 BOILER_FORM = form_defaults(config_flow.boiler_schema({"signals": {"pressure": "sensor.water"}}))
 ENTITY_FORM = form_defaults(config_flow.control_entity_schema({}))
+# The hand-back value's own fields, shown once its method is picked (I8, decision H1).
+VALUE_FORM = form_defaults(config_flow.control_entity_schema({}, {"hand_back": "value"}))
 # The tick is offered on the entity path with the virtual topology (answers F, M).
 OWN_CONTROL_FORM = form_defaults(
     config_flow.control_entity_schema({"control": {"write_path": "entity", "topology": "virtual"}})
@@ -168,10 +170,10 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ('"off" setpoint (parser)', lambda: BARE.loop.off_setpoint, 10.0),
     ('"off" setpoint: never below 8 °C on the gateway', lambda: OTGW_MIN_SETPOINT, 8.0),
     # Hand-back value (entity) | none — entered with its effect
-    ("hand-back value (form)", lambda: ENTITY_FORM["hand_back_value"], vol.UNDEFINED),
+    ("hand-back value (form)", lambda: VALUE_FORM["hand_back_value"], vol.UNDEFINED),
     (
         "hand-back value's effect (form)",
-        lambda: ENTITY_FORM["hand_back_value_effect"],
+        lambda: VALUE_FORM["hand_back_value_effect"],
         vol.UNDEFINED,
     ),
     ("hand-back method (form)", lambda: ENTITY_FORM["hand_back"], vol.UNDEFINED),

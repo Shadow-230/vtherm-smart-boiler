@@ -466,6 +466,10 @@ You also pick the **hand-back method**:
   enter the device's timeout (default 1 minute, 1 to 60).
 - **Turn off a switch** — an "external control" switch that hands control back to the device.
 
+The form shows a method's own fields once the method is picked, and the heating switch's write
+type once a heating switch is picked; a write type the connection fixes (ESPHome's, EMS-ESP's
+setpoint) is not asked. A value no longer shown is kept as it was.
+
 #### The OpenTherm Gateway
 
 The plugin sends the control setpoint and repeats it every 30 seconds, as the gateway drops it
@@ -543,7 +547,9 @@ The plugin cannot read the relay's own settings, so the form asks you:
   control does not start without it;
 - its state after a power cut, its own switch-off timer, and whether it reports its real state
   (each defaults to "I don't know", treated cautiously);
-- the repeat interval (10 to 300 seconds, default 300);
+- the repeat interval (10 to 300 seconds, default 300) — asked only where something is repeated:
+  the relay does not report its state, or it may have its own timer; a declared timer's length
+  is asked with the timer, and "boiler heats above" with the boiler's power mapped (advanced);
 - "Relay after hand-back": off (default) or on.
 
 The form's texts recommend: the relay on the boiler's room-thermostat terminals, never in its
@@ -629,8 +635,8 @@ binary_sensor:
 ```
 
 In the plugin: the setpoint number is the setpoint entity, the heating switch the heating switch;
-the control step offers both as "Held by the device", with the hand-back "Write a value", whose
-value and effect you declare.
+both are held by the device, as ESPHome holds them — the form does not ask their write types —,
+with the hand-back "Write a value", whose value and effect you declare.
 
 With these start values, a house whose Home Assistant stays down after the ESP restarts is **not
 heated** until Home Assistant returns. The alternative is a moderate start: the heating switch
@@ -648,8 +654,8 @@ names it. Binary sensors (the flame) cannot repeat; they are judged by availabil
 
 EMS-ESP's flow setpoint (`selflowtemp`) lapses within about a minute, and EMS-ESP does not repeat
 it, so the plugin writes it every 30 seconds. Pick it as the setpoint entity and as its
-read-back. The control step offers it as "Expiring", with the hand-back "Device timeout" of 1
-minute: the plugin stops writing and the boiler returns to its own setting within about a
+read-back. It is expiring, as EMS-ESP's setpoint is — the form does not ask its write type —,
+with the hand-back "Device timeout" of 1 minute offered: the plugin stops writing and the boiler returns to its own setting within about a
 minute.
 
 - **"Heating off" is setpoint 0**, EMS-ESP's own documented way to keep heating off ("Force
