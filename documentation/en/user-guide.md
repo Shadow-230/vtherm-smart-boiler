@@ -116,9 +116,13 @@ Only one entry of the integration can exist: it runs one boiler.
    gateway where more than one is set up, how a gateway sits between thermostat and boiler and
    what is wired to its thermostat terminals ([5.3](#53-the-gateway-topology)), and the restart
    indicator.
-4. **Describe the installation.** The sections **Boiler**, **Heating circuits** and **VT zones**
-   (with one **Zone** step for each zone you pick) ask what you know. Leave unknown values
-   empty: the plugin then says what it cannot judge. A field shows only where it can work, by
+4. **Describe the installation.** The sections **Boiler**, the circuits and **VT zones** (with
+   one **Zone** step for each zone you pick) ask what you know. Leave unknown values empty: the
+   plugin then says what it cannot judge. Each heating circuit is a menu item of its own,
+   **Circuit: <name>** — its name picked from Home Assistant's areas or the VT zones, or typed;
+   its number where none is given — and at the advanced level **Add circuit** adds one, up to
+   four; a tick in a circuit's form removes it, never the only one, nor one a zone still names.
+   The simple level shows one circuit, and keeps any other. A field shows only where it can work, by
    what is mapped in **Boiler signals**: in **Boiler** the minimum power always; the maximum
    power and the modulation's meaning with a modulation signal; the gas per hour at minimum and
    maximum power — from the technical data in the boiler's manual, in m³/h (kg/h for LPG) —
@@ -250,7 +254,7 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    Too low, and the boiler may stop by itself again and again in mild weather; a boiler that does
    not condense may condense in its flue. Take the value from the boiler's manual. The monitor
    may suggest a higher value if it sees many short burns; nothing changes by itself.
-3. **Highest water temperature** — the circuit's, in its form under **Heating circuits**: never
+3. **Highest water temperature** — the circuit's, in its form (**Circuit: <name>**): never
    above it, whatever the curve or the comfort correction asks; 70 °C where it is empty. Needed
    for underfloor heating on an unmixed loop. Above the curve only the comfort correction raises
    the water, up to its own limit (default 3 K). The boiler itself may overshoot it a little; an

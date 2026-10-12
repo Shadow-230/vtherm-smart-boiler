@@ -76,6 +76,11 @@
           "signals": "Boiler signals",
           "boiler": "Boiler",
           "circuit": "Heating circuits",
+          "circuit_1": "Circuit: {circuit_1}",
+          "circuit_2": "Circuit: {circuit_2}",
+          "circuit_3": "Circuit: {circuit_3}",
+          "circuit_4": "Circuit: {circuit_4}",
+          "add_circuit": "Add circuit",
           "zones": "VT zones",
           "building": "Building",
           "monitor": "Monitor thresholds",
@@ -163,25 +168,27 @@
         }
       },
       "circuit": {
-        "title": "Heating circuit {number}",
+        "title": "Heating circuit: {name}",
         "description": "How this circuit's water temperature is set.",
         "data": {
+          "name": "Name",
           "control": "Circuit type",
           "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
           "max_flow_alarm": "Too hot alarm at",
           "max_flow_alarm_min": "For at least",
           "flow_entity": "Circuit flow sensor",
-          "add_another": "Add another circuit"
+          "remove_circuit": "Remove this circuit"
         },
         "data_description": {
+          "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
-          "add_another": "Tick to describe one more circuit after this one."
+          "remove_circuit": "Removes the circuit at the save. Not offered for the only one, and refused while a zone still names it."
         }
       },
       "zones": {
@@ -542,7 +549,7 @@
       "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
       "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
-      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, under Heating circuits."
+      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu."
     }
   },
   "options": {
@@ -558,6 +565,11 @@
           "freshness": "Freshness limits",
           "boiler": "Boiler",
           "circuit": "Heating circuits",
+          "circuit_1": "Circuit: {circuit_1}",
+          "circuit_2": "Circuit: {circuit_2}",
+          "circuit_3": "Circuit: {circuit_3}",
+          "circuit_4": "Circuit: {circuit_4}",
+          "add_circuit": "Add circuit",
           "zones": "VT zones",
           "building": "Building",
           "monitor": "Monitor thresholds",
@@ -756,25 +768,27 @@
         }
       },
       "circuit": {
-        "title": "Heating circuit {number}",
+        "title": "Heating circuit: {name}",
         "description": "How this circuit's water temperature is set.",
         "data": {
+          "name": "Name",
           "control": "Circuit type",
           "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
           "max_flow_alarm": "Too hot alarm at",
           "max_flow_alarm_min": "For at least",
           "flow_entity": "Circuit flow sensor",
-          "add_another": "Add another circuit"
+          "remove_circuit": "Remove this circuit"
         },
         "data_description": {
+          "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
           "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
-          "add_another": "Tick to describe one more circuit after this one."
+          "remove_circuit": "Removes the circuit at the save. Not offered for the only one, and refused while a zone still names it."
         }
       },
       "zones": {
@@ -1145,7 +1159,7 @@
       "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
       "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
-      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, under Heating circuits."
+      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, its own item in the menu."
     }
   },
   "selector": {

@@ -76,6 +76,11 @@
           "signals": "Sygnały kotła",
           "boiler": "Kocioł",
           "circuit": "Obiegi grzewcze",
+          "circuit_1": "Obieg: {circuit_1}",
+          "circuit_2": "Obieg: {circuit_2}",
+          "circuit_3": "Obieg: {circuit_3}",
+          "circuit_4": "Obieg: {circuit_4}",
+          "add_circuit": "Dodaj obieg",
           "zones": "Strefy VT",
           "building": "Budynek",
           "monitor": "Progi monitora",
@@ -163,25 +168,27 @@
         }
       },
       "circuit": {
-        "title": "Obieg grzewczy {number}",
+        "title": "Obieg grzewczy: {name}",
         "description": "Jak ustalana jest temperatura wody w tym obiegu.",
         "data": {
+          "name": "Nazwa",
           "control": "Typ obiegu",
           "max_flow": "Najwyższa temperatura wody",
           "fixed_temperature": "Temperatura stała",
           "max_flow_alarm": "Alarm za gorąco od",
           "max_flow_alarm_min": "Przez co najmniej",
           "flow_entity": "Czujnik zasilania obiegu",
-          "add_another": "Dodaj kolejny obieg"
+          "remove_circuit": "Usuń ten obieg"
         },
         "data_description": {
+          "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
-          "add_another": "Zaznacz, aby po tym opisać jeszcze jeden obieg."
+          "remove_circuit": "Usuwa obieg przy zapisie. Niedostępne dla jedynego obiegu i odrzucane, póki strefa wskazuje ten obieg."
         }
       },
       "zones": {
@@ -542,7 +549,7 @@
       "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną.",
       "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
       "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia.",
-      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, w Obiegach grzewczych."
+      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu."
     }
   },
   "options": {
@@ -558,6 +565,11 @@
           "freshness": "Limity świeżości",
           "boiler": "Kocioł",
           "circuit": "Obiegi grzewcze",
+          "circuit_1": "Obieg: {circuit_1}",
+          "circuit_2": "Obieg: {circuit_2}",
+          "circuit_3": "Obieg: {circuit_3}",
+          "circuit_4": "Obieg: {circuit_4}",
+          "add_circuit": "Dodaj obieg",
           "zones": "Strefy VT",
           "building": "Budynek",
           "monitor": "Progi monitora",
@@ -756,25 +768,27 @@
         }
       },
       "circuit": {
-        "title": "Obieg grzewczy {number}",
+        "title": "Obieg grzewczy: {name}",
         "description": "Jak ustalana jest temperatura wody w tym obiegu.",
         "data": {
+          "name": "Nazwa",
           "control": "Typ obiegu",
           "max_flow": "Najwyższa temperatura wody",
           "fixed_temperature": "Temperatura stała",
           "max_flow_alarm": "Alarm za gorąco od",
           "max_flow_alarm_min": "Przez co najmniej",
           "flow_entity": "Czujnik zasilania obiegu",
-          "add_another": "Dodaj kolejny obieg"
+          "remove_circuit": "Usuń ten obieg"
         },
         "data_description": {
+          "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Bez mieszania, prosto z kotła; mieszany przez kocioł (drugi obieg mieszany przez kocioł); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa tylko dla jednego obiegu zasilanego prosto z kotła albo przez stały zawór. Zły typ sprawia, że sterowanie odmawia albo źle ocenia, co dociera do pokoi.",
           "max_flow": "Najwyższa temperatura dla tego obiegu, w °C — przy sterowaniu żadna nastawa powyżej niej, cokolwiek wyliczy krzywa lub korekta (70 °C, gdy puste). Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje chłodne w silny mróz, bo krzywa jest ucięta. Kocioł może ją przekroczyć o własną histerezę — powie o tym alarm zbyt gorącej wody. Obowiązuje tylko, gdy steruje wtyczka: po oddaniu sterowania albo gdy Home Assistant nie działa, jedynym limitem jest własne maksimum kotła albo termostatu ściennego, więc ustaw tam też maksimum podłogówki bez mieszacza.",
           "fixed_temperature": "Potrzebna dla termostatycznego zaworu mieszającego (stałego): jego nastawa w °C. Woda z kotła jest utrzymywana co najmniej 5 K wyżej, żeby zawór mieszający mógł ją osiągnąć; wyższa niż nastawa zaworu sprawia, że woda jest cieplejsza niż trzeba.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
           "flow_entity": "Własna temperatura zasilania obiegu mieszanego. Bez niej nie da się stwierdzić, czy ciepło do niego dociera.",
-          "add_another": "Zaznacz, aby po tym opisać jeszcze jeden obieg."
+          "remove_circuit": "Usuwa obieg przy zapisie. Niedostępne dla jedynego obiegu i odrzucane, póki strefa wskazuje ten obieg."
         }
       },
       "zones": {
@@ -1145,7 +1159,7 @@
       "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną.",
       "interface_not_answered": "Najpierw odpowiedz w „Interfejs kotła”: to, jak bramka stoi między termostatem a kotłem, i co jest na jej zaciskach termostatu, musi pasować do tej ścieżki zapisu.",
       "connection_not_answered": "Najpierw odpowiedz w „Połączenie i typ kotła”, potem w „Interfejs kotła”: pytania interfejsu wynikają z połączenia.",
-      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, w Obiegach grzewczych."
+      "highest_outside_entity_range": "Encja nastawy nie przyjmuje najwyższej temperatury wody obiegu: zmień ją w formularzu obiegu, jego pozycji w menu."
     }
   },
   "selector": {
