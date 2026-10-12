@@ -229,7 +229,8 @@ def test_every_blocker_is_listed() -> None:
             RADIATORS,
         ),
         (OTGW | {"curve": {"design_outdoor": 10, "design_flow": 55, "room": 19.5}}, RADIATORS),
-        (OTGW | {"curve": {"design_outdoor": -15, "design_flow": 75}}, RADIATORS),
+        # I8 (F2): a hand-edited cap of the section's own below the design flow.
+        (OTGW | {"curve": {"design_outdoor": -15, "design_flow": 75}, "hard_max": 70}, RADIATORS),
         # X6: what is wired to the gateway's thermostat terminals (decision 1).
         (OTGW | {"thermostat_kind": "on_off"}, RADIATORS),
         (OTGW | {"thermostat_kind": "unknown"}, RADIATORS),
@@ -1220,7 +1221,10 @@ def test_the_heating_switch_block_is_lifted_in_one_place(monkeypatch: pytest.Mon
             "design_flow_too_low",
         ),
         ({"curve": {"design_outdoor": -15, "design_flow": 26, "room": 22}}, "design_flow_too_low"),
-        ({"curve": {"design_outdoor": -15, "design_flow": 72}}, "design_flow_above_hard_max"),
+        (  # I8 (F2): a cap of the section's own — a hand edit; the circuit's caps the curve
+            {"curve": {"design_outdoor": -15, "design_flow": 72}, "hard_max": 70},
+            "design_flow_above_hard_max",
+        ),
         ({"curve": CURVE, "hard_max": 50}, "design_flow_above_hard_max"),
         (
             {"curve": {"design_outdoor": 10, "design_flow": 55, "room": 19.5}},

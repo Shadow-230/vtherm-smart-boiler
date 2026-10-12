@@ -166,8 +166,8 @@
         "title": "Heating circuit {number}",
         "description": "How this circuit's water temperature is set.",
         "data": {
-          "control": "Control",
-          "max_flow": "Maximum flow temperature",
+          "control": "Circuit type",
+          "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
           "max_flow_alarm": "Too hot alarm at",
           "max_flow_alarm_min": "For at least",
@@ -175,8 +175,8 @@
           "add_another": "Add another circuit"
         },
         "data_description": {
-          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
-          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop: control never asks for more, but the boiler may overshoot it by its own hysteresis — set the alarm below to be told. Needed for underfloor on an unmixed loop. Too high overheats the floor. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
+          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
@@ -370,12 +370,11 @@
       },
       "control_curve": {
         "title": "Heating curve and limits",
-        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. The water is also capped by the boiler's maximum heating setpoint ({boiler_max}, boiler step) and the first circuit's maximum flow temperature ({circuit_max}, circuit step): the lowest of the three — these two and the highest water temperature below — applies.",
+        "description": "The flow temperature the house needs at each outdoor temperature, the lowest water temperature, and how long heating waits for slow valves. The water is capped by the circuit's highest water temperature ({circuit_max}, circuit step; 70 °C where none) and the boiler's maximum heating setpoint ({boiler_max}, boiler step): the lower applies.",
         "data": {
           "design_outdoor": "Outdoor temperature at the hardest frost (curve point)",
           "design_flow": "Design flow temperature",
           "hard_min": "Lowest water temperature",
-          "hard_max": "Highest water temperature",
           "activation_delay_s": "Activation delay",
           "room": "Room temperature of the curve (Manual)",
           "exponent": "Curve exponent",
@@ -392,7 +391,6 @@
           "design_outdoor": "The curve's design point, in °C: at this outdoor temperature the water is at the design flow temperature. Default −15 °C. Too cold a value gives too little water in frost.",
           "design_flow": "The flow temperature the heating needs at the hardest frost (the curve point), in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost. SmartPI (0.4.0) learns its own outdoor term in each zone, which cannot be switched off, so the weather counts twice — in the curve and in the zone: set the curve to what the house needs, no higher.",
           "hard_min": "The lowest water temperature the plugin sets, in °C, set like a point of the curve. Default 20 °C. Too low: in mild weather the boiler stops by itself again and again, and a boiler that is not condensing condenses in its flue — take the value from its manual. Too high: water warmer than the rooms need, and more gas. When the boiler keeps stopping at this temperature, the plugin shows its evidence and a suggested value; it never changes this setting itself.",
-          "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow. Too high: emitters, or a floor without its own maximum, get water that hot; too low: rooms stay cold in hard frost, as the curve is cut off. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum holds.",
           "activation_delay_s": "Seconds heating waits after the first call for heat, so slow valves (thermoelectric, underfloor) open before the boiler and its pump run — as Versatile Thermostat's central boiler did; pre-filled from VT's own setting where VT kept one. Stopping is never delayed. Default 0: at once. Risk: a zone whose heating pulse is shorter than the delay never starts the boiler, and pulses close to it give short burns; without a heating switch (\"off\" as a low setpoint) the pump may run anyway.",
           "room": "With Manual: the setpoint of the warmest room, the one you want heated highest, in °C. Default 20 °C. Too low leaves rooms cold in mild weather, where the curve gives little water above it; too high raises the whole curve and wastes gas. With Auto it is the start value until a zone is known.",
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
@@ -489,7 +487,6 @@
       "mqtt_topic_invalid": "Enter the topic level as the gateway's firmware uses it, without spaces or the wildcards + and #.",
       "hand_back_value_missing": "The value method needs a hand-back value.",
       "hand_back_entity_missing": "The switch method needs the external control switch.",
-      "hard_limits_out_of_order": "The highest water temperature must be above the lowest.",
       "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts.",
       "hand_back_timeout_not_expiring": "The device's timeout hands back only with expiring writes; choose a value or a switch.",
       "hand_back_value_out_of_range": "The hand-back value is outside what the setpoint entity accepts.",
@@ -544,7 +541,8 @@
       "path_not_for_connection": "The write path does not fit how the boiler is connected. Change the connection under \"Connection and boiler type\" first.",
       "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
-      "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection."
+      "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
+      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, under Heating circuits."
     }
   },
   "options": {
@@ -761,8 +759,8 @@
         "title": "Heating circuit {number}",
         "description": "How this circuit's water temperature is set.",
         "data": {
-          "control": "Control",
-          "max_flow": "Maximum flow temperature",
+          "control": "Circuit type",
+          "max_flow": "Highest water temperature",
           "fixed_temperature": "Fixed temperature",
           "max_flow_alarm": "Too hot alarm at",
           "max_flow_alarm_min": "For at least",
@@ -770,8 +768,8 @@
           "add_another": "Add another circuit"
         },
         "data_description": {
-          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); mixed by a separate controller; or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
-          "max_flow": "The most this circuit may receive, in °C, e.g. underfloor heating on an unmixed loop: control never asks for more, but the boiler may overshoot it by its own hysteresis — set the alarm below to be told. Needed for underfloor on an unmixed loop. Too high overheats the floor. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
+          "control": "Unmixed, straight from the boiler; mixed through the boiler (a second circuit the boiler mixes); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs only for one circuit fed straight from the boiler, or through a fixed valve. The wrong type makes control refuse, or misjudge what reaches the rooms.",
+          "max_flow": "The most this circuit may receive, in °C — with control, no setpoint above it, whatever the curve or a correction asks (70 °C where empty). Needed for underfloor on an unmixed loop. Too high overheats emitters or a floor; too low: rooms stay cold in hard frost, as the curve is cut off. The boiler may overshoot it by its own hysteresis — the too-hot alarm tells. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum is the only one, so set an unmixed underfloor loop's maximum there too.",
           "fixed_temperature": "Needed for a thermostatic mixing valve (fixed): its setting in °C. The boiler's water is kept at least 5 K above it, so the mixing valve can reach it; set higher than the valve's setting, the water runs hotter than needed.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
@@ -885,12 +883,11 @@
       },
       "control_curve": {
         "title": "Heating curve and limits",
-        "description": "The flow temperature the house needs at each outdoor temperature, the limits no setpoint may pass, and how long heating waits for slow valves. The water is also capped by the boiler's maximum heating setpoint ({boiler_max}, boiler step) and the first circuit's maximum flow temperature ({circuit_max}, circuit step): the lowest of the three — these two and the highest water temperature below — applies.",
+        "description": "The flow temperature the house needs at each outdoor temperature, the lowest water temperature, and how long heating waits for slow valves. The water is capped by the circuit's highest water temperature ({circuit_max}, circuit step; 70 °C where none) and the boiler's maximum heating setpoint ({boiler_max}, boiler step): the lower applies.",
         "data": {
           "design_outdoor": "Outdoor temperature at the hardest frost (curve point)",
           "design_flow": "Design flow temperature",
           "hard_min": "Lowest water temperature",
-          "hard_max": "Highest water temperature",
           "activation_delay_s": "Activation delay",
           "room": "Room temperature of the curve (Manual)",
           "exponent": "Curve exponent",
@@ -907,7 +904,6 @@
           "design_outdoor": "The curve's design point, in °C: at this outdoor temperature the water is at the design flow temperature. Default −15 °C. Too cold a value gives too little water in frost.",
           "design_flow": "The flow temperature the heating needs at the hardest frost (the curve point), in °C, e.g. the value on your boiler's own curve. Required; there is no default. Too high wastes gas and makes the burner cycle; too low leaves rooms cold in hard frost. SmartPI (0.4.0) learns its own outdoor term in each zone, which cannot be switched off, so the weather counts twice — in the curve and in the zone: set the curve to what the house needs, no higher.",
           "hard_min": "The lowest water temperature the plugin sets, in °C, set like a point of the curve. Default 20 °C. Too low: in mild weather the boiler stops by itself again and again, and a boiler that is not condensing condenses in its flue — take the value from its manual. Too high: water warmer than the rooms need, and more gas. When the boiler keeps stopping at this temperature, the plugin shows its evidence and a suggested value; it never changes this setting itself.",
-          "hard_max": "No setpoint above this, whatever the curve or a correction asks, in °C. Default 70 °C. Underfloor heating also needs its circuit's maximum flow. Too high: emitters, or a floor without its own maximum, get water that hot; too low: rooms stay cold in hard frost, as the curve is cut off. It binds only while the plugin controls: after a hand-back or while Home Assistant is down, the boiler's or the wall thermostat's own maximum holds.",
           "activation_delay_s": "Seconds heating waits after the first call for heat, so slow valves (thermoelectric, underfloor) open before the boiler and its pump run — as Versatile Thermostat's central boiler did; pre-filled from VT's own setting where VT kept one. Stopping is never delayed. Default 0: at once. Risk: a zone whose heating pulse is shorter than the delay never starts the boiler, and pulses close to it give short burns; without a heating switch (\"off\" as a low setpoint) the pump may run anyway.",
           "room": "With Manual: the setpoint of the warmest room, the one you want heated highest, in °C. Default 20 °C. Too low leaves rooms cold in mild weather, where the curve gives little water above it; too high raises the whole curve and wastes gas. With Auto it is the start value until a zone is known.",
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
@@ -1067,7 +1063,6 @@
       "fixed_temperature_missing": "A thermostatic mixing valve (fixed) needs its temperature setting.",
       "hand_back_value_missing": "The value method needs a hand-back value.",
       "hand_back_entity_missing": "The switch method needs the external control switch.",
-      "hard_limits_out_of_order": "The highest water temperature must be above the lowest.",
       "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts.",
       "hand_back_timeout_not_expiring": "The device's timeout hands back only with expiring writes; choose a value or a switch.",
       "hand_back_value_out_of_range": "The hand-back value is outside what the setpoint entity accepts.",
@@ -1149,7 +1144,8 @@
       "path_not_for_connection": "The write path does not fit how the boiler is connected. Change the connection under \"Connection and boiler type\" first.",
       "topology_not_for_connection": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: choose the virtual topology.",
       "interface_not_answered": "Answer \"Boiler interface\" first: how the gateway sits between thermostat and boiler, and what is on its thermostat terminals, must suit this write path.",
-      "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection."
+      "connection_not_answered": "Answer \"Connection and boiler type\" first, then \"Boiler interface\": the interface's questions follow the connection.",
+      "highest_outside_entity_range": "The setpoint entity does not take the circuit's highest water temperature: change it in the circuit's form, under Heating circuits."
     }
   },
   "selector": {
@@ -1169,7 +1165,7 @@
       "options": {
         "unmixed_shared": "Unmixed, straight from the boiler",
         "through_boiler": "Mixed through the boiler",
-        "separate": "Mixed by a separate controller",
+        "separate": "Controlled by other automation (mixer, pump)",
         "passive_fixed": "Thermostatic mixing valve (fixed)"
       }
     },

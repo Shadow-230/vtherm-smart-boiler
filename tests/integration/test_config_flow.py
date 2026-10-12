@@ -72,8 +72,18 @@ async def step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]
     """One answer in the setup. I7: where it returns the menu, the walk goes on as the wizard
     went before the menu — "Configuration incomplete" opens the first section left, in the
     wizard's order, and "Create" makes the entry."""
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], data)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], curve_answer(result, data)
+    )
     return await through_menu(hass, result)
+
+
+def curve_answer(result: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """I8.7a (decision F2): the curve step no longer asks the highest water temperature — it is
+    the circuit's; an answer written before keeps the rest."""
+    if result.get("step_id") == "control_curve":
+        return {k: v for k, v in data.items() if k != "hard_max"}
+    return data
 
 
 async def through_menu(hass: HomeAssistant, result: dict[str, Any]) -> dict[str, Any]:
@@ -258,17 +268,24 @@ async def test_advanced_flow_with_two_circuits(
     )
     assert result["step_id"] == "circuit"
     result = await step(hass, result, {"control": "passive_fixed", "add_another": False})
+    assert "fixed_temperature" in result["data_schema"].schema  # revealed: shown again (I8)
+    assert not result["errors"]
+    result = await step(hass, result, {"control": "passive_fixed", "add_another": False})
     assert result["errors"] == {"fixed_temperature": "fixed_temperature_missing"}
-    result = await step(
-        hass, result, {"control": "unmixed_shared", "max_flow": 45, "add_another": True}
-    )
+    direct = {"control": "unmixed_shared", "max_flow": 45, "add_another": True}
+    result = await step(hass, result, direct)
+    # The boiler's flow reads a direct circuit: the too-hot alarm revealed, shown again (I8).
+    assert "max_flow_alarm" in result["data_schema"].schema
+    result = await step(hass, result, direct)
     assert result["step_id"] == "circuit"
     assert result["description_placeholders"] == {"number": "2"}
-    result = await step(
-        hass,
-        result,
-        {"control": "separate", "flow_entity": entities["return"], "add_another": False},
-    )
+    mixed = {"control": "separate", "add_another": False}
+    result = await step(hass, result, mixed)  # a mixed circuit: its own flow sensor revealed
+    assert "flow_entity" in result["data_schema"].schema
+    mixed |= {"flow_entity": entities["return"]}
+    result = await step(hass, result, mixed)  # read: its too-hot alarm revealed
+    assert "max_flow_alarm" in result["data_schema"].schema
+    result = await step(hass, result, mixed)
     result = await step(hass, result, {"zones": [entities["living"], entities["bedroom"]]})
     assert "circuit" in result["data_schema"].schema
     result = await step(hass, result, {"circuit": "main", "emitter": "radiator"})
@@ -469,7 +486,9 @@ async def options_step(hass: HomeAssistant, result: dict[str, Any], data: dict[s
         and set(data) <= {"write_path", *LATER_INTERFACE_KEYS}
     ):
         return result
-    result = await hass.config_entries.options.async_configure(result["flow_id"], data)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], curve_answer(result, data)
+    )
     if "next_step_id" in data or result["type"] is not FlowResultType.MENU:
         return result
     return await hass.config_entries.options.async_configure(
@@ -631,8 +650,7 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "thermostat_kind": "opentherm",
         "gateway_id": "living_room_gw",
         "curve": {"design_flow": 52},
-        "hard_min": 25,
-        "hard_max": 65,
+        "hard_min": 25,  # I8 (F2): the highest water temperature is the circuit's
         "activation_delay_s": 0,  # VT's delay, confirmed by saving (decision 5)
         # G11 B: on by default, shown in the simple level's curve step and stored.
         "comfort_correction": True,
@@ -693,9 +711,7 @@ async def test_control_with_an_entity_checks_the_hand_back(
     )
     assert result["step_id"] == "control_curve"
     curve = {"design_outdoor": -15, "design_flow": 50}
-    result = await options_step(hass, result, curve | {"hard_min": 50, "hard_max": 40})
-    assert result["errors"] == {"hard_max": "hard_limits_out_of_order"}
-    result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 60})
+    result = await options_step(hass, result, curve | {"hard_min": 25})
     assert result["step_id"] == "control_alarms"  # a value declared "own control" (Y1)
     result = await options_step(hass, result, {"write_ignored": "info"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -1134,6 +1150,7 @@ async def test_control_limits_must_suit_the_setpoint_entity(
         "number.boiler_flow", "45", {"unit_of_measurement": "°C", "min": 20, "max": 60}
     )
     entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    set_circuit_max(hass, entry_id, 60)  # the highest water temperature, within the entity's
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,
@@ -1157,14 +1174,108 @@ async def test_control_limits_must_suit_the_setpoint_entity(
         "frost_limit": 5,
         "frost_release": 7,
     }
-    result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 70})
-    assert result["errors"] == {"hard_max": "limits_outside_entity_range"}
-    result = await options_step(hass, result, curve | {"hard_min": 25, "hard_max": 60})
+    result = await options_step(hass, result, curve | {"hard_min": 25})
     assert result["step_id"] == "control_behaviour"
     result = await options_step(hass, result, {"off_setpoint": 10})
     assert result["errors"] == {"off_setpoint": "off_setpoint_outside_entity_range"}
     result = await options_step(hass, result, {"off_setpoint": 20})
     assert result["step_id"] == "control_alarms"
+
+
+@pytest.mark.parametrize(
+    ("maximum", "lowest", "errors"),
+    [
+        (30, 25, {"design_flow": "design_flow_above_hard_max"}),  # 35 °C would be cut off
+        (None, 25, {"base": "highest_outside_entity_range"}),  # the default, 70 °C, above 60
+        (60, 25, {}),
+    ],
+    ids=["lowest_above_highest", "highest_outside_entity", "fits"],
+)
+async def test_the_curve_checks_the_circuits_highest_water_temperature(
+    hass: HomeAssistant,
+    entities: dict[str, str],
+    maximum: float | None,
+    lowest: float,
+    errors: dict[str, str],
+) -> None:
+    """I8 (decision F2): the highest water temperature is the circuit's — the curve step checks
+    the design flow not above it (the curve would be cut off), and it within what the setpoint
+    entity takes, saying where to change it."""
+    hass.states.async_set(
+        "number.boiler_flow", "45", {"unit_of_measurement": "°C", "min": 20, "max": 60}
+    )
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    if maximum is not None:
+        set_circuit_max(hass, entry_id, maximum)
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    details = {
+        "setpoint_entity": "number.boiler_flow",
+        "write_type": "expiring",
+        "hand_back": "value",
+        "hand_back_value": 30,
+        "hand_back_value_effect": "own_control",
+    }
+    result = await options_step(hass, result, details)
+    assert result["step_id"] == "control_curve"
+    assert "hard_max" not in {str(m) for m in result["data_schema"].schema}
+    curve = {"design_outdoor": -15, "design_flow": 35, "hard_min": lowest}
+    result = await options_step(hass, result, curve)
+    if errors:
+        assert result["errors"] == errors
+    else:
+        assert result["step_id"] == "control_behaviour"
+
+
+async def test_the_lowest_above_the_boilers_maximum_is_refused_at_the_curve(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """PB-26 with I8 (decision F2): the boiler's maximum heating setpoint below the lowest water
+    temperature — the curve checks the circuit's highest, which passes — is refused on the
+    lowest: the hand-back would send it first, and control could never give it."""
+    hass.states.async_set(
+        "number.boiler_flow", "45", {"unit_of_measurement": "°C", "min": 20, "max": 60}
+    )
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    set_circuit_max(hass, entry_id, 60)
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    params = {**entry.options["parameters"], "max_ch_setpoint": 40}
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "parameters": params})
+    result = await open_control(hass, entry_id)
+    result = await options_step(
+        hass,
+        result,
+        {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
+    )
+    details = {
+        "setpoint_entity": "number.boiler_flow",
+        "write_type": "expiring",
+        "hand_back": "value",
+        "hand_back_value": 30,
+        "hand_back_value_effect": "own_control",
+    }
+    result = await options_step(hass, result, details)
+    result = await options_step(
+        hass, result, {"design_outdoor": -15, "design_flow": 55, "hard_min": 45}
+    )
+    assert result["errors"] == {"hard_min": "hard_min_above_max"}
+
+
+def test_the_highest_water_temperature_a_section_still_holds_comes_first() -> None:
+    """I8 (decision F2): a highest water temperature the control section still holds (a hand
+    edit) is taken first, as the parser takes it; else the first circuit's, else 70 °C."""
+    from custom_components.vtherm_smart_boiler.config_flow import highest_water_of
+
+    circuits = {"circuits": [{"id": "main", "max_flow": 50}]}
+    assert highest_water_of(circuits | {"control": {"hard_max": 60}}) == 60.0
+    assert highest_water_of(circuits) == 50.0
+    assert highest_water_of({"circuits": ["garbage"]}) == 70.0
+    assert highest_water_of({"circuits": [{"id": "main", "max_flow": True}]}) == 70.0
 
 
 async def test_off_is_not_checked_as_a_setpoint_with_a_heating_switch(
@@ -1180,6 +1291,7 @@ async def test_off_is_not_checked_as_a_setpoint_with_a_heating_switch(
     )
     hass.states.async_set(CH_SWITCH, "on")
     entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    set_circuit_max(hass, entry_id, 60)  # the highest water temperature, within the entity's
     result = await open_control(hass, entry_id)
     result = await options_step(
         hass,
@@ -1906,6 +2018,15 @@ async def open_circuit(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
     return await options_step(hass, menu, {"next_step_id": "circuit"})
 
 
+def set_circuit_max(hass: HomeAssistant, entry_id: str, maximum: float) -> None:
+    """The first circuit's highest water temperature, as its form stores it (I8, F2)."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    circuits = [dict(c) for c in entry.options["circuits"]]
+    circuits[0]["max_flow"] = maximum
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "circuits": circuits})
+
+
 def circuits_of(hass: HomeAssistant, entry_id: str) -> list[dict[str, Any]]:
     return hass.config_entries.async_get_entry(entry_id).options["circuits"]
 
@@ -2560,7 +2681,7 @@ async def test_a_circuit_with_zones_cannot_be_removed(
     options = _rich_options(entities) | {"level": "advanced"}
     entry_id = await _entry(hass, options)
     result = await open_circuit(hass, entry_id)
-    first = {"control": "unmixed_shared", "flow_entity": entities["return"]}
+    first = {"control": "unmixed_shared"}  # its stored flow sensor hidden, kept (I8, F2)
     result = await options_step(hass, result, first | {"add_another": False})
     assert result["step_id"] == "circuit"
     assert result["errors"] == {"base": "circuit_has_zones"}
@@ -2910,6 +3031,8 @@ async def test_a_circuits_flow_sensor_is_checked_on_the_server(
     entry_id = await create_entry(hass, entities, "advanced")
     result = await open_circuit(hass, entry_id)
     answer = {"control": "separate", "add_another": False}
+    result = await options_step(hass, result, answer)  # the type reveals the sensor (I8, A2)
+    assert "flow_entity" in result["data_schema"].schema
     result = await options_step(hass, result, answer | {"flow_entity": "sensor.humidity"})
     assert result["errors"] == {"flow_entity": "entity_not_suitable"}
     result = await options_step(hass, result, answer | {"flow_entity": entities["return"]})

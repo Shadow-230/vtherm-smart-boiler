@@ -250,6 +250,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_relay_reads(hass, entry)
     if entry.minor_version < 18:
         _migrate_read_backs(hass, entry)
+    if entry.minor_version < 19:
+        _migrate_highest_water(hass, entry)
     return True
 
 
@@ -535,6 +537,55 @@ def _migrate_read_backs(hass: HomeAssistant, entry: ConfigEntry) -> None:
         kept = READ_BACK_SIGNALS.values()
         options[CONTROL] = {k: v for k, v in control.items() if k not in kept}
     hass.config_entries.async_update_entry(entry, options=options, minor_version=18)
+
+
+def _migrate_highest_water(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I8.7a (minor version 19): the curve's highest water temperature is merged into the
+    circuits' (`docs/plan-0.2-i8.md` F2). Each circuit's maximum becomes the lower of its own and
+    the control section's — the boiler's water never went above that — and the section keeps
+    none. A section that writes and stores none ran with the default, which counts as its; one
+    that is no number in the circuits' range is the default too. The default is what a circuit
+    without a maximum gets now, so only another value is written there (no too-hot alarm the
+    user never set); where no circuit is stored, the one the options imply (``main``, fed
+    straight) gets it. Circuits of another shape are left as stored, and the section's value
+    with them, as is a circuit maximum that is no number in the circuits' range, for the
+    options' check to report."""
+    from .config import CIRCUIT_BOUNDS
+    from .const import CIRCUITS
+    from .control_config import CONTROL_DEFAULTS, HARD_MAX_FROM_BEFORE
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    circuits = options.get(CIRCUITS)
+    writes = isinstance(control, Mapping) and control.get("write_path") not in (None, "", "none")
+    if (
+        isinstance(control, Mapping)
+        and (HARD_MAX_FROM_BEFORE in control or writes)
+        and (circuits is None or isinstance(circuits, list))
+    ):
+        default = float(CONTROL_DEFAULTS["hard_max"])
+        low, high = CIRCUIT_BOUNDS["max_flow"]
+        highest = _stored_float(control.get(HARD_MAX_FROM_BEFORE), default)
+        if not low <= highest <= high:
+            highest = default
+        # The default is what a circuit without a maximum gets now: only another is written,
+        # so no circuit gains a too-hot alarm its user never set.
+        stored = circuits or (
+            [{"id": "main", "control": "unmixed_shared"}] if highest != default else []
+        )
+        merged: list[Any] = []
+        for item in stored:
+            raw = item.get("max_flow") if isinstance(item, Mapping) else None
+            # One that is no number in the circuits' range is left for the check to report.
+            readable = raw is None or low <= _stored_float(raw, high + 1.0) <= high
+            if isinstance(item, Mapping) and readable and (raw is not None or highest != default):
+                own = _stored_float(raw, highest)
+                item = {**item, "max_flow": min(own, highest)}
+            merged.append(item)
+        if merged or circuits is not None:
+            options[CIRCUITS] = merged
+        options[CONTROL] = {k: v for k, v in control.items() if k != HARD_MAX_FROM_BEFORE}
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=19)
 
 
 def _stored_float(raw: Any, default: float) -> float:

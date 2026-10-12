@@ -244,18 +244,18 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    cold in mild weather. An entry set up before this version runs Manual with its value. The
    control state shows the room temperature in use (`curve_room`).
    With a curve, the building's design load is read at this same temperature. The curve step
-   also shows the boiler's maximum heating setpoint and the first
-   circuit's maximum flow temperature — the lowest of the three, these two and the highest water
-   temperature, applies.
+   also shows the circuit's highest water temperature and the boiler's maximum heating
+   setpoint — the lower applies.
 2. **Lowest water temperature** — the curve never goes below it. Default 20 °C (provisional).
    Too low, and the boiler may stop by itself again and again in mild weather; a boiler that does
    not condense may condense in its flue. Take the value from the boiler's manual. The monitor
    may suggest a higher value if it sees many short burns; nothing changes by itself.
-3. **Highest water temperature** — never above it. Default 70 °C. Above the curve only the
-   comfort correction raises the water, up to its own limit (default 3 K).
-4. **Circuit maximum** — each circuit's "Maximum flow temperature", for example for underfloor
-   heating. The plugin never asks for more. The boiler itself may overshoot it a little; an
-   optional alarm tells you when the measured flow stays too high.
+3. **Highest water temperature** — the circuit's, in its form under **Heating circuits**: never
+   above it, whatever the curve or the comfort correction asks; 70 °C where it is empty. Needed
+   for underfloor heating on an unmixed loop. Above the curve only the comfort correction raises
+   the water, up to its own limit (default 3 K). The boiler itself may overshoot it a little; an
+   alarm tells you when the measured flow stays too high. (Before, the curve step had a highest
+   water temperature of its own; an update keeps the lower of it and the circuit's.)
 
 The water temperature changes slowly (the ramp, default 1 K per minute). It is re-decided every
 5 minutes by default (the decision interval).
@@ -903,7 +903,7 @@ not confirmed.
 | No demand criterion can be judged (3 variants) | set VT's device power, or another one |
 | A room below the frost limit cannot get heat (5 variants) | VT keeps it closed; see text |
 | A heating circuit has no rooms | add its rooms, or remove the circuit |
-| Underfloor heating without a water limit | enter the circuit's maximum flow temperature |
+| Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Auto-TPI cannot learn in some zones | clear "used by the central boiler" in VT |
 | The plugin cannot pause learning in some zones | information |
 | The plugin could not switch learning back on in some zones | switch SmartPI learning on |

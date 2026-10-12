@@ -524,7 +524,7 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
 |---|---|
 | Boiler specification | connection, heat source, type (single-function with or without a hot-water tank, combi, combi with a tank), hot-water priority, min/max power, modulation range, max CH setpoint, condensing, water-pressure limits, gas consumption min/max |
 | Boiler settings (installer menu; later, §9 — S-60) | CH hysteresis, anti-cycle time, pump overrun, summer threshold, built-in curve |
-| Installation | circuits, circuit control type, curve per circuit, emitter types, max underfloor flow, mixing valve, bypass |
+| Installation | circuits, circuit type (I8 F2: "controlled by other automation" was "mixed by a separate controller"), curve per circuit, emitter types, each circuit's highest water temperature (the curve's former maximum merged in), mixing valve, bypass |
 | Building (whole house, in kW; advanced level, for statistics — I8 E2) | design heat load, heating threshold (for statistics: it switches no heating) |
 
 - Every parameter has a source and a confidence, and its source is shown: class default →
@@ -1148,7 +1148,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Control | off; may be switched on from the first day; the verdict after 7 days of data | control is experimental and opt-in; it moves nothing beyond firm bounds, so a wait protects nothing — until it is on, the boiler runs as before (the user's decision, 2026-10-08) |
 | Heating curve | none — the design flow is entered | a wrong curve under-heats or wastes gas; no silent default |
 | Emitter type | none — the user chooses | underfloor needs its own maximum flow; a wrong type hides that |
-| Lowest / highest water temperature | 20 °C (provisional, K4) / 70 °C | the lowest bounds the curve from below — too low, the boiler stops by itself again and again in mild weather and a non-condensing boiler condenses in its flue (take the value from its manual); too high, warmer water than the rooms need (decision 2); 70 °C covers the usual radiator design points and stays under boilers' maximum |
+| Lowest / highest water temperature | 20 °C (provisional, K4) / 70 °C where the circuit gives none (its highest water temperature, the curve's former maximum merged in — I8 F2) | the lowest bounds the curve from below — too low, the boiler stops by itself again and again in mild weather and a non-condensing boiler condenses in its flue (take the value from its manual); too high, warmer water than the rooms need (decision 2); 70 °C covers the usual radiator design points and stays under boilers' maximum |
 | Ramp | 1 K per minute | a setpoint step small enough that the boiler does not overshoot it; zone algorithms follow, and larger swings pause SmartPI's learning (S-47) |
 | Decision interval | 5 min | VT's default cycle |
 | Activation delay | 0 s | as in VT 10.4.0; a delay is for slow valves (decision 5) |

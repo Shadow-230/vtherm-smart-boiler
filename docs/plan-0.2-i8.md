@@ -513,6 +513,33 @@ fields and the freshness limits, I8.5b the read-backs in the signals.
 
 ### I8.7 Circuits and zones: the model (F1, F2, F4, F5)
 
+Claude's call: three pull requests — I8.7a the circuit's form and the merged highest water
+temperature, I8.7b the circuits as menu items, I8.7c the zones on the circuits' side.
+
+- I8.7a ✅ (2026-10-11): the curve step no longer asks the highest water temperature — it is the
+  circuit's ("Highest water temperature", the field once "Maximum flow temperature"), 70 °C
+  where empty; the curve step checks the design flow not above it and it within the setpoint
+  entity's range (`highest_outside_entity_range`, naming the circuit's form). Claude's calls:
+  control caps the water at the circuit's value (`circuit_max`, the default where none) and
+  keeps no cap of its own (the bounds' top; a hand-edited one still counts) — so an entry
+  whose design flow lies above its circuit's maximum, cut off before, is not blocked by the
+  update; only the curve step refuses it when edited. The lowest at the circuit's maximum
+  passes as before (PB-26). Minor version 19 merges the section's highest into each circuit —
+  the lower of the two; a section that writes and stored none ran with the default; the
+  default itself is written nowhere (a circuit without a maximum gets it), so no circuit gains
+  a too-hot alarm its user never set; a circuit maximum that is no number in range, and
+  circuits of another shape, are left for the check to report. A session taken before compares
+  without the section's highest; the restore applies the limits as they are now (PB-11). The
+  circuit form: "Circuit type" ("Controlled by other automation (mixer, pump)" for the type
+  once "mixed by a separate controller"); the fixed temperature for a fixed valve only, the
+  own flow sensor (advanced) for a mixed or fixed-valve circuit only, the too-hot alarm
+  (advanced) with a flow reading — the form shows itself again with what an answer reveals,
+  a flow sensor that is no temperature refused first; a hidden value kept. Noted for the
+  user: where a user's own highest (not the default) is merged into a circuit without a
+  maximum, that circuit gains the too-hot alarm (maximum + 5 K for 10 min), which does not
+  leave hot-water runs out on a circuit the boiler feeds straight. `SCOPE.md` (§6, the
+  defaults table), both user guides (the water limits, the issue table).
+
 - Code: circuits as menu items (up to 4, add, remove, names), the circuit's zones and devices and
   emitters, the merged highest water temperature, the circuit type renamed, the zone form
   reduced to "valves close when off", VT's devices read through `vtherm_link.py`.

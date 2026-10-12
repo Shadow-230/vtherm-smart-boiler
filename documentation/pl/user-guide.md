@@ -257,20 +257,20 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
    najcieplejszego pokoju. Za niska zostawia pokoje zimne przy łagodnej pogodzie. Wpis ustawiony
    przed tą wersją działa ręcznie ze swoją wartością. Stan sterowania pokazuje używaną
    temperaturę (`curve_room`). Przy krzywej projektowe obciążenie budynku jest odczytywane przy
-   tej samej temperaturze. Krok krzywej pokazuje też maksymalną
-   nastawę c.o. kotła i maksymalną temperaturę zasilania pierwszego obiegu — obowiązuje najniższa
-   z trzech wartości: tych dwóch i najwyższej temperatury wody.
+   tej samej temperaturze. Krok krzywej pokazuje też najwyższą temperaturę wody obiegu
+   i maksymalną nastawę c.o. kotła — obowiązuje niższa.
 2. **Najniższa temperatura wody** — krzywa nigdy nie schodzi poniżej niej. Domyślnie 20 °C
    (wartość tymczasowa). Przy zbyt niskiej kocioł może w łagodną pogodę raz po raz sam się
    wyłączać; w kotle niekondensacyjnym może dojść do kondensacji w przewodzie spalinowym. Weź tę
    wartość z instrukcji kotła. Monitor może zaproponować wyższą wartość, jeśli widzi wiele
    krótkich cykli pracy palnika; nic nie zmienia się samo.
-3. **Najwyższa temperatura wody** — nigdy powyżej niej. Domyślnie 70 °C. Ponad krzywą wodę
-   podnosi tylko korekta komfortu, do własnego limitu (domyślnie 3 K, czyli kelwiny — różnica
-   temperatur).
-4. **Maksimum obiegu** — „Maksymalna temperatura zasilania” każdego obiegu, na przykład dla
-   ogrzewania podłogowego. Wtyczka nigdy nie prosi o więcej. Sam kocioł może ją nieco
-   przekroczyć; opcjonalny alarm informuje, gdy zmierzone zasilanie długo jest za wysokie.
+3. **Najwyższa temperatura wody** — ta z obiegu, w jego formularzu w **Obiegach grzewczych**:
+   nigdy powyżej niej, cokolwiek wyliczy krzywa lub korekta komfortu; 70 °C, gdy pole jest
+   puste. Wymagana dla podłogówki bez mieszacza. Ponad krzywą wodę podnosi tylko korekta
+   komfortu, do własnego limitu (domyślnie 3 K, czyli kelwiny — różnica temperatur). Sam kocioł
+   może ją nieco przekroczyć; alarm informuje, gdy zmierzone zasilanie długo jest za wysokie.
+   (Wcześniej krok krzywej miał własną najwyższą temperaturę wody; aktualizacja zachowuje niższą
+   z niej i z tej obiegu.)
 
 Temperatura wody zmienia się powoli (rampa, domyślnie 1 K na minutę). Domyślnie jest ustalana
 na nowo co 5 minut (odstęp decyzji).
@@ -943,7 +943,7 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Żadnego kryterium zapotrzebowania nie da się ocenić (3 warianty) | ustaw moc urządzenia w VT albo inne kryterium |
 | Pokój poniżej progu mrozu nie może dostać ciepła (5 wariantów) | VT trzyma go zamkniętym; zobacz tekst |
 | Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
-| Ogrzewanie podłogowe bez limitu temperatury wody | wpisz maksymalną temperaturę zasilania obiegu |
+| Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Auto-TPI nie może się uczyć w części stref | odznacz w VT „używany przez kocioł centralny” |
 | Wtyczka nie może wstrzymać nauki w części stref | informacja |
 | Wtyczka nie mogła ponownie włączyć nauki w części stref | włącz naukę SmartPI |
