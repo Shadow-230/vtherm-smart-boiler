@@ -2442,7 +2442,7 @@ ENTITY_STEP_ANSWER = {
     ("change", "refused"),
     [
         ({"write_type": "expiring"}, True),
-        ({"ch_write_type": "held"}, True),
+        ({"ch_write_type": "expiring"}, True),
         ({"hand_back_timeout_min": 30}, False),  # judges the timeout method only
         ({}, False),
     ],
@@ -2453,10 +2453,13 @@ async def test_the_write_types_cannot_change_while_a_hand_back_is_owed(
 ) -> None:
     """PB-09: the write types judge the release — a held value must show the hand-back value,
     an expiring one only leave the plugin's — so they are fixed while a hand-back is owed or
-    control holds the boiler, whose hand-back the new options would make."""
+    control holds the boiler, whose hand-back the new options would make. A heating switch is
+    set up, so its write type is asked (I8, decision H1)."""
     number = FakeNumber(rig.hass)
     number.register()
-    await start(rig, **held_entity(number))
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    await start(rig, **held_entity(number, ch_entity=switch.entity_id, ch_write_type="held"))
     await rig.switch(True)
     if owed:
         number.set_available(False)
@@ -2466,7 +2469,8 @@ async def test_the_write_types_cannot_change_while_a_hand_back_is_owed(
         assert unit_of(rig).holding
     answer = {"write_path": "entity", "confirmed_entity": number.entity_id}
     flow = await _first_control_step(rig, answer)
-    answer = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id} | change
+    heating = {"ch_entity": switch.entity_id, "ch_write_type": "held"}
+    answer = ENTITY_STEP_ANSWER | {"setpoint_entity": number.entity_id} | heating | change
     flow = await control_chain.chained(rig.hass.config_entries.options)(flow["flow_id"], answer)
     if refused:
         reason = "hand_back_pending" if owed else "control_holds_boiler"

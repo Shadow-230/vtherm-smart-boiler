@@ -13,8 +13,9 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.vtherm_smart_boiler.config_flow import CONTROL_ITEMS, section_of
 
 # What a flow's control forms were given that their form no longer asks, kept for the form
-# that asks it now — by flow.
+# that asks it now — by flow; and each flow's last control answer.
 _KEPT: dict[str, dict[str, Any]] = {}
+_LAST: dict[str, dict[str, Any]] = {}
 # The item that asks each key that moved (I8.9a): the comfort correction to the curve, VT's
 # activation delay to the behaviour, frost protection to its own item.
 _HOME = {
@@ -46,7 +47,23 @@ def answer(result: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     asked = _fields(result)
     given = {k: kept.pop(k) for k in list(kept) if k in asked and k not in data}
     kept.update({k: v for k, v in data.items() if k not in asked and k != "next_step_id"})
-    return given | {k: v for k, v in data.items() if k in asked or k == "next_step_id"}
+    sent = given | {k: v for k, v in data.items() if k in asked or k == "next_step_id"}
+    _LAST[result["flow_id"]] = sent
+    return sent
+
+
+async def again(manager: Any, result: dict[str, Any], answered: str) -> dict[str, Any]:
+    """A control form shown again with the fields its answer revealed (I8, decision A2): the
+    test's answer held them; answered again with it, as a user fills the new fields in."""
+    while (
+        is_control_form(result)
+        and result["step_id"] == answered
+        and not result.get("errors")
+        and any(k in _fields(result) for k in _KEPT.get(result["flow_id"], {}))
+    ):
+        last = {k: v for k, v in _LAST.get(result["flow_id"], {}).items() if k != "next_step_id"}
+        result = await manager.async_configure(result["flow_id"], answer(result, last))
+    return result
 
 
 def form_values(result: dict[str, Any]) -> dict[str, Any]:
@@ -133,6 +150,8 @@ def chained(manager: Any) -> Any:
         if step.startswith("control"):
             current["data_schema"] = manager._progress[flow_id].cur_step["data_schema"]
         result = await manager.async_configure(flow_id, answer(current, data))
-        return await after(manager, result, step) if "next_step_id" not in data else result
+        if "next_step_id" in data:
+            return result
+        return await after(manager, await again(manager, result, step), step)
 
     return configure

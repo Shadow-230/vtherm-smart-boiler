@@ -761,6 +761,17 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     # I6.2: ESPHome's safe-start tick, asked on the writable-entity step for ESPHome only.
     esphome = {"boiler": {"connection": "esphome"}, "control": {"write_path": "entity"}}
     fields["control_entity"] |= {str(m) for m in flow.control_entity_schema(esphome).schema}
+    # I8 (decision H1): what an answer reveals — each hand-back method's own fields, the
+    # heating switch's write type; the relay's timer length, its repeat interval, and "boiler
+    # heats above" with the boiler's power mapped.
+    for method in ("value", "switch", "timeout"):
+        answers = {"hand_back": method, "ch_entity": "switch.x"}
+        schema = flow.control_entity_schema(options, answers)
+        fields["control_entity"] |= {str(m) for m in schema.schema}
+    powered = options | {"signals": {"boiler_power": "sensor.x"}}
+    relay = flow.control_relay_schema(powered, None, {"relay_off_timer": "minutes"})
+    for step in ("control_relay", "control_relay_from_vt"):
+        fields[step] |= {str(m) for m in relay.schema}
     # I6.2: the signals step reads its hint for the connection into its description.
     from custom_components.vtherm_smart_boiler.control_config import Connection
 

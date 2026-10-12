@@ -73,9 +73,11 @@ async def step(hass: HomeAssistant, result: dict[str, Any], data: dict[str, Any]
     """One answer in the setup. I7: where it returns the menu, the walk goes on as the wizard
     went before the menu — "Configuration incomplete" opens the first section left, in the
     wizard's order, and "Create" makes the entry."""
+    answered = str(result.get("step_id", ""))
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], control_chain.answer(result, curve_answer(result, data))
     )
+    result = await control_chain.again(hass.config_entries.flow, result, answered)
     return await through_menu(hass, result)
 
 
@@ -512,11 +514,13 @@ async def options_step(hass: HomeAssistant, result: dict[str, Any], data: dict[s
     ):
         return result
     answered = str(result.get("step_id", ""))
-    result = await hass.config_entries.options.async_configure(
+    manager = hass.config_entries.options
+    result = await manager.async_configure(
         result["flow_id"], control_chain.answer(result, curve_answer(result, data))
     )
     if "next_step_id" not in data:
-        result = await control_chain.after(hass.config_entries.options, result, answered)
+        result = await control_chain.again(manager, result, answered)
+        result = await control_chain.after(manager, result, answered)
     if "next_step_id" in data or result["type"] is not FlowResultType.MENU:
         return result
     return await hass.config_entries.options.async_configure(
@@ -724,11 +728,12 @@ async def test_control_with_an_entity_checks_the_hand_back(
         )
         assert result["errors"] == {"write_type": "write_type_not_supported"}
     details = {"setpoint_entity": "number.boiler_flow", "write_type": "held"}
-    result = await options_step(
-        hass,
-        result,
-        details | {"hand_back": "value", "hand_back_value": 0, "ch_entity": "switch.heating"},
-    )
+    switched = details | {"hand_back": "value", "hand_back_value": 0, "ch_entity": "switch.heating"}
+    result = await options_step(hass, result, switched)
+    # I8 (decision H1): the heating switch reveals its write type — shown first, then judged.
+    assert (result["step_id"], result["errors"]) == ("control_entity", {})
+    assert "ch_write_type" in {str(marker) for marker in result["data_schema"].schema}
+    result = await options_step(hass, result, switched)
     assert result["errors"] == {"ch_write_type": "ch_write_type_not_supported"}
     result = await options_step(hass, result, details | {"hand_back": "value"})
     assert result["errors"] == {"hand_back_value": "hand_back_value_missing"}
@@ -736,6 +741,9 @@ async def test_control_with_an_entity_checks_the_hand_back(
         hass, result, details | {"hand_back": "value", "hand_back_value": 0}
     )  # 0 means different things on different devices: its effect is declared
     assert result["errors"] == {"hand_back_value_effect": "hand_back_value_effect_missing"}
+    result = await options_step(hass, result, details | {"hand_back": "switch"})
+    # The switch method reveals its own fields (H1): shown first, then judged.
+    assert "hand_back_entity" in {str(marker) for marker in result["data_schema"].schema}
     result = await options_step(hass, result, details | {"hand_back": "switch"})
     assert result["errors"] == {"hand_back_entity": "hand_back_entity_missing"}
     result = await options_step(
@@ -817,7 +825,8 @@ async def test_control_at_the_advanced_level_and_back(
     }
     assert entry.options["parameters"]["design_outdoor"] == -15
     assert control["ramp_k_per_min"] == 0.5
-    assert control["off_setpoint"] == 12
+    # The gateway switches heating off: "off" is never a setpoint, and not asked (I8, H3).
+    assert "off_setpoint" not in control
     assert "daily_cap" not in control  # nothing is written to the boiler's memory
     assert control["alarm_reactions"] == {}
     assert entry.runtime_data.config.control.loop.control.ramp_k_per_min == 0.5
@@ -3698,11 +3707,52 @@ async def test_the_relay_path_offers_the_own_room_controller_tick(
     assert working_thermostat(EntryConfig.from_options(options).control) is (rest == "on")
 
 
+@pytest.mark.parametrize(
+    ("answers", "level", "power", "revealed"),
+    [
+        ({}, "simple", False, {"relay_repeat_s"}),  # "I don't know": blind repeats
+        ({"relay_reports_state": "yes", "relay_off_timer": "none"}, "simple", False, set()),
+        ({"relay_reports_state": "yes", "relay_off_timer": "unknown"}, "simple", False,
+         {"relay_repeat_s"}),
+        ({"relay_reports_state": "yes", "relay_off_timer": "minutes"}, "simple", False,
+         {"relay_repeat_s", "relay_off_timer_min"}),
+        ({"relay_reports_state": "no", "relay_off_timer": "none"}, "simple", False,
+         {"relay_repeat_s"}),
+        ({"relay_reports_state": "yes", "relay_off_timer": "none"}, "advanced", False, set()),
+        ({"relay_reports_state": "yes", "relay_off_timer": "none"}, "advanced", True,
+         {"boiler_heats_above_w"}),
+        ({"relay_reports_state": "yes", "relay_off_timer": "none"}, "simple", True, set()),
+    ],
+    ids=["unknown", "reports_no_timer", "timer_unknown", "timer_minutes", "no_reports",
+         "advanced_without_power", "advanced_with_power", "simple_with_power"],
+)  # fmt: skip
+def test_the_relays_form_shows_what_its_answers_need(
+    answers: dict[str, str], level: str, power: bool, revealed: set[str]
+) -> None:
+    """I8 (decision H1): the timer's length only with a declared timer; the repeat interval
+    only where something is repeated — without state reports, or with a timer that may lapse;
+    "boiler heats above" at the advanced level with the boiler's power mapped. The rest
+    always."""
+    from custom_components.vtherm_smart_boiler.config_flow import relay_form_fields
+
+    signals = {"boiler_power": "sensor.power"} if power else {}
+    options = {"level": level, "signals": signals, "control": {"write_path": "relay"}}
+    always = {
+        "relay_entity", "relay_is_separate_contact", "relay_reports_state",
+        "relay_power_on_state", "relay_off_timer", "relay_rest_state", "own_room_controller",
+    }  # fmt: skip
+    assert relay_form_fields(options, answers) == always | revealed
+
+
 async def test_a_declared_timer_needs_its_length(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
     entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
     result = await to_relay_step(hass, entry_id)
+    assert "relay_off_timer_min" not in {str(m) for m in result["data_schema"].schema}
+    result = await options_step(hass, result, RELAY_ANSWERS | {"relay_off_timer": "minutes"})
+    # I8 (decision H1): a declared timer reveals its length — shown first, then required.
+    assert "relay_off_timer_min" in {str(m) for m in result["data_schema"].schema}
     result = await options_step(hass, result, RELAY_ANSWERS | {"relay_off_timer": "minutes"})
     assert result["errors"] == {"relay_off_timer_min": "relay_off_timer_min_missing"}
     answers = RELAY_ANSWERS | {"relay_off_timer": "minutes", "relay_off_timer_min": 15}
@@ -4505,6 +4555,8 @@ async def test_a_timeout_hand_back_needs_expiring_writes(
     )
     details = {"setpoint_entity": "number.boiler_flow", "hand_back": "timeout"}
     result = await options_step(hass, result, details | {"write_type": "held"})
+    assert result["errors"] == {}  # the method reveals the device's timeout first (I8, H1)
+    result = await options_step(hass, result, details | {"write_type": "held"})
     assert (result["step_id"], result["errors"]) == (
         "control_entity",
         {"hand_back": "hand_back_timeout_not_expiring"},
@@ -4533,8 +4585,10 @@ async def test_the_timeout_method_asks_the_devices_own_timeout(
         {"write_path": "entity", "topology": "virtual", "confirmed_entity": "number.boiler_flow"},
     )
     assert result["step_id"] == "control_entity"
-    assert form_default(result, "hand_back_timeout_min") == 1
     details = {"setpoint_entity": "number.boiler_flow", "write_type": "expiring"}
+    # I8 (decision H1): the method picked reveals its field, offered at its default.
+    result = await options_step(hass, result, details | {"hand_back": "timeout"})
+    assert form_default(result, "hand_back_timeout_min") == 1
     for minutes in (0, 61):
         with pytest.raises(InvalidData):
             await options_step(
@@ -4548,7 +4602,7 @@ async def test_the_timeout_method_asks_the_devices_own_timeout(
     apply_control_details(options, details | {"hand_back": "timeout", "hand_back_timeout_min": 5})
     assert options["control"]["hand_back_timeout_min"] == 5
     stored = {"result": None, "data_schema": control_entity_schema(options)}
-    assert form_default(stored, "hand_back_timeout_min") == 5
+    assert form_default(stored, "hand_back_timeout_min") == 5  # the stored method's own field
     apply_control_details(
         options,
         details
@@ -4721,7 +4775,7 @@ async def test_the_behaviour_step_follows_the_allow_list_to_the_save(
     result = await to_control_curve(hass, entry_id)
     result = await options_step(hass, result, ADVANCED_CURVE)
     assert result["step_id"] == "control_behaviour"
-    behaviour = {"off_setpoint": 10, "count_threshold": 1}
+    behaviour = {"ramp_k_per_min": 0.5, "count_threshold": 1}
     shown = await options_step(hass, result, behaviour)
     assert shown["step_id"] == "control_alarms"
     monkeypatch.setattr(flow_module, "alarm_step_offered", lambda _options: False)
@@ -4731,7 +4785,7 @@ async def test_the_behaviour_step_follows_the_allow_list_to_the_save(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     control = hass.config_entries.async_get_entry(entry_id).options["control"]
-    assert (control["topology"], control["off_setpoint"]) == ("gateway_standalone", 10)
+    assert (control["topology"], control["ramp_k_per_min"]) == ("gateway_standalone", 0.5)
 
 
 # --- I6.1: the setup opens with how the boiler is connected -----------------------------------
@@ -5179,25 +5233,33 @@ def suggested(result: dict[str, Any], key: str) -> Any:
 
 
 @pytest.mark.parametrize(
-    ("connection", "defaults", "tick"),
+    ("connection", "asked", "hand_back", "tick"),
     [
-        # ESPHome holds both, and has no own control to return to: a hand-back value.
-        ("esphome", ("held", "held", "value"), True),
-        # EMS-ESP's setpoint lapses within about a minute: the device's timeout.
-        ("ems_esp", ("expiring", "unknown", "timeout"), False),
-        # Another device: nothing assumed.
-        ("other_entity", ("unknown", "unknown", None), False),
+        # ESPHome holds both: neither write type asked; no own control: a hand-back value.
+        ("esphome", {}, "value", True),
+        # EMS-ESP's setpoint lapses within about a minute: not asked; the device's timeout.
+        ("ems_esp", {"ch_write_type": "unknown"}, "timeout", False),
+        # Another device: nothing assumed, both asked.
+        ("other_entity", {"write_type": "unknown", "ch_write_type": "unknown"}, None, False),
     ],
 )
 async def test_the_writable_entity_step_offers_what_the_connection_does(
     hass: HomeAssistant,
     entities: dict[str, str],
     connection: str,
-    defaults: tuple[str, str, str | None],
+    asked: dict[str, str],
+    hand_back: str | None,
     tick: bool,
 ) -> None:
-    """Decisions 2, 3: the write types and the hand-back the connection is known for, offered
-    for the user to confirm; ESPHome's safe-start tick, never ticked for the user."""
+    """Decisions 2, 3 with I8 (decision H1): a write type the connection fixes is not asked —
+    the heating switch's only once a switch is picked —, the hand-back the connection is known
+    for offered for the user to confirm; ESPHome's safe-start tick, never ticked for the user.
+    Saved, a fixed write type takes the connection's value."""
+    from custom_components.vtherm_smart_boiler.config_flow import (
+        apply_control_details,
+        control_entity_schema,
+    )
+
     hass.states.async_set("sensor.read_back", "40", {"unit_of_measurement": "°C"})
     entry_id = await create_entry(hass, entities, "simple", ("living",), panels=True)
     await answer_panels(hass, entry_id, connection)
@@ -5208,12 +5270,24 @@ async def test_the_writable_entity_step_offers_what_the_connection_does(
         {"write_path": "entity", "topology": "virtual", "confirmed_entity": "sensor.read_back"},
     )
     assert result["step_id"] == "control_entity"
-    shown = tuple(form_default(result, key) for key in ("write_type", "ch_write_type", "hand_back"))
-    assert shown == defaults
     fields = {str(marker) for marker in result["data_schema"].schema}
+    assert ("write_type" in fields) is ("write_type" in asked)
+    if "write_type" in asked:
+        assert form_default(result, "write_type") == asked["write_type"]
+    assert "ch_write_type" not in fields  # no heating switch picked yet
+    assert form_default(result, "hand_back") == hand_back
     assert ("esphome_safe_start" in fields) is tick
     if tick:
         assert form_default(result, "esphome_safe_start") is False
+    options = dict(hass.config_entries.async_get_entry(entry_id).options)
+    switched = control_entity_schema(options, {"ch_entity": "switch.heat"})
+    revealed = {str(marker) for marker in switched.schema}
+    assert ("ch_write_type" in revealed) is ("ch_write_type" in asked)
+    candidate = copy.deepcopy(options) | {"control": {"write_path": "entity"}}
+    apply_control_details(candidate, {"setpoint_entity": "number.flow", "hand_back": "timeout"})
+    fixed = {"write_type", "ch_write_type"} - set(asked)
+    stored = {k: candidate["control"][k] for k in fixed}
+    assert set(stored) == fixed  # each fixed one stored: the connection's value
 
 
 async def test_ems_esp_without_a_heating_switch_does_not_ask_for_off(
@@ -5242,7 +5316,15 @@ async def test_ems_esp_without_a_heating_switch_does_not_ask_for_off(
         "control": control | {"ch_entity": "switch.heat", "ch_write_type": "held"},
     }
     assert not fixed_off(switched)
-    assert "off_setpoint" in {str(m) for m in control_behaviour_schema(switched | advanced).schema}
+    # With a heating switch "off" is no setpoint at all, so not asked (I8, decision H3).
+    assert "off_setpoint" not in {
+        str(m) for m in control_behaviour_schema(switched | advanced).schema
+    }
+    unknown_switch = control | {"ch_entity": "switch.heat", "ch_write_type": "unknown"}
+    unswitched = {"boiler": {"connection": "ems_esp"}, "control": unknown_switch}
+    assert "off_setpoint" not in {  # nor on EMS-ESP while its switch is not usable: its own 0
+        str(m) for m in control_behaviour_schema(unswitched | advanced).schema
+    }
     assert not fixed_off({"boiler": {"connection": "ems_esp"}})  # no control set up
 
 

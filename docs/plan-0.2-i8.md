@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-12: the plan approved by the user; I8.0 to I8.8 and I8.9a done; I8.9b next.
+Status on 2026-10-12: the plan approved by the user; I8.0 to I8.9 done; I8.10 next.
 
 ## How to read this plan
 
@@ -660,7 +660,7 @@ Claude's calls (cautious, provisional, K4):
 - J4 impact: the scenarios on demand, the water temperature and the comfort correction; a new
   scenario for a circuit run by other automation, for the testing session.
 
-### I8.9 Control tabs (H)
+### I8.9 ✅ Control tabs (H)
 
 - Code: the control chain split into the five items; the hand-back method's fields shown after
   it is picked; the write types only where not fixed; the relay's conditional fields; the
@@ -696,6 +696,14 @@ Claude's calls (2026-10-12): two pull requests.
   with a timer, its repeat interval only without state reports or with a timer, "boiler heats
   above (W)" only with the boiler's power mapped; the "off" setpoint only where "off" is
   written as a low setpoint.
+- I8.9b ✅ (2026-10-12): as above, each form showing itself again with what an answer reveals,
+  a hidden value kept. Claude's calls: a write type the connection fixes is what it is known
+  for (ESPHome both held, EMS-ESP's setpoint expiring; EMS-ESP's heating switch still asked) —
+  not asked, a value an entry stored kept, the connection's where none is, and judged as it
+  stands; the heating switch's write type only with a heating switch picked (A3); the "own
+  room controller" and ESPHome ticks still dropped where not asked (answers F, M); with a
+  heating switch — the gateway paths included — "off" is never a setpoint, so not asked. Both
+  user guides (the hand-back methods, the relay's settings, ESPHome, EMS-ESP).
 
 ### I8.10 Texts and documents (A4, C3, C4) — the final check
 
