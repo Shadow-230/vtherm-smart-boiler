@@ -5,6 +5,10 @@ Every release carries a report of the tests its version passed: `docs/test-repor
 the report being written is `unreleased.md`; at the release it is renamed to the version and
 goes with the pull request from `dev` to `qas`.
 
+Each test run also gets a plain-language report beside it, `<date>-test-report.md`: what was
+tested, the results by area, the problems found and the decisions they need, in simple words for
+a reader who does not know the code (the user's request, 2026-10-11).
+
 ## What a report holds
 
 1. **Version and code** — the version, the commit tested, the dates.
@@ -29,7 +33,14 @@ deployed with `scripts/deploy_test.sh --instance N [--config NAME]` and set up a
 ```
 HA_INSTANCE=1 scripts/env.sh python devenv/j4/run.py B1 C2 ...      # scenarios by identifier
 HA_INSTANCE=1 scripts/env.sh python devenv/j4/restart.py B3 B6     # the restarts
+HA_INSTANCE=6 scripts/env.sh python devenv/j4/paths.py R1 ...      # relay (6), entity (7), stand-alone (8)
+HA_INSTANCE=1 scripts/env.sh python devenv/j4/corrections.py Q1 ... # the corrections of 2026-10-10
 ```
+
+`corrections.py` tests the corrections of 2026-10-10 (G11, `docs/plan-0.2-g11.md`): the comfort
+correction's limit and warning, SmartPI's learning band, the curve's room temperature in Auto, the
+long-burn rule and an open window without a sensor. A long run (`run.py L1`, hours set by
+`J4_HOURS`) outlasts a background command's two hours and runs detached.
 
 Each scenario starts and ends from a clean state — control off and handed back, the
 simulator's faults cleared, the zones heating at their targets — and checks what the in-process

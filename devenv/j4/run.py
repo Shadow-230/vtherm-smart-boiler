@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import os
 import pathlib
 import sys
@@ -17,8 +18,9 @@ import traceback
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 import contextlib
+from itertools import pairwise
 
-from lib import HA, ROOT, SIGNALS
+from lib import CONTAINER, HA, ROOT, SIGNALS, ssh
 
 RESULTS = pathlib.Path(
     os.environ.get("J4_RESULTS")
@@ -46,6 +48,11 @@ BASE_CURVE = {
     "ceiling_band": 10.0,
     "frost_limit": 5.0,
     "frost_release": 7.0,
+    # As the scenarios ran before G11: the curve's room entered, the correction off; the
+    # corrections' scenarios (corrections.py) switch them on themselves.
+    "room_mode": "manual",
+    "room_excluded": [],
+    "comfort_correction": False,
 }
 BASE_BEHAVIOUR = {
     "ramp_k_per_min": 1.0,
@@ -108,7 +115,9 @@ class Run:
             if k.startswith("alarm_") and st.get(e, {}).get("state") == "on"
         )
 
-    async def options(self, control=None, curve=None, behaviour=None, alarms=None, gateway="sim"):
+    async def options(
+        self, control=None, curve=None, behaviour=None, alarms=None, gateway="sim", strict=True
+    ):
         entry = await self.ha.entry("vtherm_smart_boiler")
         _s, d = await self.ha.rest(
             "POST",
@@ -126,6 +135,8 @@ class Run:
             )
             if d.get("errors") or d.get("type") == "abort":
                 await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+                if strict:
+                    raise RuntimeError(f"options not saved: {d.get('errors') or str(d)[:200]}")
                 return d
         while d.get("type") == "form":
             step = d["step_id"]
@@ -150,17 +161,33 @@ class Run:
                 "control_alarms": {**BASE_ALARMS, **(alarms or {})},
             }.get(step)
             if body is None:
+                await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+                if strict:
+                    raise RuntimeError(f"options: a step the runner does not know: {step}")
                 return {"unexpected_step": step}
+            # Each step starts from what the form shows now, so a field the runner does not set
+            # keeps its value instead of falling back to the plugin's default (G11 made the
+            # comfort correction and the curve's Auto room the defaults).
+            current = {
+                f["name"]: v
+                for f in d.get("data_schema") or []
+                if (v := (f.get("description") or {}).get("suggested_value", f.get("default")))
+                is not None
+            }
             fields = {f["name"] for f in d.get("data_schema") or []}
-            body = {k: v for k, v in body.items() if v is not None and k in fields}
+            body = {k: v for k, v in (current | body).items() if v is not None and k in fields}
             _s, d = await self.ha.rest(
                 "POST", f"/api/config/config_entries/options/flow/{fid}", body
             )
             if d.get("errors"):
                 await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+                if strict:
+                    raise RuntimeError(f"options not saved: {d.get('errors') or str(d)[:200]}")
                 return d
         if d.get("type") != "create_entry":
             await self.ha.rest("DELETE", f"/api/config/config_entries/options/flow/{fid}")
+            if strict:
+                raise RuntimeError(f"options not saved: {str(d)[:200]}")
             return {"errors": {"not_saved": str(d)[:200]}}
         await asyncio.sleep(15)  # the entry reloads
         return d
@@ -576,7 +603,12 @@ async def D8(r: Run):
 
 async def F1(r: Run, fault="low_pressure_fault"):
     """the boiler's own fault: "off" after 5 min, no hand-back, no latch, repair issue; back when it clears"""
+    # The rooms call, so heating is on when the fault comes (the reset leaves them at target).
+    for zone, target in ZONES:
+        await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+    t0 = time.time()
     await r.switch(True)
+    await r.ha.until(lambda: _heating_on(r, t0), 400, 2)
     await r.ha.wait(TRACE)
     t = time.time()
     await r.sim("set_fault", fault=fault)
@@ -602,6 +634,11 @@ async def F1(r: Run, fault="low_pressure_fault"):
     )
 
 
+async def _heating_on(r: Run, since: float) -> bool:
+    ch = r.cmds(since, "ch")
+    return bool(ch) and ch[-1][1] is True
+
+
 async def F2(r: Run):
     """the boiler's lockout: as F1"""
     await F1(r, "boiler_lockout")
@@ -623,20 +660,26 @@ async def _refused(r: Run, label: str, d: dict) -> None:
 
 async def G1(r: Run):
     """control refused without a confirmed-setpoint source"""
-    await _refused(r, "no confirmed setpoint", await r.options(control={"confirmed_entity": None}))
+    await _refused(
+        r,
+        "no confirmed setpoint",
+        await r.options(control={"confirmed_entity": None}, strict=False),
+    )
     await r.options()
 
 
 async def G2(r: Run):
     """control refused in monitor mode"""
-    await _refused(r, "monitor mode", await r.options(control={"topology": "monitor_mode"}))
+    await _refused(
+        r, "monitor mode", await r.options(control={"topology": "monitor_mode"}, strict=False)
+    )
     await r.options()
 
 
 async def G3(r: Run):
     """an on/off contact or "I don't know" on the terminals: refused, nothing written, the thermostat heats"""
     for kind in ("on_off", "unknown"):
-        await _refused(r, kind, await r.options(control={"thermostat_kind": kind}))
+        await _refused(r, kind, await r.options(control={"thermostat_kind": kind}, strict=False))
         chen = await r.s("binary_sensor.otgw_sim_boiler_master_ch_enabled")
         r.note(f"{kind}: CH enabled on the boiler (the thermostat's): {chen}")
     await r.options()
@@ -865,6 +908,96 @@ SCENARIOS = {
 }
 
 
+# --- the instance's base state, and the evidence of a failure ---------------------------------
+
+# What every scenario of a path expects to find, as each instance is set up (devenv/README.md):
+# keys of the plugin's stored control options ("curve.x" inside the curve). A key the entry does
+# not store yet takes the plugin's default for an entry made before it, which is what the base
+# means — so only a stored value is compared.
+BASE_EXPECT: dict[str, dict[str, object]] = {
+    "opentherm_gw": {
+        "hard_max": 70.0,
+        "activation_delay_s": 0,
+        "comfort_correction": False,
+        "curve.design_flow": 55.0,
+        "curve.room_mode": "manual",
+    },
+    "entity": {
+        "write_type": "held",
+        "ch_write_type": "held",
+        "hand_back": "value",
+        "hand_back_value": 0.0,
+        "own_room_controller": False,
+        "comfort_correction": False,
+        "curve.room_mode": "manual",
+    },
+    "relay": {
+        "relay_off_timer": "none",
+        "relay_power_on_state": "off",
+        "relay_rest_state": "off",
+        "relay_is_separate_contact": True,
+        "own_room_controller": False,
+        "activation_delay_s": 0,
+    },
+}
+
+
+def stored_control() -> dict[str, object]:
+    """The plugin entry's stored control options, flattened — read from the instance's own
+    .storage (read only)."""
+    raw = json.loads(ssh(f"docker exec {CONTAINER} cat /config/.storage/core.config_entries"))
+    entry = next(e for e in raw["data"]["entries"] if e["domain"] == "vtherm_smart_boiler")
+    flat: dict[str, object] = {}
+    for key, value in entry["options"].get("control", {}).items():
+        if isinstance(value, dict):
+            flat |= {f"{key}.{k}": v for k, v in value.items()}
+        else:
+            flat[key] = value
+    return flat
+
+
+def base_drift(control: dict[str, object]) -> list[str]:
+    expected = BASE_EXPECT.get(str(control.get("write_path")), {})
+    return [
+        f"{key}: {control[key]!r}, the base {value!r}"
+        for key, value in expected.items()
+        if key in control and control[key] != value
+    ]
+
+
+def base_line(control: dict[str, object]) -> str:
+    keys = ["write_path", "topology", *BASE_EXPECT.get(str(control.get("write_path")), {})]
+    return ", ".join(f"{k} {control[k]!r}" for k in dict.fromkeys(keys) if k in control)
+
+
+async def diagnosis(r: Run, since: dt.datetime) -> list[str]:
+    """The evidence of a failed scenario: the plugin's warnings and errors since it began, the
+    control state, the alarms on and the repair issues."""
+    out: list[str] = []
+    try:
+        logs = await asyncio.to_thread(
+            ssh,
+            f"docker logs --since {since:%Y-%m-%dT%H:%M:%SZ} {CONTAINER} 2>&1"
+            " | grep -a vtherm_smart_boiler | grep -a -E 'WARNING|ERROR' | cut -c1-240 | tail -12",
+        )
+        out += [f"log: {line.strip()}" for line in logs.splitlines() if line.strip()]
+    except Exception as err:
+        out.append(f"log: not read ({err})")
+    try:
+        st = await r.st("control_state")
+        a = st["attributes"]
+        out.append(
+            f"control state: {st['state']}, reasons {a.get('reasons')}, latched "
+            f"{a.get('latched_by')}, hand-back pending {a.get('hand_back_pending')}, "
+            f"confirmation {a.get('hand_back_confirmation')}"
+        )
+        out.append(f"alarms on: {await r.alarms_on()}")
+        out.append(f"issues: {[i['issue_id'] for i in await r.ha.issues()]}")
+    except Exception as err:
+        out.append(f"state: not read ({err})")
+    return out
+
+
 async def main(ids: list[str]) -> None:
     async with HA() as ha:
         for sid in ids:
@@ -873,19 +1006,39 @@ async def main(ids: list[str]) -> None:
             fn = SCENARIOS[sid]
             start = dt.datetime.now(dt.UTC)
             print(f"--- {sid} {start:%H:%M:%S} {fn.__doc__.strip()}", flush=True)
+            # The instance as the scenario finds it: a scenario never runs on an instance an
+            # earlier one left changed — its result would be another configuration's.
             try:
-                await r.reset()
-                await fn(r)
-            except Exception:
+                control = await asyncio.to_thread(stored_control)
+                drift = base_drift(control)
+                r.note(f"base: {base_line(control)}")
+            except Exception as err:
+                drift = []
+                r.note(f"base: not read ({err})")
+            if drift:
                 r.ok = False
-                r.notes.append("FAIL exception: " + traceback.format_exc().strip().splitlines()[-1])
-                traceback.print_exc()
-            finally:
+                r.notes.append(
+                    "NOT RUN — the instance is not in its base state (an earlier scenario left it "
+                    "changed; restore it first): " + "; ".join(drift)
+                )
+                verdict = "NOT RUN"
+            else:
                 try:
                     await r.reset()
+                    await fn(r)
                 except Exception:
+                    r.ok = False
+                    last = traceback.format_exc().strip().splitlines()[-1]
+                    r.notes.append(f"FAIL exception: {last}")
                     traceback.print_exc()
-            verdict = "PASS" if r.ok else "FAIL"
+                finally:
+                    try:
+                        await r.reset()
+                    except Exception:
+                        traceback.print_exc()
+                verdict = "PASS" if r.ok else "FAIL"
+                if not r.ok:
+                    r.notes += [f"diagnosis — {line}" for line in await diagnosis(r, start)]
             text = (
                 f"\n### {sid} — {verdict} ({start:%H:%M}–{dt.datetime.now(dt.UTC):%H:%M} UTC)\n{fn.__doc__.strip()}\n"
                 + "\n".join(f"- {n}" for n in r.notes)
@@ -1206,7 +1359,250 @@ async def E6(r: Run):
         await r.sim("set_outdoor", temperature=3.0)
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6)})
+GUARD_ALARMS = ("write_failed", "write_ignored", "outside_change", "commands_lost")
+
+
+async def L1(r: Run):
+    """hours of control (J4_HOURS, 12) at a steady outdoor temperature (J4_OUTDOOR, -2 °C) on
+    the gateway, or on the entities with J4_WRITE_PATH=entity, VT's TPI zones pulsing: the
+    setpoint within its limits and kept alive (a held device needs no keep-alive), heating
+    following VT's demand, no guard alarm, nothing latched, hot water never touched, the rooms
+    held"""
+    hours = float(os.environ.get("J4_HOURS", "12"))
+    outdoor = float(os.environ.get("J4_OUTDOOR", "-2"))
+    zones = [f"climate.{zone}" for zone, _t in ZONES]
+    entity = os.environ.get("J4_WRITE_PATH") == "entity"  # the entity path (instance 7)
+
+    def writes(since: float, kind: str) -> list[tuple[float, str, object]]:
+        if not entity:
+            return r.ha.since(since, kind)
+        target = {
+            "setpoint": "number.boiler_sim_flow_setpoint",
+            "ch": "switch.boiler_sim_ch_enable",
+        }[kind]
+        out: list[tuple[float, str, object]] = []
+        for at, domain, service, data in r.ha.calls:
+            ids = data.get("entity_id") or []
+            if at < since or target not in ([ids] if isinstance(ids, str) else ids):
+                continue
+            if domain == "number" and service == "set_value":
+                out.append((at, kind, data.get("value")))
+            elif domain == "switch" and service in ("turn_on", "turn_off"):
+                out.append((at, kind, service == "turn_on"))
+        return out
+
+    await r.sim("set_outdoor", temperature=outdoor)
+    await r.switch(True)
+    t = time.time()
+    samples: list[tuple[float, bool]] = []  # when, and whether a zone's device heated
+    behind_since: float | None = None
+    behind: list[int] = []  # minutes into the run where heating stayed off VT's demand > 90 s
+    raised: set[str] = set()
+    latched: set[str] = set()
+    states: set[str] = set()
+    while time.time() - t < hours * 3600:
+        st = await r.ha.states()
+        now = time.time()
+        calling = any(
+            st.get(z, {}).get("attributes", {}).get("hvac_action") == "heating" for z in zones
+        )
+        samples.append((now, calling))
+        ch = writes(t, "ch")
+        if ch and bool(ch[-1][2]) is not calling:
+            behind_since = behind_since or now
+            if now - behind_since > 90 and (
+                not behind or behind[-1] != round((behind_since - t) / 60)
+            ):
+                behind.append(round((behind_since - t) / 60))
+        else:
+            behind_since = None
+        raised |= {
+            a for a in GUARD_ALARMS if st.get(r.ent.get(f"alarm_{a}", ""), {}).get("state") == "on"
+        }
+        cs = st.get(r.ent["control_state"], {})
+        latched |= set(cs.get("attributes", {}).get("latched_by") or [])
+        states.add(cs.get("state"))
+        await r.ha.wait(10)
+    sp = writes(t, "setpoint")
+    values = [float(v) for _t, _k, v in sp]
+    gaps = [b[0] - a[0] for a, b in pairwise(sp)]
+    ch = writes(t, "ch")
+    toggles = sum(1 for a, b in pairwise(ch) if bool(a[2]) != bool(b[2]))
+    # A heating write matches VT's demand as sampled from 40 s before it (the plugin's step and
+    # the gateway's 30-s repeat) to 15 s after it: the runner samples every 10 s, so a change the
+    # plugin followed within seconds may be sampled only after the write.
+    mismatched = [
+        round((at - t) / 60)
+        for at, _k, v in ch
+        if bool(v) not in {c for when, c in samples if at - 40 <= when <= at + 15}
+        and any(at - 40 <= when <= at + 15 for when, _c in samples)
+    ]
+    rooms = {}
+    for zone, target in ZONES:
+        with contextlib.suppress(TypeError, ValueError):
+            rooms[zone] = round(
+                float(await r.s(f"sensor.boiler_sim_{zone}_temperature")) - target, 2
+            )
+    r.check(
+        bool(values) and all(20.0 <= v <= 70.0 for v in values),
+        f"setpoints {min(values, default=None)}–{max(values, default=None)} °C",
+    )
+    r.check(
+        bool(gaps) and max(gaps) <= 45.0,
+        f"kept alive: the longest gap {gaps and round(max(gaps))} s",
+    )
+    r.check(toggles >= hours * 3, f"heating follows VT's pulses: {toggles} toggles")
+    r.check(
+        not mismatched, f"every heating write as VT's demand: wrong at minutes {mismatched[:10]}"
+    )
+    r.check(not behind, f"never behind VT's demand over 90 s: at minutes {behind[:10]}")
+    r.check(not raised, f"no guard alarm: {sorted(raised)}")
+    r.check(not latched, f"nothing latched: {sorted(latched)}")
+    r.check(states <= {"heating", "idle"}, f"states seen: {sorted(states)}")
+    r.check(r.ha.since(t, "hot_water") == [], "hot water never touched")
+    r.check(all(abs(d) < 1.5 for d in rooms.values()), f"rooms against their targets (K): {rooms}")
+    t2 = time.time()
+    await r.switch(False)
+    await r.ha.wait(20)
+    r.note(f"at the hand-back: {r.cmds(t2)}, state {await r.s('control_state')}")
+
+
+async def W1(r: Run):
+    """the OpenTherm wall thermostat's own program after a hand-back, at its 06:00 UTC switch
+    from 17 to 21 °C in real time: shown on the control switch while the plugin holds the
+    boiler; handed back, the thermostat does not call at night with its room at 19 °C, and
+    calls within minutes once its program raises the room"""
+    now = dt.datetime.now(dt.UTC)
+    switch_at = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if not 300 < (switch_at - now).total_seconds() < 2400:
+        raise RuntimeError("W1 runs between 05:20 and 05:55 UTC")
+    cs = "sensor.otgw_sim_boiler_control_setpoint"
+    await r.sim("set_room_temperature", zone="zone_living", temperature=19.0)
+    await r.switch(True)
+    await r.ha.wait(120)
+    r.check(
+        await r.attr("control", "wall_thermostat_setpoint") == 17.0,
+        f"the switch shows its night setting: {await r.attr('control', 'wall_thermostat_setpoint')}",
+    )
+    t = time.time()
+    await r.switch(False)
+    await r.ha.wait(90)
+    r.note(f"handed back: {r.cmds(t)}")
+    r.check(
+        float(await r.s(cs)) <= 10.0,
+        f"at night, its room at 19 °C, it does not call: the boiler gets {await r.s(cs)} °C",
+    )
+    await r.ha.wait(max(0.0, switch_at.timestamp() - 60 - time.time()))
+    await r.sim("set_room_temperature", zone="zone_living", temperature=19.0)
+    await r.ha.wait(max(0.0, switch_at.timestamp() + 20 - time.time()))
+    r.check(
+        await r.s("sensor.otgw_sim_thermostat_room_setpoint") == "21.0",
+        f"its program at 06:00: {await r.s('sensor.otgw_sim_thermostat_room_setpoint')} °C",
+    )
+    called = await r.ha.until(lambda: _above(r, cs, 10.0), 300, 5)
+    r.check(
+        called is not None,
+        f"it calls {called and round(called)} s after 06:00: {await r.s(cs)} °C to the boiler",
+    )
+    heats = await r.ha.until(lambda: _is_on(r, "binary_sensor.boiler_sim_ch_active"), 300, 5)
+    r.check(heats is not None, f"the boiler heats on its call ({heats and round(heats)} s)")
+    r.check(
+        r.cmds(t + 60) == [],
+        f"the plugin writes nothing after its hand-back: {r.cmds(t + 60)}",
+    )
+
+
+async def _above(r: Run, entity_id: str, value: float) -> bool:
+    try:
+        return float(await r.s(entity_id)) > value
+    except TypeError, ValueError:
+        return False
+
+
+async def _is_on(r: Run, entity_id: str) -> bool:
+    return await r.s(entity_id) == "on"
+
+
+async def _vt_central_temps(r: Run, tmin: float, tmax: float) -> dict:
+    """VT's central configuration given new temperature limits — in the unit Home Assistant
+    shows: VT takes its limits as numbers in that unit."""
+    ha = r.ha
+    central = await ha.entry("versatile_thermostat", "Central configuration")
+    _s, d = await ha.rest(
+        "POST",
+        "/api/config/config_entries/options/flow",
+        {"handler": central["entry_id"], "show_advanced_options": True},
+    )
+    path = f"/api/config/config_entries/options/flow/{d['flow_id']}"
+    _s, d = await ha.rest("POST", path, {"next_step_id": "main"})
+    body = {}
+    for field in d.get("data_schema") or []:
+        value = (field.get("description") or {}).get("suggested_value", field.get("default"))
+        if value is not None:
+            body[field["name"]] = value
+    body |= {"temp_min": tmin, "temp_max": tmax}
+    _s, d = await ha.rest("POST", path, body)
+    if d.get("type") == "menu":
+        _s, d = await ha.rest("POST", path, {"next_step_id": "finalize"})
+    await ha.wait(20)
+    return d
+
+
+async def T1(r: Run):
+    """Home Assistant in US customary units: the boiler's signals and the weather in °F, VT's
+    zones set in °F; the boiler still gets what the plugin means in °C, no alarm from a reading
+    taken in the wrong unit, and the hand-back arrives"""
+    targets_f = {zone: round(target * 9 / 5 + 32, 1) for zone, target in ZONES}
+    try:
+        await r.ha.ws_cmd({"type": "config/core/update", "unit_system": "us_customary"})
+        await r.ha.wait(10)
+        d = await _vt_central_temps(r, 45.0, 95.0)
+        r.note(f"VT limits 45–95 °F: {d.get('type')} {d.get('errors')}")
+        flow = await r.st("sensor.boiler_sim_flow")
+        r.check(
+            flow["attributes"].get("unit_of_measurement") == "°F",
+            f"the flow in {flow['attributes'].get('unit_of_measurement')}: {flow['state']}",
+        )
+        for zone, target in ZONES:
+            await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+            await r.ha.call(
+                "climate",
+                "set_temperature",
+                entity_id=f"climate.{zone}",
+                temperature=targets_f[zone],
+            )
+        await r.switch(True)
+        t = time.time()
+        await r.ha.wait(1800)
+        values = [float(v) for _k, v in r.cmds(t, "setpoint")]
+        r.check(
+            bool(values) and all(20.0 <= v <= 70.0 for v in values),
+            f"°C at the boiler: {min(values, default=None)}–{max(values, default=None)}",
+        )
+        r.check(
+            await r.s("control_state") in ("heating", "idle"), f"state {await r.s('control_state')}"
+        )
+        on = await r.alarms_on()
+        r.check(not [a for a in on if a != "alarm_outdoor_sensor_suspect"], f"alarms {on}")
+        r.check(
+            await r.attr("control_state", "boiler_heats") in (None, "heats"),
+            f"heats: {await r.attr('control_state', 'boiler_heats')}",
+        )
+        t2 = time.time()
+        await r.switch(False)
+        await r.ha.wait(20)
+        r.check(bool(r.cmds(t2)), f"the hand-back: {r.cmds(t2)}")
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await r.ha.ws_cmd({"type": "config/core/update", "unit_system": "metric"})
+        await r.ha.wait(10)
+        await _vt_central_temps(r, 7.0, 35.0)
+        await r.zones()
+
+
+SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1)})
 
 
 if __name__ == "__main__":

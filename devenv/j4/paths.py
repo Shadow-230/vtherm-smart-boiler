@@ -9,6 +9,7 @@ captured from Home Assistant's service calls as run.py captures the gateway's.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import time
 from datetime import UTC, datetime
@@ -62,9 +63,16 @@ def entity_cmds(r: Run, since: float) -> list[tuple[str, object]]:
     return out
 
 
-async def options_walk(r: Run, answers: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """The plugin's control options saved again, each step with its current values and the
-    given changes; the confirmation steps ticked. Returns the last answer of the flow."""
+async def options_walk(
+    r: Run, answers: dict[str, Any], menu: str = "control", strict: bool = True
+) -> dict[str, Any]:
+    """A section of the plugin's options — control by default — saved again, each step with its
+    current values and the given changes (a list for a step met more than once, such as each
+    zone's: one change each, in order); the confirmation steps ticked. Returns the last answer
+    of the flow. ``strict``: a form that refuses the answers, or a flow that does not save,
+    raises — so a restore that did not happen (a hand-back still owed blocks changing how it is
+    made) stops the scenario loudly instead of leaving the instance changed; a scenario whose
+    point is the refusal passes ``strict=False`` and reads ``errors``."""
     ha = r.ha
     entry = await ha.entry("vtherm_smart_boiler")
     _s, d = await ha.rest(
@@ -74,7 +82,8 @@ async def options_walk(r: Run, answers: dict[str, dict[str, Any]]) -> dict[str, 
     )
     fid = d["flow_id"]
     path = f"/api/config/config_entries/options/flow/{fid}"
-    _s, d = await ha.rest("POST", path, {"next_step_id": "control"})
+    _s, d = await ha.rest("POST", path, {"next_step_id": menu})
+    met: dict[str, int] = {}
     while d.get("type") == "form":
         step = d["step_id"]
         if step == "confirm_blocking":
@@ -90,14 +99,23 @@ async def options_walk(r: Run, answers: dict[str, dict[str, Any]]) -> dict[str, 
             value = (field.get("description") or {}).get("suggested_value", field.get("default"))
             if value is not None:
                 body[name] = value
-        body |= answers.get(step, {})
+        change = answers.get(step, {})
+        if isinstance(change, list):
+            n = met.get(step, 0)
+            met[step] = n + 1
+            change = change[n] if n < len(change) else {}
+        body |= change
         body = {k: v for k, v in body.items() if v is not None}
         _s, d = await ha.rest("POST", path, body)
         if d.get("errors"):
             await ha.rest("DELETE", path)
+            if strict:
+                raise RuntimeError(f"options not saved ({menu}, step {step}): {d['errors']}")
             return d
     if d.get("type") != "create_entry":
         await ha.rest("DELETE", path)
+        if strict:
+            raise RuntimeError(f"options not saved ({menu}): {str(d)[:200]}")
         return {"errors": {"not_saved": str(d)[:200]}}
     await asyncio.sleep(15)  # the entry reloads
     r.ent.update(await ha.entities())
@@ -274,7 +292,7 @@ async def R7(r: Run):
 
 async def R8(r: Run):
     """the relay path without the separate-contact tick: control blocked, nothing reaches the relay"""
-    d = await options_walk(r, {"control_relay": {"relay_is_separate_contact": False}})
+    d = await options_walk(r, {"control_relay": {"relay_is_separate_contact": False}}, strict=False)
     if d.get("errors"):
         r.check(True, f"refused where it is entered: {d['errors']}")
     else:
@@ -358,9 +376,16 @@ async def relay_offs(r: Run, since: float) -> int:
 async def relay_on_under_control(r: Run) -> None:
     await rooms_call(r, True)
     await r.switch(True)
-    on = await r.ha.until(lambda: relay_is(r, True), 120, 1)
-    if on is None:
-        raise RuntimeError("the relay did not come on under control")
+    # VT opens the valves at its next cycle — up to its cycle length, 5 min — after the call;
+    # a cycle that began before it may still give a short pulse. A whole cycle later the rooms,
+    # 3 K below their setpoints, keep the valves open: the relay is on for good.
+    for _ in range(2):
+        on = await r.ha.until(lambda: relay_is(r, True), 400, 1)
+        if on is None:
+            raise RuntimeError("the relay did not come on under control")
+        await r.ha.wait(330)
+    if not await relay_is(r, True):
+        raise RuntimeError("the relay did not stay on under control")
 
 
 async def _issue(r: Run, key: str) -> dict[str, Any] | None:
@@ -394,13 +419,14 @@ async def R9(r: Run):
 
 
 async def R10(r: Run):
-    """a declared 10-min timer that runs from the first "on" (a Shelly's auto-off): each lapse
-    answered at once, never counted"""
+    """a declared 11-min timer that runs from the first "on" (a Shelly's auto-off): each lapse
+    answered at once, never counted. 11, not 10: a lapse at a multiple of the 5-min renewal
+    comes with one, and the renewal hides it from Home Assistant (PB-25)"""
     try:
         await relay_setup(
             r,
-            {"relay_off_timer": "minutes", "relay_off_timer_min": 10},
-            off_timer_min=10,
+            {"relay_off_timer": "minutes", "relay_off_timer_min": 11},
+            off_timer_min=11,
             timer_restarts_on_repeat=False,
         )
         await relay_on_under_control(r)
@@ -554,7 +580,11 @@ async def R15(r: Run):
             off_timer_min=2,
             timer_restarts_on_repeat=False,
         )
-        await relay_on_under_control(r)
+        # Not relay_on_under_control: this relay never stays on — it is the point.
+        await rooms_call(r, True)
+        await r.switch(True)
+        on = await r.ha.until(lambda: relay_is(r, True), 400, 1)
+        r.check(on is not None, f"the relay on under control ({on and round(on)} s)")
         aside = await r.ha.until(lambda: _control_state(r, "handed_back"), 1500, 5)
         r.check(
             aside is not None, f"stepped aside {aside and round(aside / 60, 1)} min into control"
@@ -604,6 +634,64 @@ async def R16(r: Run):
         await relay_defaults(r)
 
 
+async def R17(r: Run):
+    """every zone unknown on the relay path with the own-room-controller tick: the rest state
+    "on" hands the boiler back to its own controller, "off" switches heating off"""
+    try:
+        for rest, back in (("on", True), ("off", False)):
+            await relay_setup(r, {"relay_rest_state": rest, "own_room_controller": True})
+            await relay_on_under_control(r)
+            entries = await _zones_unknown(r, 11.5)
+            st = await r.st("control_state")
+            issue = await _issue(r, "no_zone_known")
+            r.check(
+                st["state"] == ("handed_back" if back else "idle")
+                and await relay_is(r, back)
+                and issue is not None
+                and issue.get("translation_key")
+                == ("no_zone_known_handed_back" if back else "no_zone_known_off"),
+                f"rest {rest}: {st['state']}, relay {await r.s(RELAY)}, issue {issue and issue.get('translation_key')}",
+            )
+            await _zones_back(r, entries)
+            await r.switch(False)
+            await r.ha.wait(10)
+    finally:
+        await options_walk(
+            r, {"control_relay": {"relay_rest_state": "off", "own_room_controller": False}}
+        )
+        await relay_defaults(r)
+
+
+async def R18(r: Run):
+    """VT's activation delay of 120 s on the relay path: a start waits for it"""
+    try:
+        d = await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 120}})
+        if d.get("errors"):
+            raise RuntimeError(f"options not saved: {d['errors']}")
+        await r.switch(True)
+        waits = []
+        for _ in range(2):
+            await rooms_call(r, False)
+            await r.ha.until(lambda: relay_is(r, False), 420, 5)
+            # Past the delay since any earlier pulse: a wait it started runs on through a drop
+            # (VT's rule), and would shorten the one measured here.
+            await r.ha.wait(150)
+            await rooms_call(r, True)
+            await r.ha.until(lambda: _any_valve(r), 420, 1)
+            t_call = time.time()
+            on = await r.ha.until(lambda: relay_is(r, True), 300, 1)
+            waits.append(None if on is None else round(time.time() - t_call))
+        r.check(
+            all(w is not None and w >= 115 for w in waits),
+            f"each start waited at least 120 s: {waits}",
+        )
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await options_walk(r, {"control_relay_behaviour": {"activation_delay_s": 0}})
+
+
 # --- the entity path (instance 7, --config entity) ---------------------------------------------
 
 
@@ -642,10 +730,19 @@ async def N2(r: Run):
         await r.s("alarm_hand_back_failed") == "on",
         "hand-back failed alarm while the device is away",
     )
-    await r.ha.wait(140)
+    made = await r.ha.until(lambda: _handed(r, t), 240, 5)
     c = entity_cmds(r, t)
-    r.check(("setpoint", 0.0) in c, f"the hand-back made once back: {c}")
-    r.check(await r.s("alarm_hand_back_failed") == "off", "alarm cleared")
+    r.check(made is not None, f"the hand-back made once back: {c}")
+    # A held device on its own control reads back the boiler's own value, not the hand-back
+    # value: judged at the retry checks after the write, two a minute apart (the K4 question in
+    # the in-process test), and the alarm clears then.
+    await r.ha.wait(150)
+    r.note(f"confirmation {await r.attr('control_state', 'hand_back_confirmation')}")
+    r.check(await r.s("alarm_hand_back_failed") == "off", "alarm cleared after the retry checks")
+
+
+async def _handed(r: Run, since: float) -> bool:
+    return ("setpoint", 0.0) in entity_cmds(r, since)
 
 
 async def N6(r: Run):
@@ -762,17 +859,96 @@ async def N8(r: Run):
         if await r.s("control") == "on":
             await r.switch(False)
             await r.ha.wait(10)
+        # The second part leaves a hand-back owed (the device kept the value), and an owed
+        # hand-back blocks changing how it is made: the device lets the value lapse as declared,
+        # the plugin sees the release, and only then are the base options put back.
+        await r.sim("set_write_type", write_type="expiring")
+        # The value the device holds was taken as held: the new write type does not make it
+        # lapse. The boiler drops the override, as an expiring device would at its timeout.
+        await r.sim("drop_override")
+        restore = {
+            "control_entity": {"write_type": "held", "hand_back": "value", "hand_back_value": 0}
+        }
+        t = time.time()
+        while True:  # the owed hand-back settles within minutes; until then the form refuses
+            try:
+                await options_walk(r, restore)
+                break
+            except RuntimeError as err:
+                if "hand_back_pending" not in str(err) or time.time() - t > 1200:
+                    raise
+                await r.ha.wait(60)
+        r.note(
+            f"the base restored {round(time.time() - t)} s after the owed hand-back began to settle"
+        )
         await r.sim("set_write_type", write_type="held")
+
+
+async def U1(r: Run, outdoor: float = -5.0, emitters: tuple[str, ...] = ("underfloor",) * 3):
+    """underfloor heating on an unmixed loop, the circuit's maximum 40 °C below what the curve
+    asks at −5 °C: every setpoint held at the maximum, said so; the measured flow over it by
+    the boiler's stop hysteresis at most; the too-hot alarm (45 °C, pre-filled) stays off"""
+    try:
+        d = await options_walk(r, {"circuit": {"max_flow": 40}}, menu="circuit")
+        if d.get("errors"):
+            raise RuntimeError(f"circuit not saved: {d['errors']}")
+        d = await options_walk(r, {"zone": [{"emitter": e} for e in emitters]}, menu="zones")
+        if d.get("errors"):
+            raise RuntimeError(f"zones not saved: {d['errors']}")
+        await r.sim("set_outdoor", temperature=outdoor)
+        await rooms_call(r, True)
+        await r.switch(True)
+        t = time.time()
+        flows: list[float] = []
+        capped = False
+        while time.time() - t < 6000:  # 100 min
+            await r.ha.wait(300)
+            flow = await r.s("sensor.boiler_sim_flow")
+            with contextlib.suppress(TypeError, ValueError):
+                flows.append(float(flow))
+            capped = capped or "limit_circuit_max" in (
+                await r.attr("control_state", "reasons") or []
+            )
+        sp = [v for k, v in entity_cmds(r, t) if k == "setpoint"]
+        alarm = await r.st("alarm_circuit_too_hot")
+        r.check(
+            bool(sp) and max(sp) <= 40.0,
+            f"setpoints within the maximum: max {max(sp, default=None)}",
+        )
+        r.check(capped is (outdoor < 0), f"the maximum said so: {capped}")
+        r.check(
+            bool(flows) and max(flows) <= 45.0,
+            f"measured flow at most 45: max {max(flows, default=None)}",
+        )
+        r.check(
+            alarm["state"] == "off"
+            and alarm["attributes"].get("limit") == 45.0
+            and alarm["attributes"].get("reason") is None,
+            f"too-hot alarm off, judged: {alarm['state']}, limit {alarm['attributes'].get('limit')}, reason {alarm['attributes'].get('reason')}",
+        )
+    finally:
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await r.sim("set_outdoor", temperature=3.0)
+        await options_walk(r, {"zone": [{"emitter": "radiator"}] * 3}, menu="zones")
         await options_walk(
             r,
-            {"control_entity": {"write_type": "held", "hand_back": "value", "hand_back_value": 0}},
+            {"circuit": {"max_flow": None, "max_flow_alarm": None, "max_flow_alarm_min": None}},
+            menu="circuit",
         )
+
+
+async def U2(r: Run):
+    """underfloor sharing the unmixed loop with a radiator at +5 °C: the curve below the
+    maximum, nothing held back; the flow and the alarm as in U1"""
+    await U1(r, outdoor=5.0, emitters=("underfloor", "underfloor", "radiator"))
 
 
 async def N3(r: Run):
     """a setpoint the boiler stores, or might (persistent, unknown): control never writes it"""
     for write_type in ("persistent", "unknown"):
-        d = await options_walk(r, {"control_entity": {"write_type": write_type}})
+        d = await options_walk(r, {"control_entity": {"write_type": write_type}}, strict=False)
         if d.get("errors"):
             r.check(True, f"{write_type}: refused where it is entered: {d['errors']}")
             continue
@@ -789,7 +965,9 @@ async def N3(r: Run):
 
 async def N4(r: Run):
     """without a heating switch control is refused (a low setpoint is not "off")"""
-    d = await options_walk(r, {"control_entity": {"ch_entity": None, "ch_write_type": "unknown"}})
+    d = await options_walk(
+        r, {"control_entity": {"ch_entity": None, "ch_write_type": "unknown"}}, strict=False
+    )
     if d.get("errors"):
         r.check(True, f"refused where it is entered: {d['errors']}")
     else:
@@ -896,8 +1074,8 @@ SCENARIOS.update(
     {
         f.__name__: f
         for f in (
-            *(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16),
-            *(N1, N2, N3, N4, N5, N6, N7, N8),
+            *(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18),
+            *(N1, N2, N3, N4, N5, N6, N7, N8, U1, U2),
             *(S1, S2),
         )
     }
