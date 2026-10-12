@@ -119,9 +119,11 @@ Wkład jest mile widziany — otwieraj pull requesty do `dev`. Najpierw przeczyt
 mała, przetestowana i przejrzana. Jakie automatyczne sprawdzenia działają i kiedy, opisuje jego
 część [Checks](CONTRIBUTING.md#checks).
 
-# Wsparcie
+# ☕ Wsparcie
 
-Jeśli wtyczka pomaga w Twoim ogrzewaniu, możesz postawić mi kawę: [buymeacoffee.com/shadow23][bmc].
+Jeśli Smart Boiler for Versatile Thermostat Ci się przydaje, możesz wesprzeć jego rozwój tutaj:
+
+<a href="https://buymeacoffee.com/shadow23"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="50"></a>
 
 # Autorzy
 
