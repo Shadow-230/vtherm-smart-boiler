@@ -46,8 +46,10 @@ Every pull request runs these checks on GitHub Actions:
   with. Its failure is not a fault of the pull request: it says that something upstream changed
   and needs a look.
 - Merging into `dev` needs both test checks green and the branch up to date with `dev`; merging
-  into `qas` or `main` needs the same, plus the repository owner's approval, and only the owner
-  merges.
+  into `qas` or `main` needs both test checks green and the repository owner's approval, and only
+  the owner merges. `qas` does not ask for the branch to be up to date: it takes pull requests
+  from `dev` only, and each merge leaves in `qas` an empty merge commit `dev` would otherwise have
+  to take back first (the owner's change, 2026-10-12); `main` still asks it.
 
 ## Before a pull request
 
