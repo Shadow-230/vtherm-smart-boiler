@@ -116,13 +116,16 @@ Only one entry of the integration can exist: it runs one boiler.
    gateway where more than one is set up, how a gateway sits between thermostat and boiler and
    what is wired to its thermostat terminals ([5.3](#53-the-gateway-topology)), and the restart
    indicator.
-4. **Describe the installation.** The sections **Boiler**, the circuits and **VT zones** (with
-   one **Zone** step for each zone you pick) ask what you know. Leave unknown values empty: the
-   plugin then says what it cannot judge. Each heating circuit is a menu item of its own,
-   **Circuit: <name>** — its name picked from Home Assistant's areas or the VT zones, or typed;
-   its number where none is given — and at the advanced level **Add circuit** adds one, up to
-   four; a tick in a circuit's form removes it, never the only one, nor one a zone still names.
-   The simple level shows one circuit, and keeps any other. A field shows only where it can work, by
+4. **Describe the installation.** The sections **Boiler**, the circuits and **VT zones** ask
+   what you know. Leave unknown values empty: the plugin then says what it cannot judge. Each
+   heating circuit is a menu item of its own, **Circuit: <name>** — its name picked from Home
+   Assistant's areas or the VT zones, or typed; its number where none is given — and at the
+   advanced level **Add circuit** adds one, up to four; a tick in a circuit's form removes it,
+   and its zones with it, never the only one. The simple level shows one circuit, and keeps any
+   other. A circuit's form lists the VT zones it feeds — an area adds its zones at the save —
+   and, of them, those with underfloor heating and those with convectors; the rest are
+   radiators. A zone belongs to one circuit; a zone in no circuit is neither watched nor asked
+   for heat. **VT zones** then asks one thing: whose valves close while VT has the zone off. A field shows only where it can work, by
    what is mapped in **Boiler signals**: in **Boiler** the minimum power always; the maximum
    power and the modulation's meaning with a modulation signal; the gas per hour at minimum and
    maximum power — from the technical data in the boiler's manual, in m³/h (kg/h for LPG) —

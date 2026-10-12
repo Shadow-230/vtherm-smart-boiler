@@ -371,10 +371,8 @@ async def test_installation_warnings_raise_an_issue(
     assert underfloor.severity is ir.IssueSeverity.WARNING
     assert underfloor.translation_placeholders == {"circuits": "ground"}
     # Fixed: the floor's maximum entered, the empty circuit gone — both issues go.
-    fixed = {
-        **entry.options,
-        "circuits": [{"id": "ground", "max_flow": 40.0}],
-    }
+    ground = {"id": "ground", "max_flow": 40.0, "zones": [floor], "underfloor": [floor]}
+    fixed = {**entry.options, "circuits": [ground]}  # the zones the circuits' (I8, F4)
     hass.config_entries.async_update_entry(entry, options=fixed)
     await hass.async_block_till_done()
     assert registry.async_get_issue(DOMAIN, f"installation_empty_circuit_{entry.entry_id}") is None
@@ -385,7 +383,7 @@ async def test_installation_warnings_raise_an_issue(
         is None
     )
     # A circuit added without zones, then the entry removed: its issue goes with it.
-    two = {**fixed, "circuits": [{"id": "ground", "max_flow": 40.0}, {"id": "attic"}]}
+    two = {**fixed, "circuits": [ground, {"id": "attic", "zones": []}]}
     hass.config_entries.async_update_entry(entry, options=two)
     await hass.async_block_till_done()
     again = registry.async_get_issue(DOMAIN, f"installation_empty_circuit_{entry.entry_id}")
