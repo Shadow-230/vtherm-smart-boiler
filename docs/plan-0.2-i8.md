@@ -734,6 +734,12 @@ Claude's calls (2026-10-12): four pull requests.
   valve, …). The relay's texts (C3, C4): no wiring advice — what happens without Home
   Assistant, the manual way back through the relay's own app or page, and a relay in the
   boiler's power supply cutting its pump overrun and frost protection, as neutral facts.
-- I8.10c: the repair issues, the exceptions and the forms' errors to A4's limits, EN and PL.
+- I8.10c ✅ (2026-10-12): the repair issues, the exceptions and the forms' errors to A4's limits,
+  EN and PL — what happened, what it means for the house, what to do; the phrases the tests
+  read kept. No text advises a thermostat in parallel any more (C4): the relay's rest state
+  says "a thermostat wired to the boiler, if there is one" and the manual way back through the
+  relay's own app or page; the stale names ("Heating curve and limits", "the control steps",
+  "the user guide has a sample") follow the new menu. Longer texts remain only where a safety
+  rule settled earlier needs the words (the relay timer's, Auto-TPI's costs, VT's restart).
 - I8.10d: both user guides rewritten plain, as above.
 - I8.10e: the check of every document against the code, as above; the result in `research/`.
