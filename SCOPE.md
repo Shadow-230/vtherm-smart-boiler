@@ -363,13 +363,12 @@ What the plugin can do depends on what the integration can write:
     central entry changed in this Home Assistant run before a plugin entry began watching VT, or
     when VT's central-boiler sensor is a stand-in written in this run while the entry says off
     (decision 9 of `docs/plan-0.2.3.md`).
-  - The setup texts recommend: the relay on the boiler's room-thermostat terminals, never in its
-    power supply; the old thermostat kept in parallel and set low, with the note that valves VT
-    drives stay where they were while Home Assistant is down, so its heat may not reach every
-    room; the relay starting "off" after a power cut; its local input set to "detached"; an
-    integration that reports availability; optionally the relay's own switch-off timer, renewed
-    by every "on" and set only when control starts — whether a Shelly's timer restarts on a
-    repeated "on" is not documented; one test in summer.
+  - The setup texts give facts, no wiring advice (I8 C4): if Home Assistant stops, the relay
+    stays as it was, and it can be switched by hand in its own app or page; a relay in the
+    boiler's power supply also cuts its pump overrun and frost protection; the room-thermostat
+    terminals may carry mains voltage; a Zigbee relay may look available long after it dies;
+    the relay's own switch-off timer, renewed by every "on", is set only once control starts —
+    whether a Shelly's timer restarts on a repeated "on" is not documented.
 - A second circuit controlled through the boiler (e.g. OpenTherm CH2) comes later. 0.2 controls
   at most one circuit fed straight from the boiler, with any circuits behind a fixed valve or run
   by other automation beside it (up to four in all; I8, decision F6): a circuit the boiler mixes,
@@ -1424,8 +1423,10 @@ Starts per hour count the hours with heating.
   decision 4).
 - From I6 (`docs/plan-0.2-i6.md`, "Open after I6"): the connection table's values (K4); merging
   the three highest-water-temperature fields — the boiler's, the circuit's, control's — which
-  the curve step names meanwhile (K4); pellet and biomass as heat sources; controlling two
-  circuits at once (0.3; the stored answers leave room for a second control configuration); the
+  the curve names meanwhile (K4; the circuit's and control's merged in I8, decision F2);
+  pellet and biomass as heat sources; controlling two circuits at once (0.3; the stored answers
+  leave room for a second control configuration — circuits behind a fixed valve or run by
+  other automation beside the straight one are controlled since I8.8); the
   room-temperature mode itself (0.3); a hint that a boiler often reporting heating and hot water
   together may have no hot-water priority.
 - The first published version and the repository's content (decision 16): the version after

@@ -84,7 +84,7 @@ Krok po kroku: [przewodnik użytkownika][guide-pl].
 | Wydanie | Zawartość |
 |---|---|
 | 0.2 Podstawa sterowania | monitor plus sterowanie temperaturą wody, bezpieczne oddanie kotła, ochrona przed mrozem |
-| 0.3 Ochrona przed taktowaniem i wartości pomieszczeń | praca cykliczna i lato/zima z prognozy, limit modulacji, tryb wartości pomieszczeń, podłogówka za zaworem mieszającym |
+| 0.3 Ochrona przed taktowaniem i tryb jak termostat | praca cykliczna, limit modulacji, planowanie z prognozy, tryb jak termostat, podłogówka za zaworem mieszającym |
 | 0.4 Uczenie i strojenie | uczenie po stronie wody, propozycje, sezonowe dostrojenie |
 | 0.5 Prognoza | wyprzedzanie dla wolnych grzejników na podstawie zapisanych prognoz |
 | Później | ładowanie ciepłej wody, domyślna lista HACS, więcej urządzeń |

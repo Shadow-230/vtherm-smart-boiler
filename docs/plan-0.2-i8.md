@@ -8,7 +8,7 @@ Control stays off by default; nothing here makes the plugin write anything new t
 Scope: `SCOPE.md`; overview: `PLAN.md`; the release plan: `docs/plan-0.2.md`. The decisions as
 collected in chat: `research/2026-10-10-options-review-decisions.md`.
 
-Status on 2026-10-12: the plan approved by the user; I8.0 to I8.9 done; I8.10 next.
+Status on 2026-10-12: the plan approved by the user; I8.0 to I8.10 done — I8 is done.
 
 ## How to read this plan
 
@@ -705,7 +705,7 @@ Claude's calls (2026-10-12): two pull requests.
   heating switch — the gateway paths included — "off" is never a setpoint, so not asked. Both
   user guides (the hand-back methods, the relay's settings, ESPHome, EMS-ESP).
 
-### I8.10 Texts and documents (A4, C3, C4) — the final check
+### I8.10 ✅ Texts and documents (A4, C3, C4) — the final check
 
 - Every panel text shortened to the limits of A4, plain, functions not recommendations, EN
   source and PL; the relay's texts (C3, C4); the gas rates, the design outdoor temperature, the
@@ -750,4 +750,12 @@ Claude's calls (2026-10-12): four pull requests.
   nowhere, and the window alarm (gone with I8.1) taken out of the alarm table. Claude's call:
   an editing pass, not a rewrite from scratch, so the facts checked before stay as they were;
   their check against the code is I8.10e.
-- I8.10e: the check of every document against the code, as above; the result in `research/`.
+- I8.10e ✅ (2026-10-12): the check, its result in `research/2026-10-12-i8-10e-document-check.md`.
+  Fixed: the README roadmap (EN, PL) still named summer/winter from the forecast and the
+  "room-value mode" — now the thermostat-like mode, FC1 struck; PLAN.md's 0.1 row named the
+  reference room, per-zone entities and foreign heat without their removal, its 0.2 row the
+  weather ceiling, "one written circuit" and a `NOTICE`; SCOPE.md's relay setup texts still
+  "recommended" a thermostat in parallel (C4) and an open item named the curve step; the plan's
+  status line. Found right: every file and name the technical documents cite; the alarm and
+  repair-issue tables of both guides against the translations (every entity and issue named);
+  translations' key parity and unused keys (tests); the removed names only in history notes.
