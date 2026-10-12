@@ -498,7 +498,7 @@
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
       "power_criterion_no_zone": "Żadna strefa nie podaje mocy urządzenia w Versatile Thermostat, więc tego progu nie da się osiągnąć: ustaw moc w VT albo zostaw puste.",
       "opening_criterion_no_zone": "Żadna strefa nie podaje otwarcia zaworu ani wypełnienia, więc tego progu nie da się osiągnąć.",
-      "zone_feeds_no_criterion": "Przy liczbie stref 0 strefa {zone} nigdy nie mogłaby poprosić o ciepło: nie podaje niczego, czego potrzebują ustawione tu progi — mocy urządzenia w Versatile Thermostat dla progu mocy, otwarcia zaworu ani wypełnienia dla progu otwarcia. Ustaw liczbę stref na 1 lub więcej albo uzupełnij brakującą wartość w VT.",
+      "zone_feeds_no_criterion": "Przy liczbie stref 0 {zone} nigdy nie poprosi o ciepło: nie podaje niczego, czego potrzebują progi (mocy urządzenia w VT dla mocy, otwarcia zaworu albo cyklu pracy dla otwarcia). Ustaw liczbę stref co najmniej 1 albo brakującą wartość w VT.",
       "off_setpoint_not_below_hard_min": "„Wyłączone” musi być co najmniej 1 °C poniżej najniższej temperatury wody, inaczej kocioł nie zauważy zmiany.",
       "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "confirmed_entity_missing": "Sterowanie porównuje każdy zapis z nastawą odebraną przez kocioł: wskaż ją jako „Nastawa c.o. odebrana przez kocioł” w Sygnałach kotła.",
@@ -1074,7 +1074,7 @@
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
       "power_criterion_no_zone": "Żadna strefa nie podaje mocy urządzenia w Versatile Thermostat, więc tego progu nie da się osiągnąć: ustaw moc w VT albo zostaw puste.",
       "opening_criterion_no_zone": "Żadna strefa nie podaje otwarcia zaworu ani wypełnienia, więc tego progu nie da się osiągnąć.",
-      "zone_feeds_no_criterion": "Przy liczbie stref 0 strefa {zone} nigdy nie mogłaby poprosić o ciepło: nie podaje niczego, czego potrzebują ustawione tu progi — mocy urządzenia w Versatile Thermostat dla progu mocy, otwarcia zaworu ani wypełnienia dla progu otwarcia. Ustaw liczbę stref na 1 lub więcej albo uzupełnij brakującą wartość w VT.",
+      "zone_feeds_no_criterion": "Przy liczbie stref 0 {zone} nigdy nie poprosi o ciepło: nie podaje niczego, czego potrzebują progi (mocy urządzenia w VT dla mocy, otwarcia zaworu albo cyklu pracy dla otwarcia). Ustaw liczbę stref co najmniej 1 albo brakującą wartość w VT.",
       "off_setpoint_not_below_hard_min": "„Wyłączone” musi być co najmniej 1 °C poniżej najniższej temperatury wody, inaczej kocioł nie zauważy zmiany.",
       "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -2620,7 +2620,7 @@
               "heating_stops": "Grzanie staje do powrotu sterowania",
               "device_decides": "Działa własne zabezpieczenie urządzenia",
               "own_control_resumes": "Przejmuje własne sterowanie kotła",
-              "relay_rests_off": "Przekaźnik zostaje wyłączony: ciepło tylko z termostatu równoległego",
+              "relay_rests_off": "Przekaźnik zostaje wyłączony: ciepło tylko z termostatu podłączonego do kotła",
               "relay_rests_on": "Przekaźnik zostaje włączony: kocioł grzeje według własnego ustawienia"
             }
           },
@@ -2832,7 +2832,7 @@
       "message": "Home Assistant jeszcze się uruchamia. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant. Jeśli jest skonfigurowany, najpierw go odznacz, żeby kotłem sterował tylko jeden sterownik, a potem uruchom ponownie Home Assistant: dopiero wtedy VT przestaje wysyłać polecenia kotła centralnego. Sterowanie czeka do ponownego uruchomienia Home Assistant, nawet po odznaczeniu. Czeka też na jedno ponowne uruchomienie, gdy centralną konfigurację VT utworzono lub zmieniono po uruchomieniu Home Assistant, zanim ta integracja zaczęła obserwować VT — także bez kotła centralnego — bo nie wie, co VT w tym czasie uruchomił. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od startu Home Assistant: odznacz go, żeby kotłem sterował jeden sterownik, i uruchom ponownie Home Assistant. Sterowanie czeka na restart Home Assistant, nawet po odznaczeniu — także gdy konfigurację centralną VT utworzono lub zmieniono po starcie Home Assistant, nawet bez kotła centralnego. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_vt_central_boiler_unknown": {
       "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: nie udało się załadować centralnej konfiguracji VT (zobacz Ustawienia → Urządzenia i usługi) albo jej ustawienia nie mówią, czy kocioł centralny jest włączony. Sterowanie czeka. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2874,13 +2874,13 @@
       "message": "Encja nastawy przyjmuje teraz wartości co ponad 1 °C, więc odczyt zwrotny nie potwierdzi wartości: wybierz inną encję w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_heating_off_ignored": {
-      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie” — albo przekaźnik polecenia „wyłącz” — więc wtyczka nie mogła wyłączyć ogrzewania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania albo przekaźnik wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Od początku sesji kocioł nie przyjął „wyłącz grzanie” — albo przekaźnik „wył.” — więc sterowanie stanęło i oddało kocioł. Sprawdź przełącznik grzania albo przekaźnik i ustawienia kotła, potem wyłącz i włącz sterowanie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_heating_on_ignored": {
-      "message": "Od początku sesji kocioł nie przyjął polecenia wtyczki „włącz grzanie” — albo przekaźnik polecenia „włącz” — więc wtyczka nie mogła uruchomić grzania. Sterowanie się zatrzymało, a kocioł został oddany. Sprawdź przełącznik ogrzewania albo przekaźnik wybrany w opcjach, encję, która go potwierdza, i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Od początku sesji kocioł nie przyjął „włącz grzanie” — albo przekaźnik „wł.” — więc sterowanie stanęło i oddało kocioł. Sprawdź przełącznik grzania albo przekaźnik, encję, która to potwierdza, i ustawienia kotła, potem wyłącz i włącz sterowanie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_relay_off_not_taken": {
-      "message": "Przekaźnik przyjmował wcześniej w tej sesji polecenia wtyczki, a potem przez około 15 minut nie pokazał „wyłącz”, więc wtyczka nie mogła wyłączyć ogrzewania — kocioł może dalej grzać. Sterowanie się zatrzymało, a przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik, jego łączność i encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Przekaźnik wcześniej przyjmował polecenia, potem przez około 15 minut nie pokazał „wył.”, więc sterowanie stanęło — kocioł może dalej grzać; przekaźnik ustawiono raz na stan po oddaniu. Sprawdź przekaźnik, jego łącze i encję, potem wyłącz i włącz sterowanie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_hand_back_switch_is_heating_switch": {
       "message": "Przełącznik sterowania zewnętrznego jest też przełącznikiem ogrzewania albo encją nastawy: oddawanie sterowania przełączałoby go bez końca. Wybierz w opcjach inną encję. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2892,7 +2892,7 @@
       "message": "Podłączenie bramki nie pasuje do ścieżki zapisu: wybierz inne w „Interfejs kotła”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_no_heating_switch": {
-      "message": "Sterowanie wymaga przełącznika ogrzewania, którego kocioł nie zapisuje w pamięci. Bez niego „wyłączone” byłoby niską nastawą, a nie wiadomo jeszcze, czy to zatrzymuje kocioł i jego pompę — poza EMS-ESP, którego własna nastawa 0 wyłącza grzanie. Monitor działa dalej. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Sterowanie potrzebuje przełącznika grzania, którego kocioł nie zapisuje w pamięci: bez niego „wyłącz” byłoby niską nastawą, a czy to zatrzymuje kocioł i pompę, jeszcze nie wiadomo (poza własną nastawą 0 EMS-ESP). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_gateway_not_set_up": {
       "message": "Integracja OpenTherm Gateway wybranej bramki jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz albo wybierz w opcjach inną bramkę. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -2973,19 +2973,19 @@
       "message": "W „Tryb sterowania” wybrano tylko monitorowanie: wtyczka niczego nie zapisuje do kotła. Aby ustawić sterowanie, wybierz tam tryb sterowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_connection_not_for_path": {
-      "message": "Ustawione sterowanie pisze inną ścieżką, niż teraz wynika z połączenia kotła: odpowiedz ponownie na kroki sterowania dla połączenia wybranego w „Połączenie i typ kotła”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Ustawione sterowanie pisze inną ścieżką, niż teraz wynika z połączenia kotła: odpowiedz ponownie w pozycjach sterowania dla połączenia wybranego w „Połączenie i typ kotła”. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_topology_not_for_connection": {
       "message": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: topologia w „Interfejs kotła” musi być wirtualna. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_esphome_start_not_confirmed": {
-      "message": "Nie potwierdzono, że ESP startuje z bezpiecznymi wartościami i krótkim reboot_timeout API: gdyby Home Assistant przestał działać, ESP trzymałby ostatnią nastawę i włączone grzanie aż do upływu reboot_timeout (domyślnie 15 minut). Zaznacz to w kroku sterowania, gdy ESP będzie tak skonfigurowany. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Nie potwierdzono, że ESP startuje na bezpiecznych wartościach z krótkim reboot_timeout API: po zatrzymaniu Home Assistant trzymałby ostatnią nastawę i grzanie do 15 minut. Zaznacz to w Urządzeniu sterującym, gdy ESP jest tak ustawiony. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     }
   },
   "issues": {
     "auto_tpi_blocked": {
       "title": "Auto-TPI nie może się uczyć w części stref",
-      "description": "Te strefy używają Auto-TPI i są oznaczone w Versatile Thermostat jako używane przez kocioł centralny, ale kocioł centralny VT nie jest skonfigurowany — zastępuje go wtyczka — więc Auto-TPI pomija w nich naukę: {zones}. Żeby mogło się uczyć, wyłącz opcję „używany przez kocioł centralny” w konfiguracji VT każdej z tych stref. Koszt: wtyczka nie może wstrzymać Auto-TPI bez skasowania tego, czego się nauczyło, więc będzie się ono uczyć także podczas grzania ciepłej wody i zmian temperatury wody, co może zafałszować jego współczynniki; razem z opcją znika też własna ochrona VT, więc będzie się ono uczyć również wtedy, gdy strefy potrzebują ciepła, a kocioł nie grzeje — po oddaniu kotła, które wyłącza grzanie, przy awarii kotła, w czasie opóźnienia włączenia i w okresie monitorowania. Pozostawienie opcji utrzymuje naukę Auto-TPI w tych strefach wyłączoną."
+      "description": "Te strefy działają z Auto-TPI i są w VT oznaczone „używane przez kocioł centralny”, ale kocioł centralny VT jest wyłączony — zastępuje go wtyczka — więc Auto-TPI się w nich nie uczy: {zones}. Usunięcie oznaczenia pozwala mu się uczyć — ale też podczas ciepłej wody i wahań wody oraz gdy strefy proszą, a kocioł nie grzeje (po oddaniu, przy usterce, podczas opóźnienia włączenia i okresu monitorowania), co może go zniekształcić: wtyczka nie umie wstrzymać Auto-TPI."
     },
     "hand_back_owed": {
       "title": "Oddanie kotła nie dotarło",
@@ -3007,19 +3007,19 @@
     },
     "control_state_unreadable": {
       "title": "Nie udało się odczytać pamięci wtyczki o kotle",
-      "description": "Plik, w którym wtyczka pamięta, czy steruje kotłem, nie dał się odczytać: brakuje go albo jest uszkodzony (Home Assistant może osobno zgłosić uszkodzony plik). Dla bezpieczeństwa wtyczka przyjmuje, że sterowała kotłem, i najpierw go oddaje, o ile pozwalają na to jej opcje; to powiadomienie znika, gdy kocioł pokaże to oddanie. Potem sterowanie działa normalnie. Dopóki powiadomienie jest widoczne, oddanie nie jest jeszcze potwierdzone albo nie było czym go wykonać: sprawdź, czy kocioł i przełącznik sterowania są w stanie, jakiego oczekujesz."
+      "description": "Plik, w którym wtyczka pamięta, czy trzyma kocioł, zniknął albo jest uszkodzony. Dla bezpieczeństwa najpierw oddaje kocioł, jeśli pozwalają na to jej opcje; to zgłoszenie znika, gdy kocioł pokaże to oddanie. Potem sterowanie działa jak zwykle. Dopóki zgłoszenie jest, sprawdź kocioł i przełącznik sterowania."
     },
     "setup_failed_not_heated": {
       "title": "Wtyczka nie wystartowała: dom nie jest ogrzewany",
-      "description": "Wtyczka nie mogła wystartować, więc nie steruje kotłem, a tutaj oddanie kotła wyłącza grzanie (bramka bez termostatu, wartość przy oddaniu oznaczona jako wyłączająca grzanie albo przekaźnik spoczywający w stanie „wyłączony”): dom nie jest ogrzewany, chyba że grzeje go coś innego. Działa tylko własna ochrona kotła przed zamarzaniem, jeśli ją ma. Otwórz Ustawienia → Urządzenia i usługi, znajdź wpis wtyczki i przeczytaj jego błąd; popraw to, co wskazuje, i przeładuj wpis. To powiadomienie zniknie, gdy wtyczka wystartuje."
+      "description": "Wtyczka nie wystartowała, a tutaj oddanie kotła zatrzymuje grzanie (bramka bez termostatu, wartość oddania, która zatrzymuje grzanie, albo przekaźnik spoczynkowo „wył.”): dom nie jest ogrzewany, chyba że grzeje go coś innego. W Ustawienia → Urządzenia i usługi przeczytaj błąd wpisu, popraw go i przeładuj wpis."
     },
     "setup_failed_may_not_be_heated": {
       "title": "Wtyczka nie wystartowała: dom może nie być ogrzewany",
-      "description": "Wtyczka nie mogła wystartować, więc nie steruje kotłem. Nie da się odczytać ani jej opcji, ani opcji, z którymi przejęła kocioł, więc nie wie, co kocioł robi bez niej: tam, gdzie oddanie kotła wyłącza grzanie (bramka bez termostatu, wartość przy oddaniu oznaczona jako wyłączająca grzanie albo przekaźnik spoczywający w stanie „wyłączony”), dom nie jest ogrzewany. Otwórz Ustawienia → Urządzenia i usługi, znajdź wpis wtyczki i przeczytaj jego błąd; popraw to, co wskazuje, i przeładuj wpis. To powiadomienie zniknie, gdy wtyczka wystartuje."
+      "description": "Wtyczka nie wystartowała, a jej opcji nie da się odczytać, więc nie wie, co kocioł robi bez niej: tam, gdzie oddanie zatrzymuje grzanie, dom nie jest ogrzewany. W Ustawienia → Urządzenia i usługi przeczytaj błąd wpisu, popraw go i przeładuj wpis."
     },
     "control_state_not_saved": {
       "title": "Wtyczka nie może zapisać swojej pamięci o kotle",
-      "description": "Zapis pliku, w którym wtyczka pamięta, czy steruje kotłem, nie powiódł się — pełny dysk albo pamięć, która przeszła w tryb tylko do odczytu (błąd jest w logu Home Assistant). Po restarcie wtyczka mogłaby wtedy zapomnieć, że kocioł trzyma wartość przez nią zapisaną, więc sterowanie na razie nie przejmuje kotła: oddało go, a oddanie, które wtyczka już jest winna, i tak zostaje wysłane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Wtyczka zapisuje ponownie co minutę, a sterowanie wraca samo, gdy zapis działa bez błędu przez {minutes} min. Sprawdź pamięć Home Assistant: wolne miejsce i czy jej dysk lub karta SD nie zawodzi."
+      "description": "Zapis pamięci wtyczki o kotle się nie udał (pełny dysk albo pamięć tylko do odczytu; błąd jest w logu), więc sterowanie nie przejmuje kotła: restart mógłby zapomnieć, co zapisało. Tam, gdzie oddanie zatrzymuje grzanie, kocioł w tym czasie nie grzeje. Wtyczka próbuje co minutę; sterowanie wraca samo, gdy zapis działa przez {minutes} minut. Sprawdź pamięć Home Assistant."
     },
     "hand_back_owed_after_removal": {
       "title": "Kocioł może nadal trzymać wartość z Smart Boiler for Versatile Thermostat",
@@ -3031,7 +3031,7 @@
     },
     "learning_not_paused": {
       "title": "Wtyczka nie może wstrzymać nauki w części stref",
-      "description": "Sterowanie wstrzymuje naukę stref podczas grzania ciepłej wody i przy wahaniach temperatury wody, ale tych stref wstrzymać nie może: {zones}. Auto-TPI dałoby się wstrzymać tylko przez skasowanie tego, czego się nauczyło, więc wtyczka go nie rusza; SmartPI, które nie publikuje flagi nauki, też nie może być wstrzymane. Uczą się one także w tych chwilach, co może zafałszować to, czego się uczą. Żeby tego uniknąć, zatrzymaj naukę Auto-TPI w VT, gdy już się nauczyło, albo zaktualizuj SmartPI — do tego czasu strefa zostaje bez ochrony wtyczki."
+      "description": "Sterowanie nie może wstrzymać nauki w tych strefach podczas ciepłej wody i wahań wody: {zones}. Auto-TPI dałoby się wstrzymać tylko kasując jego naukę; SmartPI bez flagi nauki nie da się wstrzymać. Uczą się więc i w tych chwilach, co może zniekształcić ich naukę."
     },
     "vt_feature_manager_unsupported": {
       "title": "Termostaty VT nie mogą pokazać wartości strefy z wtyczki",
@@ -3051,7 +3051,7 @@
     },
     "hand_back_taken_by_other": {
       "title": "Po oddaniu kotłem steruje inny sterownik",
-      "description": "Wtyczka oddała kocioł, a inny sterownik — automatyzacja, własny program urządzenia albo inna integracja — trzyma teraz to, co wtyczka ustawiła: {target}. Wtyczka uznaje oddanie za wykonane i więcej tam nie zapisuje. Z termostatem albo własnym sterowaniem kotła grzanie idzie dalej pod nim; tam, gdzie oddanie zatrzymuje grzanie, kocioł grzeje tylko pod tym innym sterownikiem. Jeśli nie spodziewasz się innego sterownika, znajdź go."
+      "description": "Po oddaniu inny sterownik — automatyzacja, program urządzenia, inna integracja — trzyma to, co ustawiła wtyczka: {target}. Oddanie liczy się jako wykonane; wtyczka już tam nie pisze. Tam, gdzie oddanie zatrzymuje grzanie, kocioł grzeje tylko pod tamtym sterownikiem. Jeśli się go nie spodziewasz, znajdź go."
     },
     "monitor_failed": {
       "title": "Sterowanie oddało kocioł: monitor wtyczki stale zawodzi",
@@ -3067,35 +3067,35 @@
     },
     "control_latched": {
       "title": "Sterowanie ustąpiło: do kotła pisze inny sterownik",
-      "description": "Inny sterownik znów zmienił to, co wtyczka zapisuje do kotła, po tym jak wtyczka raz przywróciła swoją wartość — wtyczka zobaczyła {value} na {target}, czego sama nie zapisała — więc ustąpiła i z nim nie walczy. Oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie — przez to raz, na chwilę, nadpisała wartość innego sterownika. Z termostatem albo własnym sterowaniem kotła grzanie trwa dalej; bez nich kocioł grzeje tylko pod innym sterownikiem. Aby oddać sterowanie wtyczce, zatrzymaj inny sterownik, a potem wyłącz i włącz sterowanie. Jeśli włączono „Powrót po innym sterowniku bez udziału użytkownika”, sterowanie wraca też samo po godzinie, w której nic innego nie pisało do kotła (nie dotyczy przekaźników)."
+      "description": "Inny sterownik znowu zmienił to, co pisze wtyczka, po tym jak wtyczka raz to przywróciła — {value} na {target} — więc wtyczka ustąpiła i oddała kocioł. Z termostatem albo własnym sterowaniem kotła grzanie trwa; bez nich — tylko pod tamtym sterownikiem. Zatrzymaj go, potem wyłącz i włącz sterowanie; z włączonym „Powrotem bez udziału użytkownika” sterowanie wraca też po godzinie bez innych zapisów."
     },
     "control_latched_switch": {
       "title": "Sterowanie ustąpiło: kocioł przełącza inny sterownik",
-      "description": "Inny sterownik przełączył {target}, czego wtyczka nie zrobiła, więc wtyczka ustąpiła i z nim nie walczy. Oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Z termostatem albo własnym sterowaniem kotła grzanie trwa dalej; bez nich kocioł grzeje tylko pod innym sterownikiem. Aby oddać sterowanie wtyczce, zatrzymaj inny sterownik, a potem wyłącz i włącz sterowanie. Jeśli włączono „Powrót po innym sterowniku bez udziału użytkownika”, sterowanie wraca też samo po godzinie, w której nic innego nie pisało do kotła."
+      "description": "Inny sterownik przełączył {target}, czego wtyczka nie zrobiła, więc wtyczka ustąpiła i oddała kocioł. Z termostatem albo własnym sterowaniem kotła grzanie trwa; bez nich — tylko pod tamtym sterownikiem. Zatrzymaj go, potem wyłącz i włącz sterowanie; z włączonym „Powrotem bez udziału użytkownika” sterowanie wraca też po godzinie bez innych zapisów."
     },
     "control_latched_heating_off_ignored": {
       "title": "Sterowanie zatrzymane: kocioł nie przyjmuje „wyłącz grzanie”",
-      "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „wyłącz grzanie”, więc wtyczka nie mogła wyłączyć ogrzewania i oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sprawdź przełącznik ogrzewania wybrany w opcjach i ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+      "description": "Od początku sesji kocioł nie przyjął „wyłącz grzanie”, więc wtyczka go oddała. Tam, gdzie oddanie zatrzymuje grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sprawdź przełącznik grzania wybrany w opcjach i ustawienia kotła, potem wyłącz i włącz sterowanie."
     },
     "control_latched_heating_on_ignored": {
       "title": "Sterowanie zatrzymane: kocioł nie przyjmuje „włącz grzanie”",
-      "description": "Od początku sesji kocioł nie przyjął polecenia wtyczki „włącz grzanie” — albo encja wybrana do jego potwierdzania nigdy go nie pokazała — więc wtyczka nie mogła uruchomić grzania i oddała kocioł bezpiecznie: najpierw najniższa temperatura wody, potem włączone grzanie tam, gdzie przejmuje termostat albo własne sterowanie kotła, potem zwolnienie. Dopóki sterowanie nie wróci, wtyczka nie ogrzewa domu, także ochrona przed mrozem: tam, gdzie przejmuje termostat albo własne sterowanie kotła, grzeje ono tylko wtedy, gdy kocioł przyjmuje jego żądanie; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje. Sprawdź przełącznik ogrzewania i encję, która go potwierdza, wybrane w opcjach (stan pokazujący, czy kocioł grzeje w tej chwili, nie potwierdza przełącznika) oraz ustawienia kotła, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+      "description": "Od początku sesji kocioł nie przyjął „włącz grzanie” — albo encja, która to potwierdza, nigdy tego nie pokazała — więc wtyczka go oddała. Dopóki sterowanie nie wróci, nie ogrzewa domu, łącznie z ochroną przed mrozem. Sprawdź przełącznik grzania, encję potwierdzającą (nie stan, czy kocioł teraz grzeje) i ustawienia kotła, potem wyłącz i włącz sterowanie."
     },
     "control_latched_write_ignored": {
       "title": "Sterowanie oddało kocioł: kocioł ignoruje wartość zapisywaną przez wtyczkę",
-      "description": "Kocioł nie przyjął wartości zapisanej przez wtyczkę — którą, pokazuje alarm „Sterowanie: kocioł nie przyjmuje polecenia” — a w opcjach sterowania „Kocioł ignoruje wartość” ustawiono na oddanie kotła. Sterowanie bezpiecznie oddało kocioł: najpierw najniższa temperatura wody, potem włączenie grzania, potem zwolnienie; teraz grzeje termostat albo własne sterowanie kotła. Sprawdź encję wybraną w opcjach i ustawienia kotła (wartość spoza jego zakresu, ustawienie, które ją blokuje), a potem wyłącz i włącz sterowanie, by znów przejąć kocioł."
+      "description": "Kocioł nie przyjął wartości zapisanej przez wtyczkę (alarm „Sterowanie: kocioł nie przyjmuje polecenia” mówi której), a „Kocioł ignoruje wartość” jest ustawione na oddanie, więc sterowanie oddało kocioł; grzeje teraz termostat albo jego własne sterowanie. Sprawdź encję i ustawienia kotła, potem wyłącz i włącz sterowanie."
     },
     "control_latched_other": {
       "title": "Sterowanie pozostaje oddane po wcześniejszym alarmie",
-      "description": "Wcześniejsza wersja wtyczki oddała kocioł z powodu alarmu, który teraz tylko informuje ({alarm}), a sterowanie pozostaje oddane, dopóki go nie wyłączysz i nie włączysz. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sprawdź alarm, a potem wyłącz i włącz sterowanie, by znów przejąć kocioł."
+      "description": "Wcześniejsza wersja oddała kocioł z powodu alarmu, który teraz tylko informuje ({alarm}); sterowanie pozostaje oddane, dopóki go nie wyłączysz i nie włączysz. Tam, gdzie oddanie zatrzymuje grzanie, kocioł w tym czasie nie grzeje."
     },
     "hand_back_boiler_link_lost": {
       "title": "Sterowanie oddało kocioł: utracono jego dane",
-      "description": "Odczyt płomienia lub temperatury zasilania kotła nie był świeży przez 5 minut z 10, więc sterowanie przestało zapisywać i oddało kocioł — bez świeżych danych nic nie jest zapisywane. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sterowanie wróci samo, gdy dane będą świeże przez minutę. Sprawdź bramkę lub urządzenie, jego łączność oraz encje wybrane jako płomień i zasilanie."
+      "description": "Płomień albo zasilanie kotła nie były świeże przez 5 minut w ciągu 10, więc sterowanie oddało kocioł — bez świeżych danych nic nie jest zapisywane. Tam, gdzie oddanie zatrzymuje grzanie, kocioł w tym czasie nie grzeje. Sterowanie wraca, gdy dane są świeże przez minutę. Sprawdź urządzenie, jego łącze i encje płomienia i zasilania."
     },
     "hand_back_control_error": {
       "title": "Sterowanie zatrzymane po błędzie wewnętrznym",
-      "description": "Błąd we wtyczce zatrzymał sterowanie, które oddało kocioł — szczegóły są w logu. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono teraz grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie nie wróci. Sterowanie pozostaje zatrzymane, dopóki go nie wyłączysz i nie włączysz; jeśli błąd wróci, zgłoś go razem z logiem."
+      "description": "Błąd we wtyczce zatrzymał sterowanie, a ona oddała kocioł (szczegóły w logu). Tam, gdzie oddanie zatrzymuje grzanie, kocioł w tym czasie nie grzeje. Sterowanie stoi, dopóki go nie wyłączysz i nie włączysz; jeśli błąd wróci, zgłoś go z logiem."
     },
     "no_zone_known_off": {
       "title": "Versatile Thermostat nie odpowiada: kocioł nie grzeje",
@@ -3111,15 +3111,15 @@
     },
     "no_criterion_judged_off": {
       "title": "Żadnego kryterium zapotrzebowania nie da się ocenić: kocioł nie grzeje",
-      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania ustawione w opcjach wtyczki nie dostaje danych ze stref, które mogą grzać, więc nie widać, czy któryś pokój prosi o ciepło ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie). Wtyczka trzyma grzanie kotła wyłączone i wznowi je, gdy tylko kryterium znów będzie miało dane. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
+      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania z opcji nie dostaje od nich danych, więc nie widać żadnej prośby o ciepło ({criteria}: „moc” wymaga mocy urządzenia w VT, „otwarcie” — otwarcia zaworu albo cyklu pracy). Wtyczka trzyma grzanie wyłączone, dopóki kryterium nie dostanie danych. Ustaw moc urządzenia w VT albo liczbę stref co najmniej 1 w opcjach sterowania."
     },
     "no_criterion_judged_handed_back": {
       "title": "Żadnego kryterium zapotrzebowania nie da się ocenić: kocioł wrócił do termostatu albo własnego regulatora pokojowego",
-      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania ustawione w opcjach wtyczki nie dostaje danych ze stref, które mogą grzać, więc nie widać, czy któryś pokój prosi o ciepło ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie). Wtyczka oddała kocioł termostatowi na bramce albo własnemu regulatorowi pokojowemu kotła i przejmie go znów, gdy tylko kryterium będzie miało dane. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
+      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania z opcji nie dostaje od nich danych, więc nie widać żadnej prośby o ciepło ({criteria}: „moc” wymaga mocy urządzenia w VT, „otwarcie” — otwarcia zaworu albo cyklu pracy). Wtyczka oddała kocioł termostatowi albo jego własnemu regulatorowi pokojowemu i przejmie go znowu, gdy kryterium dostanie dane. Ustaw moc urządzenia w VT albo liczbę stref co najmniej 1 w opcjach sterowania."
     },
     "no_criterion_judged_monitor": {
       "title": "Żadnego kryterium zapotrzebowania nie da się ocenić",
-      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania ustawione w opcjach wtyczki nie dostaje danych ze stref, które mogą grzać, więc nie widać, czy któryś pokój prosi o ciepło ({criteria}: „power” to moc urządzenia ustawiona w Versatile Thermostat, „opening” to otwarcie zaworu albo wypełnienie); włączone sterowanie nie mogłoby grzać dla żadnego pokoju. Ustaw moc urządzenia w VT albo ustaw w opcjach sterowania wtyczki liczbę stref na 1 lub więcej."
+      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania z opcji nie dostaje od nich danych, więc nie widać żadnej prośby o ciepło ({criteria}: „moc” wymaga mocy urządzenia w VT, „otwarcie” — otwarcia zaworu albo cyklu pracy). Po włączeniu sterowanie nie mogłoby grzać dla żadnego pokoju. Ustaw moc urządzenia w VT albo liczbę stref co najmniej 1 w opcjach sterowania."
     },
     "frost_zone_closed": {
       "title": "Pokój poniżej progu mrozu nie może dostać ciepła",
@@ -3139,7 +3139,7 @@
     },
     "frost_zone_closed_mixed": {
       "title": "Pokoje poniżej progu mrozu nie mogą dostać ciepła",
-      "description": "{zones}: Versatile Thermostat trzyma ich zawory zamknięte z różnych powodów, więc wtyczka nie może ich ogrzać i nie włącza dla nich kotła. Dla wyłączonego termostatu użyj presetu mrozowego VT zamiast wyłączenia; pokój zamknięty z powodu otwartego okna, trybu centralnego „Zatrzymany” albo innej funkcji VT (tryb bezpieczeństwa, automatyczny start/stop) zostaje nieogrzewany, dopóki VT go znów nie otworzy; centralny tryb mrozowy VT wymaga ustawienia temperatury mrozowej w każdym termostacie."
+      "description": "{zones}: VT trzyma ich zawory zamknięte z różnych powodów, więc wtyczka nie może ich ogrzać. Dla termostatu wyłączonego użyj presetu przeciwmrozowego VT zamiast wyłączenia; pokój zamknięty przez okno, „Zatrzymany” VT albo inną funkcję VT zostaje nieogrzany, dopóki VT go nie otworzy."
     },
     "thermostat_kind_missing": {
       "title": "Podaj, co jest podłączone do zacisków termostatu bramki",
@@ -3159,39 +3159,39 @@
     },
     "lowest_water_suggestion_boiler": {
       "title": "Kocioł wciąż się wyłącza przy swojej najniższej temperaturze wody",
-      "description": "W ostatnich {days} dniach {short} z {burns} cykli grzania przy około {reference} °C trwało krócej niż {limit} min i skończyło się, bo woda była dość ciepła, choć pokoje wciąż prosiły o ciepło. Rozważ podniesienie minimalnej temperatury zasilania albo punktu początkowego krzywej grzewczej w urządzeniu, które ustala temperaturę wody, do około {value} °C — nie równoległego przesunięcia krzywej, które podnosi też wodę w mróz. Dłuższe cykle są prawdopodobne; mniej uruchomień — nie na pewno. Wtyczka niczego tam nie zmienia."
+      "description": "W ostatnich {days} dniach {short} z {burns} paleń przy ogrzewaniu w okolicy {reference} °C trwało krócej niż {limit} min i skończyło się, bo woda była dostatecznie ciepła, a pokoje dalej prosiły o ciepło. Podniesienie minimalnej temperatury zasilania (albo punktu startowego krzywej) urządzenia, które ustala wodę, do około {value} °C wydłuży palenia; wtyczka niczego tam nie zmienia."
     },
     "read_back_waiting": {
       "title": "Sterowanie czeka na potwierdzenie z bramki",
-      "description": "Sterowanie jest włączone, ale odczyt zwrotny nastawy z bramki — encja wskazana w Sygnałach kotła jako nastawa c.o. odebrana przez kocioł — od 5 minut nie podaje wartości, więc wtyczka nie przejmuje kotła: bez tego odczytu nie mogłaby zobaczyć, że oddanie kotła doszło do skutku. Tam, gdzie przejmuje termostat albo własne sterowanie kotła, ono w tym czasie grzeje; tam, gdzie oddanie kotła wyłącza grzanie, kocioł nie grzeje, dopóki sterowanie go nie przejmie. Sprawdź, czy bramka jest połączona i czy wybrana encja podaje wartość — to „Control setpoint 1” urządzenia kotła w bramce. To powiadomienie zniknie, gdy encja poda wartość albo gdy wyłączysz sterowanie."
+      "description": "Sterowanie jest włączone, ale odczyt zwrotny nastawy (w Sygnałach kotła: nastawa c.o. odebrana przez kocioł) od 5 minut nie ma wartości, więc wtyczka nie przejmuje kotła: nie widziałaby, że oddanie dotarło. Tam, gdzie oddanie zatrzymuje grzanie, kocioł w tym czasie nie grzeje. Sprawdź bramkę i tę encję (jej „Control setpoint 1”)."
     },
     "write_ignored_no_heat": {
       "title": "Kocioł nie przyjmuje polecenia: dom nie jest ogrzewany",
-      "description": "Od początku sesji kocioł nie przyjął temperatury wody, którą zapisuje wtyczka; podaje to alarm „Sterowanie: kocioł nie przyjmuje polecenia”. Wtyczka nie może więc ogrzewać domu, także w ramach ochrony przed mrozem, a w tej instalacji nic innego tego nie robi: oddanie kotła wyłącza tu grzanie (bramka bez termostatu bez nastawy wtyczki nie przekazuje kotłowi zapotrzebowania na ciepło). Wtyczka nadal steruje i nie oddaje kotła; spróbuje ponownie w następnej sesji — gdy wyłączysz i włączysz sterowanie albo po ponownym uruchomieniu — a nie wtedy, gdy sterowanie przejmie kocioł po przerwie. Sprawdź ustawienia kotła — wartość spoza jego zakresu albo ustawienie, które go blokuje — oraz encje wybrane w opcjach, a potem wyłącz i włącz sterowanie."
+      "description": "Od początku sesji kocioł nie przyjął temperatury wody zapisywanej przez wtyczkę (alarm „Sterowanie: kocioł nie przyjmuje polecenia” ją podaje), a tutaj nic innego nie grzeje: dom nie jest ogrzewany, łącznie z ochroną przed mrozem. Wtyczka trzyma sterowanie i próbuje znowu przy następnej sesji — gdy wyłączysz i włączysz sterowanie albo po restarcie. Sprawdź ustawienia kotła i wybrane encje."
     },
     "setpoint_not_shown": {
       "title": "Kocioł nie pokazuje temperatury wody ustawionej przez wtyczkę",
-      "description": "Od 5 minut odczyt zwrotny nastawy kotła pokazuje inną temperaturę wody niż ta, którą ustawiła wtyczka. Wtyczka nadal steruje i nie oddaje z tego powodu kotła: kocioł może trzymać własną wartość — ustawione w nim ograniczenie albo ustawienie, które go blokuje — albo encja wskazana jako nastawa odebrana przez kocioł może nie pokazywać nastawy, którą kocioł otrzymał, lub pokazywać ją z opóźnieniem. Sprawdź maksymalną temperaturę wody i ustawienia sterowania kotła oraz nastawę c.o. wskazaną w Sygnałach kotła. Tam, gdzie oddanie kotła wyłącza grzanie, dom może w tym czasie nie dostawać potrzebnego ciepła. To powiadomienie zniknie, gdy odczyt zwrotny pokaże wartość wtyczki albo gdy wyłączysz sterowanie."
+      "description": "Od 5 minut odczyt zwrotny nastawy pokazuje inną temperaturę wody niż wtyczki. Wtyczka trzyma sterowanie i z tego powodu nie oddaje kotła: kocioł może trzymać własną wartość (limit, blokada) albo odczyt może być spóźniony lub zły. Sprawdź maksimum kotła i nastawę c.o. wskazaną w Sygnałach kotła."
     },
     "no_sign_boiler_heats": {
       "title": "Brak oznak grzania kotła",
-      "description": "Od {minutes} minut sterowanie ma włączone grzanie, pomieszczenie prosi o ciepło, a kocioł nie pokazuje żadnej oznaki grzania: jego płomień pozostaje zgaszony — albo, bez sygnału płomienia, temperatura zasilania nie rośnie — a woda pozostaje chłodniejsza niż nastawa wtyczki. Kocioł może być zablokowany po awarii, przełączony w tryb letni albo mieć wyłączone grzanie na własnym panelu lub w aplikacji producenta, albo nie mieć gazu. Sprawdź na wyświetlaczu kotła kod błędu lub blokady i skasuj ją tak, jak podaje instrukcja kotła; sprawdź, czy grzanie jest włączone na panelu kotła i w aplikacji producenta oraz czy dopływ gazu jest otwarty. Jeśli sygnały awarii kotła są dostępne, przypisanie ich w opcjach pozwala sterowaniu od razu zobaczyć awarię. Sterowanie działa dalej i nie oddaje z tego powodu kotła. To powiadomienie zniknie, gdy płomień się zapali albo temperatura zasilania wzrośnie, albo gdy wyłączysz sterowanie."
+      "description": "Od {minutes} minut grzanie jest włączone, pokój prosi o ciepło, a kocioł nie pokazuje, że grzeje (brak płomienia albo wzrostu zasilania), z wodą poniżej nastawy. Może być zablokowany po usterce, w trybie letnim, wyłączony na panelu albo w aplikacji producenta, albo bez gazu: sprawdź jego wyświetlacz i gaz. Sterowanie trwa i z tego powodu nie oddaje kotła."
     },
     "relay_unreachable_off": {
       "title": "Przekaźnik jest nieosiągalny",
-      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: po zaniku zasilania startuje wyłączony, jak podano w opcjach, więc kocioł czeka wyłączony."
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączyć kotła i wyśle polecenie ponownie, gdy przekaźnik wróci; możesz go przełączyć ręcznie w jego aplikacji albo stronie. Do tego czasu zostaje, jak był, albo robi to, co mówią jego ustawienia: po zaniku zasilania startuje wyłączony, jak podałeś, więc kocioł czeka wyłączony."
     },
     "relay_unreachable_on": {
       "title": "Przekaźnik jest nieosiągalny",
-      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: po zaniku zasilania startuje włączony, jak podano w opcjach, więc kocioł może grzać bez sterowania."
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączyć kotła i wyśle polecenie ponownie, gdy przekaźnik wróci; możesz go przełączyć ręcznie w jego aplikacji albo stronie. Do tego czasu zostaje, jak był, albo robi to, co mówią jego ustawienia: po zaniku zasilania startuje włączony, jak podałeś, więc kocioł może grzać bez sterowania."
     },
     "relay_unreachable_last": {
       "title": "Przekaźnik jest nieosiągalny",
-      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: po zaniku zasilania wraca do ostatniego stanu, jak podano w opcjach, więc kocioł może grzać bez sterowania."
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączyć kotła i wyśle polecenie ponownie, gdy przekaźnik wróci; możesz go przełączyć ręcznie w jego aplikacji albo stronie. Do tego czasu zostaje, jak był, albo robi to, co mówią jego ustawienia: po zaniku zasilania wraca do ostatniego stanu, jak podałeś, więc kocioł może grzać bez sterowania."
     },
     "relay_unreachable_unknown": {
       "title": "Przekaźnik jest nieosiągalny",
-      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączać kotła i nie oddaje sterowania, bo nic nie dotarłoby do przekaźnika; wyśle polecenie ponownie, gdy tylko przekaźnik wróci. Do tego czasu przekaźnik zostaje, jak był, albo robi to, co mówią jego własne ustawienia: nie wiadomo, co robi po zaniku zasilania, więc kocioł może grzać bez sterowania."
+      "description": "{relay} jest poza zasięgiem od 5 minut. Wtyczka nie może przełączyć kotła i wyśle polecenie ponownie, gdy przekaźnik wróci; możesz go przełączyć ręcznie w jego aplikacji albo stronie. Do tego czasu zostaje, jak był, albo robi to, co mówią jego ustawienia: nie wiadomo, co robi po zaniku zasilania, więc kocioł może grzać bez sterowania."
     },
     "relay_ignored": {
       "title": "Przekaźnik nie przyjmuje polecenia — sprawdź go",
@@ -3203,35 +3203,35 @@
     },
     "relay_not_taking": {
       "title": "Przekaźnik przestał przyjmować polecenia: dom nie jest ogrzewany",
-      "description": "{relay} przyjmował wcześniej w tej sesji polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazał żadnego z nich, a teraz nie pokazuje „włącz”. Kocioł nie dostaje zapotrzebowania na ciepło, więc dom nie jest ogrzewany, ochrona przed mrozem też nie działa. Wtyczka zachowuje sterowanie i wysyła „włącz” ponownie przy każdym sprawdzeniu; to powiadomienie zniknie, gdy przekaźnik pokaże „włącz”. Sprawdź przekaźnik i jego łączność — łącze, które dostarcza jego raporty, ale nie polecenia, albo zablokowany styk — oraz encję wybraną w opcjach."
+      "description": "{relay} wcześniej przyjmował polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazał żadnego z nich i nie pokazuje teraz „wł.”: kocioł nie dostaje zapotrzebowania na ciepło, więc dom nie jest ogrzewany, łącznie z ochroną przed mrozem. Wtyczka wysyła „wł.” przy każdym sprawdzeniu. Sprawdź przekaźnik, jego łącze i wybraną encję."
     },
     "relay_not_taking_off": {
       "title": "Przekaźnik przestał przyjmować polecenia: kocioł może dalej grzać",
-      "description": "{relay} przyjmował wcześniej w tej sesji polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazał żadnego z nich, a teraz nie pokazuje „wyłącz”. Kocioł może dalej grzać, bo przekaźnik się nie wyłącza. Sterowanie się zatrzymało; przekaźnik został raz ustawiony w stan po oddaniu sterowania, na którym też nie można polegać. Sprawdź przekaźnik i jego łączność — łącze, które dostarcza jego raporty, ale nie polecenia, albo zablokowany styk — oraz encję wybraną w opcjach, a potem wyłącz i włącz sterowanie. Monitor działa dalej."
+      "description": "{relay} wcześniej przyjmował polecenia wtyczki, ale od około 15 minut — trzech sprawdzeń — nie pokazał żadnego z nich i nie pokazuje teraz „wył.”: kocioł może dalej grzać, bo przekaźnik się nie wyłącza. Sterowanie stanęło; przekaźnik ustawiono raz na stan po oddaniu, na którym też nie można polegać. Sprawdź przekaźnik, jego łącze i encję, potem wyłącz i włącz sterowanie."
     },
     "relay_rests_off": {
       "title": "Kocioł nie grzeje, gdy sterowanie jest wyłączone",
-      "description": "Sterowanie kotłem jest wyłączone, a przekaźnik pozostaje wyłączony, choć {zones} proszą o ciepło albo zbliżają się do zamarzania. Kocioł grzeje teraz tylko przez termostat podłączony równolegle, jeśli taki masz. Włącz ponownie sterowanie albo zmień w opcjach stan przekaźnika po oddaniu sterowania."
+      "description": "Sterowanie kotłem jest wyłączone, a przekaźnik pozostaje wyłączony, choć {zones} proszą o ciepło albo zbliżają się do zamarzania. Kocioł grzeje teraz tylko przez termostat podłączony do niego, jeśli taki jest; przekaźnik możesz też przełączyć ręcznie w jego aplikacji albo stronie. Włącz ponownie sterowanie albo zmień w opcjach stan przekaźnika po oddaniu sterowania."
     },
     "relay_timer_seen": {
       "title": "Przekaźnik raz po raz wyłącza się po stałym czasie od „włącz”",
-      "description": "{relay} raz po raz wyłącza się po stałym czasie od „włącz” — widać około {minutes} min, ten czas albo jego wielokrotność — a w opcjach jego wyłącznik czasowy ma ustawione „Nie wiem”. Wygląda to na własny wyłącznik czasowy przekaźnika, ale tak samo wygląda automatyzacja, która wyłącza go po takim czasie od „włącz” — na przykład „maksymalny czas pracy”. Wtyczka za każdym razem od razu włącza przekaźnik, więc ogrzewanie trwa; nie liczy już tych wyłączeń jako restartów, których przekaźnik nie zgłosił, i powtarza „włącz” co najmniej co połowę tego czasu, jak przy podanym wyłączniku, żeby wyłącznik odnawiany przez powtórzone „włącz” już się nie kończył. Jeśli to wyłącznik przekaźnika, odczytaj jego długość w ustawieniach samego przekaźnika i podaj ją w opcjach albo usuń wyłącznik; jeśli to automatyzacja, zmień ją lub usuń. Do tego czasu wyłączenie w innym momencie nadal się liczy, a czwarte w ciągu doby sprawia, że wtyczka się wycofuje."
+      "description": "{relay} wyłącza się mniej więcej {minutes} min po „wł.” (albo po wielokrotności tego czasu), choć jego wyłącznik czasowy to „Nie wiem” — własny wyłącznik przekaźnika albo automatyzacja, np. „maksymalny czas pracy”, która wygląda tak samo. Wtyczka od razu go włącza, już tego nie liczy i powtarza „wł.” co najmniej co połowę tego czasu. Jeśli to wyłącznik przekaźnika, odczytaj jego długość w ustawieniach przekaźnika i podaj ją; jeśli automatyzacja — zmień ją."
     },
     "control_latched_relay_off": {
       "title": "Sterowanie się wycofało: coś innego przełącza przekaźnik",
-      "description": "Coś innego przełącza {relay} — automatyzacja, jego własny przycisk, osoba albo restarty, których przekaźnik nie zgłasza. Wtyczka przywracała stan; zmieniał się dalej, więc wtyczka się wycofała: raz wyłączyła przekaźnik, zgodnie z jego stanem po oddaniu sterowania, i teraz go nie rusza. Kocioł grzeje tylko przez termostat podłączony równolegle, jeśli taki jest. Jeśli przekaźnik uruchamia się ponownie bez zgłoszenia albo ma własny wyłącznik czasowy, podaj w opcjach jego stan po zaniku zasilania i ten wyłącznik; jeśli restartuje się kilka razy na dobę, sprawdź jego zasilanie i łączność. Wyłącz i włącz sterowanie, aby znów przejąć przekaźnik."
+      "description": "Coś innego stale przełącza {relay} — automatyzacja, jego przycisk, człowiek albo restarty, których nie zgłasza — więc wtyczka ustąpiła: wyłączyła przekaźnik raz, na stan po oddaniu, i zostawia go w spokoju. Bez termostatu podłączonego do kotła grzanie staje. Podaj w opcjach stan przekaźnika po zaniku zasilania i jego wyłącznik czasowy, potem wyłącz i włącz sterowanie."
     },
     "control_latched_relay_on": {
       "title": "Sterowanie się wycofało: coś innego przełącza przekaźnik",
-      "description": "Coś innego przełącza {relay} — automatyzacja, jego własny przycisk, osoba albo restarty, których przekaźnik nie zgłasza. Wtyczka przywracała stan; zmieniał się dalej, więc wtyczka się wycofała: raz włączyła przekaźnik, zgodnie z jego stanem po oddaniu sterowania, i teraz go nie rusza; kocioł grzeje według własnego ustawienia, bez sterowania pokojami. Jeśli przekaźnik uruchamia się ponownie bez zgłoszenia albo ma własny wyłącznik czasowy, podaj w opcjach jego stan po zaniku zasilania i ten wyłącznik; jeśli restartuje się kilka razy na dobę, sprawdź jego zasilanie i łączność. Wyłącz i włącz sterowanie, aby znów przejąć przekaźnik."
+      "description": "Coś innego stale przełącza {relay} — automatyzacja, jego przycisk, człowiek albo restarty, których nie zgłasza — więc wtyczka ustąpiła: włączyła przekaźnik raz, na stan po oddaniu, i zostawia go w spokoju: kocioł grzeje według własnej nastawy, bez sterowania pokojami. Podaj w opcjach stan przekaźnika po zaniku zasilania i jego wyłącznik czasowy, potem wyłącz i włącz sterowanie."
     },
     "control_latched_relay_short_timer_off": {
       "title": "Sterowanie się wycofało: przekaźnik sam wyłącza się co kilka minut",
-      "description": "{relay} sam wyłączał się mniej więcej co {minutes} min od „włącz” — to jego własny wyłącznik czasowy (tryb auto-off albo „inching”) albo automatyzacja. Tak krótkiego wyłącznika wtyczka nigdy nie uznaje za własny wyłącznik przekaźnika, bo każde wyłączenie oznacza ponowny start kotła: za każdym razem znów włączała przekaźnik i liczyła to wyłączenie, a za czwartym razem w ciągu doby się wycofała: raz wyłączyła przekaźnik, zgodnie z jego stanem po oddaniu sterowania, i teraz go nie rusza. Kocioł grzeje tylko przez termostat podłączony równolegle, jeśli taki jest. Ustaw wyłącznik czasowy przekaźnika na co najmniej 30 min albo go wyłącz i podaj to w opcjach — albo zmień automatyzację. Potem wyłącz i włącz sterowanie, aby znów przejąć przekaźnik."
+      "description": "{relay} wyłączał się sam mniej więcej co {minutes} min po „wł.” — własny wyłącznik czasowy (auto-off, „inching”) albo automatyzacja. Tak krótki wyłącznik za każdym razem ponownie uruchamia kocioł, więc przy czwartym w ciągu doby wtyczka ustąpiła: przekaźnik jest wyłączony, jak jego stan po oddaniu. Bez termostatu podłączonego do kotła grzanie staje. Ustaw wyłącznik przekaźnika na co najmniej 30 min albo go wyłącz i podaj w opcjach — albo zmień automatyzację; potem wyłącz i włącz sterowanie."
     },
     "control_latched_relay_short_timer_on": {
       "title": "Sterowanie się wycofało: przekaźnik sam wyłącza się co kilka minut",
-      "description": "{relay} sam wyłączał się mniej więcej co {minutes} min od „włącz” — to jego własny wyłącznik czasowy (tryb auto-off albo „inching”) albo automatyzacja. Tak krótkiego wyłącznika wtyczka nigdy nie uznaje za własny wyłącznik przekaźnika, bo każde wyłączenie oznacza ponowny start kotła: za każdym razem znów włączała przekaźnik i liczyła to wyłączenie, a za czwartym razem w ciągu doby się wycofała: raz włączyła przekaźnik, zgodnie z jego stanem po oddaniu sterowania, i teraz go nie rusza — ale wyłącznik czasowy przekaźnika w ciągu kilku minut znów go wyłączy, więc kocioł może w ogóle nie grzać. Ustaw wyłącznik czasowy przekaźnika na co najmniej 30 min albo go wyłącz i podaj to w opcjach — albo zmień automatyzację. Potem wyłącz i włącz sterowanie, aby znów przejąć przekaźnik."
+      "description": "{relay} wyłączał się sam mniej więcej co {minutes} min po „wł.” — własny wyłącznik czasowy (auto-off, „inching”) albo automatyzacja. Tak krótki wyłącznik za każdym razem ponownie uruchamia kocioł, więc przy czwartym w ciągu doby wtyczka ustąpiła: włączyła przekaźnik, jak jego stan po oddaniu — ale jego wyłącznik w ciągu kilku minut znowu go wyłącza, więc kocioł może w ogóle nie grzać. Ustaw wyłącznik przekaźnika na co najmniej 30 min albo go wyłącz i podaj w opcjach — albo zmień automatyzację; potem wyłącz i włącz sterowanie."
     },
     "control_latched_relay_heating_off_ignored": {
       "title": "Sterowanie zatrzymane: przekaźnik nie przyjmuje „wyłącz”",
@@ -3251,7 +3251,7 @@
     },
     "pressure_high": {
       "title": "Wysokie ciśnienie wody w instalacji",
-      "description": "Ciśnienie wynosi {value} bar, powyżej twojego progu alarmu {limit} bar. Próg musi być niższy niż ciśnienie otwarcia zaworu bezpieczeństwa, wydrukowane na zaworze. Sprawdź, czy zawór napełniający jest zamknięty. Aby obniżyć ciśnienie, wyłącz grzanie i poczekaj, aż instalacja ostygnie, a potem upuść trochę wody odpowietrznikiem grzejnika, aż manometr pokaże ciśnienie na zimno podane w instrukcji. Jeśli ciśnienie skacze przy każdym grzaniu, zleć sprawdzenie naczynia wzbiorczego; w kotle dwufunkcyjnym, jeśli rośnie samo, zleć sprawdzenie wymiennika. Grzanie trwa dalej."
+      "description": "Ciśnienie wynosi {value} bar, powyżej twojego progu alarmu {limit} bar (trzymaj go poniżej ciśnienia zaworu bezpieczeństwa, wybitego na zaworze). Sprawdź, czy kran napełniania jest zamknięty; żeby je obniżyć, ostudź instalację i spuść trochę wody odpowietrznikiem grzejnika, aż manometr pokaże ciśnienie na zimno z instrukcji. Ciśnienie skaczące przy grzaniu wskazuje na naczynie wzbiorcze. Grzanie trwa."
     },
     "flue_gas_high": {
       "title": "Za gorące spaliny",
@@ -3283,19 +3283,19 @@
     },
     "esphome_no_repeats": {
       "title": "Czujniki ESPHome nie powtarzają niezmienionych wartości",
-      "description": "{entity} przez sześć godzin ani razu nie zgłosił ponownie niezmienionej wartości. Home Assistant zapisuje wartość czujnika ESPHome tylko przy zmianie, chyba że ESP wysyła ją z force_update: true; bez tego wtyczka nie odróżni stałej wartości od zamrożonej i ocenia te czujniki tylko według dostępności. Dopisz im force_update: true w konfiguracji ESP (przykład jest w instrukcji użytkownika)."
+      "description": "{entity} przez sześć godzin nie zgłosił ponownie niezmienionej wartości: Home Assistant zapisuje czujnik ESPHome tylko przy zmianie, chyba że ESP wysyła go z force_update: true. Bez tego stałej wartości nie da się odróżnić od zawieszonej, a te czujniki są oceniane tylko po dostępności. Dodaj im force_update: true w konfiguracji ESP."
     },
     "curve_too_low": {
       "title": "Krzywa grzewcza wygląda na za niską dla: {zones}",
-      "description": "Od trzech godzin korekta komfortu stoi na swoim limicie {limit} K, a większość pomieszczeń — {zones} — nadal nie dochodzi do nastaw przy całkiem otwartych zaworach. Możliwe przyczyny, od najbardziej prawdopodobnej: krzywa grzewcza jest za niska — podnieś projektową temperaturę zasilania w opcjach integracji (Sterowanie, Krzywa grzewcza i limity); grzejnik w pomieszczeniu jest dla niego za mały; pomieszczenie traci ciepło (otwarte okno, nieszczelności). Korekta stoi na limicie i dalej nie rośnie; możesz obniżyć limit. Zgłoszenie znika, gdy korekta spadnie poniżej limitu albo pomieszczenia się nagrzeją."
+      "description": "Od trzech godzin korekta komfortu stoi na limicie {limit} K, a większość pokoi — {zones} — dalej nie dochodzi do nastaw przy całkiem otwartych zaworach. Możliwe przyczyny, od najbardziej prawdopodobnej: za niska krzywa grzewcza (jej projektowe zasilanie, w Krzywej grzewczej); za mały grzejnik w pokoju; pokój tracący ciepło (okno, nieszczelności). Korekta stoi na limicie i dalej nie rośnie."
     },
     "room_short_at_limit": {
       "title": "{zones} nie dochodzi do nastawy",
-      "description": "Od trzech godzin korekta komfortu stoi na swoim limicie {limit} K, a {zones} nadal nie dochodzi do nastawy przy całkiem otwartym zaworze, choć pozostałe pomieszczenia dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: grzejnik jest dla niego za mały; traci ciepło — otwarte okno, jego zawór, nieszczelności; albo krzywa grzewcza jest dla niego za niska — podnieś projektową temperaturę zasilania w opcjach integracji (Sterowanie, Krzywa grzewcza i limity). Sprawdź też jego grzejnik, zawór i okno. Korekta stoi na limicie i dalej dla niego nie rośnie; możesz obniżyć limit. Zgłoszenie znika, gdy korekta spadnie poniżej limitu albo pomieszczenie się nagrzeje."
+      "description": "Od trzech godzin korekta komfortu stoi na limicie {limit} K, a {zones} dalej nie dochodzi do nastawy przy całkiem otwartym zaworze, choć inne pokoje dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: za mały grzejnik; pokój traci ciepło (okno, zawór, nieszczelności); za niska dla niego krzywa grzewcza. Korekta stoi na limicie i dalej nie rośnie."
     },
     "boiler_power_limit": {
       "title": "Kocioł jest na granicy mocy dla: {zones}",
-      "description": "Od trzech godzin palnik pracuje bez przerwy, a {zones} nadal nie dochodzi do nastawy, przy czym woda zostaje ponad kelwin poniżej nastawy przy modulacji 90 % lub wyższej: kocioł nie da więcej. Sprawdź, czy ma ustawioną pełną moc grzania (w wielu kotłach to ustawienie serwisowe) i czy dom nie traci więcej ciepła, niż przewidziano przy doborze kotła. Sterowanie niczego nie zmienia. Zgłoszenie znika, gdy palenie się skończy albo pomieszczenia się nagrzeją."
+      "description": "Od trzech godzin palnik pracuje bez przerwy, {zones} nie dochodzi do nastawy, a woda jest ponad kelwin poniżej nastawy przy modulacji 90 % lub więcej: kocioł nie da więcej. Sprawdź, czy jest ustawiony na pełną moc grzewczą i czy dom nie traci więcej ciepła, niż kocioł przewidziano. Sterowanie niczego nie zmienia."
     }
   }
 }

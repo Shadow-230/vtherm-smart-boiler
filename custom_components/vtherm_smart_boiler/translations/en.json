@@ -498,7 +498,7 @@
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
       "power_criterion_no_zone": "No zone reports a device power in Versatile Thermostat, so this threshold could never be reached: set the power in VT or leave it empty.",
       "opening_criterion_no_zone": "No zone reports a valve opening or duty cycle, so this threshold could never be reached.",
-      "zone_feeds_no_criterion": "With a zone count of 0, {zone} could never ask for heat: it reports none of what the thresholds set here need — a device power in Versatile Thermostat for the power threshold, a valve opening or duty cycle for the opening threshold. Set the zone count to 1 or more, or set the missing value in VT.",
+      "zone_feeds_no_criterion": "With a zone count of 0, {zone} could never ask for heat: it reports nothing the thresholds need (a device power in VT for power, a valve opening or duty cycle for opening). Set the zone count to 1 or more, or the missing value in VT.",
       "off_setpoint_not_below_hard_min": "\"Off\" must be at least 1 °C below the lowest water temperature, or the boiler would not see a change.",
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "confirmed_entity_missing": "Control checks every write against the setpoint the boiler received: map it as \"Heating setpoint the boiler received\" in Boiler signals.",
@@ -1074,7 +1074,7 @@
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
       "power_criterion_no_zone": "No zone reports a device power in Versatile Thermostat, so this threshold could never be reached: set the power in VT or leave it empty.",
       "opening_criterion_no_zone": "No zone reports a valve opening or duty cycle, so this threshold could never be reached.",
-      "zone_feeds_no_criterion": "With a zone count of 0, {zone} could never ask for heat: it reports none of what the thresholds set here need — a device power in Versatile Thermostat for the power threshold, a valve opening or duty cycle for the opening threshold. Set the zone count to 1 or more, or set the missing value in VT.",
+      "zone_feeds_no_criterion": "With a zone count of 0, {zone} could never ask for heat: it reports nothing the thresholds need (a device power in VT for power, a valve opening or duty cycle for opening). Set the zone count to 1 or more, or the missing value in VT.",
       "off_setpoint_not_below_hard_min": "\"Off\" must be at least 1 °C below the lowest water temperature, or the boiler would not see a change.",
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "missing_signal": "A required signal is missing.",
@@ -2620,7 +2620,7 @@
               "heating_stops": "Heating stops until control resumes",
               "device_decides": "The device's own fallback applies",
               "own_control_resumes": "The boiler's own control takes over",
-              "relay_rests_off": "The relay rests off: heat only from a thermostat in parallel",
+              "relay_rests_off": "The relay rests off: heat only from a thermostat wired to the boiler",
               "relay_rests_on": "The relay rests on: the boiler heats by its own setting"
             }
           },
@@ -2832,7 +2832,7 @@
       "message": "Home Assistant is still starting. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_central_boiler_active": {
-      "message": "Versatile Thermostat's own central boiler is configured, or may have run since Home Assistant started. If it is configured, untick it first, so that only one controller drives the boiler, then restart Home Assistant: VT stops sending its central boiler's commands only then. Control keeps waiting until Home Assistant has restarted, even once you have unticked it. It also waits for one restart when VT's central configuration was created or changed after Home Assistant started, before this integration began to watch VT — even without a central boiler — as it cannot tell what VT ran meanwhile. Other reasons: {count} (all are listed on the control state)."
+      "message": "Versatile Thermostat's own central boiler is configured, or may have run since Home Assistant started: untick it, so only one controller drives the boiler, and restart Home Assistant. Control waits until Home Assistant has restarted, even once you have unticked it — also when VT's central configuration was created or changed after Home Assistant started, even without a central boiler. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_central_boiler_unknown": {
       "message": "Versatile Thermostat's central boiler cannot be ruled out yet: VT's central configuration failed to load (see Settings → Devices & services), or its settings do not say whether its central boiler is on. Control waits for it. Other reasons: {count} (all are listed on the control state)."
@@ -2874,13 +2874,13 @@
       "message": "The setpoint entity now takes values in steps above 1 °C, so its read-back cannot confirm a value: pick another entity in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_heating_off_ignored": {
-      "message": "From the start of the session the boiler did not take the plugin's \"heating off\" — or the relay its \"off\" — so the plugin could not switch heating off. Control stopped and the boiler was handed back. Check the heating switch or the relay picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
+      "message": "From the start of the session the boiler did not take \"heating off\" — or the relay its \"off\" — so control stopped and handed the boiler back. Check the heating switch or relay and the boiler's settings, then switch control off and on. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_heating_on_ignored": {
-      "message": "From the start of the session the boiler did not take the plugin's \"heating on\" — or the relay its \"on\" — so the plugin could not make the boiler heat. Control stopped and the boiler was handed back. Check the heating switch or the relay picked in the options, the entity that confirms it, and the boiler's settings, then switch control off and on. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
+      "message": "From the start of the session the boiler did not take \"heating on\" — or the relay its \"on\" — so control stopped and handed the boiler back. Check the heating switch or relay, the entity that confirms it and the boiler's settings, then switch control off and on. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_relay_off_not_taken": {
-      "message": "The relay took the plugin's commands earlier in the session, then did not show \"off\" for about 15 minutes, so the plugin could not switch heating off — the boiler may keep heating. Control stopped and the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay, its connection and the entity picked in the options, then switch control off and on. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
+      "message": "The relay took commands earlier, then did not show \"off\" for about 15 minutes, so control stopped — the boiler may keep heating; the relay was set once to its state after hand-back. Check the relay, its link and the entity, then switch control off and on. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_hand_back_switch_is_heating_switch": {
       "message": "The external control switch is also the heating switch or the setpoint entity: handing back would switch it on and off for ever. Pick another entity in the options. Other reasons: {count} (all are listed on the control state)."
@@ -2892,7 +2892,7 @@
       "message": "The gateway connection does not suit the write path: choose another under \"Boiler interface\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_no_heating_switch": {
-      "message": "Control needs a heating switch that the boiler does not store in its memory. Without one, \"off\" would be a low setpoint, and whether that stops the boiler and its pump is not known yet — except on EMS-ESP, whose own setpoint 0 switches heating off. The monitor keeps running. Other reasons: {count} (all are listed on the control state)."
+      "message": "Control needs a heating switch the boiler does not store in its memory: without one, \"off\" would be a low setpoint, and whether that stops the boiler and its pump is not known yet (EMS-ESP's own setpoint 0 aside). Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_gateway_not_set_up": {
       "message": "The OpenTherm Gateway integration of the gateway picked is removed or disabled: the commands would go nowhere. Set it up or enable it, or pick another gateway in the options. Other reasons: {count} (all are listed on the control state)."
@@ -2973,19 +2973,19 @@
       "message": "Monitoring only is chosen under \"Control mode\": the plugin writes nothing to the boiler. Choose a control mode there to set up control. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_connection_not_for_path": {
-      "message": "The control set up writes through another path than the boiler's connection now: answer the control steps again for the connection chosen under \"Connection and boiler type\". Other reasons: {count} (all are listed on the control state)."
+      "message": "The control set up writes through another path than the boiler's connection now: answer the control items again for the connection chosen under \"Connection and boiler type\". Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_topology_not_for_connection": {
       "message": "ESPHome OpenTherm and EMS-ESP are controllers on Home Assistant's side: the topology under \"Boiler interface\" must be virtual. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_esphome_start_not_confirmed": {
-      "message": "Not confirmed that the ESP starts at safe values with a short API reboot_timeout: the ESP would keep the last setpoint and heating on for up to its reboot_timeout (15 minutes by default) if Home Assistant stopped. Tick it in the control step once the ESP is set up so. Other reasons: {count} (all are listed on the control state)."
+      "message": "Not confirmed that the ESP starts at safe values with a short API reboot_timeout: it would keep the last setpoint and heating for up to 15 minutes if Home Assistant stopped. Tick it in Control device once the ESP is set so. Other reasons: {count} (all are listed on the control state)."
     }
   },
   "issues": {
     "auto_tpi_blocked": {
       "title": "Auto-TPI cannot learn in some zones",
-      "description": "These zones run Auto-TPI and are marked in Versatile Thermostat as used by the central boiler, but VT's central boiler is not configured — the plugin replaces it — so Auto-TPI skips learning in them: {zones}. To let it learn, clear \"used by the central boiler\" in each zone's VT configuration. What that costs: the plugin cannot pause Auto-TPI without wiping what it has learned, so it will then also learn while hot water charges and while the water temperature changes, which can skew its coefficients; and VT's own guard goes with the option, so it also learns while zones call for heat and the boiler does not heat — after a hand-back that stops heating, at a boiler fault, during the activation delay and during the monitoring period. Leaving the option set keeps Auto-TPI's learning off in these zones."
+      "description": "These zones run Auto-TPI and are marked \"used by the central boiler\" in VT, but VT's central boiler is off — the plugin replaces it — so Auto-TPI skips learning in them: {zones}. Clearing that mark lets it learn — but also while hot water charges or the water swings, and while zones call and the boiler does not heat (after a hand-back, at a fault, during the activation delay and the monitoring period), which can skew it: the plugin cannot pause Auto-TPI."
     },
     "hand_back_owed": {
       "title": "Handing the boiler back has not got through",
@@ -3007,19 +3007,19 @@
     },
     "control_state_unreadable": {
       "title": "The plugin's memory of the boiler could not be read",
-      "description": "The file in which the plugin remembers whether it holds the boiler could not be read: it is missing or damaged (Home Assistant may show its own notice about a damaged file). To be safe, the plugin assumes it held the boiler and hands it back first, where its options let it; this notice goes once the boiler shows that hand-back. Control then works as usual. While the notice stays, the hand-back is not confirmed yet, or there was nothing to make it with: check that the boiler and the control switch are as you expect."
+      "description": "The file where the plugin remembers whether it holds the boiler is missing or damaged. To be safe it hands the boiler back first, where its options let it; this notice goes once the boiler shows that hand-back. Control then works as usual. While it stays, check the boiler and the control switch."
     },
     "setup_failed_not_heated": {
       "title": "The plugin did not start: the house is not heated",
-      "description": "The plugin could not start, so it does not control the boiler, and here handing the boiler back stops heating (a gateway without a thermostat, a hand-back value declared to stop heating, or a relay resting \"off\"): the house is not heated unless something else heats it. Only the boiler's own frost protection, if it has one, still works. Open Settings → Devices & services, find the plugin's entry and read its error; fix what it names, then reload the entry. This notice goes once the plugin starts."
+      "description": "The plugin could not start, and here a hand-back stops heating (a gateway without a thermostat, a hand-back value that stops heating, or a relay resting \"off\"): the house is not heated unless something else heats it. In Settings → Devices & services, read the entry's error, fix it and reload the entry."
     },
     "setup_failed_may_not_be_heated": {
       "title": "The plugin did not start: the house may not be heated",
-      "description": "The plugin could not start, so it does not control the boiler. Neither its options nor the options it took the boiler with can be read, so it cannot tell what the boiler does without it: where handing the boiler back stops heating (a gateway without a thermostat, a hand-back value declared to stop heating, or a relay resting \"off\"), the house is not heated. Open Settings → Devices & services, find the plugin's entry and read its error; fix what it names, then reload the entry. This notice goes once the plugin starts."
+      "description": "The plugin could not start, and its options cannot be read, so it cannot tell what the boiler does without it: where a hand-back stops heating, the house is not heated. In Settings → Devices & services, read the entry's error, fix it and reload the entry."
     },
     "control_state_not_saved": {
       "title": "The plugin cannot save its memory of the boiler",
-      "description": "Writing the file in which the plugin remembers whether it holds the boiler failed — a full disk, or a storage that turned read-only (Home Assistant's log has the error). A restart could then forget that the boiler holds a value the plugin wrote, so control does not take the boiler meanwhile: it handed it back, and a hand-back already owed is still made. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. The plugin saves again every minute, and control resumes on its own once saving has worked for {minutes} minutes without a failure. Check Home Assistant's storage: its free space, and whether its disk or SD card is failing."
+      "description": "Saving the plugin's memory of the boiler failed (a full disk or a read-only storage; the log has the error), so control does not take the boiler: a restart could forget what it wrote. Where a hand-back stops heating, the boiler does not heat meanwhile. The plugin tries again every minute; control resumes on its own once saving has worked for {minutes} minutes. Check Home Assistant's storage."
     },
     "hand_back_owed_after_removal": {
       "title": "The boiler may still hold a value from Smart Boiler for Versatile Thermostat",
@@ -3031,7 +3031,7 @@
     },
     "learning_not_paused": {
       "title": "The plugin cannot pause learning in some zones",
-      "description": "Control pauses zone learning while hot water charges and while the water temperature swings, but it cannot pause these zones: {zones}. Auto-TPI could only be paused by resetting what it learned, so the plugin leaves it alone; a SmartPI that does not publish its learning flag cannot be paused either. They keep learning through those moments, which can skew what they learn. To avoid it, stop Auto-TPI's learning in VT once it has learned, or update SmartPI — either leaves the zone without the plugin's protection until then."
+      "description": "Control cannot pause learning in these zones during hot water and water swings: {zones}. Auto-TPI could only be paused by wiping what it learned; a SmartPI without a learning flag cannot be paused. They keep learning through those moments, which can skew what they learn."
     },
     "vt_feature_manager_unsupported": {
       "title": "VT's thermostats cannot show the plugin's zone value",
@@ -3051,7 +3051,7 @@
     },
     "hand_back_taken_by_other": {
       "title": "After the hand-back another controller holds the boiler",
-      "description": "The plugin handed the boiler back, and another controller — an automation, a device's own program or another integration — now holds what the plugin had set: {target}. The plugin counts the hand-back as done and does not write there again. With a thermostat or the boiler's own control, heating goes on under it; where the hand-back stops heating, the boiler heats only under that other controller. If you do not expect another controller, find it."
+      "description": "After the hand-back another controller — an automation, a device's program, another integration — holds what the plugin had set: {target}. The hand-back counts as done; the plugin does not write there again. Where a hand-back stops heating, the boiler heats only under that controller. If you expect none, find it."
     },
     "monitor_failed": {
       "title": "Control handed the boiler back: the plugin's monitor keeps failing",
@@ -3067,35 +3067,35 @@
     },
     "control_latched": {
       "title": "Control stepped aside: another controller writes to the boiler",
-      "description": "Another controller changed what the plugin writes to the boiler again after the plugin had written its value back once — it saw {value} on {target}, which the plugin had not written — so the plugin stepped aside and does not fight it. It handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release — this wrote over the other controller's value once, briefly. With a thermostat or the boiler's own control, it keeps heating; without one, the boiler heats only under the other controller. To give control back to the plugin, stop the other controller, then switch control off and on. If \"Return by itself after another controller\" is on, control also comes back on its own after an hour in which nothing else wrote to the boiler (not for relays)."
+      "description": "Another controller changed what the plugin writes again after the plugin wrote it back once — {value} on {target} — so the plugin stepped aside and handed the boiler back. With a thermostat or the boiler's own control it keeps heating; without one, only under that controller. Stop it, then switch control off and on; with \"Return by itself\" on, control also returns after an hour without other writes."
     },
     "control_latched_switch": {
       "title": "Control stepped aside: another controller switches the boiler",
-      "description": "Another controller switched {target}, which the plugin had not done, so the plugin stepped aside and does not fight it. It handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. With a thermostat or the boiler's own control, it keeps heating; without one, the boiler heats only under the other controller. To give control back to the plugin, stop the other controller, then switch control off and on. If \"Return by itself after another controller\" is on, control also comes back on its own after an hour in which nothing else wrote to the boiler."
+      "description": "Another controller switched {target}, which the plugin had not done, so the plugin stepped aside and handed the boiler back. With a thermostat or the boiler's own control it keeps heating; without one, only under that controller. Stop it, then switch control off and on; with \"Return by itself\" on, control also returns after an hour without other writes."
     },
     "control_latched_heating_off_ignored": {
       "title": "Control stopped: the boiler does not take \"heating off\"",
-      "description": "From the start of the session the boiler did not take the plugin's \"heating off\": the plugin could not switch heating off, so it handed the boiler back safely — first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Check the heating switch picked in the options and the boiler's settings, then switch control off and on. The monitor keeps running."
+      "description": "From the start of the session the boiler did not take \"heating off\", so the plugin handed it back. Where a hand-back stops heating, the boiler does not heat until control resumes. Check the heating switch picked in the options and the boiler's settings, then switch control off and on."
     },
     "control_latched_heating_on_ignored": {
       "title": "Control stopped: the boiler does not take \"heating on\"",
-      "description": "From the start of the session the boiler did not take the plugin's \"heating on\" — or the entity picked to confirm it never showed it — so the plugin could not make the boiler heat, and it handed the boiler back safely: first the lowest water temperature, then heating on where a thermostat or the boiler's own control takes over, then the release. Until control resumes the plugin does not heat the house, frost protection included: where a thermostat or the boiler's own control takes over, it heats only if the boiler takes its demand; where a hand-back stops heating, the boiler does not heat. Check the heating switch and the entity that confirms it picked in the options (a status showing whether the boiler heats right now does not confirm the switch) and the boiler's settings, then switch control off and on. The monitor keeps running."
+      "description": "From the start of the session the boiler did not take \"heating on\" — or its confirming entity never showed it — so the plugin handed it back. Until control resumes it does not heat the house, frost protection included. Check the heating switch, its confirming entity (not a status of whether the boiler heats now) and the boiler's settings, then switch control off and on."
     },
     "control_latched_write_ignored": {
       "title": "Control handed back: the boiler ignores a value the plugin writes",
-      "description": "The boiler did not take a value the plugin wrote — the alarm \"Control: the boiler does not accept a command\" names which — and you set \"Boiler ignores a value\" in the control options to hand back. Control handed the boiler back safely: first the lowest water temperature, then heating on, then the release; the thermostat or the boiler's own control heats now. Check the entity picked in the options and the boiler's settings (a value outside its range, a setting that locks it), then switch control off and on to take the boiler back."
+      "description": "The boiler did not take a value the plugin wrote (the alarm \"Control: the boiler does not accept a command\" names it), and \"Boiler ignores a value\" is set to hand back, so control handed the boiler back; the thermostat or its own control heats now. Check the entity and the boiler's settings, then switch control off and on."
     },
     "control_latched_other": {
       "title": "Control stays handed back after an earlier alarm",
-      "description": "An earlier version of the plugin handed the boiler back for an alarm that now only informs ({alarm}), and control stays handed back until you switch it off and on. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Check the alarm, then switch control off and on to take the boiler back."
+      "description": "An earlier version handed the boiler back for an alarm that now only informs ({alarm}); control stays handed back until you switch it off and on. Where a hand-back stops heating, the boiler does not heat meanwhile."
     },
     "hand_back_boiler_link_lost": {
       "title": "Control handed the boiler back: its data is lost",
-      "description": "The boiler's flame or flow reading was not fresh for 5 minutes within 10, so control stopped writing and handed the boiler back — nothing is written without fresh data. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Control resumes by itself once the data has been fresh for a minute. Check the gateway or device, its connection and the entities picked as flame and flow."
+      "description": "The boiler's flame or flow was not fresh for 5 minutes within 10, so control handed the boiler back — nothing is written without fresh data. Where a hand-back stops heating, the boiler does not heat meanwhile. Control resumes once the data is fresh for a minute. Check the device, its link and the flame and flow entities."
     },
     "hand_back_control_error": {
       "title": "Control stopped after an internal error",
-      "description": "An error in the plugin stopped control, and it handed the boiler back — the log has the details. Where a thermostat or the boiler's own control takes over, it heats now; where a hand-back stops heating, the boiler does not heat until control resumes. Control stays stopped until you switch it off and on; if the error comes back, report it with the log."
+      "description": "An error in the plugin stopped control, and it handed the boiler back (the log has the details). Where a hand-back stops heating, the boiler does not heat meanwhile. Control stays stopped until you switch it off and on; if the error comes back, report it with the log."
     },
     "no_zone_known_off": {
       "title": "Versatile Thermostat gives no answer: the boiler is not heating",
@@ -3111,15 +3111,15 @@
     },
     "no_criterion_judged_off": {
       "title": "No demand criterion can be judged: the boiler is not heating",
-      "description": "The zones answer, but none of the demand criteria set in the plugin's options gets data from the zones that may heat, so no room's call for heat can be seen ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin keeps the boiler's heating off and resumes as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+      "description": "The zones answer, but no demand criterion set in the options gets data from them, so no call for heat can be seen ({criteria}: \"power\" needs a device power in VT, \"opening\" a valve opening or duty cycle). The plugin keeps heating off until a criterion has data. Set the device power in VT, or a zone count of 1 or more in the control options."
     },
     "no_criterion_judged_handed_back": {
       "title": "No demand criterion can be judged: the boiler is back on its thermostat or its own room controller",
-      "description": "The zones answer, but none of the demand criteria set in the plugin's options gets data from the zones that may heat, so no room's call for heat can be seen ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle). The plugin handed the boiler back to the thermostat on the gateway, or to the boiler's own room controller, and takes it again as soon as a criterion has data again. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+      "description": "The zones answer, but no demand criterion set in the options gets data from them, so no call for heat can be seen ({criteria}: \"power\" needs a device power in VT, \"opening\" a valve opening or duty cycle). The plugin handed the boiler back to the thermostat or its own room controller, and takes it again once a criterion has data. Set the device power in VT, or a zone count of 1 or more in the control options."
     },
     "no_criterion_judged_monitor": {
       "title": "No demand criterion can be judged",
-      "description": "The zones answer, but none of the demand criteria set in the plugin's options gets data from the zones that may heat, so no room's call for heat can be seen ({criteria}: \"power\" needs a device power set in Versatile Thermostat, \"opening\" a valve opening or duty cycle); switched on, control could not heat for any room. Set the device power in VT, or set the zone count to 1 or more in the plugin's control options."
+      "description": "The zones answer, but no demand criterion set in the options gets data from them, so no call for heat can be seen ({criteria}: \"power\" needs a device power in VT, \"opening\" a valve opening or duty cycle). Switched on, control could not heat for any room. Set the device power in VT, or a zone count of 1 or more in the control options."
     },
     "frost_zone_closed": {
       "title": "A room below the frost limit cannot get heat",
@@ -3139,7 +3139,7 @@
     },
     "frost_zone_closed_mixed": {
       "title": "Rooms below the frost limit cannot get heat",
-      "description": "{zones}: Versatile Thermostat keeps their valves closed for different reasons, so the plugin cannot heat them and does not start the boiler for them. For a thermostat that is off, use VT's frost preset instead of off; a room closed for an open window, VT's central mode \"Stopped\" or another VT function (safety mode, auto start/stop) stays unheated until VT opens it again; VT's central frost mode needs a frost temperature set in every thermostat."
+      "description": "{zones}: VT keeps their valves closed for different reasons, so the plugin cannot heat them. For a thermostat that is off, use VT's frost preset instead; a room closed for a window, VT's \"Stopped\" or another VT function stays unheated until VT opens it."
     },
     "thermostat_kind_missing": {
       "title": "Say what is wired to the gateway's thermostat terminals",
@@ -3159,39 +3159,39 @@
     },
     "lowest_water_suggestion_boiler": {
       "title": "The boiler keeps stopping at its lowest water temperature",
-      "description": "In the last {days} days, {short} of {burns} heating burns at about {reference} °C were shorter than {limit} min and ended because the water was warm enough, while rooms still asked for heat. Consider raising the minimum flow temperature, or the foot point of the heating curve, of the device that sets your water temperature to about {value} °C — not the curve's parallel shift, which raises the water in frost too. Longer burns are likely; fewer starts are not guaranteed. The plugin changes nothing there."
+      "description": "In the last {days} days, {short} of {burns} heating burns at about {reference} °C were shorter than {limit} min and ended because the water was warm enough, while rooms still asked for heat. Raising the minimum flow temperature (or the curve's foot point) of the device that sets your water to about {value} °C lengthens burns; the plugin changes nothing there."
     },
     "read_back_waiting": {
       "title": "Control waits for the gateway's confirmation",
-      "description": "Control is switched on, but the gateway's setpoint read-back — the entity mapped in Boiler signals as the heating setpoint the boiler received — has had no value for 5 minutes, so the plugin does not take the boiler: without it, the plugin could never see that a hand-back got through. Where a thermostat or the boiler's own control takes over, it heats meanwhile; where a hand-back stops heating, the boiler does not heat until control takes it. Check that the gateway is connected and that the entity picked reports a value — the gateway's \"Control setpoint 1\" on its boiler device. This notice goes once the entity reports a value, or when you switch control off."
+      "description": "Control is on, but the setpoint read-back (in Boiler signals, the heating setpoint the boiler received) has shown no value for 5 minutes, so the plugin does not take the boiler: it could never see a hand-back get through. Where a hand-back stops heating, the boiler does not heat meanwhile. Check the gateway and that entity (its \"Control setpoint 1\")."
     },
     "write_ignored_no_heat": {
       "title": "The boiler does not accept the command: the house is not heated",
-      "description": "From the start of the session the boiler has not taken the water temperature the plugin writes; the alarm \"Control: the boiler does not accept a command\" names it. So the plugin cannot heat the house, frost protection included, and with this installation nothing else does: here a hand-back stops heating (a gateway without a thermostat gives the boiler no heat demand without the plugin's setpoint). The plugin keeps control and does not hand the boiler back; it tries the command again at the next session — when you switch control off and on, or after a restart — not when control takes the boiler again after a pause. Check the boiler's settings — a value outside its range, a setting that locks it — and the entities picked in the options, then switch control off and on."
+      "description": "From the start of the session the boiler has not taken the water temperature the plugin writes (the alarm \"Control: the boiler does not accept a command\" names it), and here nothing else heats: the house is not heated, frost protection included. The plugin keeps control and tries again at the next session — when you switch control off and on, or after a restart. Check the boiler's settings and the entities picked."
     },
     "setpoint_not_shown": {
       "title": "The boiler does not show the plugin's water temperature",
-      "description": "For 5 minutes the boiler's setpoint read-back has shown another water temperature than the one the plugin set. The plugin keeps control and does not hand the boiler back for this: the boiler may keep its own value — a limit set on it, a setting that locks it — or the entity mapped as the setpoint the boiler received may not report the setpoint the boiler received, or report it late. Check the boiler's maximum water temperature and its control settings, and the heating setpoint mapped in Boiler signals. Where a hand-back stops heating, the house may not get the heat it needs meanwhile. This notice goes once the read-back shows the plugin's value, or when you switch control off."
+      "description": "For 5 minutes the setpoint read-back has shown another water temperature than the plugin's. The plugin keeps control and does not hand the boiler back for this: the boiler may keep its own value (a limit, a lock), or the read-back may be late or wrong. Check the boiler's maximum and the heating setpoint mapped in Boiler signals."
     },
     "no_sign_boiler_heats": {
       "title": "No sign the boiler heats",
-      "description": "For {minutes} minutes control has had heating on while a room asks for heat, and the boiler has shown no sign of heating: its flame stayed off — or, without a flame signal, its flow temperature did not rise — while the water stayed below the plugin's setpoint. The boiler may be locked out after a fault, set to summer mode or with heating switched off on its own panel or in the maker's app, or without gas. Check the boiler's display for a fault or lockout code and reset it as its manual says; check that heating is switched on on the boiler's panel and in the maker's app, and that the gas supply is open. If the boiler's fault signals are available, mapping them in the options lets control see a fault at once. Control goes on and does not hand the boiler back for this. This notice goes once the flame shows on or the flow temperature rises, or when you switch control off."
+      "description": "For {minutes} minutes heating has been on while a room asks for heat, and the boiler has shown no sign of heating (no flame, or no rise in flow) with the water below the setpoint. It may be locked out after a fault, in summer mode, switched off on its panel or in the maker's app, or without gas: check its display and its gas. Control goes on and does not hand the boiler back for this."
     },
     "relay_unreachable_off": {
       "title": "The relay cannot be reached",
-      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and does not hand it back, as nothing could reach the relay; it sends its command again as soon as the relay returns. Until then the relay stays as it was, or does what its own settings say: after a power cut it starts off, as you declared, so the boiler waits off."
+      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and sends its command again as soon as the relay returns; you can switch it by hand in its own app or page. Until then it stays as it was, or does what its own settings say: after a power cut it starts off, as you declared, so the boiler waits off."
     },
     "relay_unreachable_on": {
       "title": "The relay cannot be reached",
-      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and does not hand it back, as nothing could reach the relay; it sends its command again as soon as the relay returns. Until then the relay stays as it was, or does what its own settings say: after a power cut it starts on, as you declared, so the boiler may heat without control."
+      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and sends its command again as soon as the relay returns; you can switch it by hand in its own app or page. Until then it stays as it was, or does what its own settings say: after a power cut it starts on, as you declared, so the boiler may heat without control."
     },
     "relay_unreachable_last": {
       "title": "The relay cannot be reached",
-      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and does not hand it back, as nothing could reach the relay; it sends its command again as soon as the relay returns. Until then the relay stays as it was, or does what its own settings say: after a power cut it returns to its last state, as you declared, so the boiler may heat without control."
+      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and sends its command again as soon as the relay returns; you can switch it by hand in its own app or page. Until then it stays as it was, or does what its own settings say: after a power cut it returns to its last state, as you declared, so the boiler may heat without control."
     },
     "relay_unreachable_unknown": {
       "title": "The relay cannot be reached",
-      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and does not hand it back, as nothing could reach the relay; it sends its command again as soon as the relay returns. Until then the relay stays as it was, or does what its own settings say: what it does after a power cut is not known, so the boiler may heat without control."
+      "description": "{relay} has been out of reach for 5 minutes. The plugin cannot switch the boiler and sends its command again as soon as the relay returns; you can switch it by hand in its own app or page. Until then it stays as it was, or does what its own settings say: what it does after a power cut is not known, so the boiler may heat without control."
     },
     "relay_ignored": {
       "title": "The relay does not accept the command — check it",
@@ -3203,35 +3203,35 @@
     },
     "relay_not_taking": {
       "title": "The relay has stopped taking commands: the house is not heated",
-      "description": "{relay} took the plugin's commands earlier in this session, but for about 15 minutes — three checks — it has shown none of them, and it does not show \"on\" now. The boiler gets no heat demand, so the house is not heated, frost protection included. The plugin keeps control and sends \"on\" again at every check; this notice goes once the relay shows \"on\". Check the relay and its connection — a link that delivers its reports but not the commands, or a stuck contact — and the entity picked in the options."
+      "description": "{relay} took the plugin's commands earlier, but for about 15 minutes — three checks — it has shown none of them, and it does not show \"on\" now: the boiler gets no heat demand, so the house is not heated, frost protection included. The plugin sends \"on\" again at every check. Check the relay, its link and the entity picked."
     },
     "relay_not_taking_off": {
       "title": "The relay has stopped taking commands: the boiler may keep heating",
-      "description": "{relay} took the plugin's commands earlier in this session, but for about 15 minutes — three checks — it has shown none of them, and it does not show \"off\" now. The boiler may keep heating, as the relay does not switch off. Control stopped; the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay and its connection — a link that delivers its reports but not the commands, or a stuck contact — and the entity picked in the options, then switch control off and on. The monitor keeps running."
+      "description": "{relay} took the plugin's commands earlier, but for about 15 minutes — three checks — it has shown none of them, and it does not show \"off\" now: the boiler may keep heating, as the relay does not switch off. Control stopped; the relay was set once to its state after hand-back, which cannot be relied on either. Check the relay, its link and the entity, then switch control off and on."
     },
     "relay_rests_off": {
       "title": "The boiler does not heat while control is off",
-      "description": "Control of the boiler is off and the relay rests off, while {zones} ask for heat or are near freezing. The boiler now heats only through a thermostat wired in parallel, if you have one. Switch control on again, or change the relay's state after hand-back in the options."
+      "description": "Control of the boiler is off and the relay rests off, while {zones} ask for heat or are near freezing. The boiler now heats only through a thermostat wired to it, if there is one; you can also switch the relay by hand in its own app or page. Switch control on again, or change the relay's state after hand-back in the options."
     },
     "relay_timer_seen": {
       "title": "The relay keeps switching off a fixed time after \"on\"",
-      "description": "{relay} keeps switching off a fixed time after \"on\" — seen about {minutes} min, that time or a whole multiple of it — while its timer is set to \"I don't know\" in the options. This looks like the relay's own switch-off timer, but an automation that switches it off that long after \"on\" — a \"maximum run time\", say — looks the same. The plugin switches the relay on again at once each time, so heating goes on; it no longer counts these switch-offs as restarts the relay did not report, and it repeats \"on\" at least every half of that time, as for a declared timer, so a timer that a repeated \"on\" restarts no longer runs out. If it is the relay's timer, read its length in the relay's own settings and declare it in the options, or remove the timer; if it is an automation, change or remove it. Until then a switch-off at another time still counts, and a fourth within a day makes the plugin step aside."
+      "description": "{relay} keeps switching off about {minutes} min after \"on\" (or a whole multiple of it) while its timer is \"I don't know\" — the relay's own timer, or an automation such as a \"maximum run time\", which looks the same. The plugin switches it on again at once, no longer counts these, and repeats \"on\" at least every half of that time. If it is the relay's timer, read its length in the relay's own settings and declare it; if an automation, change it."
     },
     "control_latched_relay_off": {
       "title": "Control stepped aside: something else switches the relay",
-      "description": "Something else keeps switching {relay} — an automation, its own button, a person, or restarts the relay does not report. The plugin set it back; it kept changing, so the plugin stepped aside: it switched the relay off once, its state after hand-back, and now leaves it alone. The boiler heats only through a thermostat wired in parallel, if there is one. If the relay restarts without reporting it, or has its own switch-off timer, declare its state after a power cut and its timer in the options; if it restarts several times a day, check its power supply and connection. Switch control off and on to take the relay back."
+      "description": "Something else keeps switching {relay} — an automation, its button, a person, or restarts it does not report — so the plugin stepped aside: it switched the relay off once, its state after hand-back, and leaves it alone. Without a thermostat wired to the boiler, heating stops. Declare the relay's state after a power cut and its timer in the options, then switch control off and on."
     },
     "control_latched_relay_on": {
       "title": "Control stepped aside: something else switches the relay",
-      "description": "Something else keeps switching {relay} — an automation, its own button, a person, or restarts the relay does not report. The plugin set it back; it kept changing, so the plugin stepped aside: it switched the relay on once, its state after hand-back, and now leaves it alone; the boiler heats by its own setting, without room control. If the relay restarts without reporting it, or has its own switch-off timer, declare its state after a power cut and its timer in the options; if it restarts several times a day, check its power supply and connection. Switch control off and on to take the relay back."
+      "description": "Something else keeps switching {relay} — an automation, its button, a person, or restarts it does not report — so the plugin stepped aside: it switched the relay on once, its state after hand-back, and leaves it alone: the boiler heats by its own setting, without room control. Declare the relay's state after a power cut and its timer in the options, then switch control off and on."
     },
     "control_latched_relay_short_timer_off": {
       "title": "Control stepped aside: the relay switches itself off every few minutes",
-      "description": "{relay} switched itself off about every {minutes} min after \"on\" — a switch-off timer of its own (an auto-off or \"inching\" mode), or an automation. A timer that short is never taken for the relay's own, as each switch-off starts the boiler again: the plugin switched the relay on again each time and counted it, and at the fourth within a day it stepped aside: it switched the relay off once, its state after hand-back, and now leaves it alone. The boiler heats only through a thermostat wired in parallel, if there is one. Set the relay's timer to at least 30 min, or switch the timer off, and declare it in the options — or change the automation. Then switch control off and on to take the relay back."
+      "description": "{relay} switched itself off about every {minutes} min after \"on\" — its own timer (auto-off, \"inching\") or an automation. A timer that short starts the boiler again each time, so at the fourth within a day the plugin stepped aside: the relay is off, its state after hand-back. Without a thermostat wired to the boiler, heating stops. Set the relay's timer to at least 30 min, or switch the timer off, and declare it — or change the automation; then switch control off and on."
     },
     "control_latched_relay_short_timer_on": {
       "title": "Control stepped aside: the relay switches itself off every few minutes",
-      "description": "{relay} switched itself off about every {minutes} min after \"on\" — a switch-off timer of its own (an auto-off or \"inching\" mode), or an automation. A timer that short is never taken for the relay's own, as each switch-off starts the boiler again: the plugin switched the relay on again each time and counted it, and at the fourth within a day it stepped aside: it switched the relay on once, its state after hand-back, and now leaves it alone — but the relay's timer switches it off again within minutes, so the boiler may not heat at all. Set the relay's timer to at least 30 min, or switch the timer off, and declare it in the options — or change the automation. Then switch control off and on to take the relay back."
+      "description": "{relay} switched itself off about every {minutes} min after \"on\" — its own timer (auto-off, \"inching\") or an automation. A timer that short starts the boiler again each time, so at the fourth within a day the plugin stepped aside: it switched the relay on, its state after hand-back — but its timer switches it off again within minutes, so the boiler may not heat at all. Set the relay's timer to at least 30 min, or switch the timer off, and declare it — or change the automation; then switch control off and on."
     },
     "control_latched_relay_heating_off_ignored": {
       "title": "Control stopped: the relay does not take \"off\"",
@@ -3251,7 +3251,7 @@
     },
     "pressure_high": {
       "title": "Heating water pressure is high",
-      "description": "The pressure is {value} bar, above your alarm limit of {limit} bar. Your limit must be below the safety valve's rating, printed on the valve. Check that the filling tap is closed. To lower the pressure, switch the heating off and let the system cool, then let a little water out at a radiator's bleed valve until the gauge shows the cold pressure from the manual. If the pressure jumps each time the heating runs, have the expansion vessel checked; on a combi boiler, if it creeps up on its own, have the heat exchanger checked. Heating carries on."
+      "description": "The pressure is {value} bar, above your alarm limit of {limit} bar (keep it below the safety valve's rating, printed on the valve). Check that the filling tap is closed; to lower it, let the system cool and let a little water out at a radiator's bleed valve until the gauge shows the cold pressure from the manual. A pressure that jumps when heating runs points to the expansion vessel. Heating carries on."
     },
     "flue_gas_high": {
       "title": "Flue gas too hot",
@@ -3283,19 +3283,19 @@
     },
     "esphome_no_repeats": {
       "title": "ESPHome sensors do not repeat unchanged values",
-      "description": "{entity} did not report an unchanged value again in six hours. Home Assistant writes an ESPHome sensor's value only when it changes, unless the ESP sends it with force_update: true; without it the plugin cannot tell a steady value from a frozen one, and judges these sensors by availability alone. Add force_update: true to them in the ESP's configuration (the user guide has a sample)."
+      "description": "{entity} did not report an unchanged value again in six hours: Home Assistant writes an ESPHome sensor only on a change, unless the ESP sends it with force_update: true. Without it a steady value cannot be told from a frozen one, and these sensors are judged by availability alone. Add force_update: true to them in the ESP's configuration."
     },
     "curve_too_low": {
       "title": "The heating curve looks too low for {zones}",
-      "description": "For three hours the comfort correction has been at its limit of {limit} K, and most rooms — {zones} — still do not reach their setpoints with their valves fully open. Possible causes, the likeliest first: the heating curve is too low — raise its design flow temperature in the integration's options (Control, Heating curve and limits); a room's radiator is too small for it; a room loses heat (an open window, leaks). The correction holds at its limit and does not climb further; you can lower the limit. This notice goes once the correction falls below its limit or the rooms are warm enough."
+      "description": "For three hours the comfort correction has been at its limit of {limit} K, and most rooms — {zones} — still do not reach their setpoints with valves fully open. Possible causes, the likeliest first: the heating curve is too low (its design flow, in Heating curve); a room's radiator too small for it; a room losing heat (a window, leaks). The correction holds at its limit and does not climb further."
     },
     "room_short_at_limit": {
       "title": "{zones} stays short of its setpoint",
-      "description": "For three hours the comfort correction has been at its limit of {limit} K, and {zones} still does not reach its setpoint with its valve fully open, while the other rooms do. Possible causes, the likeliest first: its radiator is too small for it; it loses heat — an open window, its valve, leaks; or the heating curve is too low for it — raise its design flow temperature in the integration's options (Control, Heating curve and limits). Check also its radiator, valve and window. The correction holds at its limit and does not climb further for it; you can lower the limit. This notice goes once the correction falls below its limit or the room is warm enough."
+      "description": "For three hours the comfort correction has been at its limit of {limit} K, and {zones} still does not reach its setpoint with its valve fully open, while the other rooms do. Possible causes, the likeliest first: its radiator is too small for it; it loses heat (a window, its valve, leaks); the heating curve is too low for it. The correction holds at its limit and does not climb further."
     },
     "boiler_power_limit": {
       "title": "The boiler is at its power limit for {zones}",
-      "description": "For three hours the burner has run without a break while {zones} stays short of its setpoint, and the water stays more than a kelvin below the setpoint at a modulation of 90 % or more: the boiler cannot give more. Check that it is set to its full heating power (an installer's setting on many boilers), and whether the house loses more heat than the boiler was sized for. Nothing changes in control. This notice goes once the burn ends or the rooms warm."
+      "description": "For three hours the burner has run without a break while {zones} stays short, and the water stays over a kelvin below the setpoint at 90 % modulation or more: the boiler cannot give more. Check that it is set to its full heating power, and whether the house loses more heat than the boiler was sized for. Control changes nothing."
     }
   }
 }
