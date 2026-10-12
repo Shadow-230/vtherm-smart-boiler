@@ -22,8 +22,10 @@ registration and needs VT's reload (P-59).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from datetime import datetime
 from enum import StrEnum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_COMPONENT_LOADED, EVENT_STATE_CHANGED
@@ -46,6 +48,16 @@ RELOAD_GRACE_S = 15 * 60  # a started thermostat shows the value within this, el
 # The public name of "heat reaches the zone now" (P-61; "hot water" is the boiler's domestic hot
 # water).
 HEAT_AVAILABLE = "heat_available"
+# The water interface (I9; documentation/en/water-interface.md): its fields, in its order, and
+# the public API's key in ``hass.data``.
+SUPPLY_TEMPERATURE = "supply_temperature"
+SUPPLY_REASON = "supply_reason"
+SUPPLY_MEASURED_AT = "supply_measured_at"
+HEAT_REASON = "heat_reason"
+WATER_FIELDS = (SUPPLY_TEMPERATURE, SUPPLY_REASON, SUPPLY_MEASURED_AT, HEAT_AVAILABLE, HEAT_REASON)
+API_KEY = f"{DOMAIN}_api"
+# The attribute shows the water rounded, changed only once it has moved this far (§3.3, P-63).
+ATTRIBUTE_STEP_K = 1.0
 
 type Lookup = Callable[[str], dict[str, Any] | None]
 
@@ -59,8 +71,8 @@ class RegistrationState(StrEnum):
 def zone_values(
     coordinators: list[SmartBoilerCoordinator], entity_id: str
 ) -> dict[str, Any] | None:
-    """Whether heat reaches the zone now, from the first installation that has the zone and whose
-    last refresh worked; ``None`` when none has it."""
+    """The zone's water and whether heat reaches it now (§4), from the first installation that
+    has the zone and whose last refresh worked; ``None`` when none has it."""
     for coordinator in coordinators:
         if not coordinator.last_update_success:
             continue  # its entities are unavailable: no stale values on VT's either (PB-48)
@@ -68,8 +80,34 @@ def zone_values(
         view = data.zones.get(entity_id) if data is not None else None
         if view is None:
             continue
-        return {HEAT_AVAILABLE: view.heat.available}
+        water = view.water
+        measured = water.supply_measured_at
+        return {
+            SUPPLY_TEMPERATURE: water.supply_temperature,
+            SUPPLY_REASON: None if water.supply_reason is None else water.supply_reason.value,
+            SUPPLY_MEASURED_AT: None if measured is None else dt_util.utc_from_timestamp(measured),
+            HEAT_AVAILABLE: water.heat_available,
+            HEAT_REASON: None if water.heat_reason is None else water.heat_reason.value,
+        }
     return None
+
+
+class SmartBoilerApi:
+    """What other integrations read, under ``hass.data[API_KEY]`` while an installation runs
+    (I9; water-interface.md §3.2): named functions, a later one added beside these."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+
+    def zone_water(self, entity_id: str) -> Mapping[str, Any] | None:
+        """A VT climate's water data (§4) as a read-only mapping; ``None`` when it is not a
+        zone of a running installation, or anything goes wrong — never an exception."""
+        try:
+            values = zone_values(_running(self._hass), entity_id)
+        except Exception:
+            _LOGGER.debug("Could not read the water data of %s", entity_id, exc_info=True)
+            return None
+        return None if values is None else MappingProxyType(values)
 
 
 def _running(hass: HomeAssistant) -> list[SmartBoilerCoordinator]:
@@ -89,6 +127,7 @@ class SmartBoilerFeatureManager:
         self._lookup = lookup
         self._failing = False  # a lasting failure is logged once, with its trace
         self._published: dict[str, Any] | None = None  # what VT's thermostat shows
+        self._published_water: float | None = None  # the unrounded water it was shown from
 
     def post_init(self, entry_infos: Any) -> None:
         return None
@@ -127,8 +166,38 @@ class SmartBoilerFeatureManager:
     @property
     def heat_available(self) -> bool | None:
         """Heat is reaching the zone now; ``None`` when unknown or not the plugin's zone."""
+        value = self._field(HEAT_AVAILABLE)
+        return value if isinstance(value, bool) else None
+
+    @property
+    def heat_reason(self) -> str | None:
+        """Why heat does not reach the zone, or why it cannot be told (§4.2)."""
+        value = self._field(HEAT_REASON)
+        return value if isinstance(value, str) else None
+
+    @property
+    def supply_temperature(self) -> float | None:
+        """The water reaching the zone's circuit now, °C, as measured (§4)."""
+        value = self._field(SUPPLY_TEMPERATURE)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        return float(value)
+
+    @property
+    def supply_reason(self) -> str | None:
+        """Why the water is not known, lastingly or for now (§4.1)."""
+        value = self._field(SUPPLY_REASON)
+        return value if isinstance(value, str) else None
+
+    @property
+    def supply_measured_at(self) -> datetime | None:
+        """When the reading of the water was taken, UTC — information only (§6)."""
+        value = self._field(SUPPLY_MEASURED_AT)
+        return value if isinstance(value, datetime) else None
+
+    def _field(self, name: str) -> Any:
         values = self._values()
-        return None if values is None else values[HEAT_AVAILABLE]
+        return None if values is None else values.get(name)
 
     def _values(self) -> dict[str, Any] | None:
         entity_id = getattr(self._thermostat, "entity_id", None)
@@ -139,11 +208,10 @@ class SmartBoilerFeatureManager:
             values = self._values()
             if values is None:
                 self._published = None
+                self._published_water = None
                 attributes.pop(ATTRIBUTE, None)
             else:
-                if self._published != values:
-                    self._published = dict(values)
-                attributes[ATTRIBUTE] = dict(self._published)
+                attributes[ATTRIBUTE] = dict(self._shown(values))
         except Exception:  # VT's attribute update must never fail because of the plugin
             if self._failing:
                 _LOGGER.debug("Could not add the plugin's zone value", exc_info=True)
@@ -152,6 +220,26 @@ class SmartBoilerFeatureManager:
                 self._failing = True
         else:
             self._failing = False
+
+    def _shown(self, values: dict[str, Any]) -> dict[str, Any]:
+        """The attribute (§3.3): the heat on every change, the water rounded to 1 °C and
+        replaced only once it has moved ``ATTRIBUTE_STEP_K`` from what it was shown from, or to
+        or from ``None`` — VT records it (P-63)."""
+        water = values[SUPPLY_TEMPERATURE]
+        last = self._published_water
+        moved = (water is None) != (last is None) or (
+            water is not None and last is not None and abs(water - last) >= ATTRIBUTE_STEP_K
+        )
+        if self._published is None or moved:
+            self._published_water = water
+        shown_water = self._published_water
+        shown = {
+            HEAT_AVAILABLE: values[HEAT_AVAILABLE],
+            SUPPLY_TEMPERATURE: None if shown_water is None else round(shown_water),
+        }
+        if self._published != shown:
+            self._published = shown
+        return self._published
 
 
 class SmartBoilerFeatureFactory:
@@ -356,6 +444,7 @@ def async_attach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
     if "registration" not in shared:
         shared["registration"] = FeatureRegistration(hass)
         shared["registration"].start()
+    hass.data.setdefault(API_KEY, SmartBoilerApi(hass))  # the public API (I9, §3.2)
 
 
 def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
@@ -411,3 +500,4 @@ def async_detach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
         if current is not None:
             current.stop()
         hass.data.pop(DATA_KEY, None)
+        hass.data.pop(API_KEY, None)
