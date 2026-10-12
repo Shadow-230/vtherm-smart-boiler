@@ -52,6 +52,7 @@ ALARM_HOLD_S = 5 * MIN
 HELD = "held"
 UNKNOWN_INPUT = "unknown_input"
 HOT_WATER_UNKNOWN = "hot_water_unknown"
+HOT_WATER = "hot_water"  # hot water runs now: an alarm its run would mislead is not judged
 NO_ZONE_DATA = "no_zone_data"
 
 
@@ -547,7 +548,7 @@ def low_flow(
     elif has_dhw and dhw is None:
         reason = HOT_WATER_UNKNOWN
     elif has_dhw and dhw is True:
-        reason = "hot_water"
+        reason = HOT_WATER
     elif not fresh:
         reason = "no_fresh_zone"
     elif any(z.valve_open is None for z in fresh):
@@ -581,16 +582,27 @@ CIRCUIT_NOT_MEASURED = "circuit_not_measured"
 
 
 def circuit_flow(
-    circuit: Circuit, boiler_flow: float | None, own_flow: float | None, *, own_mapped: bool = False
+    circuit: Circuit,
+    boiler_flow: float | None,
+    own_flow: float | None,
+    *,
+    own_mapped: bool = False,
+    hot_water: bool | None = False,
 ) -> tuple[float | None, str | None]:
     """The flow a circuit's emitters get, as the too-hot alarm judges it, or why it is not
     known: the circuit's own flow sensor where it reads, else the boiler's flow for an unmixed
     circuit; a passive fixed or mixed circuit without its own reading is not measured —
-    ``own_mapped``: it has a sensor that does not read now. Readings are fresh or ``None``."""
+    ``own_mapped``: it has a sensor that does not read now. Readings are fresh or ``None``.
+    ``hot_water``: hot water takes the boiler's heat now (it has priority) — the unmixed
+    circuit gets none of it, so the boiler's flow does not show it (the user's decision,
+    2026-10-12); not known (``None``), it is judged as before, so a real overheat is not
+    missed."""
     if own_flow is not None:
         return own_flow, None
     if circuit.control is CircuitControl.UNMIXED_SHARED:
-        return (boiler_flow, None) if boiler_flow is not None else (None, NO_FLOW_READING)
+        if boiler_flow is None:
+            return None, NO_FLOW_READING
+        return (None, HOT_WATER) if hot_water is True else (boiler_flow, None)
     return None, NO_FLOW_READING if own_mapped else CIRCUIT_NOT_MEASURED
 
 
@@ -604,10 +616,11 @@ def circuit_too_hot(
 ) -> Alarm:
     """The circuit's water too hot (decision 10), information only: active once ``flow`` has
     stayed above ``alarm_at`` for ``hold_s``; it clears only below ``alarm_at`` by
-    ``CIRCUIT_ALARM_HYSTERESIS_K``. Without a flow reading (``no_flow_reading``) it cannot be
-    judged: held, then unknown (S-16, Y1); a circuit no reading can ever show
-    (``circuit_not_measured``) is inactive with that reason — the alarm does not apply. A wait
-    begun later than now — the clock set back — begins now."""
+    ``CIRCUIT_ALARM_HYSTERESIS_K``. Without a flow reading (``no_flow_reading``), or while hot
+    water takes the boiler's heat from a circuit the boiler's flow measures (``hot_water``), it
+    cannot be judged: held, then unknown (S-16, Y1), its wait begun again after; a circuit no
+    reading can ever show (``circuit_not_measured``) is inactive with that reason — the alarm
+    does not apply. A wait begun later than now — the clock set back — begins now."""
     kind = AlarmKind.CIRCUIT_TOO_HOT
     if flow is None:
         why = reason or NO_FLOW_READING

@@ -233,8 +233,10 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}, advice
     assert SOURCE["entity"]["button"]["reset_comfort_correction"]["name"]  # answer J (X4)
     too_hot = SOURCE["entity"]["binary_sensor"]["alarm_circuit_too_hot"]["state_attributes"]
-    # Y1 (S-16): held through a gap in the flow, then unknown with its reason.
-    assert set(too_hot["reason"]["state"]) == {"no_flow_reading", "circuit_not_measured", "held"}
+    # Y1 (S-16): held through a gap in the flow, then unknown with its reason; not judged while
+    # hot water takes the boiler's heat from a circuit fed straight from it (2026-10-12).
+    reasons = {"no_flow_reading", "circuit_not_measured", "held", "hot_water"}
+    assert set(too_hot["reason"]["state"]) == reasons
 
 
 def _values(entity: dict, attribute: str) -> set[str]:

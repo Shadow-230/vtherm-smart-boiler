@@ -685,6 +685,46 @@ def test_the_circuit_flow_comes_from_its_own_sensor_else_the_boiler_for_an_unmix
     assert circuit_flow(unmixed, None, None) == (None, "no_flow_reading")
 
 
+def test_a_straight_circuit_skips_the_time_hot_water_takes_the_boiler_s_heat() -> None:
+    """The user's decision of 2026-10-12: while hot water takes the boiler's heat (it has
+    priority), a circuit fed straight from the boiler gets none of it, so the boiler's flow does
+    not show that circuit — not judged, its wait begun again after it; a wait of 9 minutes, then
+    20 minutes of hot water at 75 °C, then the flow above the alarm again: on only 10 minutes
+    after the hot water. Hot water not known is judged as before (a real overheat is not
+    missed); a circuit with its own sensor reads its own water and is judged as before; an
+    active alarm stays on through the hot water."""
+    from custom_components.vtherm_smart_boiler.core.installation import Circuit, CircuitControl
+
+    unmixed = Circuit("main", CircuitControl.UNMIXED_SHARED, max_flow=40.0)
+    assert circuit_flow(unmixed, 75.0, None, hot_water=True) == (None, "hot_water")
+    assert circuit_flow(unmixed, 75.0, 38.0, hot_water=True) == (38.0, None)
+    assert circuit_flow(unmixed, 75.0, None, hot_water=None) == (75.0, None)
+    assert circuit_flow(unmixed, 75.0, None, hot_water=False) == (75.0, None)
+    fixed = Circuit("floor", CircuitControl.PASSIVE_FIXED, 35.0, max_flow=40.0)
+    assert circuit_flow(fixed, 75.0, None, hot_water=True) == (None, "circuit_not_measured")
+
+    def tick(minute: int, hot_water: bool, previous: Alarm | None) -> Alarm:
+        flow, why = circuit_flow(unmixed, 75.0 if hot_water else 46.0, None, hot_water=hot_water)
+        return circuit_too_hot(flow, 45.0, 10 * MIN, minute * MIN, previous, why)
+
+    alarm: Alarm | None = None
+    for minute in range(9):
+        alarm = tick(minute, False, alarm)
+    for minute in range(9, 29):
+        alarm = tick(minute, True, alarm)
+        assert alarm.active is False, minute
+    for minute in range(29, 39):
+        alarm = tick(minute, False, alarm)
+        assert not alarm.active, minute
+    assert tick(39, False, alarm).active
+    unknown = circuit_too_hot(None, 45.0, 10 * MIN, 0.0, None, "hot_water")
+    assert (unknown.active, unknown.reason) == (None, "hot_water")
+    active = Alarm(
+        AlarmKind.CIRCUIT_TOO_HOT, True, Level.WARNING, 46.0, 45.0, since=0.0, known_at=20 * MIN
+    )
+    assert tick(25, True, active).active is True
+
+
 # --- Y1: the notifications -----------------------------------------------------------------------
 
 

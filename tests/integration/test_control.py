@@ -11468,6 +11468,39 @@ async def test_the_circuit_too_hot_alarm_is_information_on_the_measured_flow(rig
     assert alarm.attributes["reason"] == "no_flow_reading"
 
 
+@pytest.mark.parametrize("priority", [True, False], ids=["priority", "no_priority"])
+async def test_the_circuit_too_hot_alarm_skips_hot_water_on_a_straight_circuit(
+    rig: Rig, priority: bool
+) -> None:
+    """The user's decision of 2026-10-12: a circuit fed straight from the boiler, measured by
+    the boiler's flow — 9 minutes at 46 °C, then 20 minutes of hot water at 75 °C, then 46 °C
+    again: where hot water has priority the circuit gets none of it, so the alarm does not count
+    those minutes and comes on only 10 minutes after the hot water; without priority the rooms
+    keep the boiler's water, so the hot water counts and the alarm comes on during it."""
+    entry_options = with_circuit(rig, {"max_flow": 40})
+    entry_options["boiler"] = entry_options["boiler"] | {"dhw_priority": priority}
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    rig.flow = 46.0
+    await rig.advance(540, step=30)
+    rig.dhw = True
+    rig.flow = 75.0
+    await rig.advance(1200, step=30)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == ("off" if priority else "on")
+    rig.dhw = False
+    rig.flow = 46.0
+    if not priority:
+        return
+    assert alarm.attributes["reason"] == "held"  # the state known before the hot water, kept
+    await rig.advance(540, step=30)
+    assert rig.state("binary_sensor", "alarm_circuit_too_hot").state == "off"
+    await rig.advance(90, step=30)
+    alarm = rig.state("binary_sensor", "alarm_circuit_too_hot")
+    assert alarm.state == "on"
+    assert alarm.attributes.get("reason") is None
+
+
 async def test_no_circuit_alarm_without_a_circuit_maximum(rig: Rig) -> None:
     await start(rig)
     assert rig.entry is not None

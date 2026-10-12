@@ -2495,6 +2495,7 @@
             "state": {
               "no_flow_reading": "No flow reading",
               "circuit_not_measured": "The circuit's own flow is not measured",
+              "hot_water": "Hot water is heated: the boiler's flow does not reach this circuit",
               "held": "Held: its input is unknown for now (up to an hour)"
             }
           },
