@@ -1284,7 +1284,9 @@ async def test_the_lowest_above_the_boilers_maximum_is_refused_at_the_curve(
 
 def test_the_highest_water_temperature_a_section_still_holds_comes_first() -> None:
     """I8 (decision F2): a highest water temperature the control section still holds (a hand
-    edit) is taken first, as the parser takes it; else the first circuit's, else 70 °C."""
+    edit) is taken first, as the parser takes it; else, as control caps the water (the user's
+    answer of 2026-10-12), the lowest of the circuits fed straight from the boiler — each 70 °C
+    where empty —, a circuit behind a mixer or a fixed valve not counted; else 70 °C."""
     from custom_components.vtherm_smart_boiler.config_flow import highest_water_of
 
     circuits = {"circuits": [{"id": "main", "max_flow": 50}]}
@@ -1292,6 +1294,14 @@ def test_the_highest_water_temperature_a_section_still_holds_comes_first() -> No
     assert highest_water_of(circuits) == 50.0
     assert highest_water_of({"circuits": ["garbage"]}) == 70.0
     assert highest_water_of({"circuits": [{"id": "main", "max_flow": True}]}) == 70.0
+    floor_first = [
+        {"id": "floor", "control": "separate", "max_flow": 40},
+        {"id": "rads", "control": "unmixed_shared", "max_flow": 65},
+        {"id": "hall", "control": "passive_fixed", "fixed_temperature": 35, "max_flow": 45},
+    ]
+    assert highest_water_of({"circuits": floor_first}) == 65.0
+    assert highest_water_of({"circuits": floor_first[:1]}) == 70.0  # none straight
+    assert highest_water_of({"circuits": [{"id": "main"}, *floor_first[1:2]]}) == 65.0
 
 
 async def test_off_is_not_checked_as_a_setpoint_with_a_heating_switch(
@@ -5846,12 +5856,16 @@ async def test_the_curve_step_names_the_other_water_limits(
     shown: tuple[str, str],
 ) -> None:
     """Decision 10 of I6: the curve step says what else caps the water — the boiler's maximum
-    heating setpoint and the first circuit's maximum flow, as entered, "—" where not."""
+    heating setpoint and the highest water temperature of the circuits fed straight from the
+    boiler (the lowest entered; I8.8), as entered, "—" where not."""
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
     options = {"parameters": parameters, "circuits": [{"id": "main", **circuit}]}
     assert flow.water_limits(options) == {"boiler_max": shown[0], "circuit_max": shown[1]}
     assert flow.water_limits({}) == {"boiler_max": "—", "circuit_max": "—"}
+    floor = {"id": "floor", "control": "separate", "max_flow": 40}
+    mixed_first = [floor, {"id": "main", **circuit}]
+    assert flow.water_limits({"circuits": mixed_first})["circuit_max"] == shown[1]
     loaded_gateway(hass, "living_room_gw")
     entry_id = await create_entry(hass, entities, "simple", ("living",))
     result = await to_control_curve(hass, entry_id)

@@ -284,8 +284,8 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
    najcieplejszego pokoju. Za niska zostawia pokoje zimne przy łagodnej pogodzie. Wpis ustawiony
    przed tą wersją działa ręcznie ze swoją wartością. Stan sterowania pokazuje używaną
    temperaturę (`curve_room`). Przy krzywej projektowe obciążenie budynku jest odczytywane przy
-   tej samej temperaturze. Krok krzywej pokazuje też najwyższą temperaturę wody obiegu
-   i maksymalną nastawę c.o. kotła — obowiązuje niższa. Przy kilku obiegach krzywa służy
+   tej samej temperaturze. Krok krzywej pokazuje też najwyższą temperaturę wody obiegów
+   zasilanych prosto z kotła i maksymalną nastawę c.o. kotła — obowiązuje niższa. Przy kilku obiegach krzywa służy
    obiegowi zasilanemu prosto z kotła, a jej temperatura pokojowa (Auto) i korekta komfortu
    biorą pod uwagę strefy tego obiegu.
 2. **Najniższa temperatura wody** — krzywa nigdy nie schodzi poniżej niej. Domyślnie 20 °C

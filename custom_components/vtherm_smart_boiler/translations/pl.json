@@ -379,7 +379,7 @@
       },
       "control_curve": {
         "title": "Krzywa grzewcza i limity",
-        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, najniższa temperatura wody i jak długo grzanie czeka na wolne zawory. Wodę ograniczają najwyższa temperatura wody obiegu ({circuit_max}, krok obiegu; 70 °C, gdy jej nie podano) i maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła): obowiązuje niższa.",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, najniższa temperatura wody i jak długo grzanie czeka na wolne zawory. Wodę ograniczają najwyższa temperatura wody obiegów zasilanych prosto z kotła ({circuit_max}, formularze obiegów; 70 °C, gdy jej nie podano) i maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła): obowiązuje niższa.",
         "data": {
           "design_outdoor": "Temperatura przy najsilniejszym mrozie (punkt krzywej)",
           "design_flow": "Projektowa temperatura zasilania",
@@ -906,7 +906,7 @@
       },
       "control_curve": {
         "title": "Krzywa grzewcza i limity",
-        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, najniższa temperatura wody i jak długo grzanie czeka na wolne zawory. Wodę ograniczają najwyższa temperatura wody obiegu ({circuit_max}, krok obiegu; 70 °C, gdy jej nie podano) i maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła): obowiązuje niższa.",
+        "description": "Temperatura zasilania potrzebna domowi przy każdej temperaturze zewnętrznej, najniższa temperatura wody i jak długo grzanie czeka na wolne zawory. Wodę ograniczają najwyższa temperatura wody obiegów zasilanych prosto z kotła ({circuit_max}, formularze obiegów; 70 °C, gdy jej nie podano) i maksymalna nastawa c.o. kotła ({boiler_max}, krok kotła): obowiązuje niższa.",
         "data": {
           "design_outdoor": "Temperatura przy najsilniejszym mrozie (punkt krzywej)",
           "design_flow": "Projektowa temperatura zasilania",
