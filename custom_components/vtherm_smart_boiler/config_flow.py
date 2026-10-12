@@ -2071,16 +2071,30 @@ def apply_control_details(options: dict[str, Any], user_input: dict[str, Any]) -
 
 
 def highest_water_of(options: Mapping[str, Any]) -> float:
-    """The highest water temperature control writes (I8, decision F2): the first circuit's —
-    the one control runs on — else the default; one the control section still holds (a hand
-    edit) first, as the parser takes it."""
+    """The highest water temperature control writes (I8, decision F2), as control caps it (the
+    user's answer of 2026-10-12): the lowest of the circuits fed straight from the boiler, each
+    the default where empty, the default where there is none; one the control section still
+    holds (a hand edit) first, as the parser takes it."""
     stored = _plain_number(_mapping(options.get(CONTROL)).get("hard_max"))
     if stored is not None:
         return stored
+    default = float(CONTROL_DEFAULTS["hard_max"])
+    return min(
+        (default if own is None else own for own in _straight_maxima(options)), default=default
+    )
+
+
+def _straight_maxima(options: Mapping[str, Any]) -> list[float | None]:
+    """Each circuit fed straight from the boiler's highest water temperature as entered, ``None``
+    where none is (I8.8: only these cap the boiler's water)."""
     circuits = options.get(CIRCUITS)
-    first = circuits[0] if isinstance(circuits, list) and circuits else None
-    own = _plain_number(first.get("max_flow")) if isinstance(first, Mapping) else None
-    return float(CONTROL_DEFAULTS["hard_max"]) if own is None else own
+    return [
+        _plain_number(c.get("max_flow"))
+        for c in (circuits if isinstance(circuits, list) else [])
+        if isinstance(c, Mapping)
+        and c.get("control", CircuitControl.UNMIXED_SHARED.value)
+        == CircuitControl.UNMIXED_SHARED.value
+    ]
 
 
 def _plain_number(value: object) -> float | None:
@@ -2090,15 +2104,14 @@ def _plain_number(value: object) -> float | None:
 
 
 def water_limits(options: Mapping[str, Any]) -> dict[str, str]:
-    """The curve step's (decision 10 of I6): the boiler's and the first circuit's maxima, which
-    cap the water — the lower applies (I8, decision F2: the circuit's is the highest water
-    temperature, its default where none); "—" where one is not entered."""
+    """The curve step's (decision 10 of I6): the boiler's maximum and the circuits', which cap
+    the water — the lower applies (I8, decision F2: a circuit's is its highest water
+    temperature, its default where none; I8.8: the lowest entered of those fed straight from
+    the boiler); "—" where one is not entered."""
     params = options.get(PARAMETERS)
-    circuits = options.get(CIRCUITS)
     boiler = params.get("max_ch_setpoint") if isinstance(params, Mapping) else None
-    first = circuits[0] if isinstance(circuits, list) and circuits else None
-    circuit = first.get("max_flow") if isinstance(first, Mapping) else None
-    return {"boiler_max": _degrees(boiler), "circuit_max": _degrees(circuit)}
+    entered = [own for own in _straight_maxima(options) if own is not None]
+    return {"boiler_max": _degrees(boiler), "circuit_max": _degrees(min(entered, default=None))}
 
 
 def _degrees(value: object) -> str:

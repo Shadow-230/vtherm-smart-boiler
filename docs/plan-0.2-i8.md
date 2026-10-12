@@ -645,6 +645,10 @@ Claude's calls (cautious, provisional, K4):
   named on the zones' field. An area adds no zone the circuit feeds by its devices.
   `SCOPE.md` (§5, the wizard), both user guides (the setup), both technical documents
   (configuration).
+- I8.8d ✅ (2026-10-12), found while planning I8.9: the curve form still took the highest
+  water temperature from the first circuit; it now takes it as control caps the water — the
+  lowest of the circuits fed straight from the boiler, each 70 °C where empty — for its checks
+  and its text. Both user guides (the water temperature).
 
 - Core first, with tests: the boiler's water as the highest need of the circuits asking; the
   floor of a circuit run by other automation; its heat request in the demand (both modes); the
@@ -664,6 +668,27 @@ Claude's calls (cautious, provisional, K4):
 - Documents: the user guides (setting up control), the technical documents (config flow).
 - J4 impact: every scenario that walks the control options — the runner's `Run.options` and
   `options_walk` choose the items instead of walking a chain.
+
+Claude's calls (2026-10-12): two pull requests.
+- I8.9a, the items: "Control device" (`control`: an entry made before the connection question
+  picks its path there first; then the writable entity's form, or the relay's — moving over
+  from VT's central boiler where VT kept one), shown for the entity and relay paths; "Heating
+  curve" (`control_curve`), full control; "Control behaviour" (`control_behaviour`, one form
+  for both modes; the relay's own behaviour step goes); "Frost protection" (`control_frost`),
+  the advanced level, where its fields always were; "Alarm reactions" (`control_alarms`, with
+  its second confirmation), where any applies. Each item saves to the menu; the setup asks
+  each one shown. The path's own checks, made at the chain's start until now — no zones, MQTT
+  not set up, the interface or a read-back not answered, another path while a hand-back is
+  owed — run whenever a control item opens, the path applied there; a problem goes where it
+  is fixed, as before. Fields that move: VT's activation delay to the behaviour (both modes,
+  both levels); the comfort correction and its limit to the curve, together, at both levels
+  (the limit new at the simple level); frost protection to its item. No migration: the stored
+  keys stay.
+- I8.9b, what an answer reveals (A2): the hand-back method's own fields after it is picked;
+  the write types only where the connection does not fix them; the relay's timer length only
+  with a timer, its repeat interval only without state reports or with a timer, "boiler heats
+  above (W)" only with the boiler's power mapped; the "off" setpoint only where "off" is
+  written as a low setpoint.
 
 ### I8.10 Texts and documents (A4, C3, C4) — the final check
 

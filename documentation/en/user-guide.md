@@ -267,8 +267,8 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    cold in mild weather. An entry set up before this version runs Manual with its value. The
    control state shows the room temperature in use (`curve_room`).
    With a curve, the building's design load is read at this same temperature. The curve step
-   also shows the circuit's highest water temperature and the boiler's maximum heating
-   setpoint — the lower applies. With several circuits, the curve serves the one fed straight
+   also shows the highest water temperature of the circuits fed straight from the boiler and
+   the boiler's maximum heating setpoint — the lower applies. With several circuits, the curve serves the one fed straight
    from the boiler, and its room temperature (Auto) and the comfort correction read that
    circuit's zones.
 2. **Lowest water temperature** — the curve never goes below it. Default 20 °C (provisional).
