@@ -484,7 +484,9 @@ takes the emitter types of its zones (S-33); the burner is shared.
   no return); no while the flame is out or DHW is active on a boiler where hot water has
   priority; unknown while a mapped flame, the flow or what it is judged against is unknown or
   stale. Without a flame signal the water alone decides (I8, decision C1). Zone algorithms do
-  not read this value today (§9). No entity of the plugin is a zone's, and a zone is no more
+  not read this value today (§9); an optional interface that gives them the water reaching each
+  zone's circuit is specified in `documentation/en/water-interface.md` (the user's decisions of
+  2026-10-12), to be built as I9 before 0.3 on the user's go-ahead. No entity of the plugin is a zone's, and a zone is no more
   than its thermostat, its circuit, its emitter type and whether it closes when off: the
   per-zone entities, the zones' emitter output and exponent, the monitor's "near room
   temperature" (I8.1d) and the emitter power factor (I8.2) were removed

@@ -416,6 +416,7 @@ Targets are aims, not commitments; each release collects data for the next. Deta
 | [`docs/`][docs] | the plan of each release and the reviews of the code |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | the integration's parts, one control step, lifecycle, stored state, tests |
+| [Water data for zone algorithms][water] | the specified interface that gives SmartPI and other zone algorithms the water reaching each zone (not built yet) |
 | [`CHANGELOG.md`][changelog] | what each release changes |
 | [`CONTRIBUTING.md`][contributing] | how to contribute: branches, tests, rules |
 | [`LICENSE`][license] | Apache License 2.0 |
@@ -453,6 +454,7 @@ change is small, tested and reviewed. Which automatic checks run, and when, is i
 [guide-pl]: documentation/pl/user-guide.md
 [technical]: documentation/en/technical.md
 [technical-pl]: documentation/pl/technical.md
+[water]: documentation/en/water-interface.md
 [changelog]: CHANGELOG.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE

@@ -19,6 +19,7 @@ Queuing Telemetry Transport (MQTT).
 5. [Lifecycle](#5-lifecycle)
 6. [Persistent state](#6-persistent-state)
 7. [Testing](#7-testing)
+8. [Water data for zone algorithms](#8-water-data-for-zone-algorithms)
 
 ## 1. Overview
 
@@ -255,3 +256,23 @@ scripts/env.sh ruff check .
 scripts/env.sh ruff format --check .
 scripts/env.sh mypy
 ```
+
+## 8. Water data for zone algorithms
+
+**Specified, not built yet** (the user's decisions of 2026-10-12; step I9 of
+[`docs/plan-0.2.md`](../../docs/plan-0.2.md), before 0.3, on the user's go-ahead). An optional
+interface gives a zone algorithm — SmartPI first — the water reaching each zone's circuit, so
+its room model can account for a weather-compensated boiler, a mixer, burner cycling and hot
+water with priority. Data flows one way, from the plugin to the zone algorithm.
+
+The plugin exposes, per VT thermostat that is one of its zones, the supply temperature with the
+reason it is missing (lasting or momentary), when it was measured, and whether heat reaches the
+zone with its reason: as properties of its feature manager, through a function in `hass.data`
+that works with every supported VT version, and, rounded, in the `smart_boiler` attribute. It
+reads one key a consumer writes into the thermostat's `specific_states`, and pauses SmartPI's
+learning on its own conditions. No version number: consumers detect what exists, changes only
+add, and a contract test pins every name and value.
+
+The full specification — names, types, values, ranges, what happens when a value is missing:
+[`water-interface.md`](water-interface.md).
+

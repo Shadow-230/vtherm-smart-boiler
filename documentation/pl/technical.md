@@ -19,6 +19,7 @@ zapisuje, i sposób testowania. Co integracja robi dla użytkownika, opisuje
 5. [Cykl życia](#5-cykl-życia)
 6. [Stan trwały](#6-stan-trwały)
 7. [Testowanie](#7-testowanie)
+8. [Dane o wodzie dla algorytmów stref](#8-dane-o-wodzie-dla-algorytmów-stref)
 
 ## 1. Przegląd
 
@@ -271,3 +272,38 @@ scripts/env.sh ruff check .
 scripts/env.sh ruff format --check .
 scripts/env.sh mypy
 ```
+
+## 8. Dane o wodzie dla algorytmów stref
+
+**Wyspecyfikowane, jeszcze niezbudowane** (decyzje użytkownika z 2026-10-12; krok I9 w
+[`docs/plan-0.2.md`](../../docs/plan-0.2.md), przed wersją 0.3, na polecenie użytkownika).
+Opcjonalny interfejs daje algorytmowi strefy — najpierw SmartPI — temperaturę wody, która dociera
+do obiegu każdej strefy, żeby jego model pomieszczenia uwzględniał krzywą grzewczą, mieszacz,
+taktowanie palnika i ciepłą wodę z priorytetem. Dane płyną w jedną stronę: od wtyczki do
+algorytmu strefy; algorytm nigdy nie zadaje temperatury wody.
+
+Co wtyczka wystawia dla każdego termostatu VT, który jest jej strefą:
+
+- **temperaturę wody** (`supply_temperature`, °C, jak mierzy czujnik, −20 do 110 °C) albo brak, z
+  powodem (`supply_reason`): trwałym — brak czujnika (`not_mapped`), obieg z mieszaczem bez
+  własnego czujnika (`circuit_not_measured`), termostat w kilku obiegach o różnej wodzie
+  (`several_circuits`) — albo chwilowym: odczyt niedostępny (`flow_unknown`) lub nieświeży
+  (`flow_stale`);
+- **czas pomiaru** (`supply_measured_at`, UTC) — tylko informacyjnie;
+- **czy ciepło dociera** (`heat_available`) i dlaczego nie (`heat_reason`) — zmienia się z każdym
+  cyklem palnika.
+
+Gdzie: jako właściwości modułu funkcji (feature manager) na termostacie VT (gdy VT ma
+`get_feature_manager`, od 10.5.0.beta1); przez funkcję `zone_water(entity_id)` pod kluczem
+`hass.data["vtherm_smart_boiler_api"]`, działającą z każdą obsługiwaną wersją VT; i w atrybucie
+`smart_boiler` termostatu, z temperaturą zaokrągloną do 1 °C i publikowaną przy zmianie o co
+najmniej 1 K. Wtyczka czyta jeden klucz, który algorytm wpisuje do `specific_states` termostatu
+(dla SmartPI proponowany `water_factor`), i nadal sama wstrzymuje uczenie SmartPI na swoich
+warunkach: ciepła woda z priorytetem i awaria kotła — w strefach wołających ciepła; duże
+wahania wody — tylko gdy algorytm nie korzysta z danych o wodzie. Bez numeru wersji: strony
+wykrywają, co istnieje, zmiany tylko dodają, a test kontraktu pilnuje nazw i wartości.
+
+Pełna specyfikacja (po angielsku) — nazwy, typy, wartości, zakresy, co się dzieje, gdy wartości
+brak (kocioł wł./wył. na przekaźniku, integracja producenta, tryb samego monitorowania i inne):
+[`../en/water-interface.md`](../en/water-interface.md).
+
