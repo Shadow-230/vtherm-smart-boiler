@@ -14,10 +14,12 @@ from custom_components.vtherm_smart_boiler.core.cycles import (
 )
 from custom_components.vtherm_smart_boiler.core.metrics import (
     DHW_KINDS,
+    MIN_DEGREE_DAYS,
     UNKNOWN_KINDS,
     Consumption,
     DegreeDays,
     ModulationScale,
+    Share,
     binned_cycle_stats,
     condensing_share,
     cycle_stats,
@@ -203,3 +205,109 @@ def test_a_reset_first_seen_above_a_tenth_is_a_reset() -> None:
     after its reset well above a tenth of the old reading; the rest of the day still counts."""
     daily = Series([(0, 20.0), (10, 24.0), (20, 3.0), (30, 5.0)])
     assert meter_consumption(daily, 0, 40) == Consumption(pytest.approx(9.0), True)
+
+
+# --- Mutation testing (2026-10-12): window edges, gaps, burn order and boundary values ---
+
+
+def test_a_burn_starting_at_the_window_start_is_counted_in_it() -> None:
+    """P-83: a burn starting exactly at the window's start is that window's — its start and its
+    length count there."""
+    stats = cycle_stats([ch(60, 70)], HOUR, window=(HOUR, 2 * HOUR))
+    assert (stats.starts, stats.complete_burns, stats.burn_s) == (1, 1, 10 * MIN)
+
+
+def test_burn_time_across_the_window_end_counts_only_inside() -> None:
+    """Negative: a burn running past the window's end adds only its time inside — half a second
+    is half a second, not more."""
+    burn = ClassifiedBurn(Burn(HOUR - 0.5, HOUR + 5 * MIN, True, True), BurnKind.CH, 1.0)
+    assert cycle_stats([burn], HOUR, window=(0.0, HOUR)).burn_s == 0.5
+
+
+def test_a_burn_of_exactly_the_short_limit_is_not_short() -> None:
+    """Negative: a short burn is one under the limit; a burn of exactly the limit is not."""
+    stats = cycle_stats([ch(0, 10), ch(20, 29)], HOUR, short_burn_s=10 * MIN)
+    assert stats.short_burns == 1
+
+
+def test_condensing_share_goes_on_past_a_dhw_burn_and_a_return_gap() -> None:
+    """Negative: a hot-water burn before a heating burn, or the return unknown at a heating
+    burn's start, leaves out only that part — the rest of the heating burn time still counts."""
+    return_temp = Series([(0, 40.0), (20 * MIN, None), (25 * MIN, 40.0)])
+    assert condensing_share(return_temp, [dhw(0, 10), ch(20, 30)]) == Share(1.0, 5 * MIN)
+
+
+def test_a_return_at_the_threshold_is_not_condensing() -> None:
+    """Negative: condensing is a return below the threshold; exactly at it, it is not."""
+    share = condensing_share(Series([(0, 55.0)]), [ch(0, 20)], threshold=55.0)
+    assert share == Share(0.0, 20 * MIN)
+
+
+def test_one_second_of_known_return_is_a_basis() -> None:
+    """Any burn time with the return known gives a share; only none at all gives none."""
+    share = condensing_share(Series([(0, 40.0)]), [ch(0, 20)], window=(0.0, 1.0))
+    assert share == Share(1.0, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("high", "value", "expected"),
+    [
+        (100.0, 0.0, (0.0, 0.0)),  # restarted from zero: nothing counted yet
+        (100.0, 0.5, (0.5, 0.5)),  # restarted: what it counted since
+        (1.0, 0.5, (0.5, 0.5)),  # a small meter's reset is a reset too
+        (0.0, -0.5, (0.0, 0.0)),  # below a zero mark: no reset, nothing counts, the mark stays
+    ],
+)
+def test_a_meter_reset_counts_from_zero_at_any_mark(
+    high: float, value: float, expected: tuple[float, float]
+) -> None:
+    """PB-19: a reading below 90 % of a positive mark is a meter restarted from zero and adds
+    what it reads, nothing more; under a mark of zero there is no reset."""
+    assert meter_rise(high, value) == expected
+
+
+def test_a_meter_unknown_at_the_window_end_is_incomplete() -> None:
+    """Negative: the consumption is complete only with the meter known at both ends — known at
+    the start and in between but not at the end, it is not; known throughout, it is."""
+    meter = Series([(0, 100.0), (10, 101.0), (20, None)])
+    assert meter_consumption(meter, 0, 30) == Consumption(1.0, False)
+    assert meter_consumption(Series([(0, 100.0)]), 0, 30) == Consumption(0.0, True)
+
+
+def test_integrate_rate_goes_on_after_unknown_modulation() -> None:
+    """Negative: modulation unknown for the first part of a burn leaves out only that part; the
+    rest of the burn still counts, and the result is incomplete."""
+    flame = Series([(0, True), (HOUR, False)])
+    modulation = Series([(0, None), (HOUR / 2, 50.0)])
+    result = integrate_rate(flame, modulation, 1.0, 3.0, ModulationScale.RANGE, 0, HOUR)
+    assert result == Consumption(pytest.approx(1.0), False)
+
+
+def test_gas_per_degree_day_at_exactly_the_minimum_degree_days() -> None:
+    """Gas per degree-day means nothing below MIN_DEGREE_DAYS; exactly that much is enough."""
+    days = DegreeDays(MIN_DEGREE_DAYS, DAY, DAY)
+    assert per_degree_day(1.0, days) == pytest.approx(1.0 / MIN_DEGREE_DAYS)
+
+
+def test_outdoor_bins_carry_their_width() -> None:
+    """Each bin says its range, ``[low, low + width)``."""
+    bins = outdoor_bins(Series([(0, 7.0)]), 0, 10, width=2.0)
+    assert [(b.low, b.width) for b in bins] == [(6.0, 2.0)]
+
+
+def test_binned_cycle_stats_use_the_short_burn_limit_given() -> None:
+    """The short-burn limit given holds in every outdoor bin too."""
+    flame = Series([(0, False), (10 * MIN, True), (18 * MIN, False)])
+    stats = binned_cycle_stats(
+        [ch(10, 18)], flame, Series([(0, 8.0)]), 0, HOUR, short_burn_s=5 * MIN
+    )
+    assert stats[5.0].short_burns == 0
+
+
+def test_a_burn_starting_as_the_outdoor_bin_changes_belongs_to_the_new_bin() -> None:
+    """Negative: a burn starting at the very moment the outdoor temperature moves to another
+    bin belongs to that bin only — never also to the one before, never lost."""
+    flame = Series([(0, False), (HOUR, True), (HOUR + 10 * MIN, False)])
+    outdoor = Series([(0, 8.0), (HOUR, -2.0)])
+    stats = binned_cycle_stats([ch(60, 70)], flame, outdoor, 0, 2 * HOUR)
+    assert (stats[5.0].starts, stats[-5.0].starts) == (0, 1)

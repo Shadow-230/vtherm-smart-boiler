@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from itertools import pairwise
@@ -41,6 +42,7 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     decide,
     fallback_setpoint,
     follow_outage,
+    is_short,
     reset_correction,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
@@ -3146,3 +3148,549 @@ def test_the_last_grace_ending_in_a_fallback_sets_the_lowest_water_at_once() -> 
     assert at[end - 10.0].command == BoilerCommand(True, fallback_setpoint(CONFIG))
     assert at[end].command == BoilerCommand(False, CONFIG.limits.hard_min)
     assert at[end].zones_unknown
+
+
+# --- Mutation testing (2026-10-12): the controller's surviving mutants --------------------------
+
+
+def test_a_decision_interval_of_one_second_is_accepted() -> None:
+    """Any positive decision interval is valid, one second and less included. Negative: 0 is
+    refused."""
+    assert ControlConfig(curve=CURVE, decision_interval_s=1.0).decision_interval_s == 1.0
+    assert ControlConfig(curve=CURVE, decision_interval_s=0.5).decision_interval_s == 0.5
+    with pytest.raises(ValueError, match="decision interval"):
+        ControlConfig(curve=CURVE, decision_interval_s=0.0)
+
+
+def test_a_failure_outside_the_window_covers_no_time() -> None:
+    """Negative: a failed check whose minute ended before the window, or one made just now,
+    covers no time in it."""
+    assert bad_time(((0.0, True),), 1000.0) == 0.0
+    assert bad_time(((100.0, True),), 100.0) == 0.0
+
+
+def unjudged(moments: Iterable[tuple[float, bool]]) -> OutageWindow:
+    """The window after a check at each moment, no loss declared meanwhile — as while a restore
+    waits for a boiler link not yet reported (X2)."""
+    window = OutageWindow()
+    for t, bad in moments:
+        window = follow_outage(window, t, bad, lost_s=math.inf)
+    return window
+
+
+def test_a_moment_just_before_the_last_check_is_judged_at_that_check() -> None:
+    """Negative: judged at 990 s, ten seconds before its last check, the window still ends at
+    that check — [400, 1000]: the failures from 390 to 690 s cover 290 s of it, no loss."""
+    window = unjudged([*failing(390.0, 690.0), (690.0, False), (1000.0, False)])
+    assert follow_outage(window, 990.0) == follow_outage(window, 1000.0)
+    assert not follow_outage(window, 990.0).lost
+
+
+def test_a_loss_judged_late_begins_at_its_first_failure_inside_the_window() -> None:
+    """Judged at 640 s with five minutes as the limit, the failures from 100 to 400 s cover
+    five minutes of [40, 640]: a loss, from 100 s — the first minute of the window counts.
+    Negative: the failure whose span ended exactly at the window's start, and the good check
+    before the first failure, do not move the loss's start earlier."""
+    window = unjudged([(0.0, True), (40.0, False), *failing(100.0, 400.0), (400.0, False)])
+    assert not window.lost
+    lost = follow_outage(window, 640.0, False)
+    assert lost.lost
+    assert lost.lost_from == 100.0
+
+
+def test_a_failure_that_left_the_window_does_not_return_with_a_clock_set_back() -> None:
+    """C9, negative: at 660 s the failure at 0 s (its span over at 30 s) has left the window
+    [60, 660] and goes. The clock then set back to 600 s, it does not count again: the 270 s
+    of failures since 330 s are no loss."""
+    moments = [(0.0, True), (30.0, False), *failing(330.0, 570.0), (610.0, False), (660.0, False)]
+    window = checks(OutageWindow(), moments)
+    assert not window.lost
+    assert window.checks[0] == (30.0, False)
+    assert not follow_outage(window, 600.0, True).lost
+
+
+def test_a_clock_set_back_during_a_loss_does_not_end_it_early() -> None:
+    """C9, negative: lost, then the clock set back and one good check: the minute without a
+    failure counts from that check — ten seconds later the loss holds, a minute later not."""
+    lost = checks(OutageWindow(), failing(0.0, 330.0))
+    assert lost.lost
+    back = follow_outage(lost, 100.0, False)
+    assert back.lost
+    assert follow_outage(back, 110.0).lost
+    assert not follow_outage(back, 160.0).lost
+
+
+def test_a_loss_found_at_a_good_check_counts_the_minute_back_from_it() -> None:
+    """The good check that completes five minutes of failures finds the loss; the minute
+    without a failure counts from that check, so a good check a minute later ends it."""
+    window = checks(OutageWindow(), [*failing(0.0, 300.0), (300.0, False)])
+    assert window.lost
+    assert window.good_since == 300.0
+    assert not follow_outage(window, 360.0, False).lost
+
+
+def test_the_run_of_good_checks_is_kept_while_nothing_is_lost() -> None:
+    """The first check of the current run of good ones is kept (the monitor's "works since");
+    a failure clears it. Negative: nothing lost, no start of a loss."""
+    window = checks(OutageWindow(), [(0.0, False), (30.0, False)])
+    assert window.good_since == 0.0
+    assert window.lost_from is None
+    window = checks(window, [(60.0, True), (90.0, False)])
+    assert window.good_since == 90.0
+    assert window.lost_from is None
+
+
+POWER_ONLY = DemandConfig(count_threshold=0, power_threshold_kw=1.0)
+HANDING = replace(THERMOSTAT, demand=POWER_ONLY)
+RELAY_DELAY = replace(ON_OFF, activation_delay_s=120.0)
+RAMPED = replace(CONFIG, ramp_k_per_min=1.0)
+
+
+def fed(t: float, **kw) -> ControlInputs:
+    """A zone calling whose device power feeds the only criterion: demand known."""
+    return inputs(t, zones=(started("a", t, power=2.0),), **kw)
+
+
+def blind(t: float, **kw) -> ControlInputs:
+    """The same zone without a device power: no criterion judged — decision 3's end state."""
+    return inputs(t, zones=(started("a", t),), **kw)
+
+
+@pytest.mark.parametrize(
+    ("config", "between", "shown"),
+    [
+        (HANDING, [], ControlMode.HANDED_BACK),
+        (HANDING, [blind(10.0, boiler_link=False)], ControlMode.HANDED_BACK),
+        (HANDING, [fed(10.0, read_back_known=False)], ControlMode.WAITING_DATA),
+        (HANDING, [inputs(10.0, zones=(away("a"),))], ControlMode.WAITING_DATA),
+        (replace(HANDING, activation_delay_s=120.0), [fed(10.0)], ControlMode.WAITING_DATA),
+        (
+            replace(RELAY_DELAY, working_thermostat=True, demand=POWER_ONLY),
+            [fed(10.0)],
+            ControlMode.WAITING_DATA,
+        ),
+    ],
+    ids=["at_once", "stale_before", "read_back", "vt_reloading", "delay", "relay_delay"],
+)
+def test_a_stale_step_after_a_hand_back_shows_what_control_did_last(
+    config: ControlConfig, between: list[ControlInputs], shown: ControlMode
+) -> None:
+    """Decision 3 handing the boiler to a working thermostat, then a stale step short of a loss
+    (decision 7): "handed back" while nothing else has run since — another stale step
+    included; "waiting for data" once control has waited for something else since — the
+    read-back, the zones' recognition, VT's activation delay. Nothing is written."""
+    steps = [blind(0.0), *between, blind(20.0, boiler_link=False)]
+    _state, decisions = run(steps, config)
+    assert decisions[0].mode is ControlMode.HANDED_BACK
+    assert decisions[-1].mode is shown
+    assert decisions[-1].command is None
+
+
+@pytest.mark.parametrize("config", [DELAY, RELAY_DELAY], ids=["water", "relay"])
+@pytest.mark.parametrize("fresh", [True, False], ids=["taking_afresh", "mid_session"])
+def test_a_pending_start_is_due_at_one_moment_whatever_the_steps(
+    config: ControlConfig, fresh: bool
+) -> None:
+    """Decision 5: VT's 120-s delay counted over uneven steps — a minute, then 59.5 s: each
+    waiting step names the same moment heating starts, and it starts then. Taking the boiler
+    afresh nothing is written meanwhile; mid-session the "off" goes on."""
+    t0 = 0.0 if fresh else 10.0
+    before = [] if fresh else [quiet(0.0)]
+    steps = [*before, *(calling(t0 + t) for t in (0.0, 60.0, 119.5, 120.0))]
+    _state, decisions = run(steps, config)
+    for d in decisions[len(before) : -1]:
+        assert d.mode is ControlMode.IDLE
+        assert Reason.ACTIVATION_DELAY in d.reasons
+        assert d.activation_at == t0 + 120.0
+        if fresh:
+            assert d.command is None
+        else:
+            assert d.command is not None
+            assert not d.command.ch_enable
+    assert decisions[-1].command.ch_enable
+    assert decisions[-1].activation_at is None
+
+
+def test_a_one_second_activation_delay_still_waits() -> None:
+    """Decision 5: any delay above 0 holds a start — one second included."""
+    _state, decisions = run([calling(0.0), calling(10.0)], replace(CONFIG, activation_delay_s=1.0))
+    assert decisions[0].command is None
+    assert Reason.ACTIVATION_DELAY in decisions[0].reasons
+    assert decisions[1].command.ch_enable
+
+
+def test_the_relay_stays_on_once_the_wait_is_over() -> None:
+    """Decision 5 on the relay path: once heating is on the start is over — the steps after it
+    keep the relay on, with no new wait."""
+    config = replace(ON_OFF, activation_delay_s=60.0)
+    _state, decisions = run([inputs(t) for t in stepped(0.0, 200.0)], config)
+    assert all(d.command == BoilerCommand(True, None) for d in decisions[6:])
+    assert not any(Reason.ACTIVATION_DELAY in d.reasons for d in decisions[6:])
+
+
+def test_every_heating_decision_carries_the_effective_outdoor_temperature() -> None:
+    """The decision publishes the outdoor temperature it was made with: heating by the curve,
+    waiting for VT's activation delay, and on the relay path."""
+    for step, config in ((inputs(0.0), CONFIG), (calling(0.0), DELAY), (inputs(0.0), ON_OFF)):
+        _state, [decision] = run([step], config)
+        assert decision.effective_outdoor == 5.0
+
+
+@pytest.mark.parametrize(
+    ("between", "mode"),
+    [
+        (inputs(60.0, zones=(started("a", 60.0, temperature=6.0),), boiler_fault=True), "frost"),
+        (inputs(60.0, zones=(away("a"),)), "heating"),
+    ],
+    ids=["boiler_fault", "vt_reloading"],
+)
+def test_frost_heatings_hysteresis_across_a_fault_and_a_reload(
+    between: ControlInputs, mode: str
+) -> None:
+    """Frost heating for a room at 4 °C; a step that stops it — the boiler's own fault (Y1), or
+    VT reloading (the recognition period keeps the command, ``_keep``); then the room at 6 °C,
+    between the frost limit and the release. The fault keeps frost protection's state: frost
+    heating goes on. The recognition period ends it: the room's own call heats it.
+    The ``vt_reloading`` case pins current behaviour that the review of 2026-10-13 questions (A1,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+    steps = [
+        inputs(0.0, zones=(started("a", 0.0, temperature=4.0),)),
+        between,
+        inputs(120.0, zones=(started("a", 120.0, temperature=6.0),)),
+    ]
+    _state, decisions = run(steps)
+    assert decisions[0].mode is ControlMode.FROST
+    assert decisions[-1].mode is ControlMode(mode)
+    assert decisions[-1].command.ch_enable
+
+
+@pytest.mark.parametrize("config", [DELAY, RELAY_DELAY], ids=["water", "relay"])
+def test_frost_heatings_hysteresis_holds_through_the_activation_delay(
+    config: ControlConfig,
+) -> None:
+    """Decision 5: a room at 4 °C starts frost heating, which waits VT's 120-s delay; the room
+    warms to 6 °C meanwhile, still below the release — frost heating starts once the wait is
+    over."""
+    steps = [
+        inputs(t, zones=(started("a", t, temperature=4.0 if t == 0.0 else 6.0),))
+        for t in stepped(0.0, 130.0)
+    ]
+    _state, decisions = run(steps, config)
+    assert all(d.command is None for d in decisions[:-1])
+    assert decisions[-1].mode is ControlMode.FROST
+    assert decisions[-1].command.ch_enable
+
+
+def test_on_off_frost_heating_holds_until_the_release() -> None:
+    """Frost protection's hysteresis on the relay path, for a zone VT has off that can take
+    heat: on at 4 °C, still on at 6 °C, off at 7 °C."""
+    steps = [
+        inputs(t, zones=(zone(t, valve_open=0.05, temperature=temp, heating_enabled=False),))
+        for t, temp in ((0.0, 4.0), (10.0, 6.0), (20.0, 7.0))
+    ]
+    _state, decisions = run(steps, ON_OFF)
+    assert [d.mode for d in decisions] == [ControlMode.FROST, ControlMode.FROST, ControlMode.IDLE]
+
+
+@pytest.mark.parametrize(
+    "between",
+    [lambda t: (started("a", t, temperature=8.0),), lambda _t: (away("a"),)],
+    ids=["room_warmed", "vt_reloading"],
+)
+def test_frost_not_warming_counts_from_frost_heatings_new_start(
+    between: Callable[[float], tuple[ZoneState, ...]],
+) -> None:
+    """P-45: frost heating at 3 °C, a step without it — the room past the release, or VT
+    reloading — then frost heating again at 3 °C from 120 s: "frost not warming" is reported
+    two hours after the new start, not before.
+    The ``vt_reloading`` case pins current behaviour that the review of 2026-10-13 questions (A1,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return between(t) if t == 60.0 else (started("a", t, temperature=3.0),)
+
+    steps = [inputs(t, zones=zones(t)) for t in stepped(0.0, 180.0 + FROST_ALARM_S, 60.0)]
+    _state, decisions = run(steps)
+    stuck = [s.now for s, d in zip(steps, decisions, strict=True) if d.frost_stuck]
+    assert stuck[:1] == [120.0 + FROST_ALARM_S]
+
+
+@pytest.mark.parametrize(("warmed", "stuck"), [(3.5, False), (3.4, True)])
+def test_frost_not_warming_is_judged_by_half_a_kelvin(warmed: float, stuck: bool) -> None:
+    """P-45: frost heating from 3.0 °C for two hours — the room 0.5 K warmer has warmed enough
+    (negative: not reported); 0.4 K warmer has not."""
+    steps = [
+        inputs(t, zones=(started("a", t, temperature=3.0 if t == 0.0 else warmed),))
+        for t in stepped(0.0, FROST_ALARM_S + 60.0, 60.0)
+    ]
+    _state, decisions = run(steps)
+    assert decisions[-1].frost_stuck is stuck
+
+
+def test_a_closed_cold_zone_stays_flagged_until_its_release() -> None:
+    """Decision 4: a cold zone VT keeps closed, flagged at 4 °C, stays flagged at 6 °C — above
+    the frost limit, below the release — and is no longer at 7 °C."""
+    steps = [
+        inputs(t, zones=(closed("a", t, temp),))
+        for t, temp in ((0.0, 4.0), (10.0, 6.0), (20.0, 7.0))
+    ]
+    _state, decisions = run(steps)
+    assert [d.frost_closed for d in decisions] == [("a",), ("a",), ()]
+
+
+@pytest.mark.parametrize("fault", [False, True], ids=["kept", "kept_off_for_a_fault"])
+def test_a_kept_command_counts_its_steps_and_keeps_its_target(fault: bool) -> None:
+    """Decision 3 with a 1 K/min ramp: a command restored at 45 °C is kept in the recognition
+    period — as "off" while the boiler reports its own fault (Y1) — its target the restored
+    setpoint. The zone reports 10 s later: the curve's 35 °C, ramped down from 45 °C by that
+    step's 10 s. VT then reloads: the command goes on with its target, the curve's, not the
+    ramped setpoint; back 10 s later, the water decided at 10 s holds — the outdoor sensor
+    gone meanwhile is not decided on before the interval — and the ramp goes on."""
+    steps = [
+        inputs(0.0, zones=(placeholder("a", 0.0),), restored_command=KEPT, boiler_fault=fault),
+        inputs(10.0, zones=(started("a", 10.0),)),
+        inputs(20.0, zones=(away("a"),)),
+        inputs(30.0, zones=(started("a", 30.0),), outdoor_sensor=None),
+    ]
+    _state, [kept, reported, reloading, back] = run(steps, RAMPED)
+    assert kept.command == (replace(KEPT, ch_enable=False) if fault else KEPT)
+    assert kept.target == 45.0
+    assert reported.target == pytest.approx(CURVE.flow(5.0))
+    assert reported.command.setpoint == pytest.approx(45.0 - 1.0 / 6.0)
+    assert reloading.reasons == (Reason.ZONES_RECOGNITION,)
+    assert reloading.command == reported.command
+    assert reloading.target == pytest.approx(CURVE.flow(5.0))
+    assert back.command.setpoint == pytest.approx(45.0 - 2.0 / 6.0)
+    assert Reason.OUTDOOR_SENSOR in back.reasons
+
+
+def test_home_assistant_starting_keeps_a_command_already_taken_over() -> None:
+    """Decision 3: the restored command, once given, is control's own — Home Assistant still
+    starting and the restore no longer offered, it goes on unchanged; nothing is handed
+    back."""
+    starting = (HA_STARTING,)
+    steps = [
+        inputs(0.0, zones=(started("a", 0.0),), blockers=starting, restored_command=KEPT),
+        *during(10.0, 60.0, lambda t: (started("a", t),), blockers=starting),
+    ]
+    _state, decisions = run(steps)
+    assert all(d.command == KEPT and not d.hand_back for d in decisions)
+    assert all(d.reasons == (Reason.ZONES_RECOGNITION,) for d in decisions)
+
+
+def test_nothing_is_named_without_data_during_the_recognition() -> None:
+    """PB-23 (decision 3), negative: while the zones still report nothing is named — a zone
+    already calling without a device power under a power-only criterion included. Once every
+    zone has reported, the criterion and that zone are."""
+    steps = [
+        *during(0.0, 30.0, lambda t: (started("a", t), placeholder("b", t))),
+        inputs(30.0, zones=(started("a", 30.0), started("b", 30.0, heating_enabled=False))),
+    ]
+    _state, decisions = run(steps, replace(CONFIG, demand=POWER_ONLY))
+    assert all(d.criteria_without_data == () == d.zones_without_data for d in decisions[:-1])
+    assert decisions[-1].criteria_without_data == ("power",)
+    assert decisions[-1].zones_without_data == ("a",)
+
+
+def test_the_water_is_decided_anew_after_a_stale_step() -> None:
+    """Decision 6: a stale step writes nothing, and the next fresh one decides the water anew
+    at once — naming the held outdoor temperature, its sensor gone since — rather than keeping
+    the decision made before."""
+    steps = [inputs(0.0), inputs(10.0, boiler_link=False), inputs(20.0, outdoor_sensor=None)]
+    _state, decisions = run(steps)
+    assert decisions[1].command is None
+    assert Reason.OUTDOOR_HELD in decisions[-1].reasons
+
+
+def test_nothing_asking_with_an_outdoor_temperature_decides_the_water_at_its_interval() -> None:
+    """Decision 3's "off" with an outdoor temperature known: the water follows the decision
+    interval — the lowest water temperature at once only where none is known. Negative: the
+    sensor gone at 10 s, the held reading is not decided on yet."""
+    steps = [blind(0.0), blind(10.0, outdoor_sensor=None)]
+    _state, decisions = run(steps, replace(CONFIG, demand=POWER_ONLY))
+    assert all(Reason.ZONES_UNKNOWN in d.reasons for d in decisions)
+    assert Reason.OUTDOOR_SENSOR in decisions[-1].reasons
+
+
+def test_a_circuits_steady_need_does_not_decide_the_water_at_every_step() -> None:
+    """I8 (F3): the need held while a circuit asks is decided at once when it changes, not at
+    every step it stays. Negative: the sensor gone at 10 s, the held reading is not decided on
+    yet."""
+    asking = {"floor": True}
+    steps = [
+        inputs(0.0, circuit_requests=asking),
+        inputs(10.0, circuit_requests=asking, outdoor_sensor=None),
+    ]
+    _state, decisions = run(steps, MIXED)
+    assert Reason.LIMIT_CIRCUIT_NEED in decisions[0].reasons
+    assert Reason.OUTDOOR_SENSOR in decisions[-1].reasons
+
+
+def test_a_circuits_zone_known_but_not_asking_does_not_make_it_ask() -> None:
+    """I8.8b, negative: a circuit run by other automation asks through its zones only while one
+    of them wants heat — its known zone not asking leaves it silent: heating off."""
+    floor = OtherAutomation("floor", zones=frozenset({"z"}), needed=35.0)
+    config = replace(CONFIG, other_automation=(floor,))
+    _state, [decision] = run([inputs(0.0, zones=(not_asking(0.0),))], config)
+    assert decision.mode is ControlMode.IDLE
+    assert Reason.CIRCUIT_ASKS not in decision.reasons
+
+
+def test_the_heating_reason_follows_the_outdoor_one_and_precedes_the_limits() -> None:
+    """The reasons in order, each once: the outdoor temperature's source, why heating is on,
+    then the water temperature's limits."""
+    _state, [decision] = run([inputs(0.0)], replace(CONFIG, circuit_max=30.0))
+    assert decision.reasons == (Reason.OUTDOOR_SENSOR, Reason.DEMAND, Reason.LIMIT_CIRCUIT_MAX)
+
+
+def test_a_hand_back_forgets_the_heat_counted_towards_a_rise() -> None:
+    """Principle 13 (5): a hand-back resets the comfort correction with the heat flow and the
+    step counted towards its next rise — four minutes of heat flowed before it (decisions
+    every five minutes), and the first decision after control resumes adds nothing."""
+    config = replace(WATER, decision_interval_s=300.0)
+    steps = [
+        *minutes(0.0, 5, lambda t: (short(t),)),
+        inputs(250.0, enabled=False),
+        inputs(260.0, zones=(short(260.0),), flame=True),
+    ]
+    _state, decisions = run(steps, config)
+    assert decisions[-1].command.ch_enable
+    assert decisions[-1].correction == 0.0
+    assert Reason.COMFORT_CORRECTION not in decisions[-1].reasons
+
+
+def test_hot_water_between_two_decisions_is_no_heat_flow() -> None:
+    """S-24: heat flows while the flame burns without hot water. Decisions every five minutes,
+    the flame on throughout, hot water from 60 to 240 s: only the last minute counts towards
+    the rise — 1/30 K."""
+    config = replace(WATER, decision_interval_s=300.0)
+    steps = [replace(s, dhw=0.0 < s.now < 300.0) for s in minutes(0.0, 6, lambda t: (short(t),))]
+    _state, decisions = run(steps, config)
+    assert decisions[-1].correction == pytest.approx(1.0 / 30.0)
+
+
+def test_heat_during_the_activation_delays_last_step_counts_towards_the_rise() -> None:
+    """Decision 5: the steps of VT's delay are control's steps. The flame on (heat flows, S-24)
+    and a room short: the first water decision, as heating starts, counts the 10 s since the
+    last waiting step towards the comfort correction's rise.
+    This test pins current behaviour that the review of 2026-10-13 questions (A4,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+    config = replace(WATER, activation_delay_s=120.0)
+    steps = [inputs(t, zones=(short(t),), flame=True) for t in stepped(0.0, 130.0)]
+    _state, decisions = run(steps, config)
+    assert all(d.command is None for d in decisions[:-1])
+    assert decisions[-1].correction > 0.0
+
+
+def test_the_correction_stays_while_the_boilers_maximum_holds_the_setpoint() -> None:
+    """S-25: the boiler's own maximum equal to the curve holds the setpoint, as the circuit's
+    does — no rise."""
+    capped = replace(WATER, boiler_max=CURVE.flow(5.0))
+    state, _ = run(minutes(0.0, 61, lambda t: (short(t),)), capped)
+    assert state.correction == 0.0
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        ZoneState("b", 22.0, 21.0, True, valve_open=0.3),
+        ZoneState("b", 22.5, 21.0, True, valve_open=0.05),
+    ],
+    ids=["one_kelvin_over", "open_five_percent"],
+)
+def test_a_zone_at_the_edge_of_too_warm_does_not_stop_the_rise(other: ZoneState) -> None:
+    """S-08, negative: the rise stops for a zone more than 1 K over its setpoint that takes heat
+    — an opening above 5 %. One exactly 1 K over, or 1.5 K over and open exactly 5 %, does not
+    stop it."""
+
+    def zones(t: float) -> tuple[ZoneState, ...]:
+        return (short(t), replace(other, reported_at=t))
+
+    state, _ = run(minutes(0.0, 31, zones), WATER)
+    assert state.correction == pytest.approx(1.0)
+
+
+def test_rooms_open_exactly_70_percent_are_not_clearly_satisfied() -> None:
+    """Negative: the correction falls once every zone with an opening is below 70 % — a room at
+    its setpoint open exactly 70 % holds it."""
+
+    def level(t: float) -> tuple[ZoneState, ...]:
+        return (ZoneState("z", 21.0, 21.0, True, reported_at=t, valve_open=0.7),)
+
+    state, _ = run(minutes(0.0, 30, level), WATER, replace(ControlState(), correction=2.0))
+    assert state.correction == 2.0
+
+
+def test_a_room_exactly_0_3_k_short_counts_as_short() -> None:
+    """G11 C: short by at least ``SHORT_K`` — exactly 0.3 K counts (0.5 − 0.2 is exact in
+    binary). Negative: 0.2 K does not."""
+    assert is_short(ZoneState("z", 0.2, 0.5, True, valve_open=1.0))
+    assert not is_short(ZoneState("z", 0.3, 0.5, True, valve_open=1.0))
+
+
+def test_the_days_rise_counts_on_a_wall_clock_of_today() -> None:
+    """Principle 13's daily rate at a real clock's time (seconds since 1970): 3 K up, back
+    down, and no more rise within the day."""
+    t0 = 1_760_000_000.0
+    state, _ = run(minutes(t0, 91, lambda t: (short(t),)), WATER)
+    assert state.correction == pytest.approx(3.0)
+    state, _ = run(minutes(t0 + 5460.0, 46, lambda t: (satisfied(t),)), WATER, state)
+    assert state.correction == pytest.approx(0.0)
+    state, _ = run(minutes(t0 + 8220.0, 60, lambda t: (short(t),)), WATER, state)
+    assert state.correction == 0.0
+
+
+def test_a_rise_a_day_old_no_longer_counts() -> None:
+    """Principle 13's daily rate: 3 K risen at 0 s still count a minute before a day has
+    passed — no rise — and no longer at exactly a day: the correction rises again."""
+    day = 24 * HOUR
+    spent = replace(ControlState(), rises=((0.0, CORRECTION_DAY_K),))
+    _state, decisions = run(minutes(day - 120.0, 3, lambda t: (short(t),)), WATER, spent)
+    assert decisions[1].correction == 0.0
+    assert decisions[2].correction > 0.0
+
+
+def test_the_correction_does_not_rise_on_a_clock_set_back_before_it_began() -> None:
+    """Rule 3 (decision 11 of 0.2.3): the rise needs the clock not before the correction's
+    beginning. Negative: set back past it, the heat counted before is not risen on."""
+    config = replace(WATER, decision_interval_s=300.0)
+    state, _ = run(minutes(10000.0, 7, lambda t: (short(t),)), config)
+    began = state.correction
+    assert began > 0.0
+    step = inputs(10200.0, zones=(short(10200.0),), flame=True)
+    state, [decision] = run([step], config, state)
+    assert decision.correction == began
+
+
+def test_the_days_rise_counts_only_what_the_correction_rose() -> None:
+    """Principle 13: the day's 3 K counts what the band let through — a 0.5 K band reached,
+    the hours of heat after it spend nothing: having fallen back, the correction rises again
+    the same day."""
+    config = replace(WATER, correction_max_k=0.5)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    assert state.correction == pytest.approx(0.5)
+    assert sum(k for _t, k in state.rises) == pytest.approx(0.5)
+    state, _ = run(minutes(7260.0, 16, lambda t: (satisfied(t),)), config, state)
+    assert state.correction == 0.0
+    state, _ = run(minutes(8220.0, 31, lambda t: (short(t),)), config, state)
+    assert state.correction == pytest.approx(0.5)
+
+
+def test_the_at_limit_timer_starts_at_the_edge_and_reports_at_three_hours() -> None:
+    """Principle 13 (6): below the band's edge the "at limit" timer stays at 0; at the edge it
+    counts the decisions' time and reports at three hours exactly — not a minute before."""
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    assert 0.0 < state.correction < CORRECTION_MAX_K
+    assert state.correction_limit_s == 0.0
+    edge = replace(ControlState(), correction=CORRECTION_MAX_K)
+    _state, decisions = run(minutes(0.0, 181, lambda t: (short(t),)), WATER, edge)
+    assert not decisions[179].correction_at_limit
+    assert decisions[180].correction_at_limit
+
+
+def test_a_setpoint_exactly_at_the_cap_follows_a_lower_target_at_the_ramps_rate() -> None:
+    """S-23, negative: only a cap that fell below the last setpoint applies at once — one equal
+    to it is not below it, so a lower target is followed at 1 K a minute."""
+    from custom_components.vtherm_smart_boiler.core.controller import _ramp
+
+    assert _ramp(60.0, 30.0, 60.0, 30.0, 1.0) == (59.5, True)

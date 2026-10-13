@@ -8,9 +8,12 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.alarms import (
     ALARM_HOLD_S,
+    CIRCUIT_NOT_MEASURED,
     FLUE_GAS_CONDENSING_BAND,
     HELD,
     HOT_WATER_UNKNOWN,
+    LOW_FLOW_HOLD_S,
+    NO_FLOW_READING,
     NO_ZONE_DATA,
     PRESSURE_HIGH_HYSTERESIS_BAR,
     UNKNOWN_HOLD_S,
@@ -19,6 +22,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     AlarmKind,
     Band,
     Level,
+    PressureSample,
     Trend,
     add_water_band,
     banded_alarm,
@@ -28,15 +32,19 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     flue_excess_samples,
     frequent_starts,
     hysteresis_samples,
+    low_flow,
     pressure_alarms,
     pressure_high_band,
     pressure_samples,
+    pressure_slope,
     pressure_trend,
     settle,
     trend_warning,
     unstable_ignition,
 )
 from custom_components.vtherm_smart_boiler.core.cycles import Burn, BurnKind, ClassifiedBurn
+from custom_components.vtherm_smart_boiler.core.installation import Circuit, CircuitControl
+from custom_components.vtherm_smart_boiler.core.readings import ZONE_OPEN, ZoneState
 from custom_components.vtherm_smart_boiler.core.series import Series
 
 MIN = 60.0
@@ -879,3 +887,392 @@ def test_unstable_ignition_counts_only_complete_short_burns_within_the_day() -> 
     inside = [burn(24 * 60 + 200 + i * 10, 0.5) for i in range(3)]
     alarm = unstable_ignition([*old, *incomplete, *inside], now, limit=10)
     assert (alarm.value, alarm.active) == (3, False)
+
+
+# --- Mutation testing (2026-10-12): each alarm field by field, and the exact boundaries --------
+
+
+def test_an_alarm_unknown_past_its_hold_still_says_when_it_was_last_known() -> None:
+    """Negative: S-16 — an hour after it was last known the alarm is unknown, and it keeps the
+    moment it was last known rather than forgetting it."""
+    active = Alarm(HIGH, True, Level.ALARM, 2.9, 2.8, since=0.0, known_at=0.0)
+    gone = settle(Alarm(HIGH, None, reason=UNKNOWN_INPUT), active, UNKNOWN_HOLD_S)
+    assert gone == Alarm(HIGH, None, reason=UNKNOWN_INPUT, known_at=0.0)
+
+
+def test_the_add_water_band_is_built_falling() -> None:
+    """The "add water" band's danger lies below its threshold: ``rising`` is ``False``."""
+    band = add_water_band(0.8)
+    assert band.rising is False
+    assert band == Band(warning=None, alarm=0.8, rising=False, hysteresis=0.1)
+
+
+def test_every_banded_alarm_state_carries_its_kind_value_limit_and_moments() -> None:
+    """Each state of a banded alarm, field by field: unknown, the warning while the alarm level
+    waits, the alarm level, the alarm level held by its hysteresis, the warning, the warning held
+    by its hysteresis, and none."""
+    unknown = banded_alarm(HIGH, None, HIGH_BAND, None, 0.0)
+    assert unknown == Alarm(HIGH, None, reason=UNKNOWN_INPUT)
+    waiting = banded_alarm(HIGH, 2.9, HIGH_BAND, None, 0.0)
+    assert waiting == Alarm(HIGH, True, Level.WARNING, 2.9, 2.5, since=0.0, known_at=0.0)
+    alarm = banded_alarm(HIGH, 2.9, HIGH_BAND, waiting, ALARM_HOLD_S)
+    assert alarm == Alarm(HIGH, True, Level.ALARM, 2.9, 2.8, since=0.0, known_at=ALARM_HOLD_S)
+    kept = banded_alarm(HIGH, 2.75, HIGH_BAND, alarm, 6 * MIN)
+    assert kept == Alarm(HIGH, True, Level.ALARM, 2.75, 2.8, known_at=6 * MIN)
+    warning = banded_alarm(HIGH, 2.6, HIGH_BAND, kept, 7 * MIN)
+    assert warning == Alarm(HIGH, True, Level.WARNING, 2.6, 2.5, known_at=7 * MIN)
+    held = banded_alarm(HIGH, 2.45, HIGH_BAND, warning, 8 * MIN)
+    assert held == Alarm(HIGH, True, Level.WARNING, 2.45, 2.5, known_at=8 * MIN)
+    ok = banded_alarm(HIGH, 2.35, HIGH_BAND, held, 9 * MIN)
+    assert ok == Alarm(HIGH, False, None, 2.35, known_at=9 * MIN)
+
+
+def test_an_alarm_limit_alone_waits_inactive_showing_its_value_and_limit() -> None:
+    """Negative: only an alarm limit, the value beyond it — inactive while the alarm level
+    waits, yet showing the value, the alarm limit and since when it waits."""
+    band = Band(None, 2.0, True, PRESSURE_HIGH_HYSTERESIS_BAR)
+    early = banded_alarm(HIGH, 2.1, band, None, 0.0)
+    assert early == Alarm(HIGH, False, None, 2.1, 2.0, since=0.0, known_at=0.0)
+
+
+def test_a_value_at_a_limit_is_not_beyond_it() -> None:
+    """Negative: a value equal to a limit is not beyond it — 2.5 bar at a 2.5 bar warning is no
+    warning; 2.8 bar at a 2.8 bar alarm limit is only a warning, never the alarm level; 0.8 bar
+    at an "add water" threshold of 0.8 bar never raises it."""
+    assert banded_alarm(HIGH, 2.5, HIGH_BAND, None, 0.0) == Alarm(
+        HIGH, False, None, 2.5, known_at=0.0
+    )
+    at_alarm = settled(HIGH, [2.8] * 7, HIGH_BAND)
+    assert at_alarm == Alarm(HIGH, True, Level.WARNING, 2.8, 2.5, known_at=6 * MIN)
+    at_threshold = settled(LOW, [0.8] * 7, ADD_WATER)
+    assert at_threshold == Alarm(LOW, False, None, 0.8, known_at=6 * MIN)
+
+
+def test_the_pressure_alarms_keep_their_kind_and_history_between_calls() -> None:
+    """Each pressure alarm keeps its own kind and history between calls: 2.9 bar for five
+    minutes reaches the high-pressure alarm level through ``pressure_alarms``, and "add water"
+    stays off."""
+    alarms: dict[AlarmKind, Alarm] = {}
+    for minute in range(6):
+        alarms = pressure_alarms(2.9, 0.8, HIGH_BAND, alarms, minute * MIN)
+    assert alarms[HIGH] == Alarm(HIGH, True, Level.ALARM, 2.9, 2.8, since=0.0, known_at=5 * MIN)
+    assert alarms[LOW] == Alarm(LOW, False, None, 2.9, known_at=5 * MIN)
+
+
+def test_every_count_alarm_state_carries_its_kind_count_and_limit() -> None:
+    """Field by field: a count above its limit is a warning showing the count and the limit, one
+    at or below it none; one that cannot be judged shows its limit and why, and a known one is
+    held through it with the moment it was last known."""
+    starts_kind = AlarmKind.FREQUENT_STARTS
+    on = frequent_starts(starts(13), HOUR, 12)
+    assert on == Alarm(starts_kind, True, Level.WARNING, 13.0, 12.0, known_at=HOUR)
+    off = frequent_starts(starts(5), HOUR, 12)
+    assert off == Alarm(starts_kind, False, None, 5.0, 12.0, known_at=HOUR)
+    unknown = frequent_starts([], HOUR, 12, known_s=0.0)
+    assert unknown == Alarm(starts_kind, None, limit=12.0, reason=UNKNOWN_INPUT)
+    ignition = AlarmKind.UNSTABLE_IGNITION
+    alarm = unstable_ignition(short_burns(12), DAY, limit=10)
+    assert alarm == Alarm(ignition, True, Level.WARNING, 12.0, 10.0, known_at=DAY)
+    unjudged = unstable_ignition([], DAY, limit=10, known_s=0.0)
+    assert unjudged == Alarm(ignition, None, limit=10.0, reason=UNKNOWN_INPUT)
+    held = unstable_ignition([], DAY + MIN, limit=10, previous=alarm, known_s=0.0)
+    assert (held.active, held.reason, held.known_at) == (True, HELD, DAY)
+
+
+def test_a_burn_starting_at_this_very_moment_is_not_counted_yet() -> None:
+    """Negative: the windows are ``[now - 1 h, now)`` and ``[now - 1 day, now)`` — a burn that
+    starts at ``now`` itself counts in neither."""
+    at_now = ClassifiedBurn(Burn(HOUR, HOUR + 30.0, True, True), BurnKind.CH, 1.0)
+    assert frequent_starts([*starts(3), at_now], HOUR).value == 3.0
+    short_now = ClassifiedBurn(Burn(DAY, DAY + 30.0, True, True), BurnKind.CH, 1.0)
+    assert unstable_ignition([*short_burns(3), short_now], DAY).value == 3.0
+
+
+def test_a_burn_of_exactly_the_shortest_length_is_not_unstable() -> None:
+    """Negative: only a burn shorter than ``shortest_s`` counts — 60 s at the default 60 s does
+    not."""
+    assert unstable_ignition([burn(i * 10, 1) for i in range(12)], DAY).value == 0.0
+
+
+def test_twenty_samples_in_each_window_are_enough_for_a_trend() -> None:
+    """``MIN_TREND_SAMPLES`` in each window give a trend; one fewer in either, none."""
+    assert compare_windows([1.0] * 20, [2.0] * 20) == Trend(1.0, 2.0)
+    assert compare_windows([1.0] * 19, [2.0] * 20) is None
+    assert compare_windows([1.0] * 20, [2.0] * 19) is None
+
+
+def test_every_trend_warning_state_carries_its_kind_change_and_limit() -> None:
+    """Field by field: a change beyond the limit is a warning showing the change and the limit,
+    one within it none, no trend unknown with its limit and why."""
+    kind = AlarmKind.PRESSURE_FALLING
+    falling = trend_warning(kind, Trend(1.5, 1.25), 0.2, -1)
+    assert falling == Alarm(kind, True, Level.WARNING, -0.25, 0.2)
+    rising = trend_warning(kind, Trend(1.25, 1.5), 0.2, -1)
+    assert rising == Alarm(kind, False, None, 0.25, 0.2)
+    unknown = trend_warning(kind, None, 0.2, -1)
+    assert unknown == Alarm(kind, None, limit=0.2, reason=UNKNOWN_INPUT)
+
+
+def test_a_change_equal_to_its_limit_is_no_trend_warning() -> None:
+    """Negative: only a change beyond ``max_change`` warns — exactly 0.25 bar down at 0.25, or
+    3 K either way at 3 K, does not."""
+    assert trend_warning(AlarmKind.PRESSURE_FALLING, Trend(1.5, 1.25), 0.25, -1).active is False
+    drift = AlarmKind.HYSTERESIS_DRIFT
+    assert trend_warning(drift, Trend(10.0, 7.0), 3.0, 0).active is False
+    assert trend_warning(drift, Trend(7.0, 10.0), 3.0, 0).active is False
+
+
+def test_pressure_samples_stop_before_the_end() -> None:
+    """Negative: the samples cover ``[start, end)`` — none at ``end`` itself."""
+    flame = Series([(-HOUR, False)])
+    flow = Series([(-HOUR, 30.0)])
+    pressure = Series([(-HOUR, 1.5)])
+    times = [s.t for s in pressure_samples(pressure, flame, flow, 0.0, HOUR)]
+    assert times == [i * 10 * MIN for i in range(6)]
+
+
+@pytest.mark.parametrize(
+    ("flows", "pressures", "expected"),
+    [
+        ((30.0, 50.0), (1.0, 1.2), 0.01),  # two samples are enough
+        ((35.0, 45.0), (1.0, 1.1), 0.01),  # a span of exactly 10 K is enough
+        ((20.0, 25.0), (1.0, 1.05), None),  # 5 K: too narrow
+        ((30.0, 50.0), (1.5, 1.5), 0.0),  # no swelling at all is a usable slope
+        ((30.0, 50.0), (1.0, 2.0), 0.05),  # the largest usable slope
+    ],
+)
+def test_the_pressure_slope_at_its_bounds(
+    flows: tuple[float, float], pressures: tuple[float, float], expected: float | None
+) -> None:
+    """The slope needs two samples spanning at least 10 K, and lies within 0 to 0.05 bar/K, both
+    bounds included."""
+    pairs = zip(flows, pressures, strict=True)
+    slope = pressure_slope([PressureSample(i * 600.0, p, w) for i, (w, p) in enumerate(pairs)])
+    if expected is None:
+        assert slope is None
+    else:
+        assert slope == pytest.approx(expected)
+
+
+def test_a_pressure_sample_belongs_to_the_window_it_starts() -> None:
+    """The windows are ``[start, end)``: 20 cold samples in each, the first at each window's
+    start, give a trend; 19 in the baseline with the 20th at its end — the recent window's
+    first — give none."""
+    step = 10 * MIN
+    series = quiet_series(0.0, 40 * step, lambda _t: 30.0, lambda _t, _f: 1.5)
+    judged = pressure_trend(*series, (0.0, 20 * step), (20 * step, 40 * step))
+    assert (judged.active, judged.value) == (False, 0.0)
+    short = pressure_trend(*series, (0.0, 19 * step), (19 * step, 39 * step))
+    assert (short.active, short.reason) == (None, UNKNOWN_INPUT)
+
+
+def test_the_pressure_trend_corrects_cooler_water_rather_than_seeing_a_leak() -> None:
+    """Negative: the water at 60 °C before and at 35 °C in the last days, the pressure following
+    0.01 bar/K — 0.25 bar lower with the cooler water, no leak: corrected to a 40 °C loop it does
+    not fall at all."""
+
+    def flow_at(t: float) -> float:
+        return 60.0 if t < NOW - 2 * DAY else 35.0
+
+    series = quiet_series(0.0, NOW, flow_at, lambda _t, flow: 1.5 + 0.01 * (flow - 40.0))
+    alarm = pressure_trend(*series, BASELINE, RECENT)
+    assert (alarm.kind, alarm.active) == (AlarmKind.PRESSURE_FALLING, False)
+    assert alarm.value == pytest.approx(0.0, abs=1e-9)
+
+
+def test_water_at_exactly_35_degrees_is_not_cold() -> None:
+    """Negative: without a usable slope only samples below 35 °C count — water at exactly 35 °C
+    gives none, so even a clear drop cannot be judged."""
+
+    def leaking(t: float, _flow: float) -> float:
+        return 1.2 if t >= NOW - 3 * DAY else 1.5
+
+    alarm = pressure_trend(*quiet_series(0.0, NOW, lambda _t: 35.0, leaking), BASELINE, RECENT)
+    assert (alarm.active, alarm.reason) == (None, UNKNOWN_INPUT)
+
+
+def test_a_pressure_drop_under_its_limit_is_no_warning() -> None:
+    """Negative: a drop of 0.15 bar, under the 0.2 bar limit, raises nothing."""
+
+    def dropping(t: float, _flow: float) -> float:
+        return 1.35 if t >= NOW - 3 * DAY else 1.5
+
+    alarm = pressure_trend(*quiet_series(0.0, NOW, lambda _t: 30.0, dropping), BASELINE, RECENT)
+    assert alarm.active is False
+    assert alarm.value == pytest.approx(-0.15)
+
+
+def test_flue_excess_only_from_heating_burns_and_known_readings() -> None:
+    """Negative: a hot-water burn gives no sample, and does not stop a heating burn after it from
+    giving its own; a moment with the flue gas or the return unknown gives none."""
+    flue = Series([(0, 60.0)])
+    return_temp = Series([(0, 40.0)])
+    assert flue_excess_samples(flue, return_temp, [burn(0, 10, BurnKind.DHW)]) == []
+    burns = [burn(0, 10, BurnKind.DHW), burn(20, 6)]
+    assert flue_excess_samples(flue, return_temp, burns) == [20.0] * 3
+    flue_gap = Series([(0, 60.0), (25 * MIN, None)])
+    assert flue_excess_samples(flue_gap, return_temp, [burn(20, 10)]) == [20.0, 20.0]
+    return_gap = Series([(0, 40.0), (25 * MIN, None)])
+    assert flue_excess_samples(flue, return_gap, [burn(20, 10)]) == [20.0, 20.0]
+
+
+# Three heating burns with two pauses, each 10 K of hysteresis: 10 to 25 min, 35 to 50 min.
+THREE_BURNS = [burn(0, 10), burn(25, 10), burn(50, 5)]
+THREE_FLOWS = [(0.0, 40.0), (10 * MIN, 55.0), (25 * MIN, 45.0), (35 * MIN, 56.0), (50 * MIN, 46.0)]
+ASKING = [(0.0, True)]
+
+
+@pytest.mark.parametrize(
+    ("burns", "flow", "setpoint", "demand", "expected"),
+    [
+        pytest.param(
+            [burn(0, 10, BurnKind.DHW), *THREE_BURNS[1:]],
+            THREE_FLOWS,
+            None,
+            ASKING,
+            [10.0],
+            id="hot_water_before",
+        ),
+        pytest.param(
+            [ClassifiedBurn(Burn(0.0, 10 * MIN, True, False), BurnKind.CH, 1.0), *THREE_BURNS[1:]],
+            THREE_FLOWS,
+            None,
+            ASKING,
+            [10.0],
+            id="stop_not_seen",
+        ),
+        pytest.param(
+            THREE_BURNS,
+            THREE_FLOWS,
+            None,
+            [(0.0, True), (15 * MIN, False), (20 * MIN, True)],
+            [10.0],
+            id="demand_dropped",
+        ),
+        pytest.param(
+            THREE_BURNS,
+            [(0.0, 40.0), (10 * MIN, None), *THREE_FLOWS[2:]],
+            None,
+            ASKING,
+            [10.0],
+            id="flow_unknown_at_the_stop",
+        ),
+        pytest.param(
+            THREE_BURNS,
+            THREE_FLOWS,
+            [(0.0, 50.0), (15 * MIN, 60.0), (20 * MIN, 50.0)],
+            ASKING,
+            [10.0],
+            id="setpoint_moved",
+        ),
+        pytest.param(
+            THREE_BURNS,
+            THREE_FLOWS,
+            [(0.0, 50.0), (15 * MIN, 51.5)],
+            ASKING,
+            [10.0],
+            id="setpoint_moved_1_5_K",
+        ),
+        pytest.param(
+            THREE_BURNS,
+            THREE_FLOWS,
+            [(0.0, 50.0), (15 * MIN, 51.0)],
+            ASKING,
+            [10.0, 10.0],
+            id="setpoint_moved_exactly_1_K",
+        ),
+    ],
+)
+def test_a_pause_left_out_does_not_end_the_hysteresis_samples(
+    burns: list[ClassifiedBurn],
+    flow: list[tuple[float, float | None]],
+    setpoint: list[tuple[float, float | None]] | None,
+    demand: list[tuple[float, bool | None]],
+    expected: list[float],
+) -> None:
+    """Negative: a pause left out — after a hot-water burn, a stop not seen, the demand dropped,
+    the flow unknown at the stop, the setpoint moved by more than the default 1 K — gives no
+    sample, and the next pause still gives its own; a setpoint moving exactly 1 K is steady."""
+    samples = hysteresis_samples(
+        Series(flow),
+        burns,
+        None if setpoint is None else Series(setpoint),
+        demand=Series(demand),
+    )
+    assert samples == expected
+
+
+def valve_zone(opening: float | None, t: float = 100.0) -> ZoneState:
+    return ZoneState("z", valve_open=opening, reported_at=t)
+
+
+def test_every_low_flow_state_carries_its_kind_valve_and_moments() -> None:
+    """Field by field: a bypass, a pump signal unknown, an open path, a closed circuit waiting,
+    and the warning after ``LOW_FLOW_HOLD_S``."""
+    kind = AlarmKind.LOW_FLOW
+    closed = [valve_zone(0.0), valve_zone(0.02)]
+    bypass = low_flow(closed, True, 100.0, 600.0, dhw=False, bypass=True)
+    assert bypass == Alarm(kind, False, reason="bypass", known_at=100.0)
+    no_pump = low_flow(closed, None, 100.0, 600.0, dhw=False)
+    assert no_pump == Alarm(kind, None, reason="no_pump_signal")
+    open_path = low_flow([valve_zone(0.0), valve_zone(0.3)], True, 100.0, 600.0, dhw=False)
+    assert open_path == Alarm(kind, False, None, 0.3, ZONE_OPEN, known_at=100.0)
+    waiting = low_flow(closed, True, 100.0, 600.0, dhw=False)
+    assert waiting == Alarm(kind, False, None, 0.02, ZONE_OPEN, since=100.0, known_at=100.0)
+    later = 100.0 + LOW_FLOW_HOLD_S
+    on = low_flow([valve_zone(0.0, later)], True, later, 600.0, waiting, dhw=False)
+    assert on == Alarm(kind, True, Level.WARNING, 0.0, ZONE_OPEN, since=100.0, known_at=later)
+
+
+def test_closed_valves_with_the_pump_off_are_no_low_flow() -> None:
+    """Negative: the valves closed past the wait, but the pump off — no low flow, and no wait."""
+    later = 100.0 + LOW_FLOW_HOLD_S
+    waiting = low_flow([valve_zone(0.0)], True, 100.0, 600.0, dhw=False)
+    off = low_flow([valve_zone(0.0, later)], False, later, 600.0, waiting, dhw=False)
+    assert (off.active, off.since) == (False, None)
+
+
+def test_a_valve_open_exactly_at_the_zone_threshold_counts_as_closed() -> None:
+    """A valve open at exactly ``ZONE_OPEN`` takes no heat: with the pump running for the wait,
+    the low-flow warning comes on."""
+    later = 100.0 + LOW_FLOW_HOLD_S
+    edge = low_flow([valve_zone(ZONE_OPEN)], True, 100.0, 600.0, dhw=False)
+    at_limit = low_flow([valve_zone(ZONE_OPEN, later)], True, later, 600.0, edge, dhw=False)
+    assert at_limit.active is True
+
+
+def test_a_circuit_whose_own_sensor_does_not_read_is_unread_not_unmeasured() -> None:
+    """Negative: a fixed or mixed circuit whose own flow sensor is mapped but does not read now
+    has no reading — held, then unknown — rather than being a circuit nothing measures."""
+    fixed = Circuit("floor", CircuitControl.PASSIVE_FIXED, 35.0, max_flow=40.0)
+    mixed = Circuit("mix", CircuitControl.SEPARATE, max_flow=40.0)
+    for circuit in (fixed, mixed):
+        assert circuit_flow(circuit, 46.0, None, own_mapped=True) == (None, NO_FLOW_READING)
+
+
+def test_every_circuit_too_hot_state_carries_its_kind_flow_and_limit() -> None:
+    """Field by field: not measured, unknown, below the alarm temperature, waiting above it, on,
+    and kept on by its hysteresis."""
+    kind = AlarmKind.CIRCUIT_TOO_HOT
+    unmeasured = circuit_too_hot(None, 45.0, 10 * MIN, 0.0, None, CIRCUIT_NOT_MEASURED)
+    assert unmeasured == Alarm(kind, False, limit=45.0, reason=CIRCUIT_NOT_MEASURED, known_at=0.0)
+    unknown = circuit_too_hot(None, 45.0, 10 * MIN, 0.0, None)
+    assert unknown == Alarm(kind, None, limit=45.0, reason=NO_FLOW_READING)
+    below = circuit_too_hot(44.0, 45.0, 10 * MIN, 0.0, None)
+    assert below == Alarm(kind, False, None, 44.0, 45.0, known_at=0.0)
+    waiting = circuit_too_hot(46.0, 45.0, 10 * MIN, 0.0, None)
+    assert waiting == Alarm(kind, False, None, 46.0, 45.0, since=0.0, known_at=0.0)
+    on = circuit_too_hot(46.0, 45.0, 10 * MIN, 10 * MIN, waiting)
+    assert on == Alarm(kind, True, Level.WARNING, 46.0, 45.0, since=0.0, known_at=10 * MIN)
+    kept = circuit_too_hot(44.5, 45.0, 10 * MIN, 11 * MIN, on)
+    assert kept == Alarm(kind, True, Level.WARNING, 44.5, 45.0, since=0.0, known_at=11 * MIN)
+
+
+def test_a_flow_at_the_alarm_temperature_is_not_above_it() -> None:
+    """Negative: only a flow above the alarm temperature counts — at exactly 45 °C for longer
+    than the wait it never comes on, and no wait begins."""
+    alarm: Alarm | None = None
+    for minute in range(12):
+        alarm = circuit_too_hot(45.0, 45.0, 10 * MIN, minute * MIN, alarm)
+        expected = Alarm(AlarmKind.CIRCUIT_TOO_HOT, False, None, 45.0, 45.0, known_at=minute * MIN)
+        assert alarm == expected, minute

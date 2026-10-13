@@ -505,3 +505,139 @@ def test_a_draw_does_not_repeat_a_pause_that_did_not_take_or_follow_a_release() 
     released, _ = release_all(paused, 11 * MIN)
     assert plan(released, [zone("a")], 12, dhw=True).pause == ()
     assert plan(released, [zone("a")], 21, dhw=True).pause == ("a",)
+
+
+# --- Mutation testing (2026-10-12): edges of the swing, the flow, the checks; late pauses ---
+
+
+@pytest.mark.parametrize(
+    ("minute", "setpoint"),
+    [
+        (1, 45.0),  # exactly ``swing_k`` (5 K) from 40 °C
+        (30, 50.0),  # 10 K, the first setpoint exactly ``swing_window_s`` (30 min) old
+    ],
+)
+def test_a_swing_counts_at_exactly_its_size_and_its_windows_edge(
+    minute: float, setpoint: float
+) -> None:
+    """Both edges count: a change of exactly ``swing_k``, a setpoint exactly as old as the
+    window."""
+    state = plan(LearningState(), [zone("a")], 0, setpoint=40.0).state
+    result = plan(state, [zone("a")], minute, setpoint=setpoint)
+    assert result.pause == ("a",)
+    assert result.causes["a"] == (PauseCause.WATER_SWING,)
+
+
+def test_an_unknown_setpoint_is_not_recorded() -> None:
+    """Negative: a heating setpoint not known adds nothing to the swing's history."""
+    result = plan(LearningState(), [zone("a")], 0, setpoint=None)
+    assert result.state.setpoints == ()
+    assert result.pause == ()
+
+
+@pytest.mark.parametrize(("flow", "setpoint"), [(None, 45.0), (45.0, None)])
+def test_a_flow_that_cannot_be_judged_leaves_the_minimum_pause_to_decide(
+    flow: float | None, setpoint: float | None
+) -> None:
+    """After hot water, with the flow or the setpoint not known, the pause ends once the
+    minimum pause has passed."""
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    result = plan(state, [zone("a", learning=False)], 12, flow=flow, setpoint=setpoint)
+    assert result.resume == ("a",)
+
+
+@pytest.mark.parametrize("flow", [42.0, 48.0])
+def test_a_flow_exactly_the_margin_off_its_setpoint_has_recovered(flow: float) -> None:
+    """S20: the tolerance includes its edge — ``resume_margin_k`` (3 K) below or above."""
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    result = plan(state, [zone("a", learning=False)], 12, flow=flow, setpoint=45.0)
+    assert result.resume == ("a",)
+
+
+def test_the_times_count_from_the_pause_at_any_hour() -> None:
+    """A pause that began late (minute 100) is read back only a minute after it began, waits
+    out a lasting draw, and ends an hour after it began — not sooner."""
+    state = plan(LearningState(), [zone("a")], 100, dhw=True).state
+    early = plan(state, [zone("a", learning=True)], 100.5, dhw=True)
+    assert early.state.paused == {"a": 100 * MIN}  # not read back yet
+    lasting = plan(early.state, [zone("a", learning=False)], 112, dhw=True)
+    assert lasting.resume == ()
+    assert plan(lasting.state, [zone("a", learning=False)], 159, dhw=True).resume == ()
+    assert plan(lasting.state, [zone("a", learning=False)], 160, dhw=True).resume == ("a",)
+
+
+def test_a_late_swing_still_pauses() -> None:
+    """The swing's window counts back from now, at any time of day."""
+    state = plan(LearningState(), [zone("a")], 600, setpoint=35.0).state
+    assert plan(state, [zone("a")], 601, setpoint=45.0).pause == ("a",)
+
+
+def test_a_pause_still_on_exactly_a_minute_later_is_given_up_with_its_causes() -> None:
+    """Negative: the flag still on exactly ``check_s`` after the pause — the pause is not the
+    plugin's any more, and none of its causes is kept."""
+    state = plan(LearningState(), [zone("a")], 0, dhw=True).state
+    result = plan(state, [zone("a", learning=True)], 1, dhw=True)
+    assert result.state.paused == {}
+    assert result.state.causes == {}
+    assert result.pause == ()
+
+
+def test_a_stored_pause_without_causes_that_did_not_take_is_given_up() -> None:
+    """Negative: a pause stored without its causes (0.2.1) whose flag reads on is given up
+    like any other."""
+    state = LearningState(paused={"a": 0.0}, last_toggle={"a": 0.0})
+    result = plan(state, [zone("a", learning=True)], 1)
+    assert result.state.paused == {}
+    assert result.state.causes == {}
+
+
+@pytest.mark.parametrize("delay", [0.0, 0.5])
+def test_a_draw_at_once_after_a_resume_pauses(delay: float) -> None:
+    """Decision 14: a draw at the very moment of the plugin's resume, or half a second later,
+    pauses the zone again."""
+    state = plan(swung(), [zone("a", learning=False)], 40).state  # resumed
+    now = 40 * MIN + delay
+    result = plan_learning(state, [zone("a")], True, 45.0, 45.0, now, CONFIG, fault=False)
+    assert result.pause == ("a",)
+
+
+def test_a_resume_is_recent_for_exactly_the_minimum_pause() -> None:
+    """Exactly ``min_pause_s`` after the plugin's resume the zone is no longer within it."""
+    state = plan(swung(), [zone("a", learning=False)], 40).state  # resumed
+    assert state.resumed == {"a": 40 * MIN}
+    assert plan(state, [zone("a")], 50).state.resumed == {}
+
+
+def test_a_resume_forgets_the_causes_and_counts_as_a_toggle() -> None:
+    """Negative: once resumed, the zone's causes are not kept, and a swing a minute later does
+    not pause it again — the resume was a toggle."""
+    result = plan(swung(), [zone("a", learning=False)], 40)
+    assert result.resume == ("a",)
+    assert result.state.causes == {}
+    assert result.state.last_toggle == {"a": 40 * MIN}
+    assert plan(result.state, [zone("a")], 41, setpoint=35.0).pause == ()
+
+
+def test_a_draw_behind_a_closed_valve_ends_its_pause_and_counts_again_later() -> None:
+    """A late pause (minute 100) for a draw ends after the minimum pause once the valve closes,
+    the draw still on: the hour is not up, so nothing outlasted it — the zone's valve opening
+    again, the same draw pauses it again."""
+    state = plan(LearningState(), [zone("a")], 100, dhw=True).state
+    ended = plan(state, [zone("a", learning=False, valve_open=False)], 112, dhw=True)
+    assert ended.resume == ("a",)
+    assert ended.state.outlasted == {}
+    assert plan(ended.state, [zone("a")], 123, dhw=True).pause == ("a",)
+
+
+def test_a_release_keeps_recent_resumes_and_what_an_hour_outlasted() -> None:
+    """A release keeps what other zones were resumed within the minimum pause, and what an
+    hour outlasted (decision 14)."""
+    state = LearningState(
+        paused={"a": 0.0},
+        resumed={"b": 30.0},
+        outlasted={"c": (PauseCause.DHW,)},
+    )
+    released, zones = release_all(state, 60.0)
+    assert zones == ("a",)
+    assert released.resumed == {"b": 30.0}
+    assert released.outlasted == {"c": (PauseCause.DHW,)}

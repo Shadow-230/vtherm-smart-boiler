@@ -105,3 +105,56 @@ def test_a_smartpi_zone_in_its_learning_phase_is_saturated_up_to_its_hysteresis(
     assert pick([learning]).saturated
     assert pick([learning]).deficit == pytest.approx(-0.2)  # shown as VT sees it
     assert not pick([zone("a", 21.2, 21.0, 1.0)]).saturated
+
+
+# --- Mutation testing (2026-10-12): demand and deficit bounds, ties by deficit, lost zone ---
+
+
+def test_a_demand_exactly_one_margin_higher_is_not_clearly_worse() -> None:
+    """Negative: a candidate exactly one demand margin above the current zone is still in its
+    band — only a colder room could make it clearly worse."""
+    current = zone("a", 20.0, 21.0, 0.5)
+    assert not _clearly_worse(zone("b", 20.0, 21.0, 0.75), current, 0.25, 0.3)
+
+
+def test_a_demand_exactly_one_margin_lower_still_compares_deficits() -> None:
+    """A candidate exactly one demand margin below the current zone is still in its band: a
+    clearly colder room makes it clearly worse."""
+    current = zone("a", 21.0, 21.0, 0.5)
+    assert _clearly_worse(zone("b", 19.0, 21.0, 0.25), current, 0.25, 0.3)
+
+
+def test_a_deficit_exactly_one_margin_deeper_is_not_clearly_worse() -> None:
+    """Negative: in the same demand band, a room exactly one deficit margin colder does not take
+    the place of the current zone."""
+    current = zone("a", 20.5, 21.0, 0.5)
+    assert not _clearly_worse(zone("b", 20.0, 21.0, 0.5), current, 0.1, 0.5)
+
+
+def test_a_zone_exactly_one_margin_below_the_top_demand_is_in_the_band() -> None:
+    """The band of "about the same demand" includes its edge: the colder zone exactly one margin
+    below the highest demand wins."""
+    zones = [zone("a", 20.8, 21.0, 0.75), zone("b", 19.0, 21.0, 0.5)]
+    assert critical_zone("c", zones, NOW, AGE, demand_margin=0.25).zone_id == "b"
+
+
+@pytest.mark.parametrize("demand", [None, 0.8, 1.0])
+def test_the_colder_zone_wins_whatever_its_name(demand: float | None) -> None:
+    """In one demand band the deficit decides, not the order of the zone names."""
+    result = pick([zone("a", 19.0, 21.0, demand), zone("b", 20.5, 21.0, demand)])
+    assert result.zone_id == "a"
+
+
+def test_a_previous_critical_zone_no_longer_eligible_is_replaced() -> None:
+    """Negative: when the previous critical zone is gone from the eligible zones (stale, off),
+    the hysteresis has nothing to keep and the best remaining zone is picked."""
+    previous = CriticalZone("c", SelectionStatus.OK, "gone", 0.9, 1.0, False)
+    result = pick([zone("a", 20.0, 21.0, 0.4)], previous=previous)
+    assert result == CriticalZone("c", SelectionStatus.OK, "a", 0.4, pytest.approx(1.0), False)
+
+
+def test_fully_open_exactly_at_the_setpoint_is_not_saturated() -> None:
+    """Negative: a fully open zone exactly at its setpoint is not short of heat — no saturation."""
+    result = pick([zone("a", 21.0, 21.0, 1.0)])
+    assert result.zone_id == "a"
+    assert not result.saturated

@@ -164,3 +164,57 @@ def test_a_slow_change_over_two_hours_is_not_extreme(rate: float) -> None:
     values = [5.0 - rate * k * OUTDOOR_SAMPLE_S / HOUR for k in range(25)]
     seen = readings(0.0, values)
     assert not extreme_weather(seen, values[-1], seen[-1][0], -15.0)
+
+
+# --- Mutation testing (2026-10-12): the windows' exact bounds -------------------------------
+
+
+def test_a_start_at_this_step_or_exactly_the_window_ago_is_a_heating_start() -> None:
+    """Both ends of the window count: a burn seen to begin at this very step, or exactly
+    ``window_s`` before it; a second older is out."""
+    now = 10 * HOUR
+    burns = [burn(now), burn(now - STARTS_WINDOW_S), burn(now - STARTS_WINDOW_S - 1.0)]
+    assert heating_starts(burns, now) == (now - STARTS_WINDOW_S, now)
+
+
+def test_the_starts_compared_include_their_edges() -> None:
+    """A start at the correction's beginning or at this step counts as after it; one exactly
+    the compared span before its beginning counts as before it."""
+    began = 10 * HOUR
+    now = began + HOUR
+    empty = StartsBaseline(began, before=())
+    assert starts_rose(empty, (began,), now)
+    assert starts_rose(empty, (now,), now)
+    edge = StartsBaseline(began, before=(began - HOUR,))
+    assert not starts_rose(edge, (began + 10 * 60.0,), now)  # one before, one after
+
+
+def test_a_start_within_a_second_of_the_beginning_is_compared() -> None:
+    """Any time after the beginning has hours to compare, however short: a start half a second
+    after it, with none before, is a rise."""
+    began = 10 * HOUR
+    assert starts_rose(StartsBaseline(began, before=()), (began + 0.5,), began + 1.0)
+
+
+def test_it_may_rise_at_its_very_beginning() -> None:
+    """The clock at the correction's beginning is not before it: nothing to compare yet, so it
+    may rise."""
+    began = 10 * HOUR
+    assert may_rise(StartsBaseline(began, before=()), (), began)
+
+
+def test_a_reading_exactly_two_hours_old_is_kept() -> None:
+    """None older than two hours is kept: one exactly two hours old is not older, and with
+    nothing newer before the hour it is the one that shows the hour covered."""
+    seen = ((0.0, 5.0),)
+    assert follow_outdoor(seen, None, 2 * OUTDOOR_WINDOW_S) == seen
+    assert follow_outdoor(seen, None, 2 * OUTDOOR_WINDOW_S + 1.0) == ()
+
+
+@pytest.mark.parametrize("age", [OUTDOOR_WINDOW_S, 1800.0])
+def test_a_spread_within_the_hour_is_extreme_at_wall_clock_times(age: float) -> None:
+    """Negative: a reading within the last hour — exactly an hour old included — counts toward
+    the spread at any wall-clock time: 3 K apart within the hour is extreme."""
+    now = 1_760_000_000.0
+    seen = ((now - OUTDOOR_WINDOW_S - OUTDOOR_SAMPLE_S, 5.0), (now - age, 2.0))
+    assert extreme_weather(seen, 5.0, now, design_outdoor=-15.0)

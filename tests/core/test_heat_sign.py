@@ -181,3 +181,33 @@ def test_a_clock_set_back_starts_the_count_again() -> None:
     assert state.since == 5 * MINUTE
     later = follow_heat_sign(HeatSignState(draw_at=5 * MINUTE), COLD, 0.0)
     assert later.draw_at == 0.0  # a draw later than now counts as now
+
+
+# --- Mutation testing (2026-10-12): the window's edge, the count's reference, the last draw ---
+
+
+def test_the_alarm_is_raised_exactly_at_the_end_of_the_window() -> None:
+    """Thirty minutes running are enough: the alarm at exactly ``PROOF_WINDOW_S``."""
+    state, _ = run(HeatSignState(), COLD, 0.0, PROOF_WINDOW_S)
+    assert state.alarm
+
+
+def test_a_second_step_at_the_same_moment_keeps_the_counts_reference() -> None:
+    """Negative: a step at the moment the count began does not begin it again — the flow then
+    stays the reference of the rise."""
+    flow_only = replace(COLD, flame=None)
+    state = follow_heat_sign(HeatSignState(), flow_only, 0.0)
+    state = follow_heat_sign(state, replace(flow_only, flow=36.0), 0.0)
+    assert state == HeatSignState(since=0.0, flow_from=35.0)
+
+
+def test_the_last_draw_is_remembered_after_its_quiet_window() -> None:
+    """The last hot-water draw stays known after its window, counting or not: a clock set back
+    before it is a draw now (C9), and judges nothing."""
+    draw = 10 * MINUTE
+    for after in (COLD, replace(COLD, calling=False)):
+        state = follow_heat_sign(HeatSignState(), replace(COLD, dhw=True), draw)
+        state = follow_heat_sign(state, after, draw + DRAW_QUIET_S + STEP)
+        assert state.draw_at == draw, after
+        state = follow_heat_sign(state, COLD, 5 * MINUTE)
+        assert state == HeatSignState(draw_at=5 * MINUTE), after

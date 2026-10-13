@@ -191,3 +191,20 @@ def test_a_zone_listed_whole_twice_or_a_device_in_two_circuits_is_an_error() -> 
         ),
     )
     assert twice.issues() == [Issue(IssueCode.DUPLICATE_ZONE, Severity.ERROR, "a")]
+
+
+# --- Mutation testing (2026-10-12): unknown lookups and unreadable stored values ---
+
+
+def test_an_unknown_zone_is_none() -> None:
+    """Negative: looking up a zone the installation does not list gives nothing, not an error."""
+    installation = Installation(BOILER, circuits=(Circuit("main"),), zones=(Zone("a", "main"),))
+    assert installation.zone("nope") is None
+    assert Installation(BOILER, circuits=(Circuit("main"),)).zone("a") is None
+
+
+def test_a_stored_hot_water_kind_of_another_shape_suggests_nothing() -> None:
+    """Negative: a stored hot-water kind that is not text at all — a list or a mapping in a
+    damaged entry — is a value the form cannot read: no suggestion, not an error."""
+    for raw in (["combi"], {"dhw": "combi"}):
+        assert BoilerType.suggested_for(raw) is None

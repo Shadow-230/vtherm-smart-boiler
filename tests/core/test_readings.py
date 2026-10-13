@@ -281,3 +281,42 @@ def test_a_smartpi_zone_in_its_learning_phase_is_short_up_to_its_upper_hysteresi
     assert zone.deficit == pytest.approx(0.2)
     assert zone.shortfall == pytest.approx(shortfall)
     assert ZoneState("z", None, 21.0, True, smartpi_learning_phase=True).shortfall is None
+
+
+# --- Mutation testing (2026-10-12): ages and freshness at their exact bounds ------------------
+
+
+def test_a_reading_reported_this_moment_is_zero_seconds_old() -> None:
+    """A report at this very moment, or under a second ago, has that age — never rounded up;
+    one "later than now" (a clock set back) is 0 seconds old."""
+    reading = Reading(45.0, reported_at=100.0)
+    assert reading.age(100.0) == 0.0
+    assert reading.age(100.5) == 0.5
+    assert reading.age(90.0) == 0.0
+
+
+def test_a_fresh_reading_within_its_age_limit_is_used() -> None:
+    """With ``max_age`` set, a reading reported within it gives its value — a number or a
+    flag alike."""
+    snapshot = BoilerSnapshot(
+        t=1000.0,
+        readings={Signal.FLOW: Reading(50.0, 990.0), Signal.FLAME: Reading(True, 990.0)},
+    )
+    assert snapshot.number(Signal.FLOW, max_age=60.0) == 50.0
+    assert snapshot.flag(Signal.FLAME, max_age=60.0) is True
+
+
+def test_a_stale_flag_is_unknown() -> None:
+    """Negative: a binary signal reported longer ago than ``max_age`` is unknown, as a stale
+    number is — not its last value."""
+    snapshot = BoilerSnapshot(t=1000.0, readings={Signal.FLAME: Reading(True, 10.0)})
+    assert snapshot.flag(Signal.FLAME, max_age=60.0) is None
+    assert snapshot.flag(Signal.FLAME) is True
+
+
+def test_a_zone_reported_exactly_its_age_limit_ago_is_fresh() -> None:
+    """The age limit includes its bound: reported exactly ``max_age`` ago is still fresh, a
+    second more is not."""
+    state = ZoneState("z", reported_at=100.0)
+    assert state.is_fresh(160.0, 60.0)
+    assert not state.is_fresh(161.0, 60.0)
