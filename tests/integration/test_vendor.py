@@ -496,6 +496,57 @@ async def later(hass: HomeAssistant, freezer: Any, seconds: float) -> None:
     await hass.async_block_till_done()
 
 
+RADIATOR = "input_number.living_radiator"
+
+
+@pytest.mark.parametrize("max_closing", [100, 90], ids=["closes_fully", "floor_10_percent"])
+async def test_a_real_vt_valve_zone_calls_only_with_its_valve_opened_past_its_floor(
+    hass: HomeAssistant, freezer: Any, max_closing: int
+) -> None:
+    """VT 10.5.0's change (the test session's gap 1, 2026-10-13): an over_valve zone whose valve
+    may not close fully (VT's ``max_closing_degree`` below 100 — here a floor of 10 %) is not
+    active at that floor: "a valve at its physical floor must not heat or request the boiler"
+    (VT's own test); VT 10.4.0 counted it active there, so such a zone called for good. The
+    plugin takes VT's ``is_device_active``: the zone wants heat with its valve opened past the
+    floor by the room's need, not at the floor. Negative: a valve that closes fully, likewise
+    — at 0."""
+    from custom_components.versatile_thermostat import const as vt
+
+    from custom_components.vtherm_smart_boiler.core.demand import DemandConfig, boiler_demand
+
+    radiator = {"min": 0, "max": 100, "step": 1, "initial": 0}
+    assert await async_setup_component(
+        hass, "input_number", {"input_number": {"living_radiator": radiator}}
+    )
+    valve_zone = vt_thermostat(
+        **{
+            vt.CONF_THERMOSTAT_TYPE: vt.CONF_THERMOSTAT_VALVE,
+            vt.CONF_UNDERLYING_LIST: [RADIATOR],
+            vt.CONF_MAX_CLOSING_DEGREE: max_closing,
+            vt.CONF_OPENING_THRESHOLD_DEGREE: 0,
+        }
+    )
+    entry = await started_with_the_plugin(hass, valve_zone)  # 19 °C towards 21 °C
+    await later(hass, freezer, 30.0)
+    link = entry.runtime_data.link
+
+    def demand() -> tuple[Any, Any]:
+        zone = link.zone(LIVING)
+        return zone, boiler_demand([zone], zone.reported_at or 0.0, None, DemandConfig())
+
+    floor = 100 - max_closing
+    zone, calling = demand()
+    assert float(hass.states.get(RADIATOR).state) > floor  # opened by the room's need
+    assert zone.device_active is True
+    assert calling.wanted is True
+    await heat_to(hass, 15.0)  # the room above its target: closed as far as the valve may
+    await later(hass, freezer, 30.0)
+    zone, idle = demand()
+    assert float(hass.states.get(RADIATOR).state) == floor
+    assert zone.device_active is False
+    assert idle.wanted is False
+
+
 async def test_a_vt_safety_mode_zone_follows_vt_and_is_flagged(
     hass: HomeAssistant, freezer: Any
 ) -> None:
