@@ -289,6 +289,7 @@ class GuardState:
     away_since: float | None = None
     missed: tuple[float, ...] = ()
     retry: bool = False  # the last write failed, or waited: send it again
+    keepalive_due: bool = False  # a held target's keep-alive waited: sent at the next step
     recent: tuple[tuple[float, float], ...] = ()  # (time, value) of sends within the timeout
     change_at: float | None = None  # the latest send of a new value
     unconfirmed_since: float | None = None  # the first send not read back since
@@ -400,9 +401,10 @@ def confirmation(state: GuardState, config: GuardConfig) -> Confirmation | None:
     if state.clip is not None:
         return Confirmation.CLIPPED
     if state.confirmed_at is not None:
-        # Confirmed only while the read-back still shows it: another value seen now — not yet
-        # judged, held one step — is not the plugin's (Z4-01).
-        another = state.foreign is not None or state.last_kind is ReadKind.PREVIOUS
+        # Confirmed only while the read-back still shows it: another value seen last — not yet
+        # judged, held one step, or not judged during a draw; an unknown read-back since changes
+        # nothing — is not the plugin's (Z4-01).
+        another = state.last_kind is not ReadKind.OURS
         return Confirmation.NOT_CONFIRMED if another else Confirmation.CONFIRMED
     return Confirmation.NOT_CONFIRMED if state.late else Confirmation.WAITING
 
@@ -519,6 +521,8 @@ def plan_write(
         # Our own write failed, or waited: what the device shows says nothing about others.
         return _send(state, desired, WriteKind.RESEND, now, config, seen.trace)
     judged = classify(state, read_back, seen, now, config)
+    if judged is ChangeClass.NOT_JUDGED and _replaced_unread(state, desired, seen, now, config):
+        judged = _start_phase(state, seen, now, config)  # it failed before the change
     state, events, lost = _account(state, judged, read_back, seen, now)
     reaction = REACTIONS[judged]
     if reaction is Reaction.STOP:
@@ -590,9 +594,9 @@ def _start_phase(
     state: GuardState, seen: Observation, now: float, config: GuardConfig
 ) -> ChangeClass:
     """The start phase: an attempt fails once the read-back fell back, or has not shown the
-    plugin's value its timeout after the send; the third counted failure is "ignored from the
-    start". An attempt with a trace of an outage in it does not count. Never another
-    controller."""
+    plugin's value its timeout after the send — shown another value then, at a change that
+    replaces it (``_replaced_unread``); the third counted failure is "ignored from the start".
+    An attempt with a trace of an outage in it does not count. Never another controller."""
     at = state.attempt_at
     overdue = at is not None and now - at >= config.confirm_timeout_s
     if not (seen.fell or overdue):
@@ -601,6 +605,24 @@ def _start_phase(
     if counted and state.failed_attempts + 1 >= START_ATTEMPTS:
         return ChangeClass.IGNORED_FROM_START
     return ChangeClass.FAILED_ATTEMPT
+
+
+def _replaced_unread(
+    state: GuardState, desired: float, seen: Observation, now: float, config: GuardConfig
+) -> bool:
+    """A change about to replace the start phase's attempt once its timeout has passed, the
+    read-back showing another value — for a step, too briefly for another controller: that
+    attempt was not read back, and fails before the next one starts."""
+    at = state.attempt_at
+    return (
+        not state.start_done
+        and seen.kind is ReadKind.OTHER
+        and not seen.quiet
+        and state.confirmed_at is None
+        and at is not None
+        and now - at >= config.confirm_timeout_s
+        and not _near(desired, state.written, config.tolerance)
+    )
 
 
 def _fall_back(
@@ -1045,7 +1067,11 @@ def _plan(
         due = now - written_at >= config.keepalive_s
     else:  # held: refreshed with no echo required, and at once when the target is back
         refresh = config.refresh_s
-        due = seen.returned or (refresh is not None and now - written_at >= refresh)
+        due = (
+            seen.returned
+            or state.keepalive_due
+            or (refresh is not None and now - written_at >= refresh)
+        )
     if due:
         result = _send(state, state.written, WriteKind.KEEPALIVE, now, config, seen.trace)
         return replace(result, events=events, judged=judged)
@@ -1066,10 +1092,14 @@ def _send(
     written = state.written
     value = written if kind is WriteKind.KEEPALIVE and written is not None else desired
     if state.written_at is not None and now - state.written_at < config.min_interval_s:
+        if kind is WriteKind.KEEPALIVE:
+            # A held target back: due at this step only, so kept due for the next one.
+            return GuardResult(replace(state, keepalive_due=True))
         waiting = kind in (WriteKind.RESEND, WriteKind.REWRITE)
         return GuardResult(replace(state, retry=True) if waiting else state)
     if kind is WriteKind.KEEPALIVE:
-        return GuardResult(replace(state, written_at=now, retry=False), WriteAction(value, kind))
+        sent = replace(state, written_at=now, retry=False, keepalive_due=False)
+        return GuardResult(sent, WriteAction(value, kind))
     new_value = written is None or not _near(value, written, config.tolerance)
     if kind is WriteKind.RESEND and new_value:
         kind = WriteKind.CHANGE  # the controller moved on: the new value goes
@@ -1108,6 +1138,7 @@ def _send(
         left=left,
         away_since=away,
         retry=False,
+        keepalive_due=False,
         recent=(*recent, (now, value)),
         change_at=now if kind is WriteKind.CHANGE and new_value else state.change_at,
         unconfirmed_since=now if fresh else state.unconfirmed_since,
@@ -1142,8 +1173,7 @@ def _clock(state: GuardState, now: float, config: GuardConfig) -> GuardState:
     (the gateway gives the boiler back after a minute without it), and every other moment later
     than now counts as now."""
     if state.written_at is not None and now < state.written_at:
-        earlier = now - config.keepalive_s
-        state = replace(state, written_at=earlier, sent_at=min(state.sent_at or earlier, earlier))
+        state = replace(state, written_at=now - config.keepalive_s)
     moved: dict[str, Any] = {}
     for item in fields(state):
         value = getattr(state, item.name)
