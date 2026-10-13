@@ -3337,22 +3337,18 @@ def test_every_heating_decision_carries_the_effective_outdoor_temperature() -> N
 
 
 @pytest.mark.parametrize(
-    ("between", "mode"),
+    "between",
     [
-        (inputs(60.0, zones=(started("a", 60.0, temperature=6.0),), boiler_fault=True), "frost"),
-        (inputs(60.0, zones=(away("a"),)), "heating"),
+        inputs(60.0, zones=(started("a", 60.0, temperature=6.0),), boiler_fault=True),
+        inputs(60.0, zones=(away("a"),)),
     ],
     ids=["boiler_fault", "vt_reloading"],
 )
-def test_frost_heatings_hysteresis_across_a_fault_and_a_reload(
-    between: ControlInputs, mode: str
-) -> None:
+def test_frost_heatings_hysteresis_across_a_fault_and_a_reload(between: ControlInputs) -> None:
     """Frost heating for a room at 4 °C; a step that stops it — the boiler's own fault (Y1), or
     VT reloading (the recognition period keeps the command, ``_keep``); then the room at 6 °C,
-    between the frost limit and the release. The fault keeps frost protection's state: frost
-    heating goes on. The recognition period ends it: the room's own call heats it.
-    The ``vt_reloading`` case pins current behaviour that the review of 2026-10-13 questions (A1,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+    between the frost limit and the release. Both keep frost protection's state: frost heating
+    goes on until the release."""
     steps = [
         inputs(0.0, zones=(started("a", 0.0, temperature=4.0),)),
         between,
@@ -3360,7 +3356,7 @@ def test_frost_heatings_hysteresis_across_a_fault_and_a_reload(
     ]
     _state, decisions = run(steps)
     assert decisions[0].mode is ControlMode.FROST
-    assert decisions[-1].mode is ControlMode(mode)
+    assert decisions[-1].mode is ControlMode.FROST
     assert decisions[-1].command.ch_enable
 
 
@@ -3393,18 +3389,18 @@ def test_on_off_frost_heating_holds_until_the_release() -> None:
 
 
 @pytest.mark.parametrize(
-    "between",
-    [lambda t: (started("a", t, temperature=8.0),), lambda _t: (away("a"),)],
+    ("between", "start"),
+    [(lambda t: (started("a", t, temperature=8.0),), 120.0), (lambda _t: (away("a"),), 0.0)],
     ids=["room_warmed", "vt_reloading"],
 )
 def test_frost_not_warming_counts_from_frost_heatings_new_start(
-    between: Callable[[float], tuple[ZoneState, ...]],
+    between: Callable[[float], tuple[ZoneState, ...]], start: float
 ) -> None:
-    """P-45: frost heating at 3 °C, a step without it — the room past the release, or VT
-    reloading — then frost heating again at 3 °C from 120 s: "frost not warming" is reported
-    two hours after the new start, not before.
-    The ``vt_reloading`` case pins current behaviour that the review of 2026-10-13 questions (A1,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+    """P-45: frost heating at 3 °C from 0 s, a step at 60 s — the room past the release, or VT
+    reloading — then the room at 3 °C again from 120 s: "frost not warming" is reported two
+    hours after frost heating's start, not before. The room past the release ended it: a new
+    start at 120 s. VT reloading did not: the recognition period keeps frost protection's state,
+    and the start at 0 s counts."""
 
     def zones(t: float) -> tuple[ZoneState, ...]:
         return between(t) if t == 60.0 else (started("a", t, temperature=3.0),)
@@ -3412,7 +3408,7 @@ def test_frost_not_warming_counts_from_frost_heatings_new_start(
     steps = [inputs(t, zones=zones(t)) for t in stepped(0.0, 180.0 + FROST_ALARM_S, 60.0)]
     _state, decisions = run(steps)
     stuck = [s.now for s, d in zip(steps, decisions, strict=True) if d.frost_stuck]
-    assert stuck[:1] == [120.0 + FROST_ALARM_S]
+    assert stuck[:1] == [start + FROST_ALARM_S]
 
 
 @pytest.mark.parametrize(("warmed", "stuck"), [(3.5, False), (3.4, True)])
@@ -3569,16 +3565,19 @@ def test_hot_water_between_two_decisions_is_no_heat_flow() -> None:
     assert decisions[-1].correction == pytest.approx(1.0 / 30.0)
 
 
-def test_heat_during_the_activation_delays_last_step_counts_towards_the_rise() -> None:
-    """Decision 5: the steps of VT's delay are control's steps. The flame on (heat flows, S-24)
-    and a room short: the first water decision, as heating starts, counts the 10 s since the
-    last waiting step towards the comfort correction's rise.
-    This test pins current behaviour that the review of 2026-10-13 questions (A4,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
-    config = replace(WATER, activation_delay_s=120.0)
-    steps = [inputs(t, zones=(short(t),), flame=True) for t in stepped(0.0, 130.0)]
+def test_heat_before_the_first_command_does_not_count_towards_the_rise() -> None:
+    """Decision 5: the steps of VT's delay are control's steps, but a fresh start writes nothing
+    while it waits. The flame on (the boiler's own heat, S-24) and a room short: the first water
+    decision, as heating starts, counts none of it towards the comfort correction's rise — as
+    without a delay; the heat under the plugin's command counts from there."""
+    config = replace(WATER, activation_delay_s=120.0, decision_interval_s=60.0)
+    steps = [inputs(t, zones=(short(t),), flame=True) for t in stepped(0.0, 190.0)]
     _state, decisions = run(steps, config)
-    assert all(d.command is None for d in decisions[:-1])
+    assert all(d.command is None for d in decisions[:12])
+    assert decisions[12].command is not None
+    assert decisions[12].correction == 0.0
+    _state, plain = run(steps[12:], replace(config, activation_delay_s=0.0))
+    assert [d.correction for d in decisions[12:]] == [d.correction for d in plain]
     assert decisions[-1].correction > 0.0
 
 

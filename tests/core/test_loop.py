@@ -914,9 +914,10 @@ def test_off_on_a_grid_is_never_above_itself_and_ignored_it_hands_back() -> None
 
 def test_off_without_a_grid_value_at_or_below_it_is_not_written() -> None:
     """Negative (P-15): an entity whose lowest value lies above "off" as a low setpoint has no grid
-    value for it — "off" is not written, and heating is shown neither on nor off.
-    This test pins current behaviour that the review of 2026-10-13 questions (A3,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+    value for it — "off" is not written, and heating is shown neither on nor off. The loop alone
+    never meets it running: the control unit's blocker "outside the entity's range" stops control
+    and hands back first, and lets it resume once the entity takes "off" again
+    (``test_ems_esp_off_below_the_entitys_range_blocks_and_resumes``)."""
     config = replace(CONFIG, ch_writes=False, off_setpoint=10.0)
     grid = Grid(step=0.5, minimum=20.0, maximum=90.0)
     _state, out = loop_step(LoopState(), inputs(0.0, opening=0.0), None, config, grid=grid)
