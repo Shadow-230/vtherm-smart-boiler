@@ -22,12 +22,15 @@ from custom_components.vtherm_smart_boiler.core.guards import (
     WriteAction,
     WriteKind,
     WriteType,
+    add_loss,
 )
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits, Grid
 from custom_components.vtherm_smart_boiler.core.loop import (
     HEATING_OFF_IGNORED,
     HEATING_ON_IGNORED,
+    RELAY,
     RELAY_OFF_NOT_TAKEN,
+    SETPOINT,
     LastCommand,
     LoopConfig,
     LoopState,
@@ -823,3 +826,382 @@ def test_a_relays_own_timer_lapses_never_raise_commands_lost() -> None:
     assert resent == lapses + 1  # the first "on", then one at each lapse
     assert state.losses == ()
     assert on
+
+
+# --- Mutation testing (2026-10-12): defaults, grids, outputs of every step, the warning's day ---
+
+GRID = Grid(step=0.5, minimum=0.25, maximum=90.0)  # 70 on it is 69.75: never above, never below
+
+
+def test_the_default_heating_switch_is_held_and_never_judged() -> None:
+    """Negative: by default heating on/off has no echo — held: written, refreshed every 5 minutes
+    with no echo required, and never judged; a read-back showing the other state throughout makes
+    it neither "ignored from the start" nor a latch."""
+    config = LoopConfig(control=CONFIG.control, setpoint_guard=CONFIG.setpoint_guard)
+    state, out = loop_step(LoopState(), inputs(0.0), 0.0, config, False)
+    assert out.heating == WriteAction(1.0, WriteKind.CHANGE)
+    state, outs = run(state, config, 10.0, 1200.0, out.setpoint.value, False)
+    assert [t for t, o in outs if o.heating is not None] == [300.0, 600.0, 900.0, 1200.0]
+    assert not any(o.hand_back or o.ignored for _t, o in outs)
+    assert not state.switch.ignored
+    assert not state.control.latched
+
+
+def test_a_new_session_keeps_the_heating_switchs_one_rewrite() -> None:
+    """The heating switch's one rewrite is kept through a new session for its day, as the
+    setpoint's; everything else of it starts afresh."""
+    state = LoopState(switch=GuardState(written=1.0, rewritten_at=0.0, ignored=True))
+    assert new_session(state, 100.0).switch == GuardState(rewritten_at=0.0)
+    assert new_session(state, DAY).switch == GuardState()
+
+
+def test_a_new_session_keeps_the_wait_for_a_link_not_yet_reported() -> None:
+    """Negative (X2, X3): the boiler link silent while the restore waits for its first report is
+    no staleness; control switched off and on during that wait still knows it, so the link
+    reporting at the next step is fresh — not lost at once for the silence before."""
+    wait = {"boiler_link": False, "link_unreported": True}
+    state, outs = run(LoopState(), CONFIG, 0.0, 400.0, None, **wait)
+    assert not any(out.decision.link_lost for _t, out in outs)
+    fresh = new_session(state, 410.0)
+    _state, out = loop_step(fresh, inputs(410.0), None, CONFIG)
+    assert not out.decision.link_lost
+
+
+@pytest.mark.parametrize("ch_writes", [True, False], ids=["switch", "low_setpoint"])
+@pytest.mark.parametrize(
+    ("bounds", "outdoor", "sent"),
+    [
+        ({"circuit_max": 60.0}, -30.0, 59.75),
+        ({"boiler_max": 60.0}, -30.0, 59.75),
+        ({"circuit_floor": 40.4}, 20.0, 40.75),
+        ({}, 20.0, 25.25),
+    ],
+    ids=["circuit_max", "boiler_max", "circuit_floor", "hard_min"],
+)
+def test_a_setpoint_on_a_grid_stays_inside_every_bound(
+    ch_writes: bool, bounds: dict, outdoor: float, sent: float
+) -> None:
+    """P-98, P-15: on an entity's grid of 0.5 from 0.25, a circuit's or the boiler's maximum of 60
+    is sent as 59.75, never 60.25; a fixed circuit's floor of 40.4 as 40.75, never 40.25; the hard
+    minimum 25 as 25.25, never 24.75 — with a heating switch and with "off" as a low setpoint."""
+    control = ControlConfig(curve=HeatingCurve(design_flow=75.0), ramp_k_per_min=None, **bounds)
+    config = replace(CONFIG, control=control, ch_writes=ch_writes)
+    step = inputs(0.0, outdoor_sensor=outdoor)
+    _state, out = loop_step(LoopState(), step, 0.0, config, grid=GRID)
+    assert out.setpoint == WriteAction(sent, WriteKind.CHANGE)
+    assert out.heating_on is True
+
+
+def test_off_on_a_grid_is_never_above_itself_and_ignored_it_hands_back() -> None:
+    """P-15, I6: "off" as a low setpoint of 10 on an entity's grid of 0.5 from 0.25 is sent as
+    9.75 — the grid value at or below it, never 10.25 nor raised to the heating limits — and known
+    as "off". The boiler ignoring it from the start is recognised as "off" ignored: latched with
+    ``heating_off_ignored`` and handed back at the next step."""
+    config = replace(CONFIG, ch_writes=False, off_setpoint=10.0)
+    own = 45.0  # the boiler's own setting, shown before the plugin and kept
+    state, out = loop_step(LoopState(), inputs(0.0, opening=0.0), own, config, grid=GRID)
+    assert out.setpoint == WriteAction(9.75, WriteKind.CHANGE)
+    assert out.heating_on is False
+    t = 10.0
+    while t <= 360.0:
+        state, out = loop_step(state, inputs(t, opening=0.0), own, config, grid=GRID)
+        t += 10.0
+    assert out.ignored == ("setpoint",)
+    state, out = loop_step(state, inputs(370.0, opening=0.0), own, config, grid=GRID)
+    assert out.hand_back
+    assert state.control.latched_by == (HEATING_OFF_IGNORED,)
+
+
+def test_off_without_a_grid_value_at_or_below_it_is_not_written() -> None:
+    """Negative (P-15): an entity whose lowest value lies above "off" as a low setpoint has no grid
+    value for it — "off" is not written, and heating is shown neither on nor off. The loop alone
+    never meets it running: the control unit's blocker "outside the entity's range" stops control
+    and hands back first, and lets it resume once the entity takes "off" again
+    (``test_ems_esp_off_below_the_entitys_range_blocks_and_resumes``)."""
+    config = replace(CONFIG, ch_writes=False, off_setpoint=10.0)
+    grid = Grid(step=0.5, minimum=20.0, maximum=90.0)
+    _state, out = loop_step(LoopState(), inputs(0.0, opening=0.0), None, config, grid=grid)
+    assert out.decision.command is not None
+    assert out.decision.command.ch_enable is False
+    assert out.setpoint is None
+    assert out.heating_on is None
+
+
+def test_a_water_path_command_without_a_setpoint_writes_nothing() -> None:
+    """Negative: a command without a water temperature (on/off control) where "off" is a low
+    setpoint writes no heating value — on an entity's grid too — and claims no heating state."""
+    control = ControlConfig(
+        curve=HeatingCurve(), ramp_k_per_min=None, on_off=True, stale_hand_back_s=None
+    )
+    config = replace(CONFIG, control=control, ch_writes=False)
+    _state, out = loop_step(LoopState(), inputs(0.0), None, config, grid=GRID)
+    assert out.decision.command is not None
+    assert out.decision.command.ch_enable is True
+    assert out.decision.command.setpoint is None
+    assert out.setpoint is None
+    assert out.heating_on is None
+
+
+def test_heat_a_kelvin_above_off_ignored_from_the_start_does_not_latch() -> None:
+    """Negative (I6, P-43): "off" as a low setpoint 1 K below the hard minimum — the closest
+    allowed; the boiler ignores the heating setpoint (the hard minimum) from the start: "off" was
+    never among what it did not take, so no latch and no hand-back."""
+    config = replace(CONFIG, ch_writes=False, off_setpoint=24.0)
+    own = 30.0
+    warm = {"outdoor_sensor": 20.0}
+    state, out = loop_step(LoopState(), inputs(0.0, **warm), own, config)
+    assert out.setpoint == WriteAction(25.0, WriteKind.CHANGE)
+    state, outs = run(state, config, 10.0, 360.0, own, **warm)
+    assert outs[-1][1].ignored == ("setpoint",)
+    state, out = loop_step(state, inputs(370.0, **warm), own, config)
+    assert not out.hand_back
+    assert not state.control.latched
+
+
+def test_a_held_heating_switch_back_from_unavailable_is_written_again_at_once() -> None:
+    """A held heating switch back from unavailable gets heating on/off again at once, not at the
+    next 5-minute refresh. Negative: without the return, nothing is due yet."""
+    state, out = loop_step(LoopState(), inputs(0.0), None, CONFIG)
+    value = out.setpoint.value
+    back = GuardContext(returned=True)
+    _state, out = loop_step(state, inputs(20.0), value, CONFIG, heating_context=back)
+    assert out.heating == WriteAction(1.0, WriteKind.KEEPALIVE)
+    _state, out = loop_step(state, inputs(20.0), value, CONFIG)
+    assert out.heating is None
+    assert out.hand_back is False
+
+
+def test_a_hand_back_still_names_the_target_ignored_from_the_start() -> None:
+    """Answer O: the step that hands back after heating on/off was ignored from the start still
+    names it among the ignored targets; nothing is unconfirmed or not shown — a hand-back sends
+    nothing — and no warning is raised."""
+    config = replace(CONFIG, switch_guard=ECHOED_SWITCH)
+    state, out = loop_step(LoopState(), inputs(0.0, opening=0.0), 0.0, config, True)
+    value = out.setpoint.value
+    state, _outs = run(state, config, 10.0, 360.0, value, True, opening=0.0)
+    state, out = loop_step(state, inputs(370.0, opening=0.0), value, config, True)
+    assert out.hand_back
+    assert out.decision.hand_back
+    assert (out.ignored, out.unconfirmed, out.not_shown) == (("heating",), (), ())
+    assert out.commands_lost is False
+
+
+def test_commands_lost_holds_for_a_day_after_the_last_loss() -> None:
+    """The warning "commands lost" stays on until a day without a loss — not only while three
+    losses fall within the day: with the first of them a day old and the last not, it holds while
+    writing goes on, and clears a day after the last."""
+    losses = ((0.0, SETPOINT), (1000.0, SETPOINT), (2000.0, SETPOINT))
+    state, out = loop_step(LoopState(losses=losses), inputs(3000.0), None, CONFIG)
+    assert out.commands_lost is True
+    for t in (DAY + 100.0, DAY + 110.0):  # two within the day now
+        state, out = loop_step(state, inputs(t), None, CONFIG)
+        assert out.decision.command is not None
+        assert not out.blocked
+        assert out.commands_lost is True
+    state, out = loop_step(state, inputs(DAY + 2000.0), None, CONFIG)
+    assert out.commands_lost is False
+
+
+def test_a_loss_recorded_between_steps_holds_the_warning_through_a_hand_back() -> None:
+    """A lost command recorded between steps (as the unit records the external-control switch's)
+    as the third within a day raises "commands lost" at the next step, even one that hands back;
+    it then holds for a day after the last loss through steps with nothing to write."""
+    losses = ((0.0, SETPOINT), (1000.0, SETPOINT))
+    state, out = loop_step(LoopState(losses=losses), inputs(DAY - 40.0), None, CONFIG)
+    assert out.commands_lost is False
+    state = replace(state, losses=add_loss(state.losses, DAY - 30.0, "external"))
+    alarm = ("pressure_low",)
+    state, out = loop_step(state, inputs(DAY - 20.0, hand_back_alarms=alarm), None, CONFIG)
+    assert out.hand_back
+    assert out.commands_lost is True
+    state, out = loop_step(state, inputs(DAY + 10.0), None, CONFIG)  # the first a day old
+    assert out.decision.command is None
+    assert out.commands_lost is True
+    state, out = loop_step(state, inputs(2 * DAY - 20.0), None, CONFIG)
+    assert out.commands_lost is False
+
+
+@pytest.mark.parametrize("case", ["not_shown", "ignored"])
+def test_a_step_with_nothing_to_write_still_reports_the_targets(case: str) -> None:
+    """A step that writes nothing for want of fresh data still reports the setpoint: not shown for
+    five minutes (and so unconfirmed), or ignored from the start."""
+    state, out = loop_step(LoopState(), inputs(0.0), None, CONFIG)
+    value = out.setpoint.value
+    if case == "not_shown":
+        setpoint = replace(state.setpoint, unshown_since=0.0)
+        expected = ((), ("setpoint",), ("setpoint",))
+    else:
+        setpoint = replace(state.setpoint, ignored=True, ignored_values=(value,))
+        expected = (("setpoint",), (), ())
+    state = replace(state, setpoint=setpoint)
+    _state, out = loop_step(state, inputs(400.0, boiler_link=False), None, CONFIG)
+    assert out.decision.command is None
+    assert out.blocked is False
+    assert (out.ignored, out.unconfirmed, out.not_shown) == expected
+
+
+@pytest.mark.parametrize("target", ["setpoint", "switch"])
+def test_a_target_held_by_another_controller_is_reported_while_waiting(target: str) -> None:
+    """P53: another controller holds one target — the setpoint or heating on/off — and the step
+    has no command (no fresh data): still reported blocked, nothing written."""
+    state, _ = loop_step(LoopState(), inputs(0.0), None, CONFIG)
+    guard = replace(getattr(state, target), blocked=GuardEvent.OUTSIDE_CHANGE)
+    state = replace(state, **{target: guard})
+    _state, out = loop_step(state, inputs(30.0, boiler_link=False), None, CONFIG)
+    assert out.decision.command is None
+    assert out.blocked is True
+    assert (out.setpoint, out.heating) == (None, None)
+
+
+def test_the_setpoint_found_held_by_another_controller_keeps_its_block() -> None:
+    """Decision 6: the setpoint changed from outside again after its one rewrite — the guard keeps
+    the block after the step, and the next step writes nothing."""
+    config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
+    state, out = loop_step(LoopState(), inputs(0.0), 0.0, config)
+    setpoint = out.setpoint.value
+    state, _ = loop_step(state, inputs(10.0), setpoint, config)  # confirmed
+    state, _ = loop_step(state, inputs(20.0), 60.0, config)
+    state, _ = loop_step(state, inputs(30.0), 60.0, config)  # the one rewrite
+    state, _ = loop_step(state, inputs(40.0), setpoint, config)
+    state, _ = loop_step(state, inputs(50.0), 60.0, config)
+    state, out = loop_step(state, inputs(60.0), 60.0, config)
+    assert out.blocked
+    assert state.setpoint.blocked is GuardEvent.OUTSIDE_CHANGE
+    _state, out = loop_step(state, inputs(70.0), 60.0, config)
+    assert (out.setpoint, out.heating, out.blocked) == (None, None, True)
+
+
+@pytest.mark.parametrize("case", ["not_shown", "ignored"])
+def test_another_controller_found_still_reports_the_other_target(case: str) -> None:
+    """P22, row 13: the step that finds heating on/off switched from outside again stops every
+    write, keeps the block, leaves the setpoint as it was before the step and still reports it —
+    not shown for five minutes, or ignored from the start — and "commands lost", which holds
+    after it for a day after the last loss."""
+    b = DAY  # a day of losses counted back from the start
+    config = replace(CONFIG, switch_guard=ECHOED_SWITCH)
+    state, out = loop_step(LoopState(), inputs(b), 0.0, config, True)  # "on" before
+    value = out.setpoint.value
+    state, _ = run(state, config, b + 10.0, b + 390.0, value, True)  # confirmed, past the start
+    state, _ = loop_step(state, inputs(b + 400.0), value, config, False)  # switched off outside
+    state, _ = loop_step(state, inputs(b + 410.0), value, config, False)  # the one rewrite
+    state, _ = loop_step(state, inputs(b + 420.0), value, config, True)
+    state, _ = loop_step(state, inputs(b + 500.0), value, config, False)
+    if case == "not_shown":
+        setpoint = replace(state.setpoint, unshown_since=b)
+        expected = ((), ("setpoint",), ("setpoint",))
+    else:
+        setpoint = replace(state.setpoint, ignored=True, ignored_values=(value,))
+        expected = (("setpoint",), (), ())
+    losses = ((515.0, SETPOINT), (b, SETPOINT), (b + 100.0, SETPOINT))
+    state = replace(state, setpoint=setpoint, losses=losses)
+    state, out = loop_step(state, inputs(b + 510.0), value, config, False)  # again
+    assert out.blocked
+    assert out.events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert out.decision.command is not None
+    assert (out.ignored, out.unconfirmed, out.not_shown) == expected
+    assert out.commands_lost is True
+    assert state.switch.blocked is GuardEvent.OUTSIDE_CHANGE
+    assert state.setpoint == setpoint
+    _state, out = loop_step(state, inputs(b + 520.0), value, config, False)  # 515 a day old
+    assert (out.setpoint, out.heating, out.blocked) == (None, None, True)
+    assert out.commands_lost is True
+
+
+def test_a_relays_reach_is_followed_through_a_hand_back() -> None:
+    """X8: the relay is followed at every step, a hand-back's included — out of reach from the
+    step that hands back, its alarm comes five minutes later, not five minutes after the next
+    step; a hand-back while it is out of reach still reports the alarm; a relay that takes its
+    commands is never named ignored."""
+    on = RelaySeen(on=True, known=True, available=True)
+    gone = RelaySeen()
+    alarm = ("pressure_low",)
+    state, _ = loop_step(LoopState(), inputs(0.0), None, RELAY_LOOP, relay_seen=on)
+    state, out = loop_step(
+        state, inputs(10.0, hand_back_alarms=alarm), None, RELAY_LOOP, relay_seen=gone
+    )
+    assert out.hand_back
+    assert out.ignored == ()
+    assert out.relay_unreachable is False
+    for t in (20.0, 300.0):
+        state, out = loop_step(state, inputs(t), None, RELAY_LOOP, relay_seen=gone)
+        assert out.relay_unreachable is False
+    state, out = loop_step(state, inputs(310.0), None, RELAY_LOOP, relay_seen=gone)
+    assert out.relay_unreachable is True
+    # Out of reach while control goes on: the alarm after five minutes, and at a hand-back.
+    state, _ = loop_step(LoopState(), inputs(0.0), None, RELAY_LOOP, relay_seen=on)
+    for t in [10.0 * n for n in range(1, 40)]:
+        state, out = loop_step(state, inputs(t), None, RELAY_LOOP, relay_seen=gone)
+        assert not out.hand_back
+        assert out.relay_unreachable is (t >= 310.0)
+    state, out = loop_step(
+        state, inputs(400.0, hand_back_alarms=alarm), None, RELAY_LOOP, relay_seen=gone
+    )
+    assert out.hand_back
+    assert out.relay_unreachable is True
+
+
+def test_an_untraced_relay_restart_is_answered_and_reported() -> None:
+    """Answers D, N: a relay commanded "off" shows its power-on state "on" with no trace — a
+    restart it did not report: "off" sent again at once, counted, and reported so that it is
+    stored at once. Negative: before it, no restart is reported."""
+    off = RelaySeen(on=False, known=True, available=True)
+    state = LoopState()
+    for t in [10.0 * n for n in range(10)]:
+        step = inputs(t, opening=0.0)
+        state, out = loop_step(state, step, None, RELAY_LOOP, relay_seen=off)
+        assert out.relay_restart is False
+    back_on = RelaySeen(on=True, known=True, available=True, changed_at=100.0)
+    step = inputs(100.0, opening=0.0)
+    state, out = loop_step(state, step, None, RELAY_LOOP, relay_seen=back_on)
+    assert out.relay == RelayWrite(False, WriteKind.RESEND)
+    assert out.relay_restart is True
+    assert state.relay.restarts == (100.0,)
+
+
+def test_a_relay_ignored_from_the_start_is_named_at_the_step_that_finds_it() -> None:
+    """R7: the step that finds the relay ignoring "on" from the start names it among the ignored
+    targets, before the next step latches and hands back; until then it is named nowhere."""
+    stuck = RelaySeen(on=False, known=True, available=True)
+    state = LoopState()
+    outs = []
+    for t in [10.0 * n for n in range(80)]:
+        state, out = loop_step(state, inputs(t), None, RELAY_LOOP, relay_seen=stuck)
+        outs.append(out)
+        if out.hand_back:
+            break
+    assert outs[-1].hand_back
+    found = next(n for n, out in enumerate(outs) if out.ignored)
+    assert 0 < found < len(outs) - 1
+    assert outs[found].ignored == ("relay",)
+    assert all(out.ignored == () for out in outs[:found])
+
+
+def test_relay_losses_hold_the_warning_for_a_day_after_the_last() -> None:
+    """A relay's third lost command within a day raises "commands lost", which holds for a day
+    after the last loss — with the first of the three a day old, and through a hand-back."""
+    on = RelaySeen(on=True, known=True, available=True)
+    losses = ((0.0, RELAY), (1000.0, RELAY))
+    state = LoopState(losses=losses)
+    state, out = loop_step(state, inputs(DAY - 1000.0), None, RELAY_LOOP, relay_seen=on)
+    assert out.commands_lost is False
+    back = RelaySeen(on=False, known=True, available=True, trace=True, changed_at=DAY - 20.0)
+    state, out = loop_step(state, inputs(DAY - 20.0), None, RELAY_LOOP, relay_seen=back)
+    assert out.relay == RelayWrite(True, WriteKind.RESEND)
+    assert out.commands_lost is True
+    state, out = loop_step(state, inputs(DAY + 10.0), None, RELAY_LOOP, relay_seen=on)
+    assert out.commands_lost is True  # two within the day now
+    alarm = ("pressure_low",)
+    step = inputs(DAY + 20.0, hand_back_alarms=alarm)
+    state, out = loop_step(state, step, None, RELAY_LOOP, relay_seen=on)
+    assert out.hand_back
+    assert out.commands_lost is True
+    state, out = loop_step(state, inputs(DAY + 1010.0), None, RELAY_LOOP, relay_seen=on)
+    assert out.commands_lost is True  # one within the day
+
+
+def test_a_last_command_round_trips_with_its_setpoint() -> None:
+    """V3: the setpoint written is stored under its own key and read back, so the next start gives
+    the same command again."""
+    command = LastCommand(True, 45.5, 12.5)
+    assert command.as_dict() == {"heating": True, "setpoint": 45.5, "at": 12.5}
+    assert parse_last_command(command.as_dict()) == command

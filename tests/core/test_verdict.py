@@ -538,3 +538,145 @@ def test_the_stored_load_share_counts_heating_season_time_only() -> None:
     share = load_below_min_from_distribution(((0, HOUR), (10, HOUR), (20, HOUR)), model, 1.5)
     assert (share.value, share.basis_s) == (pytest.approx(0.5), 2 * HOUR)
     assert load_below_min_from_distribution(((15, HOUR),), model, 1.5).value is None
+
+
+# --- Mutation testing (2026-10-12): exact limits, criteria counted once, data limits --------------
+
+
+def test_the_load_share_at_its_exact_bounds() -> None:
+    """Negative: outdoor exactly at the heating threshold is outside the season; exactly at the
+    crossover the load equals the minimum power, not below it; a warm or unknown stretch first
+    does not end the count; one second of season is a basis already."""
+    from custom_components.vtherm_smart_boiler.core.verdict import (
+        load_below_min_from_distribution,
+    )
+
+    model = LoadModel(loss_coefficient=0.5, heating_threshold=15.0)  # 2.5 kW at 10 °C
+    outdoor = Series([(0, None), (HOUR, 15.0), (2 * HOUR, 10.0), (3 * HOUR, 12.0)])
+    share = load_below_min_share(outdoor, model, 2.5, 0, 4 * HOUR)
+    assert (share.value, share.basis_s) == (pytest.approx(0.5), 2 * HOUR)
+    assert load_below_min_share(Series([(0, 0.0)]), model, 2.5, 0, 1.0) == Share(0.0, 1.0)
+    stored = ((20, HOUR), (15, HOUR), (10, HOUR), (12, HOUR))
+    share = load_below_min_from_distribution(stored, model, 2.5)
+    assert (share.value, share.basis_s) == (pytest.approx(0.5), 2 * HOUR)
+    assert load_below_min_from_distribution(((0, 1.0),), model, 2.5) == Share(0.0, 1.0)
+
+
+def test_exactly_enough_data_is_enough() -> None:
+    """Negative: exactly 90 % of the monitoring days, exactly the burns needed and exactly ten
+    hours of a known return are enough — the verdict is not held back at its own limits."""
+    options = replace(RELAY, min_days=10.0)  # 90 % of it: 9 days
+    result = assess(
+        9 * DAY, stats(1.0, 0.1, burns=20), Share(0.2, 10 * HOUR), Share(0.05, DAY), options
+    )
+    assert result.verdict is Verdict.NOT_WORTH_IT
+    assert ReasonCode.LOW_CONDENSING in codes(result)
+
+
+_UNKNOWN_STARTS = replace(stats(1.0, 0.1), active_s=0.0)  # no heating hour: starts unknown
+_RELAY_NON_CONDENSING = replace(RELAY, condensing_boiler=False)
+
+CRITERIA_COUNTED = [
+    ("the starts unknown", _UNKNOWN_STARTS, None, None, RELAY, 1, 3),
+    ("frequent starts, short burns", stats(5.0, 0.9), None, None, RELAY, 2, 3),
+    ("low condensing", _UNKNOWN_STARTS, 0.2, None, RELAY, 2, 3),
+    ("good condensing", _UNKNOWN_STARTS, 0.9, None, RELAY, 2, 3),
+    ("condensing in between", _UNKNOWN_STARTS, 0.6, None, RELAY, 2, 3),
+    ("load often below", _UNKNOWN_STARTS, None, 0.5, RELAY, 2, 3),
+    ("load rarely below", _UNKNOWN_STARTS, None, 0.05, RELAY, 2, 3),
+    ("load in between", _UNKNOWN_STARTS, None, 0.2, RELAY, 2, 3),
+    ("not built to condense", _UNKNOWN_STARTS, 0.2, None, _RELAY_NON_CONDENSING, 1, 2),
+]
+
+
+@pytest.mark.parametrize(
+    ("heating", "condensing", "load", "options", "judged", "needed"),
+    [row[1:] for row in CRITERIA_COUNTED],
+    ids=[row[0] for row in CRITERIA_COUNTED],
+)
+def test_each_criterion_judged_counts_once(
+    heating: CycleStats,
+    condensing: float | None,
+    load: float | None,
+    options: VerdictOptions,
+    judged: int,
+    needed: int,
+) -> None:
+    """Negative (S-32): a criterion judged counts once, whatever it found; an unknown one, or
+    condensing on a boiler not built to condense, not at all — one too many and "not worth it"
+    would rest on too few criteria."""
+    result = assess(
+        10 * DAY,
+        heating,
+        None if condensing is None else Share(condensing, DAY),
+        None if load is None else Share(load, DAY),
+        options,
+        load_estimate_only=False,
+    )
+    assert result.verdict is Verdict.NOT_ENOUGH_DATA
+    assert result.reasons[0] == Reason(ReasonCode.CRITERIA_JUDGED, ReasonKind.DATA, judged, needed)
+
+
+CRITERIA_LIMITS = [
+    (
+        "starts, short burns, condensing at the limit not a problem; load at it is",
+        stats(3.0, 0.5),
+        0.5,
+        0.3,
+        (
+            Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, 0.5, 0.5),
+            Reason(
+                ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER,
+                ReasonKind.PROBLEM,
+                0.3,
+                0.3,
+                changed_by_control=False,
+            ),
+        ),
+    ),
+    (
+        "few starts and good condensing at the limit fine; load at the rare limit not",
+        stats(1.5, 0.6),
+        0.8,
+        0.1,
+        (
+            Reason(ReasonCode.FEW_STARTS, ReasonKind.FINE, 1.5, 1.5),
+            Reason(ReasonCode.SHORT_BURNS, ReasonKind.PROBLEM, 0.6, 0.5, changed_by_control=False),
+            Reason(ReasonCode.GOOD_CONDENSING, ReasonKind.FINE, 0.8, 0.8),
+        ),
+    ),
+    (
+        "inside the limits: each value with its limit",
+        stats(2.0, 0.1),
+        0.2,
+        0.05,
+        (
+            Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, 0.1, 0.5),
+            Reason(
+                ReasonCode.LOW_CONDENSING,
+                ReasonKind.PROBLEM,
+                0.2,
+                0.5,
+                changed_by_control=False,
+                detail=WATER_NOT_CONTROLLED,
+            ),
+            Reason(ReasonCode.LOAD_RARELY_BELOW_MIN_POWER, ReasonKind.FINE, 0.05, 0.1),
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("heating", "condensing", "load", "reasons"),
+    [row[1:] for row in CRITERIA_LIMITS],
+    ids=[row[0] for row in CRITERIA_LIMITS],
+)
+def test_each_criterion_at_its_exact_limit(
+    heating: CycleStats, condensing: float, load: float, reasons: tuple[Reason, ...]
+) -> None:
+    """Negative: at exactly its limit a value falls on the documented side — starts above 3 an
+    hour, short burns above half, a load from 30 % on are problems; few starts up to 1.5, good
+    condensing from 80 %, a load below 10 % fine — and every reason carries value and limit."""
+    result = assess(10 * DAY, heating, Share(condensing, DAY), Share(load, DAY), RELAY)
+    assert result.verdict is Verdict.NOT_WORTH_IT
+    assert result.reasons == reasons

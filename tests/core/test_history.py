@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import islice
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.daily import summarize_day
@@ -12,6 +14,7 @@ from custom_components.vtherm_smart_boiler.core.parameters import (
     ParameterSet,
     Source,
 )
+from custom_components.vtherm_smart_boiler.core.readings import ZONE_OPEN, ZoneState
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 
@@ -192,4 +195,157 @@ def test_overlapping_downtimes_are_one() -> None:
         (0.5 * HOUR, 1.0),
         (HOUR, None),
         *[(k * 0.5 * HOUR, float(k)) for k in range(8, 13)],
+    ]
+
+
+# --- Mutation testing (2026-10-12): zone states, copies, cuts and downtime edges ---------------
+
+
+def _full_zone(zone_id: str) -> ZoneSeries:
+    """A zone with every series known from 10 s on."""
+    zone = ZoneSeries(zone_id)
+    for series, value in zip(zone.series(), (20.5, 21.0, True, True, 0.4, 0.6, 1.5), strict=True):
+        series.append(10.0, value)
+    return zone
+
+
+def test_a_zones_state_holds_every_series_value_at_the_moment() -> None:
+    """A zone's state at a moment carries its id and every series' value then; before its first
+    samples everything but the id and the moment is unknown."""
+    zone = _full_zone("a")
+    assert zone.state_at(20.0) == ZoneState(
+        "a",
+        temperature=20.5,
+        target=21.0,
+        heating_enabled=True,
+        calling=True,
+        on_percent=0.4,
+        valve_open=0.6,
+        power=1.5,
+        reported_at=20.0,
+    )
+    assert zone.state_at(5.0) == ZoneState("a", reported_at=5.0)
+
+
+@pytest.mark.parametrize(
+    ("opening", "wanted"), [(ZONE_OPEN, False), (ZONE_OPEN + 0.01, True)], ids=["at", "above"]
+)
+def test_a_zone_with_only_its_valve_opening_is_judged_by_it(opening: float, wanted: bool) -> None:
+    """Negative: a zone with nothing but its valve opening still counts; an opening of exactly
+    ``ZONE_OPEN`` is no demand, only above it — whether its flag is unknown or missing."""
+    zone = ZoneSeries("a", valve_open=Series([(0.0, opening)]))
+    history = History(zones={"a": zone})
+    demand = history.zone_demand(0.0, HOUR)
+    calling = history.zone_calling(0.0, HOUR)
+    assert demand is not None
+    assert calling is not None
+    assert demand.value_at(0.0) is wanted
+    assert calling.value_at(0.0) is wanted
+
+
+def test_a_copied_window_keeps_every_series_and_the_zone_ids() -> None:
+    """The copy handed to another thread holds the window of every series — the weather, the
+    setpoint read-back, the control state and each zone under its own id — not empty ones."""
+    history = History(
+        signals={Signal.FLOW: Series([(0.0, 40.0), (20.0, 45.0)])},
+        zones={"a": _full_zone("a")},
+        weather=Series([(0.0, 5.0), (20.0, 4.0)]),
+        setpoint_read_back=Series([(0.0, 50.0), (20.0, 55.0)]),
+        control_state=Series([(0.0, "watching"), (20.0, "controlling")]),
+    )
+    copy = history.copy_window(15.0, 30.0)
+    assert _samples(copy.signals[Signal.FLOW]) == [(15.0, 40.0), (20.0, 45.0)]
+    assert _samples(copy.weather) == [(15.0, 5.0), (20.0, 4.0)]
+    assert _samples(copy.setpoint_read_back) == [(15.0, 50.0), (20.0, 55.0)]
+    assert _samples(copy.control_state) == [(15.0, "watching"), (20.0, "controlling")]
+    assert copy.zones["a"].zone_id == "a"
+    assert copy.zones["a"].state_at(15.0) == _full_zone("a").state_at(15.0)
+
+
+def test_dropping_old_samples_keeps_the_value_holding_at_the_cut_everywhere() -> None:
+    """The rolling history forgets what lies before the cut in every series — signals, zones,
+    weather, setpoint read-back, control state — and keeps the value holding at the cut."""
+    zone = ZoneSeries("a", temperature=Series([(0.0, 19.0), (20.0, 20.0), (40.0, 21.0)]))
+    history = History(
+        signals={Signal.FLOW: Series([(0.0, 40.0), (20.0, 45.0), (40.0, 50.0)])},
+        zones={"a": zone},
+        weather=Series([(0.0, 5.0), (20.0, 4.0), (40.0, 3.0)]),
+        setpoint_read_back=Series([(0.0, 50.0), (20.0, 55.0), (40.0, 60.0)]),
+        control_state=Series([(0.0, "off"), (20.0, "watching"), (40.0, "controlling")]),
+    )
+    history.drop_before(30.0)
+    assert _samples(history.signals[Signal.FLOW]) == [(20.0, 45.0), (40.0, 50.0)]
+    assert _samples(history.zones["a"].temperature) == [(20.0, 20.0), (40.0, 21.0)]
+    assert _samples(history.weather) == [(20.0, 4.0), (40.0, 3.0)]
+    assert _samples(history.setpoint_read_back) == [(20.0, 55.0), (40.0, 60.0)]
+    assert _samples(history.control_state) == [(20.0, "watching"), (40.0, "controlling")]
+
+
+@pytest.mark.parametrize(
+    "down", [[(HOUR, HOUR)], [(-HOUR, 0.0)]], ids=["empty", "ends_at_the_window_start"]
+)
+def test_a_downtime_with_no_time_in_the_window_marks_nothing(down: list) -> None:
+    """Negative: an empty downtime, or one that ends exactly at the window's start, covers none
+    of ``[start, end)``: the rows come back as they are."""
+    rows = [(0.0, False), (2 * HOUR, True)]
+    assert list(with_downtime(rows, down, 0.0, DAY)) == rows
+
+
+@pytest.mark.parametrize(
+    "down",
+    [[(HOUR, 2 * HOUR), (2 * HOUR, 3 * HOUR)], [(HOUR, 3 * HOUR), (1.5 * HOUR, 2 * HOUR)]],
+    ids=["touching", "nested"],
+)
+def test_touching_or_nested_downtimes_are_one_until_the_latest_end(down: list) -> None:
+    """Two downtimes that touch, or one inside another, are one downtime: one ``None`` at its
+    start, known again only at the latest end."""
+    rows = [(0.0, False), (1.2 * HOUR, True), (2.5 * HOUR, False), (4 * HOUR, True)]
+    assert list(with_downtime(rows, down, 0.0, DAY)) == [
+        (0.0, False),
+        (HOUR, None),
+        (3 * HOUR, False),
+        (4 * HOUR, True),
+    ]
+
+
+def test_a_downtime_from_the_window_start_says_nothing_of_its_end_by_that_row() -> None:
+    """A downtime that begins exactly at the window's start: the row at the start is the
+    recorder's state from before it, as for one begun before the window — not the state at its
+    end; known again from the first row after it."""
+    assert list(with_downtime([(0.0, True)], [(0.0, HOUR)], 0.0, DAY)) == [(0.0, None)]
+    rows = [(0.0, True), (2 * HOUR, False)]
+    assert list(with_downtime(rows, [(0.0, HOUR)], 0.0, DAY)) == [(0.0, None), (2 * HOUR, False)]
+
+
+def test_a_row_inside_a_downtime_begun_before_the_window_is_the_state_at_its_end() -> None:
+    """Only the window-start row of a downtime begun before the window says nothing of its end; a
+    row recorded inside it after the start is the state at its end (PB-65)."""
+    rows = [(0.0, True), (0.5 * HOUR, False), (2 * HOUR, True)]
+    assert list(with_downtime(rows, [(-HOUR, HOUR)], 0.0, DAY)) == [
+        (0.0, None),
+        (HOUR, False),
+        (2 * HOUR, True),
+    ]
+
+
+def test_separate_downtimes_are_each_unknown() -> None:
+    """Two separate downtimes, each with a row inside: each starts unknown and is known again at
+    its own end — also when both lie after the last row (the generator ends)."""
+    rows = [(0.0, False), (1.5 * HOUR, True), (2.5 * HOUR, False), (3.5 * HOUR, True)]
+    down = [(HOUR, 2 * HOUR), (3 * HOUR, 4 * HOUR)]
+    later = [*rows, (5 * HOUR, False)]
+    assert list(islice(with_downtime(later, down, 0.0, DAY), 20)) == [
+        (0.0, False),
+        (HOUR, None),
+        (2 * HOUR, True),
+        (2.5 * HOUR, False),
+        (3 * HOUR, None),
+        (4 * HOUR, True),
+        (5 * HOUR, False),
+    ]
+    assert list(islice(with_downtime(rows[:2], down, 0.0, DAY), 20)) == [
+        (0.0, False),
+        (HOUR, None),
+        (2 * HOUR, True),
+        (3 * HOUR, None),
     ]

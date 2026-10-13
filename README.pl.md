@@ -114,7 +114,7 @@ trafiły do modelu SmartPI.
 | Wymaganie | Wersja |
 |---|---|
 | Home Assistant | 2026.9 lub nowszy |
-| Versatile Thermostat | 10.2.0 lub nowszy (od 10.2.0 ładuje zewnętrzne menedżery funkcji); testowana wersja to 10.4.0 — tymczasowo, do pierwszego wydania |
+| Versatile Thermostat | 10.2.0 lub nowszy (od 10.2.0 ładuje zewnętrzne menedżery funkcji); testowana wersja to 10.5.1 — tymczasowo, do pierwszego wydania |
 | `vtherm_api` | 0.5.0 lub nowsza, instalowana z wtyczką |
 | SmartPI, Auto-TPI | opcjonalne; działa każdy algorytm stref VT |
 
@@ -443,9 +443,11 @@ Wkład jest mile widziany — otwieraj pull requesty do `dev`. Najpierw przeczyt
 mała, przetestowana i przejrzana. Jakie automatyczne sprawdzenia działają i kiedy, opisuje jego
 część [Checks](CONTRIBUTING.md#checks).
 
-# Wsparcie
+# ☕ Wsparcie
 
-Jeśli wtyczka pomaga w Twoim ogrzewaniu, możesz postawić mi kawę: [buymeacoffee.com/shadow23][bmc].
+Jeśli Smart Boiler for Versatile Thermostat Ci się przydaje, możesz wesprzeć jego rozwój tutaj:
+
+<a href="https://buymeacoffee.com/shadow23"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="50"></a>
 
 # Autorzy
 

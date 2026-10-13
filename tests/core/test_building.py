@@ -8,7 +8,12 @@ import random
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.building import (
+    ANNUAL_ENERGY_CONFIDENCE,
     CLAMPED_CONFIDENCE,
+    MAX_THRESHOLD_ERROR_K,
+    MIN_FIT_DAYS,
+    MIN_QUALITY,
+    SINGLE_PARAMETER_PENALTY,
     DayPoint,
     LoadModel,
     fit_daily_load,
@@ -339,3 +344,190 @@ def test_the_threshold_error_is_infinite_without_enough_to_judge() -> None:
     flat = [9.0, 6.0, 3.0]
     assert threshold_error([1.0, 2.0, 3.0], flat, flat, 0.0, 3.0) == math.inf
     assert threshold_error([2.0, 2.0, 2.0], flat, [6.0, 6.0, 6.0], -3.0, 4.0) == math.inf
+
+
+# --- Mutation testing (2026-10-12): edges of refusals, the days counted, confidences and caps ---
+
+
+@pytest.mark.parametrize(
+    ("design_load_kw", "design_outdoor", "indoor", "expected"),
+    [
+        (1.0, -20.0, 20.0, 0.025),  # a design load of 1 kW
+        (2.0, 10.0, 11.0, 2.0),  # 1 K between the design outdoor and indoor temperatures
+    ],
+)
+def test_a_small_but_positive_design_load_or_span_is_accepted(
+    design_load_kw: float, design_outdoor: float, indoor: float, expected: float
+) -> None:
+    """Only a design load or a span of zero or less is refused; small positive ones count."""
+    estimate = loss_from_design_load(design_load_kw, design_outdoor, indoor)
+    assert estimate.value == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("energy_kwh", "degree_days", "expected"),
+    [
+        (1.0, 2.0, 1.0 / 48.0),  # 1 kWh in a year
+        (48.0, 1.0, 2.0),  # 1 K·day in a year
+    ],
+)
+def test_a_small_but_positive_annual_energy_or_degree_days_is_accepted(
+    energy_kwh: float, degree_days: float, expected: float
+) -> None:
+    """Only energy or degree-days of zero or less are refused; the estimate is a rule of thumb
+    with its own low confidence."""
+    estimate = loss_from_annual_energy(energy_kwh, degree_days)
+    assert estimate.value == pytest.approx(expected)
+    assert estimate.confidence == ANNUAL_ENERGY_CONFIDENCE
+
+
+def test_no_annual_energy_gives_no_estimate() -> None:
+    """Negative: a year without heating energy gives no loss coefficient."""
+    with pytest.raises(ValueError, match="positive"):
+        loss_from_annual_energy(0.0, 3000.0)
+
+
+@pytest.mark.parametrize(
+    ("extra", "counted"),
+    [
+        (DayPoint(20.0, 10.0), 8),  # warmer than the threshold: not a heating day
+        (DayPoint(15.0, 10.0), 8),  # exactly at the threshold: not colder than it
+        (DayPoint(5.0, 0.0), 8),  # no energy
+        (_days(0.2, 15.0, [14.9])[0], 9),  # 0.48 kWh, just below the threshold: counted
+    ],
+)
+def test_only_days_colder_than_the_threshold_with_energy_count(
+    extra: DayPoint, counted: int
+) -> None:
+    """Negative: a day at or above the threshold, or without energy, is not a heating day;
+    a day just below it with a little energy is."""
+    days = [*_days(0.2, 15.0, [-4, -2, 0, 2, 4, 6, 8, 10]), extra]
+    fit = fit_daily_load(days, ENTERED_15)
+    assert fit is not None
+    assert fit.days == counted
+
+
+def test_exactly_the_minimum_number_of_days_gives_a_fit() -> None:
+    """``MIN_FIT_DAYS`` heating days are enough (one fewer is not: above)."""
+    fit = fit_daily_load(_days(0.2, 15.0, [4, 5, 6, 5, 4, 6, 5]), ENTERED_15)
+    assert fit is not None
+    assert fit.days == MIN_FIT_DAYS
+
+
+@pytest.mark.parametrize("count", [15, 60])
+def test_the_loss_fitted_alone_weighs_coverage_quality_and_the_penalty(count: int) -> None:
+    """Fitted alone, the loss's confidence is coverage (full from 30 days on, never more) times
+    quality times the single-parameter penalty; the fit keeps its days, quality and time."""
+    days = _noisy(0.2, 15.0, _band(8.0, 11.5, count), 0.05, seed=7)
+    fit = fit_daily_load(days, ENTERED_15, at=100.0)
+    assert fit is not None
+    assert fit.threshold is None
+    assert fit.days == count
+    assert MIN_QUALITY <= fit.quality < 1.0
+    assert fit.loss is not None
+    assert fit.loss.source is Source.MEASURED
+    assert fit.loss.at == 100.0
+    coverage = min(1.0, count / 30)
+    assert fit.loss.confidence == pytest.approx(coverage * fit.quality * SINGLE_PARAMETER_PENALTY)
+
+
+def test_a_small_house_is_fitted_alone_too() -> None:
+    """A loss of 0.02 kW/K (under 1 kWh per day and kelvin) is fitted like any other."""
+    fit = fit_daily_load(_days(0.02, 15.0, [4, 5, 6, 5, 4, 6, 5, 5]), ENTERED_15)
+    assert fit is not None
+    assert fit.loss is not None
+    assert fit.loss.value == pytest.approx(0.02)
+
+
+def test_a_spread_of_exactly_the_minimum_fits_the_threshold() -> None:
+    """P-31: an outdoor spread of exactly ``MIN_OUTDOOR_SPREAD_K`` (8 K) fits the threshold too —
+    with the class default given, which alone would fit nothing."""
+    fit = fit_daily_load(_days(0.2, 16.0, [-4, -3, -2, -1, 0, 1, 2, 3, 4]), DEFAULT_15)
+    assert fit is not None
+    assert fit.threshold is not None
+    assert fit.threshold.value == pytest.approx(16.0)
+
+
+@pytest.mark.parametrize("rise", [0.0, 0.5])
+def test_energy_flat_or_gently_rising_with_outdoor_temperature_gives_no_fit(rise: float) -> None:
+    """Negative: energy that does not fall as it gets warmer — the same every day, or rising
+    a little — is no heating load, whatever the spread."""
+    days = [DayPoint(t, 10.0 + rise * t) for t in [-4.0, -2.0, 0.0, 2.0, 4.0, 6.0, 8.0, 10.0]]
+    assert fit_daily_load(days, DEFAULT_15) is None
+
+
+def test_a_fit_of_exactly_the_minimum_quality_is_kept() -> None:
+    """R² of exactly ``MIN_QUALITY`` is enough. The days (two clusters 8 K apart, energies in
+    quarter kWh) make R² exactly 0.5 and the energies' total square deviation exactly 1."""
+    cold = [DayPoint(0.0, e) for e in (10.0, 9.5, 10.0, 9.5)]
+    mild = [DayPoint(8.0, e) for e in (9.5, 9.0, 9.5, 9.0)]
+    fit = fit_daily_load([*cold, *mild], DEFAULT_15)
+    assert fit is not None
+    assert fit.quality == MIN_QUALITY
+
+
+def test_a_loss_fitted_alone_of_exactly_the_minimum_quality_is_kept() -> None:
+    """1 − relative RMS error of exactly ``MIN_QUALITY`` is enough: energies of 15 and 5 kWh at
+    one outdoor temperature are off their mean by exactly half of it."""
+    fit = fit_daily_load([DayPoint(7.0, e) for e in (15.0, 5.0) * 4], ENTERED_15)
+    assert fit is not None
+    assert fit.quality == MIN_QUALITY
+
+
+def test_both_confidences_weigh_coverage_and_r_squared_the_threshold_its_spread_to_full() -> None:
+    """P-31: with 15 noisy days over an 18 K spread, both the loss and the threshold weigh half
+    coverage times R² — the spread beyond ``FULL_SPREAD_K`` adds nothing."""
+    days = _noisy(0.2, 16.0, _band(-5.0, 13.0, 15), 0.05, seed=3)
+    fit = fit_daily_load(days, DEFAULT_15)
+    assert fit is not None
+    assert fit.quality < 1.0
+    assert fit.loss is not None
+    assert fit.threshold is not None
+    assert fit.loss.confidence == pytest.approx(0.5 * fit.quality)
+    assert fit.threshold.confidence == pytest.approx(0.5 * fit.quality)
+
+
+@pytest.mark.parametrize(
+    ("loss", "threshold"),
+    [
+        (8.0, 16.0),  # the loss beyond its bound, the threshold not
+        (0.2, 25.0),  # the threshold beyond its bound, the loss not
+    ],
+)
+def test_either_value_held_at_its_bound_caps_both_confidences(
+    loss: float, threshold: float
+) -> None:
+    """Negative: a month of clean days, but one fitted value outside its plausible range — both
+    the loss and the threshold are shown at ``CLAMPED_CONFIDENCE``, never used."""
+    fit = fit_daily_load(_days(loss, threshold, _band(-5.0, 10.0)), DEFAULT_15)
+    assert fit is not None
+    assert fit.loss is not None
+    assert fit.threshold is not None
+    assert fit.loss.confidence == CLAMPED_CONFIDENCE
+    assert fit.threshold.confidence == CLAMPED_CONFIDENCE
+
+
+def test_a_threshold_error_of_exactly_the_limit_does_not_cap() -> None:
+    """P-31: only a standard error above ``MAX_THRESHOLD_ERROR_K`` caps the threshold. Thirty
+    days in two clusters 12 K apart (slope −3 kWh/K, threshold 16 °C, residual square sum 6048)
+    give a standard error of exactly 2 K: the threshold keeps its own confidence."""
+    cold = [DayPoint(-2.0, e) for e in [72.0] * 7 + [36.0] * 7 + [54.0]]
+    mild = [DayPoint(10.0, e) for e in [30.0] * 5 + [6.0] * 5 + [24.0, 12.0, 18.0, 18.0, 18.0]]
+    days = [*cold, *mild]
+    xs = [d.outdoor_mean for d in days]
+    ys = [d.energy_kwh for d in days]
+    predicted = [54.0] * 15 + [18.0] * 15
+    assert threshold_error(xs, ys, predicted, -3.0, 16.0) == MAX_THRESHOLD_ERROR_K
+    fit = fit_daily_load(days, DEFAULT_15)
+    assert fit is not None
+    assert fit.threshold is not None
+    assert fit.threshold.value == pytest.approx(16.0)
+    assert fit.threshold.confidence == pytest.approx(fit.quality)
+    assert fit.threshold.confidence > CLAMPED_CONFIDENCE
+
+
+def test_the_threshold_error_by_the_delta_method() -> None:
+    """P-31: ``s / |slope| · √(1/n + (threshold − mean outdoor)² / Sxx)``, from three days on and
+    over any spread: s = 2, |slope| = 4, n = 3, Sxx = 0.5, the threshold 2 K from the mean."""
+    error = threshold_error([0.0, 0.5, 1.0], [12.0, 7.0, 4.0], [10.0, 7.0, 4.0], -4.0, 2.5)
+    assert error == pytest.approx(2.5 / math.sqrt(3.0))

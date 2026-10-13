@@ -1539,7 +1539,74 @@ async def T1(r: Run):
         await r.zones()
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1)})
+# VT publishes a thermostat's attributes at its own cycle (5 min by default) or on a change of
+# its own: the water data shown is that old at most, plus the plugin's 30-s refresh.
+VT_CYCLE_WAIT = 360
+
+
+async def _water_shown(r: Run) -> dict[str, dict | None]:
+    """Each VT zone's attribute ``smart_boiler`` (water-interface.md §3.3)."""
+    return {zone: await r.attr(f"climate.{zone}", "smart_boiler") for zone, _target in ZONES}
+
+
+async def _flow_now(r: Run) -> float | None:
+    try:
+        return float(await r.s("sensor.boiler_sim_flow"))
+    except TypeError, ValueError:
+        return None
+
+
+async def V1(r: Run):
+    """I9: every VT zone shows the plugin's water data (attribute smart_boiler) — the boiler's
+    flow rounded to 1 °C and whether heat reaches it; no heat during a hot-water draw; both
+    unknown once the flow sensor fails, and back once it works"""
+    await r.switch(True)
+    await r.ha.wait(600)  # heating under control
+    before = await _flow_now(r)
+    shown = await _water_shown(r)
+    after = await _flow_now(r)
+    r.note(f"flow {before}–{after} °C; shown {shown}")
+    for zone, value in shown.items():
+        r.check(
+            isinstance(value, dict) and set(value) == {"heat_available", "supply_temperature"},
+            f"{zone}: the attribute with its two keys",
+        )
+    flows = [f for f in (before, after) if f is not None]
+    if flows:
+        # Rounded to 1 °C, published again on a change of 1 K, up to a VT cycle old: within 2 K
+        # of the flow seen around it (more only if the flow moved fast).
+        low, high = min(flows) - 2.0, max(flows) + 2.0
+        for zone, value in shown.items():
+            water = value.get("supply_temperature") if isinstance(value, dict) else None
+            r.check(
+                isinstance(water, int | float) and low <= water <= high,
+                f"{zone}: water {water} within {low:.1f}–{high:.1f}",
+            )
+    await r.sim("start_dhw", minutes=10)
+    await r.ha.wait(VT_CYCLE_WAIT)
+    r.check(await r.s("binary_sensor.boiler_sim_dhw_active") == "on", "the draw runs")
+    shown = await _water_shown(r)
+    for zone, value in shown.items():
+        heat = value.get("heat_available") if isinstance(value, dict) else "missing"
+        r.check(heat is False, f"{zone}: no heat during the draw ({heat})")
+    await r.ha.wait(600 - VT_CYCLE_WAIT + 60)  # the draw over
+    await r.sim("fail_signal", signal="flow")
+    await r.ha.wait(VT_CYCLE_WAIT)
+    shown = await _water_shown(r)
+    for zone, value in shown.items():
+        r.check(
+            value == {"heat_available": None, "supply_temperature": None},
+            f"{zone}: unknown with the flow failed ({value})",
+        )
+    await r.sim("fail_signal", signal="flow", failed=False)
+    await r.ha.wait(VT_CYCLE_WAIT)
+    shown = await _water_shown(r)
+    for zone, value in shown.items():
+        water = value.get("supply_temperature") if isinstance(value, dict) else None
+        r.check(water is not None, f"{zone}: the water known again ({value})")
+
+
+SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1)})
 
 
 if __name__ == "__main__":

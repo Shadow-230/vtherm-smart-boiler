@@ -108,7 +108,7 @@ stay out of SmartPI's model.
 | Requirement | Version |
 |---|---|
 | Home Assistant | 2026.9 or later |
-| Versatile Thermostat | 10.2.0 or later (it loads external feature managers from 10.2.0); 10.4.0 is the version tested — provisional until the first release |
+| Versatile Thermostat | 10.2.0 or later (it loads external feature managers from 10.2.0); 10.5.1 is the version tested — provisional until the first release |
 | `vtherm_api` | 0.5.0 or later, installed with the plugin |
 | SmartPI, Auto-TPI | optional; any VT zone algorithm works |
 
@@ -434,9 +434,11 @@ Contributions are welcome — open pull requests against `dev`. Read
 change is small, tested and reviewed. Which automatic checks run, and when, is in its section
 [Checks](CONTRIBUTING.md#checks).
 
-# Support
+# ☕ Support
 
-If the plugin helps your heating, you can buy me a coffee: [buymeacoffee.com/shadow23][bmc].
+If Smart Boiler for Versatile Thermostat is useful to you, you can support its development here:
+
+<a href="https://buymeacoffee.com/shadow23"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="50"></a>
 
 # Authors
 

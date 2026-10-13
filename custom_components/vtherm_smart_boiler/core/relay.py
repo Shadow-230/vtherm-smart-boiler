@@ -52,8 +52,10 @@ of 0.2.3), rows in this order:
    answer O; where "on", it cannot make the boiler heat: decision 4 of 0.2.3 — the loop blocks
    control and hands the relay back either way). After the start phase, not shown over
    ``RELAY_NOT_TAKEN_CHECKS`` checks running — from the first send not shown, through new
-   commands, until the relay shows one; a check it could not answer, out of reach, and a lost
-   command start the run again — it has stopped
+   commands, until the relay switches to one (a command it already shows, taken as it is or sent
+   to renew its timer, ends nothing: a relay stuck in one state under VT's short pulses — decided
+   by the user, 2026-10-13); a check it could not answer, out of reach, and a lost command start
+   the run again — it has stopped
    taking commands (decision 6 of 0.2.3, SB-06): "on" is sent again at every check and the
    control unit raises an error-level issue (the house is not heated); "off" not taken leaves
    the plugin unable to switch heating off — nothing more is written, and the loop blocks
@@ -620,8 +622,10 @@ def _observe(state: RelayState, seen: RelaySeen, now: float) -> RelayState:
     """The relay shows the command: confirmed, held since; held for the timeout, the start phase
     is over and "write ignored" clears (not after "ignored from the start"). Shown on since a
     moment later than the "on" the on-period counts from, the on-period began then (Z4R-02).
-    Shown — now, or for a moment since the send — it takes commands: a run of checks without
-    its command ends (decision 6 of 0.2.3)."""
+    Switched to it since a run of checks without its command began — or shown for a moment since
+    the send — it takes commands: the run ends (decision 6 of 0.2.3); shown where it already
+    stood when the run began, it does not (decided by the user, 2026-10-13) — nor where no switch
+    has been seen at all since the unit started."""
     if seen.on is not state.written:
         if _flipped(state, seen):
             state = replace(state, unshown_since=None, not_taken=False)
@@ -632,14 +636,16 @@ def _observe(state: RelayState, seen: RelaySeen, now: float) -> RelayState:
         # after its own timer had switched it off restarts that timer: the on-period began then.
         state = replace(state, on_since=min(changed, now))
     held = now if state.held_since is None else state.held_since
+    run = state.unshown_since
+    switched = run is None or (changed is not None and changed > run)
     state = replace(
         state,
         confirmed_at=now if state.confirmed_at is None else state.confirmed_at,
         held_since=held,
         rewrite_pending=False,
         attempt_at=None,
-        unshown_since=None,
-        not_taken=False,
+        unshown_since=None if switched else run,
+        not_taken=state.not_taken and not switched,
     )
     if now - held >= RELAY_CONFIRM_S and not state.ignored:
         state = replace(state, start_done=True, unconfirmed=False)
@@ -795,7 +801,8 @@ def _return_due(state: RelayState, now: float, config: RelayConfig) -> bool:
 
 def _adopt(state: RelayState, desired: bool, now: float) -> RelayState:
     """A new command the relay already shows: taken as written and confirmed, with no write —
-    a relay that reports its state is written on a mismatch only."""
+    a relay that reports its state is written on a mismatch only. A run of checks without its
+    command goes on: the relay did not switch (decided by the user, 2026-10-13)."""
     return replace(
         state,
         written=desired,
@@ -809,8 +816,6 @@ def _adopt(state: RelayState, desired: bool, now: float) -> RelayState:
         rewrite_pending=False,
         unconfirmed=state.unconfirmed and not state.start_done,
         attempt_at=None,
-        unshown_since=None,
-        not_taken=False,
     )
 
 

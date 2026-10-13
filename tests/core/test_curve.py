@@ -144,3 +144,55 @@ def test_the_auto_room_keeps_the_curves_own_checks(curve: HeatingCurve, expected
     room = auto_room((22.0,) if expected > 20 else (17.0,), curve, None)
     assert room == pytest.approx(expected)
     assert curve.design_outdoor < room < curve.design_flow
+
+
+# --- Mutation testing (2026-10-12): the curve's own bounds and the outdoor state's memory ---
+
+EPOCH = 1_760_000_000.0  # a wall-clock time, in seconds since the Unix epoch
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"design_outdoor": 20.0, "room": 20.0},  # no span: the curve would divide by zero
+        {"design_flow": 20.0, "room": 20.0},  # no excess: no water above the room
+    ],
+)
+def test_a_curve_at_its_own_bounds_is_rejected(kwargs: dict[str, float]) -> None:
+    """Negative: below and above mean strictly — the design outdoor temperature or the design
+    flow equal to the room temperature is refused."""
+    with pytest.raises(ValueError, match="must be"):
+        HeatingCurve(**kwargs)
+
+
+def test_missing_readings_keep_the_average_and_when_the_last_reading_came() -> None:
+    """At wall-clock times: without readings the last effective value holds for the hold time,
+    then nothing is usable — both keep the moving average and when the last reading came, so a
+    reading back continues the average instead of starting it again."""
+    state = update_outdoor(OutdoorState(), 2.0, None, EPOCH)
+    held = update_outdoor(state, None, None, EPOCH + 1800.0, hold_s=HOUR)
+    assert held == OutdoorState(2.0, 2.0, OutdoorSource.HELD, EPOCH)
+    gone = update_outdoor(held, None, None, EPOCH + HOUR + 1.0, hold_s=HOUR)
+    assert gone == OutdoorState(2.0, None, OutdoorSource.NONE, EPOCH)
+    back = update_outdoor(gone, 8.0, None, EPOCH + 2 * HOUR, time_constant_s=3 * HOUR)
+    assert back.average == pytest.approx(2.0 + 6.0 * (1 - math.exp(-2 / 3)))
+    assert back.effective == back.average
+
+
+def test_no_time_passed_moves_no_average() -> None:
+    """Negative: a second reading at the same moment, or after the wall clock was set back,
+    leaves the moving average where it was — a warmer reading cannot raise the effective."""
+    state = update_outdoor(OutdoorState(), 5.0, None, EPOCH)
+    for now in (EPOCH, EPOCH - HOUR):
+        again = update_outdoor(state, 10.0, None, now)
+        assert again.average == 5.0
+        assert again.effective == 5.0
+
+
+@pytest.mark.parametrize(("time_constant_s", "weight"), [(0.0, 1.0), (1.0, 1 - math.exp(-1))])
+def test_a_short_time_constant_weighs_by_its_own_law(time_constant_s: float, weight: float) -> None:
+    """No time constant: the average is the reading itself — no division by zero, no jump past
+    the reading; a one-second constant still weighs one elapsed second by its exponential."""
+    state = update_outdoor(OutdoorState(), 0.0, None, EPOCH)
+    later = update_outdoor(state, 10.0, None, EPOCH + 1.0, time_constant_s=time_constant_s)
+    assert later.average == pytest.approx(10.0 * weight)

@@ -7,9 +7,12 @@ from dataclasses import replace
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.demand import (
+    POWER,
     Demand,
     DemandConfig,
     boiler_demand,
+    feeds_power,
+    heat_can_flow,
     zone_wants_heat,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
@@ -565,3 +568,95 @@ def test_a_vt_restart_off_and_not_ready_then_started() -> None:
         (None, 0, ("a",)),
         (True, 1, ()),
     ]
+
+
+# --- Mutation testing (2026-10-12): bounds, thresholds reached exactly, a device power alone --
+
+
+def test_the_configs_bounds_are_valid_values() -> None:
+    """A zone opening of 0 — any opening above 0 wants heat — and an opening threshold of
+    1, fully open, are valid."""
+    assert DemandConfig(zone_opening=0.0).zone_opening == 0.0
+    assert DemandConfig(count_threshold=0, opening_threshold=1.0).opening_threshold == 1.0
+
+
+@pytest.mark.parametrize("threshold", [1.01, 1.5, 2.0])
+def test_an_opening_threshold_above_fully_open_is_refused(threshold: float) -> None:
+    """Negative: an opening threshold above 1 — more than fully open — could never be reached,
+    and is refused."""
+    with pytest.raises(ValueError, match="must"):
+        DemandConfig(opening_threshold=threshold)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        zone(valve_open=0.05),  # exactly the zone opening: not above it
+        zone(on_percent=0.05),
+        zone(auto_mode=True, valve_open=0.05),
+        zone(auto_mode=True, valve_open=0.0),
+        zone(auto_mode=True),  # no action and no opening: nothing says it heats
+    ],
+)
+def test_a_zone_not_above_the_zone_opening_does_not_want_heat(state: ZoneState) -> None:
+    """Negative: without VT's own word, a zone wants heat only above the zone opening —
+    exactly at it, at 0, or with nothing to judge by, it does not, in "auto" alike."""
+    assert zone_wants_heat(state, 0.05) is False
+
+
+def test_heat_cannot_flow_through_a_valve_open_no_more_than_the_zone_opening() -> None:
+    """Negative: a zone in "auto" whose action says it heats, its valve open exactly the zone
+    opening, takes no heat now; a valve open further does."""
+    assert not heat_can_flow(zone(auto_mode=True, calling=True, valve_open=0.05), 0.05)
+    assert heat_can_flow(zone(auto_mode=True, calling=True, valve_open=0.06), 0.05)
+
+
+def test_a_zone_with_only_a_device_power_counts_it_while_it_calls() -> None:
+    """A zone VT gives a device power but no duty cycle (an older VT) counts its power while it
+    calls, and nothing while it does not."""
+    calling = zone("a", power=2.0, calling=True)
+    idle = zone("b", power=3.0, calling=False)
+    result = boiler_demand([calling, idle], NOW, AGE, POWER_ONLY)
+    assert result.power_kw == 2.0
+    assert result.wanted is True
+
+
+@pytest.mark.parametrize(
+    ("power", "mean_power", "feeds"),
+    [
+        (None, 0.5, True),  # a mean power above 0, under 1 kW
+        (None, 1.2, True),
+        (2.0, None, True),
+        (None, 0.0, False),  # 0 is no data
+        (None, None, False),
+    ],
+)
+def test_a_zone_feeds_the_power_criterion_by_a_power_above_0(
+    power: float | None, mean_power: float | None, feeds: bool
+) -> None:
+    """P-14: a device power, or a mean power above 0, feeds the power criterion — any size of
+    it; a mean power of 0 without a device power is no data."""
+    assert feeds_power(zone(power=power, mean_power=mean_power)) is feeds
+
+
+def test_a_mean_power_of_0_alone_leaves_the_power_criterion_without_data() -> None:
+    """Negative: the only zone in a heating mode publishes a mean power of 0 and no device
+    power — the power criterion has no data: unknown, never "no"."""
+    result = boiler_demand([zone(valve_open=0.6, mean_power=0.0)], NOW, AGE, POWER_ONLY)
+    assert result.criteria_without_data == (POWER,)
+    assert result.power_kw is None
+    assert result.wanted is None
+
+
+@pytest.mark.parametrize(
+    ("state", "config"),
+    [
+        (zone(on_percent=0.5, power=2.0), POWER_ONLY),  # 1 kW over the cycle: the threshold
+        (zone(valve_open=0.5), OPENING_ONLY),  # exactly the opening threshold
+        (zone(valve_open=0.6), OPENING_ONLY),  # above it, the opening deciding alone
+    ],
+)
+def test_a_threshold_reached_exactly_is_demand(state: ZoneState, config: DemandConfig) -> None:
+    """A threshold is reached at its value: a power or an opening equal to it is demand, each
+    criterion deciding alone."""
+    assert boiler_demand([state], NOW, AGE, config).wanted is True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
 from typing import Any
 
 import pytest
@@ -55,7 +56,8 @@ async def test_diagnostics_are_redacted(
     assert result["options"]["signals"]["flame"].startswith("entity_")
     assert result["signals"]["flow"]["status"] == "ok"
     assert result["parameters"]["boiler_min_power"]["effective"] == 4.0
-    assert result["capabilities"]["vtherm_api_version"] == "0.5.0"
+    # The installed one: the pinned version, or the newest in the early warnings.
+    assert result["capabilities"]["vtherm_api_version"] == version("vtherm_api")
     assert result["analysis"]["verdict"] == "not_enough_data"
     assert len(result["zones"]) == 1
     assert result["forecasts"]["snapshots"] >= 1

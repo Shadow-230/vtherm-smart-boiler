@@ -138,3 +138,39 @@ def test_the_value_before_a_moment_leaves_a_sample_at_it_out() -> None:
     assert series.value_before(25.0) == 2.0
     assert series.value_before(10.0) is None  # nothing before the first sample
     assert Series().value_before(5.0) is None
+
+
+# --- Mutation testing (2026-10-12): the last sample, empty windows, short means ---
+
+
+@pytest.mark.parametrize(
+    ("samples", "expected"),
+    [
+        ([(0.0, 1.0)], [(0.0, 4.0)]),
+        ([(0.0, 1.0), (10.0, 2.0), (20.0, 3.0)], [(0.0, 1.0), (10.0, 2.0), (20.0, 4.0)]),
+    ],
+    ids=["only_sample", "last_of_three"],
+)
+def test_same_time_replaces_only_the_last_sample(
+    samples: list[tuple[float, float]], expected: list[tuple[float, float]]
+) -> None:
+    """A sample at the last one's time replaces the last one — also when it is the only one —
+    and leaves every earlier sample as it was."""
+    series = Series(samples)
+    series.append(samples[-1][0], 4.0)
+    assert [(s.t, s.value) for s in series] == expected
+
+
+@pytest.mark.parametrize(("start", "end"), [(10.0, 10.0), (10.0, 5.0)], ids=["empty", "reversed"])
+def test_an_empty_window_copies_nothing(start: float, end: float) -> None:
+    """Negative: a window with no time in it holds no sample, not even the value at its start."""
+    series = Series([(0.0, 1.0), (20.0, 2.0)])
+    assert len(series.window(start, end)) == 0
+
+
+@pytest.mark.parametrize("known_s", [0.5, 1.0])
+def test_a_mean_over_a_second_or_less_of_known_data_is_that_value(known_s: float) -> None:
+    """Any known data at all gives a mean, however short: a second or less is not "nothing"."""
+    mean = time_weighted_mean(Series([(0.0, 40.0)]), 0.0, known_s)
+    assert mean.value == pytest.approx(40.0)
+    assert mean.known_s == known_s

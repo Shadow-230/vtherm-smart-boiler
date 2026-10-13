@@ -92,3 +92,35 @@ def test_a_zone_split_by_its_devices_asks_through_its_devices_there() -> None:
     assert asking(None) == ("floor",)
     assert circuits_asking((split,), {}, {}, wanting).asking == ("floor",)  # nothing read
     assert circuits_asking((split,), {}, {}, frozenset()).asking == ()  # not wanting heat
+
+
+# --- Mutation testing (2026-10-12): every zone and every circuit is looked at -----------------
+
+
+@pytest.mark.parametrize("wanting", ["climate.a", "climate.b", "climate.c"])
+def test_any_one_of_a_circuits_zones_wanting_heat_makes_it_ask(wanting: str) -> None:
+    """Each of a circuit's zones is looked at: a zone of it not wanting heat does not end the
+    search, so whichever one zone wants heat, the circuit asks."""
+    circuit = OtherAutomation("floor", zones=frozenset({"climate.a", "climate.b", "climate.c"}))
+    assert circuit.asks_through(frozenset({wanting}), {})
+    assert circuits_asking((circuit,), {}, {}, frozenset({wanting})).asking == ("floor",)
+
+
+def test_a_quiet_circuit_listed_first_does_not_hide_those_after_it() -> None:
+    """Negative: a circuit that does not ask is skipped, not the end of the list — one asking
+    after it still asks and holds its water."""
+    quiet = OtherAutomation("garage", requests=True, needed=70.0)
+    asking = OtherAutomation("floor", requests=True, needed=35.0)
+    found = circuits_asking((quiet, asking), {"garage": False, "floor": True}, {}, frozenset())
+    assert found.asking == ("floor",)
+    assert found.floor == 35.0 + OTHER_AUTOMATION_MARGIN_K
+
+
+def test_a_lower_need_listed_after_a_higher_one_does_not_lower_the_floor() -> None:
+    """Negative: the floor is the highest need of those asking whatever their order — a cooler
+    circuit after a hotter one keeps the hotter one's water."""
+    hot = OtherAutomation("pool", requests=True, needed=55.0)
+    cool = OtherAutomation("floor", requests=True, needed=35.0)
+    found = circuits_asking((hot, cool), {"pool": True, "floor": True}, {}, frozenset())
+    assert found.asking == ("pool", "floor")
+    assert found.floor == 55.0 + OTHER_AUTOMATION_MARGIN_K

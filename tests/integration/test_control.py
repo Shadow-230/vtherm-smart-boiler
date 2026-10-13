@@ -1744,6 +1744,43 @@ async def test_ems_esp_switches_heating_off_with_setpoint_zero(rig: Rig) -> None
     assert len(number.writes) == handed_back  # the timeout lets EMS-ESP drop it
 
 
+async def test_ems_esp_off_below_the_entitys_range_blocks_and_resumes(rig: Rig) -> None:
+    """P-15 (the review of 2026-10-13, A3): on EMS-ESP "off" is the setpoint 0. The setpoint
+    entity's lowest value moving above 0 while control runs — an EMS-ESP update, say — would
+    leave the plugin unable to switch heating off: the blocker "outside the entity's range"
+    stops control at once and hands back (EMS-ESP's timeout: nothing more is written), shown on
+    the control state; once the entity takes 0 again, control resumes by itself."""
+    number = FakeNumber(rig.hass, attributes={"min": 0, "max": 90, "step": 0.5})
+    number.register()
+    ems_esp = {
+        "write_path": "entity",
+        "setpoint_entity": number.entity_id,
+        "write_type": "expiring",
+        "hand_back": "timeout",
+        "confirmed_entity": number.entity_id,
+        "topology": "virtual",
+    }
+    entry_options = options(rig.zones, **ems_esp)
+    entry_options["boiler"] |= {"connection": "ems_esp", "control_mode": "full"}
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    assert number.writes
+    number.attributes = {"min": 5, "max": 90, "step": 0.5}
+    number.publish(number.value)
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    assert state.state == "not_allowed"
+    assert "setpoint_outside_entity_range" in state.attributes["blockers"]
+    count = len(number.writes)
+    await rig.advance(120)
+    assert len(number.writes) == count  # handed back: EMS-ESP drops the setpoint by itself
+    number.attributes = {"min": 0, "max": 90, "step": 0.5}
+    number.publish(number.value)
+    await rig.advance(60)
+    assert rig.state("sensor", "control_state").state != "not_allowed"
+    assert len(number.writes) > count  # control resumed by itself
+
+
 @pytest.mark.parametrize("connection", [None, "esphome"])
 async def test_without_ems_esp_a_setpoint_alone_stays_blocked(
     rig: Rig, connection: str | None

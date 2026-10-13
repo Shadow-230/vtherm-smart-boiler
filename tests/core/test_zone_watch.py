@@ -10,6 +10,7 @@ from custom_components.vtherm_smart_boiler.core.zone_watch import (
     NO_ZONE_ISSUE_S,
     RECOGNITION_S,
     ZoneWatch,
+    every_zone_unknown_since,
     follow_zones,
     graced,
     in_recognition,
@@ -307,3 +308,26 @@ def test_a_clock_set_back_restarts_the_every_zone_unknown_wait_now() -> None:
 
     assert every_zone_unknown_since(10_000.0, (gone("a"),), 6_400.0, None) == 6_400.0
     assert every_zone_unknown_since(6_400.0, (gone("a"),), 10_000.0, None) == 6_400.0
+
+
+# --- Mutation testing (2026-10-12): the zones' age limit and the zones listed after one -------
+
+
+def test_a_zone_that_never_answered_does_not_hide_the_grace_of_those_after_it() -> None:
+    """A zone that never answered gets no grace, and the zones listed after it still get
+    theirs: one that answered, then went away, keeps its last answer."""
+    first = zone("b", 0.0)
+    seen = run([(0.0, (gone("a"), first)), (10.0, (gone("a"), gone("b")))])
+    assert graced(seen[1]) == {"b": first}
+    assert seen[1].lost_at == {"b": 10.0}
+
+
+def test_every_zone_beyond_its_age_limit_is_unknown_since_then() -> None:
+    """Negative: a zone VT started, in a heating mode, but last reported longer ago than the
+    zones' age limit is not known — with every zone so, the no-zone issue's wait begins."""
+    stale = zone("a", 0.0)
+    assert every_zone_unknown_since(None, (stale,), 700.0, 600.0) == 700.0
+    assert every_zone_unknown_since(None, (stale,), 600.0, 600.0) is None
+    watch = follow_zones(ZoneWatch(), (stale,), 700.0, 600.0)
+    assert watch.unknown_since == 700.0
+    assert follow_zones(ZoneWatch(), (stale,), 600.0, 600.0).unknown_since is None

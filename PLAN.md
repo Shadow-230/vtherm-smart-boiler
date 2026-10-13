@@ -42,7 +42,7 @@ Three layers:
    blocks it (2026-10-08). Claude connects only to this instance (`CLAUDE.md`).
 
 Control is tested only against the simulator: acceptance scenarios run first in-process, then in
-the test HA. Details: `docs/plan-0.2.md`, phase J. CI fetches VT 10.4.0 and SmartPI 0.4.0 from
+the test HA. Details: `docs/plan-0.2.md`, phase J. CI fetches VT 10.5.1 and SmartPI 0.4.0 from
 their tags on GitHub's servers, so the real-VT tests run on every change; nothing is downloaded
 locally (`docs/plan-0.2.2.md`, decision 14).
 

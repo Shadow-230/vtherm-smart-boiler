@@ -123,3 +123,61 @@ def test_without_removes_one_source() -> None:
         .without(MIN_POWER, Source.ENTERED)
     )
     assert params.value(MIN_POWER) == 4.0
+
+
+# --- Mutation testing (2026-10-12): range and tolerance edges, defaults of other sources ---
+
+
+@pytest.mark.parametrize("value", [PARAMETER_DEFS[MIN_POWER].low, PARAMETER_DEFS[MIN_POWER].high])
+def test_the_plausible_range_includes_its_ends(value: float) -> None:
+    """A value exactly at either end of the plausible range is accepted."""
+    params = ParameterSet().with_estimate(MIN_POWER, Estimate(value, Source.ENTERED))
+    assert params.value(MIN_POWER) == value
+
+
+def test_a_confidence_of_zero_is_accepted_and_never_effective() -> None:
+    """Confidence runs from 0 to 1 inclusive: an estimate with none at all is stored, not used."""
+    params = ParameterSet().with_estimate(MIN_POWER, Estimate(3.0, Source.MEASURED, 0.0))
+    assert params.get(MIN_POWER).estimate(Source.MEASURED) == Estimate(3.0, Source.MEASURED, 0.0)
+    assert params.value(MIN_POWER) is None
+
+
+def test_the_class_default_answers_only_for_the_default_source() -> None:
+    """Negative: the class default is no entry, no measurement and no suggestion; and an
+    estimate that exists is returned as it is."""
+    key = ParameterKey.HEATING_THRESHOLD
+    parameter = ParameterSet().get(key)
+    for source in (Source.ENTERED, Source.MEASURED, Source.LEARNED, Source.SUGGESTED):
+        assert parameter.estimate(source) is None, source
+    entered = Estimate(17.0, Source.ENTERED)
+    assert ParameterSet().with_estimate(key, entered).get(key).estimate(Source.ENTERED) == entered
+
+
+def test_an_observation_at_exactly_the_minimum_confidence_is_compared() -> None:
+    """The confidence the plugin counts includes its edge: such an observation shows a mismatch."""
+    params = (
+        ParameterSet()
+        .with_estimate(MIN_POWER, Estimate(3.0, Source.ENTERED))
+        .with_estimate(MIN_POWER, Estimate(6.0, Source.MEASURED, 0.5))
+    )
+    assert params.mismatches() == [Mismatch(MIN_POWER, 3.0, Estimate(6.0, Source.MEASURED, 0.5))]
+
+
+@pytest.mark.parametrize(
+    ("key", "entered", "measured"),
+    [
+        (HYSTERESIS, 5.0, 7.0),  # exactly the absolute tolerance (2 K)
+        (MIN_POWER, 5.0, 6.0),  # exactly the relative tolerance (20 % of 5 kW)
+    ],
+)
+def test_a_difference_of_exactly_the_tolerance_is_no_mismatch(
+    key: ParameterKey, entered: float, measured: float
+) -> None:
+    """Negative: declared and measured values mismatch only when they differ by more than the
+    tolerance, not by exactly it."""
+    params = (
+        ParameterSet()
+        .with_estimate(key, Estimate(entered, Source.ENTERED))
+        .with_estimate(key, Estimate(measured, Source.MEASURED, 0.9))
+    )
+    assert params.mismatches() == []

@@ -365,3 +365,21 @@ def test_a_restart_indicator_shows_a_restart_by_its_kind() -> None:
     assert restart_seen(1.0, 2.0, RestartKind.BOOT_TIME)
     assert not restart_seen(None, 2.0, RestartKind.BOOT_TIME)
     assert not restart_seen(2.0, None, RestartKind.UPTIME)
+
+
+# --- Mutation testing (2026-10-12): the tolerance includes its edge ---
+
+
+@pytest.mark.parametrize("read_back", [49.5, 50.5])
+def test_a_held_target_half_a_kelvin_from_the_hand_back_value_is_released(
+    read_back: float,
+) -> None:
+    """A read-back exactly the tolerance away from the hand-back value still shows it."""
+    assert released(HELD, read_back, reported_after=True)
+
+
+@pytest.mark.parametrize("read_back", [25.5, 44.5])
+def test_an_expiring_target_half_a_kelvin_from_ours_is_not_released(read_back: float) -> None:
+    """Negative: a read-back exactly the tolerance away from the lowest or from the plugin's last
+    value is still ours — not the device's own value, no release."""
+    assert not released(EXPIRING, read_back, reported_after=True)

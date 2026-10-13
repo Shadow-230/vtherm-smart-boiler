@@ -175,6 +175,18 @@ def test_a_new_value_waits_at_most_one_step() -> None:
     assert action == WriteAction(50.0, WriteKind.CHANGE)
 
 
+def test_a_keep_alive_for_a_return_waits_at_most_one_step() -> None:
+    """The write-rate guard: a held target back from unavailable within one step of the last
+    write gets its keep-alive at the next step — not at the next refresh, 5 minutes later."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, HELD)
+    state, action, _ = step(state, 45.0, None, 3.0, HELD, returned=True)
+    assert action is None  # within the same step
+    state, action, _ = step(state, 45.0, None, 10.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.KEEPALIVE)
+    _, action, _ = step(state, 45.0, None, 20.0, HELD)
+    assert action is None  # sent; nothing more until the next refresh
+
+
 def test_a_runaway_loop_gets_one_write_per_step() -> None:
     state = GuardState()
     written = 0
@@ -359,6 +371,27 @@ def test_where_a_written_value_stands() -> None:
     assert confirmation(state, HELD) is Confirmation.NOT_CONFIRMED  # a known value, not ours
     state, _, _ = step(state, 45.0, 45.0, 150.0, HELD)
     assert confirmation(state, HELD) is Confirmation.CONFIRMED
+
+
+def test_confirmed_only_while_the_read_back_last_showed_the_value() -> None:
+    """A value shown as confirmed is one the read-back still shows: after another value, an
+    unknown read-back — or a draw while it still shows that value — keeps "not confirmed" until
+    the plugin's value is read back again; so does a fall-back during a draw, not judged.
+    Negative: unknown right after the plugin's own value — confirmed."""
+    state = held(EXPIRING)
+    state, _, _ = step(state, 45.0, 60.0, 160.0, EXPIRING)
+    assert confirmation(state, EXPIRING) is Confirmation.NOT_CONFIRMED
+    unknown, _, _ = step(state, 45.0, None, 170.0, EXPIRING)
+    assert confirmation(unknown, EXPIRING) is Confirmation.NOT_CONFIRMED
+    draw, _, _ = step(state, 45.0, 60.0, 170.0, EXPIRING, dhw=True)
+    assert confirmation(draw, EXPIRING) is Confirmation.NOT_CONFIRMED
+    back, _, _ = step(unknown, 45.0, 45.0, 180.0, EXPIRING)
+    assert confirmation(back, EXPIRING) is Confirmation.CONFIRMED
+    fallen = result_of(held(HELD), 45.0, 0.0, 160.0, HELD, dhw=True)
+    assert fallen.judged is ChangeClass.NOT_JUDGED
+    assert confirmation(fallen.state, HELD) is Confirmation.NOT_CONFIRMED
+    ours_then_unknown, _, _ = step(held(HELD), 45.0, None, 160.0, HELD)
+    assert confirmation(ours_then_unknown, HELD) is Confirmation.CONFIRMED
 
 
 def test_a_clock_set_back_does_not_stop_the_keep_alive() -> None:
@@ -2140,3 +2173,771 @@ def test_a_fall_back_while_the_rewrite_is_pending_is_judged_by_the_fall_back_row
     assert result.judged is ChangeClass.LOST_COMMAND
     assert (result.lost, result.action) == (True, WriteAction(45.0, WriteKind.RESEND))
     assert (result.events, result.state.blocked) == ((), None)
+
+
+# --- Mutation testing (2026-10-12): bounds, Home Assistant's clock and branches pinned -------
+
+LATE = 1_700_000_000.0  # Home Assistant's clock: seconds since 1970, never near zero
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"keepalive_s": 1.0, "min_interval_s": 0.5},
+        {"confirm_timeout_s": 1.0},
+        {"tolerance": 0.0},
+    ],
+)
+def test_valid_guard_configs_at_their_bounds(kwargs: dict) -> None:
+    """A keep-alive of one second with a write interval below it, a timeout of one second, no
+    tolerance at all: valid."""
+    GuardConfig(**kwargs)
+
+
+def test_a_zero_confirmation_timeout_is_invalid() -> None:
+    """Negative: a confirmation timeout of 0 is refused, whatever the keep-alive."""
+    with pytest.raises(ValueError, match="must"):
+        GuardConfig(confirm_timeout_s=0.0)
+
+
+def test_a_read_back_exactly_the_tolerance_away_shows_the_value() -> None:
+    """A read-back within the tolerance of the value written — 0.5 K, its bound included — shows
+    it. Negative: just beyond, it does not."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, EXPIRING)
+    shown = result_of(state, 45.0, 45.5, 10.0, EXPIRING)
+    assert shown.judged is ChangeClass.CONFIRMED
+    assert confirmation(shown.state, EXPIRING) is Confirmation.CONFIRMED
+    beyond = result_of(state, 45.0, 45.6, 10.0, EXPIRING)
+    assert beyond.judged is ChangeClass.NOT_JUDGED
+    assert confirmation(beyond.state, EXPIRING) is Confirmation.WAITING
+
+
+def test_losses_are_counted_for_a_day_at_home_assistants_clock() -> None:
+    """Two losses a minute apart are two; one exactly a day old is gone. The other target's loss
+    is the same one within 20 s, its bound included, another one beyond. Three losses within the
+    day warn. Negative: once the first is a day old, the two left do not."""
+    losses = add_loss(add_loss((), LATE, "setpoint"), LATE + 60.0, "setpoint")
+    assert losses == ((LATE, "setpoint"), (LATE + 60.0, "setpoint"))
+    assert add_loss(((LATE, "setpoint"),), LATE + DAY, "setpoint") == ((LATE + DAY, "setpoint"),)
+    assert add_loss(((LATE, "heating"),), LATE + 20.0, "setpoint") == ((LATE, "heating"),)
+    assert add_loss(((LATE, "heating"),), LATE + 21.0, "setpoint") == (
+        (LATE, "heating"),
+        (LATE + 21.0, "setpoint"),
+    )
+    three = ((LATE, "setpoint"), (LATE + 60.0, "setpoint"), (LATE + 120.0, "setpoint"))
+    assert losses_warning(three, LATE + 120.0, False)
+    assert not losses_warning(three, LATE + DAY, False)
+
+
+def _rewritten_late() -> GuardState:
+    """At Home Assistant's clock: 45 held, then another controller's 60 for two steps — the one
+    rewrite at ``LATE + 410`` — and 45 read back."""
+    state, _, _ = step(GuardState(), 45.0, 0.0, LATE, HELD)
+    state = keep(state, HELD, LATE + 10.0, LATE + 150.0)
+    state, _, _ = step(state, 45.0, 60.0, LATE + 400.0, HELD)
+    state, action, _ = step(state, 45.0, 60.0, LATE + 410.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.REWRITE)
+    state, _, _ = step(state, 45.0, 45.0, LATE + 420.0, HELD)
+    return state
+
+
+@pytest.mark.parametrize(("after", "blocked"), [(DAY - 10.0, True), (DAY, False)])
+def test_the_one_rewrite_counts_for_exactly_a_day(after: float, blocked: bool) -> None:
+    """At Home Assistant's clock, another value held two steps within a day of the one rewrite
+    blocks the guard; exactly a day after it, it is written again once."""
+    state = _rewritten_late()
+    t = LATE + 410.0 + after
+    state, _, _ = step(state, 45.0, 60.0, t - 10.0, HELD)
+    result = result_of(state, 45.0, 60.0, t, HELD)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    if blocked:
+        assert (result.action, result.events) == (None, (GuardEvent.OUTSIDE_CHANGE,))
+    else:
+        assert (result.action, result.events) == (WriteAction(45.0, WriteKind.REWRITE), ())
+
+
+def test_a_held_target_back_at_the_first_step_is_not_judged() -> None:
+    """Negative: at the first step, nothing written yet, a held target that came back is not
+    judged: no lost command counted, its value simply sent."""
+    result = result_of(GuardState(), 45.0, 40.0, 0.0, HELD, returned=True)
+    assert result.judged is ChangeClass.NOT_JUDGED
+    assert not result.lost
+    assert result.action == WriteAction(45.0, WriteKind.CHANGE)
+
+
+def test_a_rewrite_not_read_back_blocks_even_while_the_read_back_moves() -> None:
+    """Negative: the one rewrite, never read back within its timeout, blocks the guard even when
+    the read-back never holds one value for two steps."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    state, _, _ = step(state, 45.0, 60.0, 300.0, HELD)
+    state, action, _ = step(state, 45.0, 60.0, 310.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.REWRITE)
+    for t in range(320, 430, 10):
+        state, _, events = step(state, 45.0, 57.0 if t % 20 else 60.0, float(t), HELD)
+        assert events == ()
+    state, action, events = step(state, 45.0, 57.0, 430.0, HELD)
+    assert action is None
+    assert events == (GuardEvent.OUTSIDE_CHANGE,)
+
+
+def test_after_a_hand_back_a_value_never_read_back_is_a_lost_command() -> None:
+    """After a hand-back inside the session — the start phase over, the baseline known — the
+    value sent again and never read back, the read-back staying at the baseline, is a lost
+    command once its timeout has passed: sent again and counted."""
+    state = after_hand_back(held(HELD))
+    state, action, _ = step(state, 45.0, 0.0, 1000.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.CHANGE)
+    for t in range(1010, 1120, 10):
+        result = result_of(state, 45.0, 0.0, float(t), HELD)
+        state = result.state
+        assert (result.action, result.lost) == (None, False), t
+    result = result_of(state, 45.0, 0.0, 1120.0, HELD)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+    assert result.lost
+
+
+def test_a_clock_set_back_after_a_lost_command_waits_for_its_resend() -> None:
+    """C9: a lost command sent again at 400, then the clock set back to 300. The fall-back's
+    moment counts as now: its resend is waited for its whole timeout from 300, not judged again
+    early because the send's own moment moved further back."""
+    result = result_of(held(HELD), 45.0, 0.0, 400.0, HELD)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    state = result.state
+    for t in range(300, 420, 10):
+        result = result_of(state, 45.0, 0.0, float(t), HELD)
+        state = result.state
+        assert (result.action, result.lost) == (None, False), t
+    result = result_of(state, 45.0, 0.0, 420.0, HELD)
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+
+
+def test_a_clock_set_back_keeps_earlier_moments() -> None:
+    """C9: only moments later than now move. After a hand-back, 45 sent at 1000 and kept alive
+    every 30 s, the read-back at the baseline; the clock set back from 1100 to 1080: the send at
+    1000 is still when it was sent, so the value never read back is a lost command 120 s after
+    it — not later, and not never."""
+    state = after_hand_back(held(EXPIRING))
+    for t in (*range(1000, 1110, 10), *range(1080, 1120, 10)):  # set back after 1100
+        result = result_of(state, 45.0, 0.0, float(t), EXPIRING)
+        state = result.state
+        assert not result.lost, t
+    result = result_of(state, 45.0, 0.0, 1120.0, EXPIRING)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.lost
+
+
+def test_a_clock_set_back_below_the_send_counts_the_send_as_now() -> None:
+    """C9: the clock set back below the last send — the send counts as now, like every other
+    moment later than now; only the keep-alive's own moment goes a period further back. After a
+    hand-back, 45 sent at 1000 and never read back, the clock set back to 900: a lost command
+    120 s after 900, at 1020 — not sooner, not later, and not never."""
+    state = after_hand_back(held(HELD))
+    state, action, _ = step(state, 45.0, 0.0, 1000.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.CHANGE)
+    for t in range(900, 1020, 10):
+        result = result_of(state, 45.0, 0.0, float(t), HELD)
+        state = result.state
+        assert not result.lost, t
+    assert state.sent_at == 900.0
+    result = result_of(state, 45.0, 0.0, 1020.0, HELD)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.lost
+
+
+def test_a_second_write_at_the_same_instant_waits() -> None:
+    """Negative: a step run twice at the same moment writes once; the second waits for the write
+    interval like any write within one step."""
+    state, action, _ = step(GuardState(), 45.0, None, 0.0, EXPIRING)
+    assert action == WriteAction(45.0, WriteKind.CHANGE)
+    _, action, _ = step(state, 50.0, None, 0.0, EXPIRING)
+    assert action is None
+
+
+@pytest.mark.parametrize("after", [60.0, 120.0])
+def test_a_fall_back_soon_after_a_new_value_read_back_is_explained(after: float) -> None:
+    """Answer E: a fall-back within 120 s of a send of a new value, its bound included, is
+    explained by it even once that value was read back: a lost command, not the second fall-back
+    within the hour."""
+    state = held(HELD)
+    state, _, _ = step(state, 45.0, 0.0, 400.0, HELD)  # the first fall-back: a lost command
+    state, _, _ = step(state, 45.0, 45.0, 410.0, HELD)
+    state, action, _ = step(state, 50.0, 45.0, 1000.0, HELD)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    state, _, _ = step(state, 50.0, 50.0, 1010.0, HELD)  # read back
+    result = result_of(state, 50.0, 0.0, 1000.0 + after, HELD)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.action == WriteAction(50.0, WriteKind.RESEND)
+
+
+def test_a_resend_explains_no_fall_back() -> None:
+    """Negative (answer E): a resend of the same value explains nothing: a second fall-back 60 s
+    after a lost command's resend, once it was read back, is another controller."""
+    state = held(HELD)
+    state, action, _ = step(state, 45.0, 0.0, 400.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.RESEND)
+    state, _, _ = step(state, 45.0, 45.0, 410.0, HELD)
+    result = result_of(state, 45.0, 0.0, 460.0, HELD)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(45.0, WriteKind.REWRITE)
+
+
+def test_a_rewrite_of_a_new_value_explains_no_fall_back() -> None:
+    """Answer E: only a change explains a fall-back — the one rewrite does not, even where it
+    carries a new value (decided by the user, 2026-10-13): it is the last chance. The second
+    fall-back within the hour is written again once, with the value the controller asks for
+    now; a third, soon after that rewrite was read back, blocks the guard."""
+    state = held(HELD)
+    state, _, _ = step(state, 45.0, 0.0, 400.0, HELD)  # the first: a lost command
+    state, _, _ = step(state, 45.0, 45.0, 410.0, HELD)
+    state, action, _ = step(state, 50.0, 0.0, 500.0, HELD)  # the second: another controller
+    assert action == WriteAction(50.0, WriteKind.REWRITE)
+    state, _, _ = step(state, 50.0, 50.0, 510.0, HELD)
+    result = result_of(state, 50.0, 0.0, 520.0, HELD)
+    assert result.events == (GuardEvent.OUTSIDE_CHANGE,)
+    assert result.state.blocked is GuardEvent.OUTSIDE_CHANGE
+
+
+def test_a_second_fall_back_exactly_an_hour_later_is_another_controller() -> None:
+    """Answer E: the second fall-back without a trace within an hour of the first, its bound
+    included, is another controller."""
+    state = held(HELD)
+    state, _, _ = step(state, 45.0, 0.0, 400.0, HELD)
+    state, _, _ = step(state, 45.0, 45.0, 410.0, HELD)
+    result = result_of(state, 45.0, 0.0, 400.0 + HOUR, HELD)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+
+
+def test_another_value_before_the_first_sends_timeout_is_not_judged() -> None:
+    """Negative, at Home Assistant's clock: before any confirmation, another value held for
+    steps is judged only once the first send has gone unread for its timeout."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, LATE, HELD)
+    for t in (10.0, 20.0, 110.0):
+        result = result_of(state, 45.0, 60.0, LATE + t, HELD)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED, t
+    result = result_of(state, 45.0, 60.0, LATE + 120.0, HELD)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+
+
+def test_a_clip_spans_every_value_sent_and_needs_a_lower_read_back() -> None:
+    """Clipped: one value held two steps, lower than every value sent since the first send not
+    read back, across values 1 K apart in whatever order — 52 then 51 here. Negative: a
+    read-back exactly the tolerance below the lowest sent is within it, not lower: no clip, and
+    another controller once the first send has gone unread for its timeout."""
+    state, _, _ = step(GuardState(), 52.0, None, 0.0, EXPIRING)
+    state, _, _ = step(state, 51.0, None, 130.0, EXPIRING)
+    state, _, _ = step(state, 51.0, 50.0, 140.0, EXPIRING)
+    result = result_of(state, 51.0, 50.0, 150.0, EXPIRING)
+    assert result.judged is ChangeClass.CLIPPED
+    state, _, _ = step(GuardState(), 50.0, None, 0.0, EXPIRING)
+    state, _, _ = step(state, 52.0, None, 130.0, EXPIRING)
+    state, _, _ = step(state, 51.0, None, 140.0, EXPIRING)
+    state, _, _ = step(state, 51.0, 49.5, 150.0, EXPIRING)
+    result = result_of(state, 51.0, 49.5, 160.0, EXPIRING)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+
+
+def test_two_keepalives_of_silence_exactly_are_no_lapse() -> None:
+    """Negative (TB-10): exactly 60 s since the last write is no lapse yet: the fall-back rows
+    judge the read-back at the baseline — a failed attempt in the start phase."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, 10.0, EXPIRING)
+    for t in (20.0, 30.0, 40.0, 50.0, 60.0):  # confirmed; stale data: nothing desired
+        state, _, _ = step(state, None, 45.0, t, EXPIRING)
+    result = result_of(state, 45.0, 40.0, 70.0, EXPIRING)
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+
+
+def test_an_echo_across_an_unknown_read_back_is_not_measured() -> None:
+    """KD-01: what the read-back shows is followed afresh once it is back from unknown: a change
+    seen then measures no echo delay. Without the unknown step, it does."""
+    state, _, _ = step(GuardState(), ON, OFF, 0.0, ECHOED)
+    state, _, _ = step(state, ON, None, 10.0, ECHOED)
+    state, _, _ = step(state, ON, ON, 20.0, ECHOED)
+    assert (state.echoes, state.echo_delays) == (0, ())
+    state, _, _ = step(GuardState(), ON, OFF, 0.0, ECHOED)
+    state, _, _ = step(state, ON, ON, 20.0, ECHOED)
+    assert (state.echoes, state.echo_delays) == (1, (20.0,))
+
+
+def test_an_unknown_read_back_restarts_the_count_of_a_value_not_shown() -> None:
+    """Z4R2-03 and M11: a setpoint not shown since 410, then its read-back unknown from 600: the
+    unknown read-back's own rule speaks — five minutes from 600 — not the earlier count."""
+    state = keep(held(HELD), HELD, 160.0, 390.0)
+    state, _, _ = step(state, 50.0, 45.0, 400.0, HELD)
+    for t in range(410, 600, 10):
+        state, _, _ = step(state, 50.0, 45.0, float(t), HELD)  # the previous value, held
+    for t in range(600, 900, 10):
+        state, _, _ = step(state, 50.0, None, float(t), HELD)
+        assert not confirmation_missing(state, float(t)), t
+    state, _, _ = step(state, 50.0, None, 900.0, HELD)
+    assert confirmation_missing(state, 900.0)
+
+
+def test_a_fall_back_just_after_an_unknown_read_back_is_a_lost_command() -> None:
+    """An unknown read-back is a trace of an outage for five minutes: a fall-back right after it
+    is a lost command, even the second within the hour."""
+    state = keep(held(EXPIRING, first=40.0), EXPIRING, 160.0, 390.0)
+    state, _, _ = step(state, 45.0, 40.0, 400.0, EXPIRING)  # the first fall-back
+    state, _, _ = step(state, 45.0, 45.0, 410.0, EXPIRING)
+    state = keep(state, EXPIRING, 420.0, 490.0)
+    state, _, _ = step(state, 45.0, None, 500.0, EXPIRING)
+    result = result_of(state, 45.0, 40.0, 510.0, EXPIRING)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+
+
+@pytest.mark.parametrize("after", [20.0, 120.0])
+def test_a_value_sent_within_the_timeout_is_the_plugins(after: float) -> None:
+    """A read-back of a value the plugin sent within the confirmation timeout, its bound
+    included, is the plugin's — at Home Assistant's clock too: confirmed, not judged."""
+    state, _, _ = step(GuardState(), 45.0, None, LATE, EXPIRING)
+    state, action, _ = step(state, 50.0, None, LATE + 10.0, EXPIRING)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    result = result_of(state, 50.0, 45.0, LATE + after, EXPIRING)
+    assert result.judged is ChangeClass.CONFIRMED
+
+
+def test_no_baseline_is_learned_during_a_draw() -> None:
+    """P-07: the value from before the plugin is not learned during a hot-water draw; the first
+    known read-back after it is."""
+    state, _, _ = step(GuardState(), None, 60.0, 0.0, HELD, dhw=True)
+    assert state.baseline is None
+    state, _, _ = step(state, None, 40.0, 200.0, HELD, dhw=False)
+    assert state.baseline == 40.0
+
+
+def test_no_baseline_is_learned_after_a_hand_back_before_a_confirmation() -> None:
+    """P-07: once the session has sent a value, the baseline is learned only after the plugin's
+    value was read back — a hand-back in between changes nothing."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, HELD)
+    state, _, _ = step(after_hand_back(state), None, 30.0, 10.0, HELD)
+    assert state.baseline is None
+
+
+def test_no_value_sent_in_the_session_is_taken_for_the_baseline() -> None:
+    """P-07: a value the plugin sent in this session — the second and later ones too — is never
+    learned as the value from before it; another one is, once the plugin's was read back."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, HELD)
+    state, _, _ = step(state, 50.0, None, 10.0, HELD)
+    state, _, _ = step(state, 55.0, None, 20.0, HELD)
+    state, _, _ = step(state, 55.0, 55.0, 30.0, HELD)
+    state, _, _ = step(state, 55.0, 50.0, 200.0, HELD)
+    assert state.baseline is None
+    state, _, _ = step(state, 55.0, 40.0, 210.0, HELD)
+    assert state.baseline == 40.0
+
+
+def test_a_value_not_shown_counts_in_the_start_phase_and_after_it() -> None:
+    """Z4R2-03: a setpoint not shown for five minutes is reported — the previous value held by
+    the device during the start phase, and the baseline after it, alike."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, HELD)
+    state, _, _ = step(state, 45.0, 45.0, 10.0, HELD)
+    for t in range(20, 440, 10):  # 50 sent at 20; the device shows 45 throughout
+        state, _, _ = step(state, 50.0, 45.0, float(t), HELD)
+    assert not state.start_done
+    assert value_not_shown(state, 430.0)
+    state = keep(held(HELD), HELD, 160.0, 390.0)
+    for t in range(400, 710, 10):  # back at the baseline from 400, after the start phase
+        state, _, _ = step(state, 45.0, 0.0, float(t), HELD)
+    assert value_not_shown(state, 700.0)
+
+
+def test_a_send_waits_for_its_timeout_before_it_is_not_confirmed() -> None:
+    """A send not read back is "waiting" until its timeout and "not confirmed" from it on — at
+    Home Assistant's clock too — the read-back known and at the baseline meanwhile."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, LATE, HELD)
+    assert confirmation(state, HELD) is Confirmation.WAITING
+    for t in (10.0, 110.0):
+        state, _, _ = step(state, 45.0, 40.0, LATE + t, HELD)
+        assert confirmation(state, HELD) is Confirmation.WAITING, t
+    state, _, _ = step(state, 45.0, 40.0, LATE + 120.0, HELD)
+    assert confirmation(state, HELD) is Confirmation.NOT_CONFIRMED
+
+
+def test_a_lost_commands_resend_waits_for_its_own_timeout() -> None:
+    """A lost command sent again is "waiting" until its own timeout: the session's first send,
+    read back long ago, is no reason to show it "not confirmed" at once."""
+    state = held(HELD)
+    state, _, _ = step(state, 45.0, 0.0, 400.0, HELD)  # lost: sent again
+    state, _, _ = step(state, 45.0, 0.0, 410.0, HELD)
+    assert confirmation(state, HELD) is Confirmation.WAITING
+
+
+def test_a_fall_back_during_a_draw_is_not_judged() -> None:
+    """Negative (provisional, K4): the read-back falling back to the baseline during a hot-water
+    draw is not judged: no lost command counted."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    result = result_of(state, 45.0, 0.0, 300.0, HELD, dhw=True)
+    assert result.judged is ChangeClass.NOT_JUDGED
+    assert not result.lost
+
+
+def test_a_fall_back_that_began_during_a_draw_is_judged_after_it() -> None:
+    """A fall-back to the baseline that began during a hot-water draw, still shown once the draw
+    and its 120 s are over, is judged then like any fall-back — a lost command, sent again at once
+    and counted — though the read-back did not change at that step; not before."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    for t in range(300, 520, 10):  # the draw until 390, then its 120 s
+        result = result_of(state, 45.0, 0.0, float(t), HELD, dhw=t < 400)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED, t
+        assert not result.lost, t
+    result = result_of(state, 45.0, 0.0, 520.0, HELD, dhw=False)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.lost
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+    assert confirmation(result.state, HELD) is Confirmation.WAITING
+
+
+def test_a_fall_back_after_a_draw_back_to_the_value_is_judged_when_it_comes() -> None:
+    """Negative: a fall-back during a draw that ended with the plugin's value shown again leaves
+    nothing to judge after it; a later fall-back is judged at its own step."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    for t in range(300, 400, 10):
+        state, _, _ = step(state, 45.0, 0.0 if t < 350 else 45.0, float(t), HELD, dhw=True)
+    for t in range(400, 700, 10):
+        result = result_of(state, 45.0, 45.0, float(t), HELD, dhw=False)
+        state = result.state
+        assert result.judged is ChangeClass.CONFIRMED, t
+    result = result_of(state, 45.0, 0.0, 700.0, HELD, dhw=False)
+    assert result.judged is ChangeClass.LOST_COMMAND
+
+
+def test_a_setpoints_previous_value_stays_exempt_after_an_outage() -> None:
+    """Z4R-01: a setpoint's previous value, its successor not read back yet, is not judged — with
+    a trace of an outage too (a slow read-back after a gateway restart)."""
+    state = keep(held(HELD), HELD, 160.0, 390.0)
+    state, _, _ = step(state, 50.0, 45.0, 400.0, HELD)
+    for t in range(410, 600, 10):
+        result = result_of(state, 50.0, 45.0, float(t), HELD, outage_at=380.0)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED, t
+        assert result.action is None or result.action.kind is WriteKind.KEEPALIVE
+
+
+def test_a_report_as_new_as_the_send_is_its_read_back() -> None:
+    """Z4R3-01: a report from the very moment of the send is that send's read-back: the previous
+    value is no longer exempt, and the read-back back at it for two steps is another
+    controller."""
+    state = keep(held(HELD), HELD, 160.0, 390.0)
+    state, action, _ = step(state, 50.0, 45.0, 400.0, HELD, reported_at=10.0)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    state, _, _ = step(state, 50.0, 50.0, 410.0, HELD, reported_at=400.0)
+    state, _, _ = step(state, 50.0, 45.0, 600.0, HELD, reported_at=600.0)
+    result = result_of(state, 50.0, 45.0, 610.0, HELD, reported_at=600.0)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+    assert result.action == WriteAction(50.0, WriteKind.REWRITE)
+
+
+@pytest.mark.parametrize("resent", [False, True], ids=["sent", "resent"])
+def test_the_echo_of_a_value_sent_again_is_its_own_once_the_one_between_was_read_back(
+    resent: bool,
+) -> None:
+    """Z4R3-01: 45, then 50 read back by its own echo, then 45 again within five minutes: the
+    earlier 45 cannot still be in flight — 50 was read back since — so the echo of the new 45 is
+    its own, sent again after a failed write or not; 50 shown later for two steps is another
+    controller."""
+    state = keep(held(HELD), HELD, 160.0, 390.0)
+    state, _, _ = step(state, 50.0, 45.0, 400.0, HELD, reported_at=10.0)
+    state, _, _ = step(state, 50.0, 50.0, 410.0, HELD, reported_at=405.0)
+    state, action, _ = step(state, 45.0, 50.0, 450.0, HELD, reported_at=405.0)
+    assert action == WriteAction(45.0, WriteKind.CHANGE)
+    t = 460.0
+    if resent:
+        state, action, _ = step(write_failed(state), 45.0, 50.0, t, HELD, reported_at=405.0)
+        assert action == WriteAction(45.0, WriteKind.RESEND)
+        t += 10.0
+    state, _, _ = step(state, 45.0, 45.0, t, HELD, reported_at=t - 5.0)
+    state, _, _ = step(state, 45.0, 50.0, 530.0, HELD, reported_at=530.0)
+    result = result_of(state, 45.0, 50.0, 540.0, HELD, reported_at=530.0)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+
+
+def test_a_resend_keeps_the_values_own_echo() -> None:
+    """Z4R3-01: a value read back by its own echo stays so when it is sent again — a lost
+    command's resend is no new value — so its previous value, shown later for its timeout, is
+    another controller."""
+    state = keep(held(HELD), HELD, 160.0, 390.0)
+    state, _, _ = step(state, 50.0, 45.0, 400.0, HELD, reported_at=10.0)
+    state, _, _ = step(state, 50.0, 50.0, 410.0, HELD, reported_at=405.0)
+    state, action, _ = step(state, 50.0, 0.0, 420.0, HELD, reported_at=415.0)
+    assert action == WriteAction(50.0, WriteKind.RESEND)  # lost: sent again
+    for t in range(430, 540, 10):
+        state, _, events = step(state, 50.0, 45.0, float(t), HELD, reported_at=430.0)
+        assert events == ()
+    result = result_of(state, 50.0, 45.0, 540.0, HELD, reported_at=430.0)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+
+
+def test_a_resend_does_not_make_its_own_echo_look_stale() -> None:
+    """Z4R3-01: 45 sent and never read back, then 50, sent again after a failed write: its echo,
+    newer than the send, is its own — the resend is no earlier send of 50 still in flight — so
+    45 shown later for two steps is another controller."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    state, _, _ = step(state, 50.0, 40.0, 10.0, HELD)
+    state, action, _ = step(write_failed(state), 50.0, 40.0, 20.0, HELD)
+    assert action == WriteAction(50.0, WriteKind.RESEND)
+    state, _, _ = step(state, 50.0, 50.0, 30.0, HELD, reported_at=25.0)
+    state, _, _ = step(state, 50.0, 45.0, 200.0, HELD, reported_at=200.0)
+    result = result_of(state, 50.0, 45.0, 210.0, HELD, reported_at=200.0)
+    assert result.judged is ChangeClass.ANOTHER_CONTROLLER
+
+
+def test_the_echo_delay_runs_from_the_first_send_of_the_value_shown() -> None:
+    """KD-01: the echo delay runs from the first send of the value since the read-back showed
+    another — not from a later send of it, nor from a send of the value already shown — to the
+    change as Home Assistant shows it: a report at the very moment of that send is a delay of 0."""
+    cases = [
+        # "on", "off", "on" while the read-back shows "off": from the first "on"
+        (((0.0, ON, OFF), (10.0, OFF, OFF), (20.0, ON, OFF), (30.0, ON, ON)), (30.0,)),
+        # "off" sent while "off" is shown starts nothing: from the "on" after it
+        (((0.0, ON, ON), (10.0, OFF, OFF), (20.0, ON, OFF), (30.0, ON, ON)), (10.0,)),
+    ]
+    for steps, delays in cases:
+        state = GuardState()
+        for t, desired, shown in steps:
+            state, _, _ = step(state, desired, shown, t, ECHOED)
+        assert state.echo_delays == delays
+    state, _, _ = step(GuardState(), ON, OFF, 0.0, ECHOED)
+    state, _, _ = step(state, ON, ON, 10.0, ECHOED, reported_at=0.0)
+    assert state.echo_delays == (0.0,)
+
+
+def _echoes_learned() -> GuardState:
+    """Heating on/off, "off" before the plugin, at Home Assistant's clock: "on", "off", "on" sent
+    at +0, +20 and +40 s; the first two read back 10 s later, the third due at +50."""
+    state = GuardState()
+    for t, desired, shown in (
+        (0, ON, OFF),
+        (10, ON, ON),
+        (20, OFF, ON),
+        (30, OFF, OFF),
+        (40, ON, OFF),
+    ):
+        state, _, _ = step(state, desired, shown, LATE + t, ECHOED)
+    return state
+
+
+def test_a_stuck_heating_read_back_is_judged_five_minutes_after_its_first_missed_send() -> None:
+    """KD-01: three echoes of 10 s known; "off" sent as "on" is read back at +50, and again at
+    +140; the read-back stays "on". Each send counts as missed once unshown three times the
+    10 s plus 30 s, the first at +110; with two, the read-back is stuck 5 minutes after the
+    first: another controller then, not before."""
+    state = _echoes_learned()
+    missed = {}
+    judged = []
+    for t in range(50, 400, 10):
+        result = result_of(state, ON if t == 130 else OFF, ON, LATE + t, ECHOED)
+        state = result.state
+        missed[t] = state.missed
+        if result.judged is ChangeClass.ANOTHER_CONTROLLER:
+            judged.append(t)
+    assert state.echoes == 3
+    assert (missed[100], missed[110]) == ((), (LATE + 50.0,))
+    assert missed[200] == (LATE + 50.0, LATE + 140.0)
+    assert judged[:1] == [360]
+
+
+@pytest.mark.parametrize("how", ["shown", "draw"])
+def test_a_change_or_a_draw_starts_the_missed_sends_afresh(how: str) -> None:
+    """KD-01: the count of missed sends starts afresh when the read-back changes — it shows
+    "off" at last — and during a hot-water draw."""
+    state = _echoes_learned()
+    for t in range(50, 120, 10):
+        state, _, _ = step(state, OFF, ON, LATE + t, ECHOED)
+    assert state.missed == (LATE + 50.0,)
+    if how == "shown":
+        state, _, _ = step(state, OFF, OFF, LATE + 120.0, ECHOED)
+    else:
+        state, _, _ = step(state, OFF, ON, LATE + 120.0, ECHOED, dhw=True)
+    assert state.missed == ()
+
+
+def test_a_send_before_the_read_back_changed_is_never_counted_missed() -> None:
+    """KD-01: "off" sent while the read-back shows "off", which then turns "on" from outside: the
+    send came before what the read-back shows now, so it is never counted as missed."""
+    state = _echoes_learned()
+    for t, desired, shown in ((50, ON, ON), (60, OFF, ON), (70, OFF, OFF), (80, ON, OFF)):
+        state, _, _ = step(state, desired, shown, LATE + t, ECHOED)
+    state, _, _ = step(state, OFF, OFF, LATE + 90.0, ECHOED)
+    for t in range(100, 180, 10):
+        state, _, _ = step(state, OFF, ON, LATE + t, ECHOED)
+    assert state.echoes == 4
+    assert state.missed == ()
+
+
+@pytest.mark.parametrize(
+    ("config", "judged"),
+    [(HELD, ChangeClass.LOST_COMMAND), (EXPIRING, ChangeClass.FAILED_ATTEMPT)],
+    ids=["lost_command", "failed_attempt"],
+)
+def test_a_resend_held_back_by_the_write_interval_goes_at_the_next_step(
+    config: GuardConfig, judged: ChangeClass
+) -> None:
+    """The write-rate guard: a fall-back 3 s after a keep-alive is judged — a lost command after
+    the start phase, a failed attempt in it — and its resend waits for the next step, where it
+    goes, counted once. Meanwhile the value is not shown confirmed."""
+    if config is HELD:
+        state = keep(held(HELD), HELD, 160.0, 290.0)
+        keepalive = 300.0  # the held refresh
+    else:
+        state, _, _ = step(GuardState(), 45.0, 0.0, 0.0, EXPIRING)
+        state = keep(state, EXPIRING, 10.0, 20.0)
+        keepalive = 30.0
+    state, action, _ = step(state, 45.0, 45.0, keepalive, config)
+    assert action == WriteAction(45.0, WriteKind.KEEPALIVE)
+    result = result_of(state, 45.0, 0.0, keepalive + 3.0, config)
+    assert result.judged is judged
+    assert result.action is None
+    assert confirmation(result.state, config) is Confirmation.WAITING
+    result = result_of(result.state, 45.0, 0.0, keepalive + 10.0, config)
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+    assert not result.lost
+
+
+def test_the_values_ignored_are_those_of_the_counted_attempts() -> None:
+    """Answer O's "among the values it did not take": the values of every counted failed attempt,
+    not those of attempts with a trace of an outage in them, which do not count. The attempts
+    at 0, 120 and 240 s (40) had the trace; those at 360, 480 and 600 s (45, 50, 55) count."""
+    state, _, _ = step(GuardState(), 40.0, 0.0, 0.0, EXPIRING)
+    ignored_at = None
+    for t in range(10, 900, 10):
+        desired = 40.0 if t < 360 else 45.0 if t < 480 else 50.0 if t < 600 else 55.0
+        outage = 50.0 if t >= 50 else None
+        result = result_of(state, desired, 0.0, float(t), EXPIRING, outage_at=outage)
+        state = result.state
+        if GuardEvent.IGNORED in result.events:
+            ignored_at = t
+            break
+    assert ignored_at == 720
+    assert state.ignored_values == (45.0, 50.0, 55.0)
+
+
+def test_a_change_within_a_running_attempt_belongs_to_it() -> None:
+    """The start phase, at Home Assistant's clock: a change within a running attempt's timeout
+    belongs to it — the attempt fails 120 s after its first send, with both values."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, LATE, HELD)
+    state, action, _ = step(state, 50.0, 40.0, LATE + 50.0, HELD)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    for t in (60.0, 110.0):
+        state, action, _ = step(state, 50.0, 40.0, LATE + t, HELD)
+        assert action is None
+    result = result_of(state, 50.0, 40.0, LATE + 120.0, HELD)
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+    assert result.state.failed_values == (45.0, 50.0)
+
+
+def test_a_change_once_an_attempt_is_over_starts_the_next() -> None:
+    """The start phase: a change at a running attempt's timeout, the read-back showing another
+    value for one step, first ends that attempt as failed — counted, with its value; the third
+    so is "ignored from the start", and nothing is sent. The change, or the new value sent as a
+    failed attempt's resend, starts the next attempt — failing 120 s after its own send, with
+    its own value."""
+    sent, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    result = result_of(sent, 50.0, 60.0, 120.0, HELD)  # another value, one step
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+    assert result.action == WriteAction(50.0, WriteKind.CHANGE)
+    assert result.state.failed_values == (45.0,)
+    result = result_of(result.state, 50.0, 40.0, 130.0, HELD)  # it falls back
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+    assert result.state.failed_values == (45.0, 50.0)
+    third = result_of(replace(sent, failed_attempts=2), 50.0, 60.0, 120.0, HELD)
+    assert third.judged is ChangeClass.IGNORED_FROM_START
+    assert third.action is None
+    assert third.events == (GuardEvent.IGNORED,)
+    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    state, _, _ = step(state, 45.0, 45.0, 10.0, HELD)
+    result = result_of(state, 50.0, 40.0, 20.0, HELD)  # it falls back; the new value goes
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+    assert result.action == WriteAction(50.0, WriteKind.CHANGE)
+    state = result.state
+    for t in range(30, 140, 10):
+        state, action, _ = step(state, 50.0, 40.0, float(t), HELD)
+        assert action is None, t
+    assert result_of(state, 50.0, 40.0, 140.0, HELD).judged is ChangeClass.FAILED_ATTEMPT
+
+
+def test_another_value_at_an_attempts_timeout_without_a_change_is_not_a_failed_attempt() -> None:
+    """Negative: the read-back showing another value for one step at the attempt's timeout, with
+    no new value to send, is not judged yet; held a second step, it is another controller —
+    and an attempt replaced by a change within its timeout, or with a trace in it, is not
+    counted."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    result = result_of(state, 45.0, 60.0, 120.0, HELD)
+    assert result.judged is ChangeClass.NOT_JUDGED
+    assert result.state.failed_attempts == 0
+    assert result_of(result.state, 45.0, 60.0, 130.0, HELD).judged is (
+        ChangeClass.ANOTHER_CONTROLLER
+    )
+    early = result_of(state, 50.0, 60.0, 110.0, HELD)
+    assert early.judged is ChangeClass.NOT_JUDGED
+    assert early.action == WriteAction(50.0, WriteKind.CHANGE)
+    traced = result_of(state, 50.0, 60.0, 120.0, HELD, outage_at=60.0)
+    assert traced.judged is ChangeClass.FAILED_ATTEMPT
+    assert traced.state.failed_attempts == 0
+
+
+def test_ignored_from_the_start_counts_no_lost_command() -> None:
+    """Negative: the third counted failed attempt — ignored from the start — is no lost command:
+    nothing sent, nothing counted toward "commands lost"."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    result = result_of(replace(state, failed_attempts=2), 45.0, 40.0, 120.0, HELD)
+    assert result.judged is ChangeClass.IGNORED_FROM_START
+    assert result.events == (GuardEvent.IGNORED,)
+    assert result.action is None
+    assert not result.lost
+
+
+def _traced_attempt(case: str) -> tuple[GuardState, float, float | None]:
+    """The start phase at Home Assistant's clock, two failed attempts counted already, 45 sent
+    and the baseline 40: an attempt with a trace of an outage in it — seen at a step, an unknown
+    read-back, or there when it was sent, sent again or written again. Returns the state, when
+    the attempt is judged, and the outage then known."""
+    t = LATE
+    if case == "sent_unknown":
+        state, _, _ = step(GuardState(), None, 40.0, t, HELD)
+        state, _, _ = step(replace(state, failed_attempts=2), 45.0, None, t + 10.0, HELD)
+        state, _, _ = step(state, None, 40.0, t + 410.0, HELD)  # back; nothing to write
+        return state, t + 420.0, None
+    if case == "rewritten":
+        state, _, _ = step(GuardState(), 45.0, 40.0, t, HELD)
+        state, _, _ = step(state, 45.0, 45.0, t + 10.0, HELD)
+        state, _, _ = step(state, 45.0, 50.0, t + 20.0, HELD)
+        outage = t - 260.0  # a trace at +30, out of view from +40
+        state, action, _ = step(
+            replace(state, failed_attempts=2), 45.0, 50.0, t + 30.0, HELD, outage_at=outage
+        )
+        assert action == WriteAction(45.0, WriteKind.REWRITE)
+        return state, t + 50.0, outage
+    state, _, _ = step(GuardState(), 45.0, 40.0, t, HELD)
+    state = replace(state, failed_attempts=2)
+    if case == "seen":
+        state, _, _ = step(state, 45.0, 40.0, t + 10.0, HELD, outage_at=t + 5.0)
+        return state, t + 400.0, t + 5.0
+    if case == "unknown":
+        state, _, _ = step(state, 45.0, None, t + 10.0, HELD)
+        state, _, _ = step(state, None, 40.0, t + 400.0, HELD)  # back; nothing to write
+        return state, t + 410.0, None
+    if case == "resent":  # the first attempt fails with the trace: the resend's attempt has it
+        state, action, _ = step(state, 45.0, 40.0, t + 120.0, HELD, outage_at=t + 100.0)
+        assert action == WriteAction(45.0, WriteKind.RESEND)
+        return state, t + 500.0, t + 100.0
+    state, action, _ = step(write_failed(state), 45.0, 40.0, t + 10.0, HELD, outage_at=t + 5.0)
+    assert action == WriteAction(45.0, WriteKind.RESEND)  # "retried": the failed write again
+    return state, t + 400.0, t + 5.0
+
+
+@pytest.mark.parametrize(
+    "case", ["seen", "unknown", "sent_unknown", "resent", "retried", "rewritten"]
+)
+def test_an_attempt_with_a_trace_does_not_count_however_late_it_is_judged(case: str) -> None:
+    """An attempt with a trace of an outage in it does not count — even judged once that trace is
+    out of view (the controller had nothing to write for minutes): sent again, not the third
+    counted failure."""
+    state, at, outage = _traced_attempt(case)
+    result = result_of(state, 45.0, 40.0, at, HELD, outage_at=outage)
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+    assert result.events == ()
+    assert result.state.failed_attempts == 2
+    assert not result.state.ignored

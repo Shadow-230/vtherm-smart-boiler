@@ -958,7 +958,8 @@ The four classes of a change seen in the read-back:
   24 h raise the information alarm "commands lost", never a hold. A second untraced fall-back within
   60 min that no send explains counts as another controller; a send explains a fall-back when it
   comes before the plugin's latest send was read back as its value, or within 120 s of a send of a
-  new value (answer E).
+  new value (answer E) — not the one rewrite, even where it carries a new value: a fall-back after
+  it is the next change, and the plugin steps aside (decided by the user, 2026-10-13).
 - **Ignored from the start** — the boiler never takes the value: never read back as the plugin's for
   longer than 120 s after each of the session's first 3 sends (provisional, K4). The plugin stops
   sending it for the session and says "the boiler does not accept the command — check the settings";
@@ -1051,7 +1052,7 @@ plugin step aside by themselves (Z4-01, Z4R-01, Z4R2-03).
 | R5: the relay's own switch-off timer | off after its lapse time | — | "on" again, not counted, where it is a declared timer's lapse — within 60 s of a whole multiple of its length, at most 3×, since the on-period's "on" or the last renewal; any other switch-off is R2a or R3 (decision 6 of 0.2.3); with the timer "I don't know", counted as a restart toward answer N (Z4-02), unless it recurs at the same on-period age of 9 min or more (10 min, a minute's tolerance), which is the relay's own timer (Z4R-02); a shorter regular one keeps counting, and its latch issue names its length (K4.2) |
 | R6: a relay that reports no state | nothing | — | blind repeats; "controlled without confirmation"; a manual change is undone at the next repeat |
 | R7: the relay never takes the command | never the commanded state for more than 120 s after each of the first 3 sends | ignored from the start | not written again this session; an alarm-level issue; its "off" or "on" ignored: control blocked and the relay handed back (answer O; decision 4 of 0.2.3) |
-| R7a: a relay that stops taking the command in the session | not the commanded state over 3 checks running (about 15 min), the command not shown since it was sent | stopped taking commands | an error-level issue; its "off" not taken: control blocked and the relay handed back (decision 6 of 0.2.3) |
+| R7a: a relay that stops taking the command in the session | not the commanded state over 3 checks running (about 15 min), the command not shown since it was sent — a command it already shows, while it has not switched since, ends nothing (a relay stuck under VT's short pulses; the user, 2026-10-13) | stopped taking commands | an error-level issue; its "off" not taken: control blocked and the relay handed back (decision 6 of 0.2.3) |
 | R8: the relay's hand-back | the rest state | — | done once read back; at a step aside written once and then left alone |
 | R9: a planned restart | — | — | the rest state at the stop; the last command restored at once at the start |
 
@@ -1226,7 +1227,7 @@ reviews every provisional value at K4.
 | Low-flow warning after 15 min | `core/alarms.py` | existing |
 | Recognition period at most 10 min; grace 10 min | `core/zone_watch.py` | decided (decision 3) |
 | Relay out of reach 5 min | control | decided |
-| Untraced fall-back window 60 min; a send explains a fall-back within 120 s of a new value | guards | decided (answer E) |
+| Untraced fall-back window 60 min; a send explains a fall-back within 120 s of a new value, the one rewrite never | guards | decided (answer E; the rewrite, 2026-10-13) |
 | Return by itself after 60 min without a foreign value | `control.py` | decided |
 | A relay in its declared power-cut state: warning at 3 within 24 h, the fourth steps aside | control | decided (answers D, N) |
 | The plugin's own monitor failing: hand-back after 5 min | control | decided (answer I) |
@@ -1275,7 +1276,7 @@ reviews every provisional value at K4.
 | A write's timeout 10 s; a control step counts 60 s at most | control | provisional, K4 (reason to confirm) |
 | The "add water" threshold accepted within 0.1–2.0 bar | options (Y1) | provisional, K4 (reason to confirm) |
 | SmartPI's learning calls time out after 5 s, inside the stop's 15-s budget | `control.py` | provisional, K4 (reason to confirm) |
-| The minimum VT version 10.2.0 (external feature managers load from it; 10.4.0 is tested) | `vtherm_link.py` | provisional, K4 (Q3.1) |
+| The minimum VT version 10.2.0 (external feature managers load from it; 10.5.1 is tested) | `vtherm_link.py` | provisional, K4 (Q3.1) |
 | A started thermostat that does not show the zone values within 15 min: the "reload VT" repair issue | `feature_manager.py` | provisional, K4 (reason to confirm) |
 | A day counts when 90 % of it is known; its degree-days need 80 % | monitor (Y2) | provisional, K4 (reason to confirm) |
 | The lowest-water-temperature suggestion never above 50 °C | monitor (X6) | provisional, K4 (reason to confirm) |
@@ -1530,7 +1531,8 @@ Starts per hour count the hours with heating.
   12. A deviating outdoor sensor: the colder of the sensor and the weather entity.
   13. Class 3 comes into 0.2.2 without minimum times or a switching cap; anti-cycling in 0.3 is to
       be decided against principle 12.
-  14. CI fetches VT 10.4.0 and SmartPI 0.4.0 from their tags on GitHub's servers.
+  14. CI fetches VT 10.5.1 (10.4.0 until 2026-10-13) and SmartPI 0.4.0 from their tags on GitHub's
+      servers.
   15. J4 provokes an unclean restart and a lost link in the test container only.
   16. The first published version after the independent check and at K4; the content at K5.
   Also: the missing-data rule, boiler protection by the boiler's own fault, the safe hand-back,
