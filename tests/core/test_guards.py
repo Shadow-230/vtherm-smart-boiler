@@ -175,6 +175,18 @@ def test_a_new_value_waits_at_most_one_step() -> None:
     assert action == WriteAction(50.0, WriteKind.CHANGE)
 
 
+def test_a_keep_alive_for_a_return_waits_at_most_one_step() -> None:
+    """The write-rate guard: a held target back from unavailable within one step of the last
+    write gets its keep-alive at the next step — not at the next refresh, 5 minutes later."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, HELD)
+    state, action, _ = step(state, 45.0, None, 3.0, HELD, returned=True)
+    assert action is None  # within the same step
+    state, action, _ = step(state, 45.0, None, 10.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.KEEPALIVE)
+    _, action, _ = step(state, 45.0, None, 20.0, HELD)
+    assert action is None  # sent; nothing more until the next refresh
+
+
 def test_a_runaway_loop_gets_one_write_per_step() -> None:
     state = GuardState()
     written = 0
@@ -2560,6 +2572,37 @@ def test_a_fall_back_during_a_draw_is_not_judged() -> None:
     result = result_of(state, 45.0, 0.0, 300.0, HELD, dhw=True)
     assert result.judged is ChangeClass.NOT_JUDGED
     assert not result.lost
+
+
+def test_a_fall_back_that_began_during_a_draw_is_judged_after_it() -> None:
+    """A fall-back to the baseline that began during a hot-water draw, still shown once the draw
+    and its 120 s are over, is judged then like any fall-back — a lost command, sent again at once
+    and counted — though the read-back did not change at that step; not before."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    for t in range(300, 520, 10):  # the draw until 390, then its 120 s
+        result = result_of(state, 45.0, 0.0, float(t), HELD, dhw=t < 400)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED, t
+        assert not result.lost, t
+    result = result_of(state, 45.0, 0.0, 520.0, HELD, dhw=False)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.lost
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+    assert confirmation(result.state, HELD) is Confirmation.WAITING
+
+
+def test_a_fall_back_after_a_draw_back_to_the_value_is_judged_when_it_comes() -> None:
+    """Negative: a fall-back during a draw that ended with the plugin's value shown again leaves
+    nothing to judge after it; a later fall-back is judged at its own step."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    for t in range(300, 400, 10):
+        state, _, _ = step(state, 45.0, 0.0 if t < 350 else 45.0, float(t), HELD, dhw=True)
+    for t in range(400, 700, 10):
+        result = result_of(state, 45.0, 45.0, float(t), HELD, dhw=False)
+        state = result.state
+        assert result.judged is ChangeClass.CONFIRMED, t
+    result = result_of(state, 45.0, 0.0, 700.0, HELD, dhw=False)
+    assert result.judged is ChangeClass.LOST_COMMAND
 
 
 def test_a_setpoints_previous_value_stays_exempt_after_an_outage() -> None:
