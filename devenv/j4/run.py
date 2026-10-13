@@ -1558,8 +1558,9 @@ async def _flow_now(r: Run) -> float | None:
 
 async def V1(r: Run):
     """I9: every VT zone shows the plugin's water data (attribute smart_boiler) — the boiler's
-    flow rounded to 1 °C and whether heat reaches it; no heat during a hot-water draw; both
-    unknown once the flow sensor fails, and back once it works"""
+    flow rounded to 1 °C and whether heat reaches it; no heat during a hot-water draw; the water
+    unknown once the flow sensor fails (the heat unknown, or "no" with the flame out), and back
+    once it works"""
     await r.switch(True)
     await r.ha.wait(600)  # heating under control
     before = await _flow_now(r)
@@ -1592,11 +1593,23 @@ async def V1(r: Run):
     await r.ha.wait(600 - VT_CYCLE_WAIT + 60)  # the draw over
     await r.sim("fail_signal", signal="flow")
     await r.ha.wait(VT_CYCLE_WAIT)
+    # The water unknown; the heat unknown while the flame burns, and "no" while it is out — the
+    # flame decides first (heat.py). Where the flame changed around the reading, either.
+    before = await r.s("binary_sensor.boiler_sim_flame")
     shown = await _water_shown(r)
+    after = await r.s("binary_sensor.boiler_sim_flame")
+    heats: tuple[bool | None, ...] = (None, False)
+    if before == after == "on":
+        heats = (None,)
+    elif before == after == "off":
+        heats = (False,)
+    r.note(f"the flame {before}, then {after}, around the reading: the heat expected {heats}")
     for zone, value in shown.items():
+        water = value.get("supply_temperature", "missing") if isinstance(value, dict) else "missing"
+        heat = value.get("heat_available", "missing") if isinstance(value, dict) else "missing"
         r.check(
-            value == {"heat_available": None, "supply_temperature": None},
-            f"{zone}: unknown with the flow failed ({value})",
+            water is None and heat in heats,
+            f"{zone}: the water unknown with the flow failed, the heat {heats} ({value})",
         )
     await r.sim("fail_signal", signal="flow", failed=False)
     await r.ha.wait(VT_CYCLE_WAIT)
