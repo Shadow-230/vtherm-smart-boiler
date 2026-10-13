@@ -1929,6 +1929,33 @@ async def test_control_needs_at_least_one_zone(
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
+@pytest.mark.parametrize("mode", ["monitor", "full"])
+async def test_the_mode_of_an_entry_made_before_the_connection_question_is_saved(
+    hass: HomeAssistant, entities: dict[str, str], mode: str
+) -> None:
+    """The mode item of an entry made before the connection question, which stores no
+    connection: saving it works — monitoring only, or full control — and the boiler keeps the
+    class it has, which no connection decides; no connection is made up. Before, the form
+    failed: the class was read off a connection the entry does not have."""
+    entry_id = await create_entry(hass, entities, "simple")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    boiler = {k: v for k, v in entry.options["boiler"].items() if k not in PANEL_KEYS}
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "boiler": boiler})
+    await hass.async_block_till_done()
+    menu = await hass.config_entries.options.async_init(entry_id)
+    assert "mode" in menu["menu_options"]
+    result = await options_step(hass, menu, {"next_step_id": "mode"})
+    result = await options_step(hass, result, {"control_mode": mode})
+    if result.get("step_id") == "confirm_blocking":
+        result = await options_step(hass, result, {"save_anyway": True})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    saved = hass.config_entries.async_get_entry(entry_id).options["boiler"]
+    assert saved["control_mode"] == mode
+    assert saved["class"] == boiler["class"]
+    assert "connection" not in saved
+
+
 async def to_behaviour_with(
     hass: HomeAssistant, entities: dict[str, str], zones: tuple[str, ...]
 ) -> dict[str, Any]:

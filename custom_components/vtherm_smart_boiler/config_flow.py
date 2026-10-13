@@ -698,8 +698,9 @@ def apply_interface(
 
 
 def apply_mode(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    """The second panel's answers; the class follows the connection and the mode (decision 2).
-    An electric boiler does not condense; one without hot water keeps no priority."""
+    """The second panel's answers; the class follows the connection and the mode (decision 2) —
+    an entry made before the connection question keeps the class it has, which no connection
+    decides. An electric boiler does not condense; one without hot water keeps no priority."""
     boiler = dict(_stored_boiler(options))
     boiler[CONTROL_MODE] = user_input[CONTROL_MODE]
     boiler["condensing"] = user_input.get("condensing", False)  # not shown: it burns nothing
@@ -707,9 +708,10 @@ def apply_mode(options: dict[str, Any], user_input: dict[str, Any]) -> None:
         boiler[DHW_PRIORITY] = user_input[DHW_PRIORITY]
     else:
         boiler.pop(DHW_PRIORITY, None)  # not shown: no hot water
-    boiler["class"] = boiler_class_for(
-        Connection(boiler[CONNECTION]), ControlMode(user_input[CONTROL_MODE])
-    ).value
+    connection = stored_connection(options)
+    if connection is not None:
+        mode = ControlMode(user_input[CONTROL_MODE])
+        boiler["class"] = boiler_class_for(connection, mode).value
     options[BOILER] = boiler
 
 
