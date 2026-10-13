@@ -3036,7 +3036,7 @@
     },
     "vt_feature_manager_unsupported": {
       "title": "Termostaty VT nie mogą pokazać wartości strefy z wtyczki",
-      "description": "Zainstalowany tu Versatile Thermostat nie może załadować menedżera funkcji wtyczki (menedżery funkcji wymagają VT {version} lub nowszego z vtherm_api 0.5 lub nowszym; wtyczkę testowano z VT 10.4.0), więc jego termostaty nie mogą pokazać, czy ciepło dociera do ich stref. Zaktualizuj Versatile Thermostat, żeby to pokazać."
+      "description": "Zainstalowany tu Versatile Thermostat nie może załadować menedżera funkcji wtyczki (menedżery funkcji wymagają VT {version} lub nowszego z vtherm_api 0.5 lub nowszym; wtyczkę testowano z VT 10.5.1), więc jego termostaty nie mogą pokazać, czy ciepło dociera do ich stref. Zaktualizuj Versatile Thermostat, żeby to pokazać."
     },
     "vt_reload_needed": {
       "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki",

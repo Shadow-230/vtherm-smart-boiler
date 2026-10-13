@@ -34,7 +34,7 @@ the [technical documentation](technical.md).
 - **Home Assistant 2026.9 or later** — the version the plugin is tested on.
 - **Versatile Thermostat 10.2.0 or later**, with its thermostats (the plugin calls them zones)
   set up for the rooms this boiler heats. VT loads external feature managers from 10.2.0;
-  10.4.0 is the version tested. The minimum is provisional and is confirmed before the first
+  10.5.1 is the version tested. The minimum is provisional and is confirmed before the first
   release.
 - The `vtherm_api` library, 0.5.0 or later. Home Assistant installs it with the plugin.
 - **A boiler that Home Assistant can read**, through any integration that shows its signals as

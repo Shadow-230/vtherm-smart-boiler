@@ -1,15 +1,17 @@
 # Tests, lint, formatting and types on every push and pull request (docs/plan-0.2.md, K2;
 # docs/plan-0.2.1.md, R3), on the Home Assistant version tested and on the declared minimum
-# (hacs.json). vendor/ (VT 10.4.0 and SmartPI 0.4.0) is not in the repository: CI fetches both
+# (hacs.json). vendor/ (VT 10.5.1 and SmartPI 0.4.0) is not in the repository: CI fetches both
 # on GitHub's servers by the full commit their release tags pointed at, so a tag moved later
 # changes nothing, and so runs the real-VT tests on every change (docs/plan-0.2.2.md, decision
 # 14; PB-86; nothing is downloaded on the developer's machine). Coverage counts branches, and
 # every module keeps its own floor (P-35). The canaries (newest vtherm_api; newest VT and
-# SmartPI releases) are early warnings of a change upstream, not of ours: they run weekly, on
-# demand and on pull requests into qas and main, not on every pull request (PB-85). A pull
-# request is checked once, up to date with its base (the rulesets require it), so the merge into
-# dev is not checked again; pushes to qas and main are, as the last word before tests on a real
-# Home Assistant and before a release; the weekly run checks dev. The tests run on every CPU
+# SmartPI releases) are early warnings of a change upstream, not of ours: they run on demand and
+# on pull requests into qas and main, not on every pull request (PB-85). GitHub runs a schedule
+# only from the default branch, main, which holds no workflow until a release: so the canaries
+# are started by hand on dev, weekly and before every pull request into qas (the user's decision,
+# 2026-10-13). A pull request is checked once, up to date with its base, so the merge into dev
+# is not checked again; pushes to qas and main are, as the last word before tests on a real
+# Home Assistant and before a release. The tests run on every CPU
 # (pytest-xdist). Actions are pinned to full commits (PB-86); the comment names the version.
 name: Tests
 
@@ -84,10 +86,11 @@ jobs:
           minimum = json.load(open("hacs.json", encoding="utf-8"))["homeassistant"]
           assert __version__ == minimum, (__version__, minimum)
           PY
-      # Decision 14 (P-119): the commits are those the 10.4.0 and 0.4.0 tags pointed at when
-      # docs/plan-0.1.md A5 checked them, fetched by their full hash (PB-86); an archive that
-      # cannot be reached fails the job rather than skipping tests.
-      - name: VT 10.4.0 and SmartPI 0.4.0 by their release commits
+      # Decision 14 (P-119): the commits the VT 10.5.1 tag (the user's decision, 2026-10-13;
+      # 10.4.0 before) and the SmartPI 0.4.0 tag (docs/plan-0.1.md A5) pointed at when checked,
+      # fetched by their full hash (PB-86); an archive that cannot be reached fails the job
+      # rather than skipping tests.
+      - name: VT 10.5.1 and SmartPI 0.4.0 by their release commits
         if: steps.docs.outputs.only != 'true'
         run: |
           set -euo pipefail
@@ -98,10 +101,10 @@ jobs:
               | tar -xz -C "vendor/$folder" --strip-components=1
           }
           mkdir -p vendor/custom_components
-          fetch jmcollin78/versatile_thermostat 78090166e88a77dfbae619eb8eb842bdd1d7259e \
-            versatile_thermostat-10.4.0
+          fetch jmcollin78/versatile_thermostat 17ea26e0406057b395a27e3bb1a4ec7c39bb3a3c \
+            versatile_thermostat-10.5.1
           fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
-          ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
+          ln -s ../versatile_thermostat-10.5.1/custom_components/versatile_thermostat \
             vendor/custom_components/versatile_thermostat
           ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
             vendor/custom_components/vtherm_smartpi
@@ -173,7 +176,7 @@ jobs:
           python -m pip install --group test --group ha -c "$constraints"
           python -m pip install -U vtherm-api
           python -m pip show vtherm-api | head -2
-      - name: VT 10.4.0 and SmartPI 0.4.0 by their release commits
+      - name: VT 10.5.1 and SmartPI 0.4.0 by their release commits
         run: |
           set -euo pipefail
           fetch() {  # repository, the full commit, the folder under vendor/
@@ -183,10 +186,10 @@ jobs:
               | tar -xz -C "vendor/$folder" --strip-components=1
           }
           mkdir -p vendor/custom_components
-          fetch jmcollin78/versatile_thermostat 78090166e88a77dfbae619eb8eb842bdd1d7259e \
-            versatile_thermostat-10.4.0
+          fetch jmcollin78/versatile_thermostat 17ea26e0406057b395a27e3bb1a4ec7c39bb3a3c \
+            versatile_thermostat-10.5.1
           fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
-          ln -s ../versatile_thermostat-10.4.0/custom_components/versatile_thermostat \
+          ln -s ../versatile_thermostat-10.5.1/custom_components/versatile_thermostat \
             vendor/custom_components/versatile_thermostat
           ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
             vendor/custom_components/vtherm_smartpi

@@ -114,7 +114,7 @@ trafiły do modelu SmartPI.
 | Wymaganie | Wersja |
 |---|---|
 | Home Assistant | 2026.9 lub nowszy |
-| Versatile Thermostat | 10.2.0 lub nowszy (od 10.2.0 ładuje zewnętrzne menedżery funkcji); testowana wersja to 10.4.0 — tymczasowo, do pierwszego wydania |
+| Versatile Thermostat | 10.2.0 lub nowszy (od 10.2.0 ładuje zewnętrzne menedżery funkcji); testowana wersja to 10.5.1 — tymczasowo, do pierwszego wydania |
 | `vtherm_api` | 0.5.0 lub nowsza, instalowana z wtyczką |
 | SmartPI, Auto-TPI | opcjonalne; działa każdy algorytm stref VT |
 

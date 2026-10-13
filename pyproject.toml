@@ -12,7 +12,7 @@ test = [
     "mypy==2.3.1",
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
-    # Requirements of the vendored VT 10.4.0 manifest.
+    # Requirements of the vendored VT 10.5.1 manifest (vtherm_api>=0.5.0, numpy, scipy).
     "numpy==2.3.2",
     "scipy==1.18.1",
 ]
@@ -23,7 +23,7 @@ ha-minimum = ["pytest-homeassistant-custom-component==0.13.363"]  # pins homeass
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# vendor/ holds VT 10.4.0 and SmartPI 0.4.0; vendor/custom_components links their integrations.
+# vendor/ holds VT 10.5.1 and SmartPI 0.4.0; vendor/custom_components links their integrations.
 pythonpath = [".", "vendor", "sim"]
 addopts = "--basetemp=.tmp/pytest"
 timeout = 300  # a test that hangs fails instead of holding up the run (pytest-timeout)

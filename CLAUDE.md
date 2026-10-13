@@ -56,14 +56,15 @@ Each topic lives only in its file; do not copy it here.
   only: no clones, downloads or copies on disk, temporary directories included. Exceptions,
   consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
-  and SmartPI 0.4.0 sources in `vendor/` (A5). Sources and documents of typical DIY boiler
+  and SmartPI 0.4.0 sources in `vendor/` (A5; VT 10.5.1 there since 2026-10-13, put in by the
+  user). Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
   for interface facts only (the user's decision, 2026-09-24). The official license text only
   with the user's consent at that step (`docs/plan-0.2.md` K1). CI on GitHub's servers fetches VT
-  10.4.0 and SmartPI 0.4.0 from their tags for the real-VT tests; nothing is downloaded locally
-  (`docs/plan-0.2.2.md`, decision 14).
+  10.5.1 (10.4.0 until 2026-10-13, the user's decision) and SmartPI 0.4.0 from their tags for the
+  real-VT tests; nothing is downloaded locally (`docs/plan-0.2.2.md`, decision 14).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
@@ -94,6 +95,11 @@ Each topic lives only in its file; do not copy it here.
   the user grants it for that one push (`gh auth refresh -h github.com -s workflow`) and takes it
   back at once (`gh auth refresh -h github.com --remove-scopes workflow`); Claude checks
   `gh auth status` after, and never keeps or asks for the scope otherwise.
+  The early warnings (the newest VT, SmartPI and `vtherm_api`) do not run on their weekly
+  schedule — GitHub runs a schedule only from `main` — so Claude starts them by hand on `dev`
+  (`gh workflow run tests.yml --ref dev`): at a session's start when the last such run on `dev` is
+  over 7 days old, and before every pull request from `dev` to `qas`; their result goes into the
+  report (the user's decision, 2026-10-13).
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step; the user
   reviews before anything reaches a real boiler (`docs/plan-0.2.md`, K4); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step

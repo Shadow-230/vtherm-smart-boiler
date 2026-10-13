@@ -395,7 +395,8 @@ that the user's answer changes one place in the code.
     cycling and the start budget remain to be decided; `docs/plan-0.2-i8.md` B8, B9.)
 14. **Tests with the real VT in CI** (P-119, review question 14). *Decided (2026-09-27):* CI fetches
     VT 10.4.0 and SmartPI 0.4.0 from their tags on GitHub's servers, so the real-VT tests run on
-    every change; nothing is downloaded locally.
+    every change; nothing is downloaded locally. VT 10.5.1 instead of 10.4.0 since 2026-10-13
+    (the user's decision).
 15. **J4 in the test HA** (review question 15). *Decided (2026-09-27):* an unclean restart and a lost
     link are provoked in the test HA's own container (e.g. `docker kill` over SSH), only in the test
     LXC and only after the user says to start (J4).
