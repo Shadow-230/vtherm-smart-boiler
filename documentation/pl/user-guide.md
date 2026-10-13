@@ -203,6 +203,12 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła; ochrona przed mrozem dalej
   czuwa.
 - Wtyczka nie ma przełącznika lato/zima. Jeśli strefy VT są wyłączone, kocioł nie grzeje.
+- **Strefy z zaworem, który nie zamyka się do końca** (w VT **Maksymalny stopień zamknięcia**
+  poniżej 100): używaj VT 10.5 lub nowszego. Od 10.5 zawór trzymany na tym minimum nie liczy się
+  jako grzejący, a strefa prosi o ciepło dopiero, gdy VT otworzy go bardziej. VT 10.2–10.4 liczył
+  go jako grzejący, więc taka strefa prosiła o ciepło bez przerwy i kocioł mógł się nigdy nie
+  wyłączać. Przy ustawieniu domyślnym (100: zawór zamyka się całkiem) wszystkie wersje działają
+  tak samo.
 - Obieg sterowany przez inną automatykę prosi o ciepło, gdy jego encja **Obieg prosi o ciepło**
   jest włączona albo gdy potrzebuje ciepła któraś z jego stref: grzanie włącza się wtedy dla
   niego samego, bez względu na ustawioną liczbę stref — jego mieszacz potrzebuje wody. Gdy tej
