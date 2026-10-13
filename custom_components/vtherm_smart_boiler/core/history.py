@@ -181,15 +181,15 @@ def with_downtime[X](
     plugin's setup — the latest row inside is the entity's state then (Home Assistant writes
     every state at its start, before the plugin's setup): known again from ``to`` (PB-65);
     without a row inside, from the first row after ``to``. An interval that began before
-    ``start`` makes ``start`` itself unknown, as the recorder's state for it is the one from
-    before — that row is not the state at ``to`` either."""
-    marks: list[tuple[float, float, bool]] = []  # from, to, began before ``start``
+    ``start``, or at it, makes ``start`` itself unknown, as the recorder's state for it is the
+    one from before — that row is not the state at ``to`` either."""
+    marks: list[tuple[float, float, bool]] = []  # from, to, began at or before ``start``
     for a, b in sorted((a, b) for a, b in down if a < b and b > start and a < end):
         low = max(a, start)
         if marks and low <= marks[-1][1]:
             marks[-1] = (marks[-1][0], max(marks[-1][1], b), marks[-1][2])  # one downtime
         else:
-            marks.append((low, b, a < start))
+            marks.append((low, b, a <= start))
     index = 0
     marked = False  # the current interval's ``None`` is out
     last: list[X] = []  # the latest row inside the current interval: its state at ``to``
