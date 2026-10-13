@@ -2276,13 +2276,12 @@ def test_a_run_of_checks_ends_when_the_relay_shows_the_command() -> None:
     assert not_taken_at(results)[0] == 2000.0 + NOT_TAKEN_S
 
 
-def test_a_command_taken_as_it_is_ends_the_run_of_checks() -> None:
-    """Negative (decision 6 of 0.2.3, SB-06): "off" not shown from 1000 s, then "on" again, which
-    the relay still shows — taken as it is: the run of checks ends. The late "off" landing just
-    after it (the plugin's own context) is left to the check, whose "on" the relay does not
-    take: "not taken" three checks after that send, not 15 min after 1000 s.
-    This test pins current behaviour that the review of 2026-10-13 questions (A2,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+def test_a_command_taken_as_it_is_does_not_end_the_run_of_checks() -> None:
+    """Decision 6 of 0.2.3 (SB-06), decided by the user 2026-10-13: "off" not shown from 1000 s,
+    then "on" again, which the relay still shows — taken as it is, with no write, but the relay
+    has not switched to a command: the run of checks goes on. The late "off" landing just after
+    it, under the plugin's own context, is left to the check, whose "on" the relay does not take:
+    "not taken" 15 min after 1000 s."""
     relay, state = confirmed_on()
     relay.takes = False
 
@@ -2298,15 +2297,14 @@ def test_a_command_taken_as_it_is_ends_the_run_of_checks() -> None:
     assert by_t[1200.0].write is None  # "on" taken as it is
     assert by_t[1210.0].judged is ChangeClass.NOT_JUDGED
     assert by_t[1300.0].write == RelayWrite(True, WriteKind.RESEND)
-    assert not_taken_at(results)[0] == 1300.0 + NOT_TAKEN_S
+    assert not_taken_at(results)[0] == 1000.0 + NOT_TAKEN_S
 
 
-def test_a_command_not_shown_after_the_start_phase_is_reported_and_cleared_by_a_new_one() -> None:
+def test_a_command_not_shown_after_the_start_phase_is_reported_until_the_relay_switches() -> None:
     """After the start phase, "on" not read back within 120 s is "not confirmed" ("write
-    ignored"), and three checks on "not taken"; a new command the relay already shows clears
-    both at once — it holds that one.
-    This test pins current behaviour that the review of 2026-10-13 questions (A2,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+    ignored"), and three checks on "not taken". A new command the relay already shows is taken
+    as it is — no write, "write ignored" off — but the relay has not switched: still "not taken"
+    (decided by the user 2026-10-13). Once it switches to a command, that clears."""
     relay, state = stopped_taking(True)
     state, results = drive(relay, REPORTING, True, 1000.0, 1900.0, state)
     unshown = dict(results)[1000.0 + RELAY_CONFIRM_S].state
@@ -2316,7 +2314,46 @@ def test_a_command_not_shown_after_the_start_phase_is_reported_and_cleared_by_a_
     result = plan_relay(state, False, relay.seen(1910.0), 1910.0, REPORTING)
     assert result.write is None  # taken as it is
     assert not relay_write_ignored(result.state)
-    assert relay_check(result.state, REPORTING, reports=True) is RelayCheck.CONFIRMED
+    assert relay_check(result.state, REPORTING, reports=True) is RelayCheck.NOT_TAKEN
+    relay.takes = True
+    state, results = drive(relay, REPORTING, True, 1920.0, 2100.0, result.state)
+    assert dict(results)[1920.0].write == RelayWrite(True, WriteKind.CHANGE)
+    assert relay.on is True
+    assert relay_check(state, REPORTING, reports=True) is RelayCheck.CONFIRMED
+
+
+def flipping(stuck: bool, period: float = 240.0) -> Callable[[float], bool]:
+    """VT's command from 1000 s, flipping every ``period``: first the state a relay stuck in
+    ``stuck`` does not show."""
+    return lambda t: stuck if int((t - 1000.0) // period) % 2 else not stuck
+
+
+@pytest.mark.parametrize("timer", [RelayTimer.NONE, RelayTimer.UNKNOWN])
+@pytest.mark.parametrize("stuck", [True, False], ids=["stuck_on", "stuck_off"])
+def test_a_relay_stuck_under_short_pulses_is_not_taken(stuck: bool, timer: RelayTimer) -> None:
+    """SB-06 (decision 6 of 0.2.3), decided by the user 2026-10-13: a relay stuck in one state
+    while VT's command flips every 4 minutes never switches to a command — those it already
+    shows, taken as they are or sent to renew its timer, do not end the run of checks: "not
+    taken" comes within 15 minutes of the first send it did not show, plus one period. Before,
+    each command that came to where it stood ended the run, so it never came."""
+    config = replace(REPORTING, timer=timer)
+    relay, state = stopped_taking(not stuck)
+    state, results = drive(relay, config, flipping(stuck), 1000.0, 3000.0, state)
+    first = not_taken_at(results)
+    assert first
+    assert first[0] <= 1000.0 + NOT_TAKEN_S + 240.0
+    assert relay.on is stuck
+    assert state.off_not_taken is stuck  # stuck on: "off" no longer taken, control blocked
+
+
+def test_a_relay_that_switches_under_short_pulses_is_never_not_taken() -> None:
+    """Negative: the same pulses on a relay that takes them — never "not confirmed", never "not
+    taken"."""
+    relay, state = confirmed_on()
+    state, results = drive(relay, REPORTING, flipping(True), 1000.0, 4000.0, state)
+    assert len(relay.writes) > 10
+    assert not not_taken_at(results)
+    assert all(result.judged is not ChangeClass.NOT_CONFIRMED for _t, result in results)
 
 
 def test_the_start_phase_attempts_are_reported_and_never_counted_as_lost() -> None:
