@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from importlib.metadata import version
 from typing import Any
 
 import pytest
@@ -21,6 +22,9 @@ from custom_components.vtherm_smart_boiler.vtherm_link import (
 )
 
 from .harness import VT_PLATFORM, FakeZones, ha_started
+
+# The installed vtherm_api: the pinned version, or the newest in the early warnings.
+VTHERM_API = version("vtherm_api")
 
 
 async def test_zones_from_vt_climate_entities(hass: HomeAssistant, zones: FakeZones) -> None:
@@ -104,7 +108,7 @@ async def test_capabilities_without_vt(hass: HomeAssistant) -> None:
     capabilities = link.capabilities()
     assert capabilities.vt_loaded is False
     assert capabilities.vt_version is None
-    assert capabilities.vtherm_api_version == "0.5.0"
+    assert capabilities.vtherm_api_version == VTHERM_API
     assert capabilities.smartpi_loaded is False
 
 
@@ -127,7 +131,7 @@ async def test_the_api_version_is_read_once_off_the_event_loop(
     link = VThermLink(hass, [])
     await link.async_detect()
     for _ in range(5):
-        assert link.capabilities().vtherm_api_version == "0.5.0"
+        assert link.capabilities().vtherm_api_version == VTHERM_API
     assert threads == [False]  # once, not in the loop's thread
 
 
