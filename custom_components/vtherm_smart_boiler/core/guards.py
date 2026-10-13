@@ -1173,8 +1173,7 @@ def _clock(state: GuardState, now: float, config: GuardConfig) -> GuardState:
     (the gateway gives the boiler back after a minute without it), and every other moment later
     than now counts as now."""
     if state.written_at is not None and now < state.written_at:
-        earlier = now - config.keepalive_s
-        state = replace(state, written_at=earlier, sent_at=min(state.sent_at or earlier, earlier))
+        state = replace(state, written_at=now - config.keepalive_s)
     moved: dict[str, Any] = {}
     for item in fields(state):
         value = getattr(state, item.name)

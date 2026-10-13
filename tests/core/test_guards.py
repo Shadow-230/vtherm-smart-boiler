@@ -2327,20 +2327,20 @@ def test_a_clock_set_back_keeps_earlier_moments() -> None:
     assert result.lost
 
 
-def test_a_clock_set_back_below_the_send_moves_it_with_the_keep_alive() -> None:
-    """C9: the clock set back below the last send moves the send with the keep-alive, a
-    keep-alive period before now. After a hand-back, 45 sent at 1000 and never read back, the
-    clock set back to 900: a lost command 120 s after 870, at 990 — not later, and not never.
-    This test pins current behaviour that the review of 2026-10-13 questions (A6,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+def test_a_clock_set_back_below_the_send_counts_the_send_as_now() -> None:
+    """C9: the clock set back below the last send — the send counts as now, like every other
+    moment later than now; only the keep-alive's own moment goes a period further back. After a
+    hand-back, 45 sent at 1000 and never read back, the clock set back to 900: a lost command
+    120 s after 900, at 1020 — not sooner, not later, and not never."""
     state = after_hand_back(held(HELD))
     state, action, _ = step(state, 45.0, 0.0, 1000.0, HELD)
     assert action == WriteAction(45.0, WriteKind.CHANGE)
-    for t in range(900, 990, 10):
+    for t in range(900, 1020, 10):
         result = result_of(state, 45.0, 0.0, float(t), HELD)
         state = result.state
         assert not result.lost, t
-    result = result_of(state, 45.0, 0.0, 990.0, HELD)
+    assert state.sent_at == 900.0
+    result = result_of(state, 45.0, 0.0, 1020.0, HELD)
     assert result.judged is ChangeClass.LOST_COMMAND
     assert result.lost
 
