@@ -397,9 +397,10 @@ def confirmation(state: GuardState, config: GuardConfig) -> Confirmation | None:
     if state.clip is not None:
         return Confirmation.CLIPPED
     if state.confirmed_at is not None:
-        # Confirmed only while the read-back still shows it: another value seen now — not yet
-        # judged, held one step — is not the plugin's (Z4-01).
-        another = state.foreign is not None or state.last_kind is ReadKind.PREVIOUS
+        # Confirmed only while the read-back still shows it: another value seen last — not yet
+        # judged, held one step, or not judged during a draw; an unknown read-back since changes
+        # nothing — is not the plugin's (Z4-01).
+        another = state.last_kind is not ReadKind.OURS
         return Confirmation.NOT_CONFIRMED if another else Confirmation.CONFIRMED
     return Confirmation.NOT_CONFIRMED if state.late else Confirmation.WAITING
 

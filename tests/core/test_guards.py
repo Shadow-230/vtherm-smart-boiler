@@ -361,6 +361,27 @@ def test_where_a_written_value_stands() -> None:
     assert confirmation(state, HELD) is Confirmation.CONFIRMED
 
 
+def test_confirmed_only_while_the_read_back_last_showed_the_value() -> None:
+    """A value shown as confirmed is one the read-back still shows: after another value, an
+    unknown read-back — or a draw while it still shows that value — keeps "not confirmed" until
+    the plugin's value is read back again; so does a fall-back during a draw, not judged.
+    Negative: unknown right after the plugin's own value — confirmed."""
+    state = held(EXPIRING)
+    state, _, _ = step(state, 45.0, 60.0, 160.0, EXPIRING)
+    assert confirmation(state, EXPIRING) is Confirmation.NOT_CONFIRMED
+    unknown, _, _ = step(state, 45.0, None, 170.0, EXPIRING)
+    assert confirmation(unknown, EXPIRING) is Confirmation.NOT_CONFIRMED
+    draw, _, _ = step(state, 45.0, 60.0, 170.0, EXPIRING, dhw=True)
+    assert confirmation(draw, EXPIRING) is Confirmation.NOT_CONFIRMED
+    back, _, _ = step(unknown, 45.0, 45.0, 180.0, EXPIRING)
+    assert confirmation(back, EXPIRING) is Confirmation.CONFIRMED
+    fallen = result_of(held(HELD), 45.0, 0.0, 160.0, HELD, dhw=True)
+    assert fallen.judged is ChangeClass.NOT_JUDGED
+    assert confirmation(fallen.state, HELD) is Confirmation.NOT_CONFIRMED
+    ours_then_unknown, _, _ = step(held(HELD), 45.0, None, 160.0, HELD)
+    assert confirmation(ours_then_unknown, HELD) is Confirmation.CONFIRMED
+
+
 def test_a_clock_set_back_does_not_stop_the_keep_alive() -> None:
     """C9: the wall clock set back an hour (a correction, a wrong time server): the keep-alive
     — due every 30 s, or the gateway gives the boiler back — must not wait for an hour."""
