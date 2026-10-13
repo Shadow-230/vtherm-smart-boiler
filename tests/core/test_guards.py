@@ -175,6 +175,18 @@ def test_a_new_value_waits_at_most_one_step() -> None:
     assert action == WriteAction(50.0, WriteKind.CHANGE)
 
 
+def test_a_keep_alive_for_a_return_waits_at_most_one_step() -> None:
+    """The write-rate guard: a held target back from unavailable within one step of the last
+    write gets its keep-alive at the next step — not at the next refresh, 5 minutes later."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, HELD)
+    state, action, _ = step(state, 45.0, None, 3.0, HELD, returned=True)
+    assert action is None  # within the same step
+    state, action, _ = step(state, 45.0, None, 10.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.KEEPALIVE)
+    _, action, _ = step(state, 45.0, None, 20.0, HELD)
+    assert action is None  # sent; nothing more until the next refresh
+
+
 def test_a_runaway_loop_gets_one_write_per_step() -> None:
     state = GuardState()
     written = 0
