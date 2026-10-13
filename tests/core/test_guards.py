@@ -2383,11 +2383,10 @@ def test_a_resend_explains_no_fall_back() -> None:
 
 
 def test_a_rewrite_of_a_new_value_explains_no_fall_back() -> None:
-    """Answer E: only a change explains a fall-back. The second fall-back within the hour is
-    written again once, with the value the controller asks for now; a third, soon after that
-    rewrite was read back, blocks the guard.
-    This test pins current behaviour that the review of 2026-10-13 questions (A7,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
+    """Answer E: only a change explains a fall-back — the one rewrite does not, even where it
+    carries a new value (decided by the user, 2026-10-13): it is the last chance. The second
+    fall-back within the hour is written again once, with the value the controller asks for
+    now; a third, soon after that rewrite was read back, blocks the guard."""
     state = held(HELD)
     state, _, _ = step(state, 45.0, 0.0, 400.0, HELD)  # the first: a lost command
     state, _, _ = step(state, 45.0, 45.0, 410.0, HELD)

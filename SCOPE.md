@@ -958,7 +958,8 @@ The four classes of a change seen in the read-back:
   24 h raise the information alarm "commands lost", never a hold. A second untraced fall-back within
   60 min that no send explains counts as another controller; a send explains a fall-back when it
   comes before the plugin's latest send was read back as its value, or within 120 s of a send of a
-  new value (answer E).
+  new value (answer E) — not the one rewrite, even where it carries a new value: a fall-back after
+  it is the next change, and the plugin steps aside (decided by the user, 2026-10-13).
 - **Ignored from the start** — the boiler never takes the value: never read back as the plugin's for
   longer than 120 s after each of the session's first 3 sends (provisional, K4). The plugin stops
   sending it for the session and says "the boiler does not accept the command — check the settings";
@@ -1226,7 +1227,7 @@ reviews every provisional value at K4.
 | Low-flow warning after 15 min | `core/alarms.py` | existing |
 | Recognition period at most 10 min; grace 10 min | `core/zone_watch.py` | decided (decision 3) |
 | Relay out of reach 5 min | control | decided |
-| Untraced fall-back window 60 min; a send explains a fall-back within 120 s of a new value | guards | decided (answer E) |
+| Untraced fall-back window 60 min; a send explains a fall-back within 120 s of a new value, the one rewrite never | guards | decided (answer E; the rewrite, 2026-10-13) |
 | Return by itself after 60 min without a foreign value | `control.py` | decided |
 | A relay in its declared power-cut state: warning at 3 within 24 h, the fourth steps aside | control | decided (answers D, N) |
 | The plugin's own monitor failing: hand-back after 5 min | control | decided (answer I) |
