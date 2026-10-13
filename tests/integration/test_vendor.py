@@ -146,8 +146,73 @@ async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_value
     await heat_to(hass, 21.5)  # VT publishes its attributes again
     shown = hass.states.get(LIVING).attributes.get("smart_boiler")
     assert shown is not None
-    # I9 (water-interface.md §3.3): heat available, and the water rounded to 1 °C.
-    assert set(shown) == {"heat_available", "supply_temperature"}
+    # I9 (water-interface.md §3.3): heat available, and the water rounded to 1 °C — the boiler's
+    # flame off, its flow at 30 °C; the same as the public API's fields (§3.2).
+    assert shown == {"heat_available": False, "supply_temperature": 30}
+    assert _water(hass) == {
+        "supply_temperature": 30.0,
+        "supply_reason": None,
+        "heat_available": False,
+        "heat_reason": "flame_off",
+    }
+    FakeBoiler(hass, (Signal.FLAME, Signal.FLOW)).set_many({Signal.FLAME: True, Signal.FLOW: 45.6})
+    await entry.runtime_data.async_refresh()
+    await heat_to(hass, 21.0)
+    # The flame on, the flow 26.6 K above the room at 19 °C: heat reaches it.
+    assert hass.states.get(LIVING).attributes["smart_boiler"] == {
+        "heat_available": True,
+        "supply_temperature": 46,
+    }
+    assert _water(hass) == {
+        "supply_temperature": 45.6,
+        "supply_reason": None,
+        "heat_available": True,
+        "heat_reason": None,
+    }
+
+
+def _water(hass: HomeAssistant) -> dict[str, Any]:
+    """The public API's fields for the living room, the moment of the reading aside — known
+    while the water is."""
+    water = hass.data["vtherm_smart_boiler_api"].zone_water(LIVING)
+    assert water is not None
+    fields = dict(water)
+    measured = fields.pop("supply_measured_at")
+    assert (measured is None) is (fields["supply_temperature"] is None)
+    return fields
+
+
+async def test_a_real_vt_thermostat_finds_the_plugins_manager_by_its_name(
+    hass: HomeAssistant,
+) -> None:
+    """I9 (water-interface.md §3.1): from VT 10.5.0 a zone algorithm finds the plugin's manager
+    on its own thermostat by its stable name, ``get_feature_manager("vtherm_smart_boiler")``;
+    its properties are the public API's fields. VT 10.4.0, pinned here, has no such lookup: the
+    test runs in the early warning on the newest VT."""
+    from homeassistant.components.climate import DATA_COMPONENT
+
+    entry = await room_and_boiler(hass)
+    hass.set_state(CoreState.starting)
+    await setup(hass, entry)
+    await setup(hass, vt_thermostat())
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    await heat_to(hass, 21.0)
+    thermostat = hass.data[DATA_COMPONENT].get_entity(LIVING)
+    assert thermostat is not None
+    lookup = getattr(thermostat, "get_feature_manager", None)
+    if lookup is None:
+        pytest.skip("this VT has no get_feature_manager (VT 10.4.0; from 10.5.0)")
+    FakeBoiler(hass, (Signal.FLAME, Signal.FLOW)).set_many({Signal.FLAME: True, Signal.FLOW: 45.6})
+    await entry.runtime_data.async_refresh()
+    manager = lookup(DOMAIN)
+    assert manager is not None
+    water = hass.data["vtherm_smart_boiler_api"].zone_water(LIVING)
+    assert water is not None
+    assert {name: getattr(manager, name) for name in water} == dict(water)
+    assert manager.supply_temperature == 45.6
+    assert manager.heat_available is True
 
 
 async def test_a_vt_thermostat_already_running_shows_the_values_after_vt_reloads(
