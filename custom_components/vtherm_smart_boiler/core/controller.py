@@ -749,7 +749,9 @@ def _keep(
 ) -> tuple[ControlState, ControlDecision]:
     """The recognition period: nothing new is decided. The command held before goes on, with
     its keep-alives; without one nothing is written. ``fault``: the boiler reports its own
-    fault — the command held goes on as "off" (Y1)."""
+    fault — the command held goes on as "off" (Y1). Frost protection's state stays as it was:
+    its hysteresis, and its start for "frost not warming" (P-45) — VT reloading is no new
+    start."""
     reasons: tuple[Reason, ...] = (Reason.ZONES_RECOGNITION,)
     if fault:
         reasons = (*reasons, Reason.BOILER_FAULT)
@@ -764,9 +766,6 @@ def _keep(
         state,
         mode=mode,
         controlling=True,
-        frost=False,
-        frost_since=None,
-        frost_from=None,
         command=held,
         target=target,
         reasons=reasons,
