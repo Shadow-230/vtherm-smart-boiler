@@ -269,3 +269,31 @@ async def test_the_entity_path_answers_a_form_shown_again(rig: Rig, hass_client:
     await rig.hass.async_block_till_done()
     control = _control(rig)
     assert (control["hand_back"], control["hand_back_value"]) == ("value", 0)
+
+
+async def test_e7_adds_a_circuit_run_by_other_automation_and_removes_it(
+    rig: Rig, hass_client: Any
+) -> None:
+    """E7: "Add circuit" with a circuit run by other automation — its form shown again once the
+    type reveals the request's fields (I8, decision A2), answered as a user fills them in — then
+    the same circuit's tick removes it, back to instance 1's one circuit."""
+    rig.hass.states.async_set(j4_options.CIRCUIT_ASKS_ENTITY, "off")
+    await start(rig, entry_options=ONE_CIRCUIT)
+    rest = await _rest(rig, hass_client)
+    change = j4_options.CIRCUIT_ASKS
+    result = await walk.save_options(
+        rest, _entry_id(rig), change, ("add_circuit",), required=list(change)
+    )
+    await rig.hass.async_block_till_done()
+    assert result["type"] == "create_entry"
+    assert rig.entry is not None
+    circuits = rig.entry.options["circuits"]
+    assert len(circuits) == 2
+    added = circuits[1]
+    assert added["control"] == "separate"
+    assert added["request_entity"] == j4_options.CIRCUIT_ASKS_ENTITY
+    assert added["needed_temperature"] == 50.0
+    remove = j4_options.REMOVE_CIRCUIT
+    await walk.save_options(rest, _entry_id(rig), remove, ("circuit_2",), required=list(remove))
+    await rig.hass.async_block_till_done()
+    assert [c["id"] for c in rig.entry.options["circuits"]] == ["main"]
