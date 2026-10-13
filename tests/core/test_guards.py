@@ -175,6 +175,18 @@ def test_a_new_value_waits_at_most_one_step() -> None:
     assert action == WriteAction(50.0, WriteKind.CHANGE)
 
 
+def test_a_keep_alive_for_a_return_waits_at_most_one_step() -> None:
+    """The write-rate guard: a held target back from unavailable within one step of the last
+    write gets its keep-alive at the next step — not at the next refresh, 5 minutes later."""
+    state, _, _ = step(GuardState(), 45.0, None, 0.0, HELD)
+    state, action, _ = step(state, 45.0, None, 3.0, HELD, returned=True)
+    assert action is None  # within the same step
+    state, action, _ = step(state, 45.0, None, 10.0, HELD)
+    assert action == WriteAction(45.0, WriteKind.KEEPALIVE)
+    _, action, _ = step(state, 45.0, None, 20.0, HELD)
+    assert action is None  # sent; nothing more until the next refresh
+
+
 def test_a_runaway_loop_gets_one_write_per_step() -> None:
     state = GuardState()
     written = 0
@@ -359,6 +371,27 @@ def test_where_a_written_value_stands() -> None:
     assert confirmation(state, HELD) is Confirmation.NOT_CONFIRMED  # a known value, not ours
     state, _, _ = step(state, 45.0, 45.0, 150.0, HELD)
     assert confirmation(state, HELD) is Confirmation.CONFIRMED
+
+
+def test_confirmed_only_while_the_read_back_last_showed_the_value() -> None:
+    """A value shown as confirmed is one the read-back still shows: after another value, an
+    unknown read-back — or a draw while it still shows that value — keeps "not confirmed" until
+    the plugin's value is read back again; so does a fall-back during a draw, not judged.
+    Negative: unknown right after the plugin's own value — confirmed."""
+    state = held(EXPIRING)
+    state, _, _ = step(state, 45.0, 60.0, 160.0, EXPIRING)
+    assert confirmation(state, EXPIRING) is Confirmation.NOT_CONFIRMED
+    unknown, _, _ = step(state, 45.0, None, 170.0, EXPIRING)
+    assert confirmation(unknown, EXPIRING) is Confirmation.NOT_CONFIRMED
+    draw, _, _ = step(state, 45.0, 60.0, 170.0, EXPIRING, dhw=True)
+    assert confirmation(draw, EXPIRING) is Confirmation.NOT_CONFIRMED
+    back, _, _ = step(unknown, 45.0, 45.0, 180.0, EXPIRING)
+    assert confirmation(back, EXPIRING) is Confirmation.CONFIRMED
+    fallen = result_of(held(HELD), 45.0, 0.0, 160.0, HELD, dhw=True)
+    assert fallen.judged is ChangeClass.NOT_JUDGED
+    assert confirmation(fallen.state, HELD) is Confirmation.NOT_CONFIRMED
+    ours_then_unknown, _, _ = step(held(HELD), 45.0, None, 160.0, HELD)
+    assert confirmation(ours_then_unknown, HELD) is Confirmation.CONFIRMED
 
 
 def test_a_clock_set_back_does_not_stop_the_keep_alive() -> None:
@@ -2541,6 +2574,37 @@ def test_a_fall_back_during_a_draw_is_not_judged() -> None:
     assert not result.lost
 
 
+def test_a_fall_back_that_began_during_a_draw_is_judged_after_it() -> None:
+    """A fall-back to the baseline that began during a hot-water draw, still shown once the draw
+    and its 120 s are over, is judged then like any fall-back — a lost command, sent again at once
+    and counted — though the read-back did not change at that step; not before."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    for t in range(300, 520, 10):  # the draw until 390, then its 120 s
+        result = result_of(state, 45.0, 0.0, float(t), HELD, dhw=t < 400)
+        state = result.state
+        assert result.judged is ChangeClass.NOT_JUDGED, t
+        assert not result.lost, t
+    result = result_of(state, 45.0, 0.0, 520.0, HELD, dhw=False)
+    assert result.judged is ChangeClass.LOST_COMMAND
+    assert result.lost
+    assert result.action == WriteAction(45.0, WriteKind.RESEND)
+    assert confirmation(result.state, HELD) is Confirmation.WAITING
+
+
+def test_a_fall_back_after_a_draw_back_to_the_value_is_judged_when_it_comes() -> None:
+    """Negative: a fall-back during a draw that ended with the plugin's value shown again leaves
+    nothing to judge after it; a later fall-back is judged at its own step."""
+    state = keep(held(HELD), HELD, 160.0, 290.0)
+    for t in range(300, 400, 10):
+        state, _, _ = step(state, 45.0, 0.0 if t < 350 else 45.0, float(t), HELD, dhw=True)
+    for t in range(400, 700, 10):
+        result = result_of(state, 45.0, 45.0, float(t), HELD, dhw=False)
+        state = result.state
+        assert result.judged is ChangeClass.CONFIRMED, t
+    result = result_of(state, 45.0, 0.0, 700.0, HELD, dhw=False)
+    assert result.judged is ChangeClass.LOST_COMMAND
+
+
 def test_a_setpoints_previous_value_stays_exempt_after_an_outage() -> None:
     """Z4R-01: a setpoint's previous value, its successor not read back yet, is not judged — with
     a trace of an outage too (a slow read-back after a gateway restart)."""
@@ -2766,17 +2830,23 @@ def test_a_change_within_a_running_attempt_belongs_to_it() -> None:
 
 
 def test_a_change_once_an_attempt_is_over_starts_the_next() -> None:
-    """The start phase: a change at a running attempt's timeout, or the new value sent as a
+    """The start phase: a change at a running attempt's timeout, the read-back showing another
+    value for one step, first ends that attempt as failed — counted, with its value; the third
+    so is "ignored from the start", and nothing is sent. The change, or the new value sent as a
     failed attempt's resend, starts the next attempt — failing 120 s after its own send, with
-    its own value.
-    The first case pins current behaviour that the review of 2026-10-13 questions (A5,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
-    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
-    state, action, _ = step(state, 50.0, 60.0, 120.0, HELD)  # another value, one step
-    assert action == WriteAction(50.0, WriteKind.CHANGE)
-    result = result_of(state, 50.0, 40.0, 130.0, HELD)  # it falls back
+    its own value."""
+    sent, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    result = result_of(sent, 50.0, 60.0, 120.0, HELD)  # another value, one step
     assert result.judged is ChangeClass.FAILED_ATTEMPT
-    assert result.state.failed_values == (50.0,)
+    assert result.action == WriteAction(50.0, WriteKind.CHANGE)
+    assert result.state.failed_values == (45.0,)
+    result = result_of(result.state, 50.0, 40.0, 130.0, HELD)  # it falls back
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+    assert result.state.failed_values == (45.0, 50.0)
+    third = result_of(replace(sent, failed_attempts=2), 50.0, 60.0, 120.0, HELD)
+    assert third.judged is ChangeClass.IGNORED_FROM_START
+    assert third.action is None
+    assert third.events == (GuardEvent.IGNORED,)
     state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
     state, _, _ = step(state, 45.0, 45.0, 10.0, HELD)
     result = result_of(state, 50.0, 40.0, 20.0, HELD)  # it falls back; the new value goes
@@ -2787,6 +2857,26 @@ def test_a_change_once_an_attempt_is_over_starts_the_next() -> None:
         state, action, _ = step(state, 50.0, 40.0, float(t), HELD)
         assert action is None, t
     assert result_of(state, 50.0, 40.0, 140.0, HELD).judged is ChangeClass.FAILED_ATTEMPT
+
+
+def test_another_value_at_an_attempts_timeout_without_a_change_is_not_a_failed_attempt() -> None:
+    """Negative: the read-back showing another value for one step at the attempt's timeout, with
+    no new value to send, is not judged yet; held a second step, it is another controller —
+    and an attempt replaced by a change within its timeout, or with a trace in it, is not
+    counted."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    result = result_of(state, 45.0, 60.0, 120.0, HELD)
+    assert result.judged is ChangeClass.NOT_JUDGED
+    assert result.state.failed_attempts == 0
+    assert result_of(result.state, 45.0, 60.0, 130.0, HELD).judged is (
+        ChangeClass.ANOTHER_CONTROLLER
+    )
+    early = result_of(state, 50.0, 60.0, 110.0, HELD)
+    assert early.judged is ChangeClass.NOT_JUDGED
+    assert early.action == WriteAction(50.0, WriteKind.CHANGE)
+    traced = result_of(state, 50.0, 60.0, 120.0, HELD, outage_at=60.0)
+    assert traced.judged is ChangeClass.FAILED_ATTEMPT
+    assert traced.state.failed_attempts == 0
 
 
 def test_ignored_from_the_start_counts_no_lost_command() -> None:
