@@ -61,6 +61,6 @@ version is decided then.
 
 ### Requirements
 
-- Home Assistant 2026.9 or later; Versatile Thermostat 10.2.0 or later (10.5.1 tested);
-  `vtherm_api` 0.5.0 or later.
+- Home Assistant 2026.9 or later; Versatile Thermostat 10.2.0 or later (10.5.1 tested; 10.5 or
+  later for zones whose valve may not close fully); `vtherm_api` 0.5.0 or later.
 - Translations: English and Polish.

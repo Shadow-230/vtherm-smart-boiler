@@ -376,6 +376,9 @@ target:
   Przy jednej stałej wartości jest raz zapisywana ponownie, a druga zmiana w ciągu 24 h każe
   wtyczce się wycofać.
 - Jeden kocioł na Home Assistant (jeden wpis). Bez pomp ciepła, zaworów i sterowania ciepłą wodą.
+- **Strefy VT z zaworem, który nie zamyka się do końca** (w VT „Maksymalny stopień zamknięcia”
+  poniżej 100) wymagają VT 10.5 lub nowszego: VT 10.2–10.4 liczy taki zawór na jego minimum jako
+  grzejący, więc strefa prosi o ciepło bez przerwy i kocioł może się nigdy nie wyłączać.
 - Sterowanie temperaturą wody wymaga przełącznika grzania wł./wył. (poza EMS-ESP); bramka z
   termostatem wł./wył. na zaciskach to tylko monitor.
 - Własny kocioł centralny VT musi być wyłączony, a Home Assistant raz uruchomiony ponownie.

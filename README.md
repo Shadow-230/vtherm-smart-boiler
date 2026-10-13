@@ -367,6 +367,9 @@ target:
   With one steady value it is written back once, and a second change within 24 h makes the plugin
   step aside.
 - One boiler per Home Assistant (one entry). No heat pumps, no valves, no hot-water control.
+- **VT zones with a valve that may not close fully** (VT's "Max closing degree" below 100) need
+  VT 10.5 or newer: VT 10.2–10.4 counts such a valve as heating at its floor, so the zone calls
+  for heat all the time and the boiler may never switch off.
 - Water-temperature control needs a heating on/off switch (except EMS-ESP); a gateway with an
   on/off thermostat on its terminals is monitor only.
 - VT's own central boiler must be off, and Home Assistant restarted once.
