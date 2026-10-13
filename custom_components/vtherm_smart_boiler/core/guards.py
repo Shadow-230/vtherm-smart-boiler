@@ -25,7 +25,8 @@ setpoint (S-40, answer E):
   OpenTherm thermostat, also the thermostat's own request where that field is mapped) with a trace
   of an outage within the five minutes before; a held target's first value after it came back;
   a single such fall-back without a trace, or one a send explains (it comes before the plugin's
-  latest send was read back, or within 120 s of a new value). Sent again at once and counted:
+  latest send was read back, or within 120 s of a change to a new value — not of the one rewrite,
+  even of a new value: after it, another fall-back steps aside). Sent again at once and counted:
   frequent losses raise a warning, never a hold;
 - **ignored from the start** — never read back as the plugin's for longer than 120 s after each of
   the session's first three sends (an attempt with a trace of an outage in it does not count): the
@@ -623,7 +624,9 @@ def _fall_back(
 
 def _explained(state: GuardState, now: float) -> bool:
     """A send explains a fall-back that comes before the plugin's latest send was read back, or
-    within ``EXPLAINED_S`` of a send of a new value — not a keep-alive or a resend."""
+    within ``EXPLAINED_S`` of a change to a new value — not a keep-alive, a resend, or the one
+    rewrite even where it carries a new value: the rewrite is the last chance, and a fall-back
+    after it is no lost command but the next change (decided by the user, 2026-10-13)."""
     if state.confirmed_at is None:
         return True
     return state.change_at is not None and now - state.change_at <= EXPLAINED_S
