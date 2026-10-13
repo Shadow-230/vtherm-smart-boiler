@@ -516,6 +516,8 @@ def plan_write(
         # Our own write failed, or waited: what the device shows says nothing about others.
         return _send(state, desired, WriteKind.RESEND, now, config, seen.trace)
     judged = classify(state, read_back, seen, now, config)
+    if judged is ChangeClass.NOT_JUDGED and _replaced_unread(state, desired, seen, now, config):
+        judged = _start_phase(state, seen, now, config)  # it failed before the change
     state, events, lost = _account(state, judged, read_back, seen, now)
     reaction = REACTIONS[judged]
     if reaction is Reaction.STOP:
@@ -587,9 +589,9 @@ def _start_phase(
     state: GuardState, seen: Observation, now: float, config: GuardConfig
 ) -> ChangeClass:
     """The start phase: an attempt fails once the read-back fell back, or has not shown the
-    plugin's value its timeout after the send; the third counted failure is "ignored from the
-    start". An attempt with a trace of an outage in it does not count. Never another
-    controller."""
+    plugin's value its timeout after the send — shown another value then, at a change that
+    replaces it (``_replaced_unread``); the third counted failure is "ignored from the start".
+    An attempt with a trace of an outage in it does not count. Never another controller."""
     at = state.attempt_at
     overdue = at is not None and now - at >= config.confirm_timeout_s
     if not (seen.fell or overdue):
@@ -598,6 +600,24 @@ def _start_phase(
     if counted and state.failed_attempts + 1 >= START_ATTEMPTS:
         return ChangeClass.IGNORED_FROM_START
     return ChangeClass.FAILED_ATTEMPT
+
+
+def _replaced_unread(
+    state: GuardState, desired: float, seen: Observation, now: float, config: GuardConfig
+) -> bool:
+    """A change about to replace the start phase's attempt once its timeout has passed, the
+    read-back showing another value — for a step, too briefly for another controller: that
+    attempt was not read back, and fails before the next one starts."""
+    at = state.attempt_at
+    return (
+        not state.start_done
+        and seen.kind is ReadKind.OTHER
+        and not seen.quiet
+        and state.confirmed_at is None
+        and at is not None
+        and now - at >= config.confirm_timeout_s
+        and not _near(desired, state.written, config.tolerance)
+    )
 
 
 def _fall_back(
