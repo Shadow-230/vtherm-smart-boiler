@@ -3569,16 +3569,19 @@ def test_hot_water_between_two_decisions_is_no_heat_flow() -> None:
     assert decisions[-1].correction == pytest.approx(1.0 / 30.0)
 
 
-def test_heat_during_the_activation_delays_last_step_counts_towards_the_rise() -> None:
-    """Decision 5: the steps of VT's delay are control's steps. The flame on (heat flows, S-24)
-    and a room short: the first water decision, as heating starts, counts the 10 s since the
-    last waiting step towards the comfort correction's rise.
-    This test pins current behaviour that the review of 2026-10-13 questions (A4,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
-    config = replace(WATER, activation_delay_s=120.0)
-    steps = [inputs(t, zones=(short(t),), flame=True) for t in stepped(0.0, 130.0)]
+def test_heat_before_the_first_command_does_not_count_towards_the_rise() -> None:
+    """Decision 5: the steps of VT's delay are control's steps, but a fresh start writes nothing
+    while it waits. The flame on (the boiler's own heat, S-24) and a room short: the first water
+    decision, as heating starts, counts none of it towards the comfort correction's rise — as
+    without a delay; the heat under the plugin's command counts from there."""
+    config = replace(WATER, activation_delay_s=120.0, decision_interval_s=60.0)
+    steps = [inputs(t, zones=(short(t),), flame=True) for t in stepped(0.0, 190.0)]
     _state, decisions = run(steps, config)
-    assert all(d.command is None for d in decisions[:-1])
+    assert all(d.command is None for d in decisions[:12])
+    assert decisions[12].command is not None
+    assert decisions[12].correction == 0.0
+    _state, plain = run(steps[12:], replace(config, activation_delay_s=0.0))
+    assert [d.correction for d in decisions[12:]] == [d.correction for d in plain]
     assert decisions[-1].correction > 0.0
 
 
