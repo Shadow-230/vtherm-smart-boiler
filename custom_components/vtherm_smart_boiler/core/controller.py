@@ -749,7 +749,9 @@ def _keep(
 ) -> tuple[ControlState, ControlDecision]:
     """The recognition period: nothing new is decided. The command held before goes on, with
     its keep-alives; without one nothing is written. ``fault``: the boiler reports its own
-    fault — the command held goes on as "off" (Y1)."""
+    fault — the command held goes on as "off" (Y1). Frost protection's state stays as it was:
+    its hysteresis, and its start for "frost not warming" (P-45) — VT reloading is no new
+    start."""
     reasons: tuple[Reason, ...] = (Reason.ZONES_RECOGNITION,)
     if fault:
         reasons = (*reasons, Reason.BOILER_FAULT)
@@ -764,9 +766,6 @@ def _keep(
         state,
         mode=mode,
         controlling=True,
-        frost=False,
-        frost_since=None,
-        frost_from=None,
         command=held,
         target=target,
         reasons=reasons,
@@ -840,7 +839,13 @@ def _heating_decision(
     coldest = min(
         watched_temperatures(inputs.zones, now, config.zone_max_age_s, config.frost), default=None
     )
-    step_s = 0.0 if state.last_step_at is None else max(0.0, now - state.last_step_at)
+    # Only time under a command of the plugin's counts: a fresh start's wait for VT's activation
+    # delay writes nothing, so the heat then is the boiler's own (decision 5).
+    step_s = (
+        0.0
+        if state.last_step_at is None or state.command is None
+        else max(0.0, now - state.last_step_at)
+    )
     # A step counts a minute at most: a wall clock jumping forward must not count an hour of
     # heat flow or of fall, which would move the comfort correction past its rate at once.
     counted_s = min(MAX_STEP_S, step_s)
