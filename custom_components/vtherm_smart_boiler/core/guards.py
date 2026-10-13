@@ -65,11 +65,11 @@ and shows another one is reported (``value_not_shown``: "confirmation missing" a
 issue), never judged by itself.
 
 Not judged: a difference seen for one step; the exempt previous value (above), shown "not
-confirmed" once the timeout has passed; a hot-water draw and the 120 s after it; the plugin's own
-expiring override lapsing after more than 60 s of its silence (sent again); a write of the
-plugin's own that failed (sent again). Keep-alive repeats and refreshes are not rewrites. A value
-shown as confirmed is one the read-back still shows: another value seen, even for one step, shows
-"not confirmed".
+confirmed" once the timeout has passed; a hot-water draw and the 120 s after it (a fall-back that
+began in them, still shown, is judged at the first step after); the plugin's own expiring override
+lapsing after more than 60 s of its silence (sent again); a write of the plugin's own that failed
+(sent again). Keep-alive repeats and refreshes are not rewrites. A value shown as confirmed is one
+the read-back still shows: another value seen, even for one step, shows "not confirmed".
 
 The guard's memory — the baseline, the block, its counters, the class "ignored from the start",
 the clip — lasts the session, across hand-backs inside it (``after_hand_back``); the one rewrite is
@@ -289,6 +289,7 @@ class GuardState:
     away_since: float | None = None
     missed: tuple[float, ...] = ()
     retry: bool = False  # the last write failed, or waited: send it again
+    keepalive_due: bool = False  # a held target's keep-alive waited: sent at the next step
     recent: tuple[tuple[float, float], ...] = ()  # (time, value) of sends within the timeout
     change_at: float | None = None  # the latest send of a new value
     unconfirmed_since: float | None = None  # the first send not read back since
@@ -304,6 +305,9 @@ class GuardState:
     attempt_trace: bool = False  # a trace of an outage within it: it does not count
     held_since: float | None = None  # the read-back shows the plugin's value since
     last_kind: ReadKind | None = None  # what the last known read-back showed
+    # The read-back came into the fall-back set during a hot-water draw or the quiet time after
+    # it, which judge nothing, and has stayed there: judged at the first step after them.
+    fell_quiet: bool = False
     unknown_since: float | None = None  # the read-back unknown since
     # A setpoint's read-back known and showing another value than the plugin's — not during a
     # draw, not in the fall-back set before the start phase is over — since (Z4R2-03).
@@ -397,9 +401,10 @@ def confirmation(state: GuardState, config: GuardConfig) -> Confirmation | None:
     if state.clip is not None:
         return Confirmation.CLIPPED
     if state.confirmed_at is not None:
-        # Confirmed only while the read-back still shows it: another value seen now — not yet
-        # judged, held one step — is not the plugin's (Z4-01).
-        another = state.foreign is not None or state.last_kind is ReadKind.PREVIOUS
+        # Confirmed only while the read-back still shows it: another value seen last — not yet
+        # judged, held one step, or not judged during a draw; an unknown read-back since changes
+        # nothing — is not the plugin's (Z4-01).
+        another = state.last_kind is not ReadKind.OURS
         return Confirmation.NOT_CONFIRMED if another else Confirmation.CONFIRMED
     return Confirmation.NOT_CONFIRMED if state.late else Confirmation.WAITING
 
@@ -718,7 +723,9 @@ def _observe(
         else None,
     )
     last = state.last_kind
-    fell = kind is ReadKind.FALL_BACK and last is not None and last is not ReadKind.FALL_BACK
+    fell = kind is ReadKind.FALL_BACK and (
+        state.fell_quiet or (last is not None and last is not ReadKind.FALL_BACK)
+    )
     if kind is ReadKind.OURS:
         held_since = now if state.held_since is None else state.held_since
         state = replace(
@@ -758,7 +765,7 @@ def _observe(
         and since is not None
         and now - since >= (config.confirm_timeout_s)
     )
-    state = replace(state, last_kind=kind, late=late)
+    state = replace(state, last_kind=kind, late=late, fell_quiet=fell and quiet)
     state = _note_attempt_trace(state, trace)
     return state, Observation(kind, trace, quiet, returned, fell)
 
@@ -1040,7 +1047,11 @@ def _plan(
         due = now - written_at >= config.keepalive_s
     else:  # held: refreshed with no echo required, and at once when the target is back
         refresh = config.refresh_s
-        due = seen.returned or (refresh is not None and now - written_at >= refresh)
+        due = (
+            seen.returned
+            or state.keepalive_due
+            or (refresh is not None and now - written_at >= refresh)
+        )
     if due:
         result = _send(state, state.written, WriteKind.KEEPALIVE, now, config, seen.trace)
         return replace(result, events=events, judged=judged)
@@ -1061,10 +1072,14 @@ def _send(
     written = state.written
     value = written if kind is WriteKind.KEEPALIVE and written is not None else desired
     if state.written_at is not None and now - state.written_at < config.min_interval_s:
+        if kind is WriteKind.KEEPALIVE:
+            # A held target back: due at this step only, so kept due for the next one.
+            return GuardResult(replace(state, keepalive_due=True))
         waiting = kind in (WriteKind.RESEND, WriteKind.REWRITE)
         return GuardResult(replace(state, retry=True) if waiting else state)
     if kind is WriteKind.KEEPALIVE:
-        return GuardResult(replace(state, written_at=now, retry=False), WriteAction(value, kind))
+        sent = replace(state, written_at=now, retry=False, keepalive_due=False)
+        return GuardResult(sent, WriteAction(value, kind))
     new_value = written is None or not _near(value, written, config.tolerance)
     if kind is WriteKind.RESEND and new_value:
         kind = WriteKind.CHANGE  # the controller moved on: the new value goes
@@ -1103,6 +1118,7 @@ def _send(
         left=left,
         away_since=away,
         retry=False,
+        keepalive_due=False,
         recent=(*recent, (now, value)),
         change_at=now if kind is WriteKind.CHANGE and new_value else state.change_at,
         unconfirmed_since=now if fresh else state.unconfirmed_since,
