@@ -2830,17 +2830,23 @@ def test_a_change_within_a_running_attempt_belongs_to_it() -> None:
 
 
 def test_a_change_once_an_attempt_is_over_starts_the_next() -> None:
-    """The start phase: a change at a running attempt's timeout, or the new value sent as a
+    """The start phase: a change at a running attempt's timeout, the read-back showing another
+    value for one step, first ends that attempt as failed — counted, with its value; the third
+    so is "ignored from the start", and nothing is sent. The change, or the new value sent as a
     failed attempt's resend, starts the next attempt — failing 120 s after its own send, with
-    its own value.
-    The first case pins current behaviour that the review of 2026-10-13 questions (A5,
-    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
-    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
-    state, action, _ = step(state, 50.0, 60.0, 120.0, HELD)  # another value, one step
-    assert action == WriteAction(50.0, WriteKind.CHANGE)
-    result = result_of(state, 50.0, 40.0, 130.0, HELD)  # it falls back
+    its own value."""
+    sent, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    result = result_of(sent, 50.0, 60.0, 120.0, HELD)  # another value, one step
     assert result.judged is ChangeClass.FAILED_ATTEMPT
-    assert result.state.failed_values == (50.0,)
+    assert result.action == WriteAction(50.0, WriteKind.CHANGE)
+    assert result.state.failed_values == (45.0,)
+    result = result_of(result.state, 50.0, 40.0, 130.0, HELD)  # it falls back
+    assert result.judged is ChangeClass.FAILED_ATTEMPT
+    assert result.state.failed_values == (45.0, 50.0)
+    third = result_of(replace(sent, failed_attempts=2), 50.0, 60.0, 120.0, HELD)
+    assert third.judged is ChangeClass.IGNORED_FROM_START
+    assert third.action is None
+    assert third.events == (GuardEvent.IGNORED,)
     state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
     state, _, _ = step(state, 45.0, 45.0, 10.0, HELD)
     result = result_of(state, 50.0, 40.0, 20.0, HELD)  # it falls back; the new value goes
@@ -2851,6 +2857,26 @@ def test_a_change_once_an_attempt_is_over_starts_the_next() -> None:
         state, action, _ = step(state, 50.0, 40.0, float(t), HELD)
         assert action is None, t
     assert result_of(state, 50.0, 40.0, 140.0, HELD).judged is ChangeClass.FAILED_ATTEMPT
+
+
+def test_another_value_at_an_attempts_timeout_without_a_change_is_not_a_failed_attempt() -> None:
+    """Negative: the read-back showing another value for one step at the attempt's timeout, with
+    no new value to send, is not judged yet; held a second step, it is another controller —
+    and an attempt replaced by a change within its timeout, or with a trace in it, is not
+    counted."""
+    state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
+    result = result_of(state, 45.0, 60.0, 120.0, HELD)
+    assert result.judged is ChangeClass.NOT_JUDGED
+    assert result.state.failed_attempts == 0
+    assert result_of(result.state, 45.0, 60.0, 130.0, HELD).judged is (
+        ChangeClass.ANOTHER_CONTROLLER
+    )
+    early = result_of(state, 50.0, 60.0, 110.0, HELD)
+    assert early.judged is ChangeClass.NOT_JUDGED
+    assert early.action == WriteAction(50.0, WriteKind.CHANGE)
+    traced = result_of(state, 50.0, 60.0, 120.0, HELD, outage_at=60.0)
+    assert traced.judged is ChangeClass.FAILED_ATTEMPT
+    assert traced.state.failed_attempts == 0
 
 
 def test_ignored_from_the_start_counts_no_lost_command() -> None:
