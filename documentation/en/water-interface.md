@@ -53,7 +53,7 @@ functions; it is removed when Smart Boiler stops. Today it has one:
   read-only mapping with the fields of section 4; `None` when the thermostat is not one of Smart
   Boiler's zones, or its data cannot be read.
 
-It works with every VT version Smart Boiler supports (10.2.0 and later; 10.4.0 tested) and before
+It works with every VT version Smart Boiler supports (10.2.0 and later; 10.5.1 tested) and before
 VT's reload. A consumer imports nothing of Smart Boiler's; it checks that the key and the
 function exist. A later addition is a new function on the same object. Smart Boiler's other keys
 in `hass.data` are internal and not part of this interface.

@@ -78,7 +78,7 @@ _CENTRAL_RUNNING = frozenset(
 # manager-version.md; provisional, K4): VT 10.0 and 10.1 use ``vtherm_api`` for control
 # algorithms only — a registration there succeeds, and no manager is ever created (P-60).
 VT_FEATURE_MANAGERS_FROM = "10.2.0"
-VT_TESTED = "10.4.0"  # the only VT version the plugin is tested with
+VT_TESTED = "10.5.1"  # the VT version the plugin is tested with (10.4.0 until 2026-10-13)
 # VT's central entry is the one whose ``thermostat_type`` is this (VT 10.4.0 ``const.py``); its
 # central boiler's activation delay, 0–600 s, stays in its data once the feature is unticked.
 THERMOSTAT_TYPE = "thermostat_type"

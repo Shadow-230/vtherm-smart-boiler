@@ -1276,7 +1276,7 @@ reviews every provisional value at K4.
 | A write's timeout 10 s; a control step counts 60 s at most | control | provisional, K4 (reason to confirm) |
 | The "add water" threshold accepted within 0.1–2.0 bar | options (Y1) | provisional, K4 (reason to confirm) |
 | SmartPI's learning calls time out after 5 s, inside the stop's 15-s budget | `control.py` | provisional, K4 (reason to confirm) |
-| The minimum VT version 10.2.0 (external feature managers load from it; 10.4.0 is tested) | `vtherm_link.py` | provisional, K4 (Q3.1) |
+| The minimum VT version 10.2.0 (external feature managers load from it; 10.5.1 is tested) | `vtherm_link.py` | provisional, K4 (Q3.1) |
 | A started thermostat that does not show the zone values within 15 min: the "reload VT" repair issue | `feature_manager.py` | provisional, K4 (reason to confirm) |
 | A day counts when 90 % of it is known; its degree-days need 80 % | monitor (Y2) | provisional, K4 (reason to confirm) |
 | The lowest-water-temperature suggestion never above 50 °C | monitor (X6) | provisional, K4 (reason to confirm) |
@@ -1531,7 +1531,8 @@ Starts per hour count the hours with heating.
   12. A deviating outdoor sensor: the colder of the sensor and the weather entity.
   13. Class 3 comes into 0.2.2 without minimum times or a switching cap; anti-cycling in 0.3 is to
       be decided against principle 12.
-  14. CI fetches VT 10.4.0 and SmartPI 0.4.0 from their tags on GitHub's servers.
+  14. CI fetches VT 10.5.1 (10.4.0 until 2026-10-13) and SmartPI 0.4.0 from their tags on GitHub's
+      servers.
   15. J4 provokes an unclean restart and a lost link in the test container only.
   16. The first published version after the independent check and at K4; the content at K5.
   Also: the missing-data rule, boiler protection by the boiler's own fault, the safe hand-back,

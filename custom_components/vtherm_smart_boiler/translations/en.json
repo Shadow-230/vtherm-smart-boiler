@@ -3036,7 +3036,7 @@
     },
     "vt_feature_manager_unsupported": {
       "title": "VT's thermostats cannot show the plugin's zone value",
-      "description": "The Versatile Thermostat installed here cannot load the plugin's feature manager (feature managers need VT {version} or newer, with vtherm_api 0.5 or newer; the plugin is tested with VT 10.4.0), so its thermostats cannot show whether heat reaches their zones. Update Versatile Thermostat to show it."
+      "description": "The Versatile Thermostat installed here cannot load the plugin's feature manager (feature managers need VT {version} or newer, with vtherm_api 0.5 or newer; the plugin is tested with VT 10.5.1), so its thermostats cannot show whether heat reaches their zones. Update Versatile Thermostat to show it."
     },
     "vt_reload_needed": {
       "title": "Some VT thermostats need a reload to show the plugin's value",

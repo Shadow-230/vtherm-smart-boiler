@@ -1,9 +1,9 @@
 # Test Home Assistant
 
 A Home Assistant 2026.9.3 in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile
-Thermostat 10.4.0 and SmartPI 0.4.0 as vendored, and the test-only boiler simulator
-(`sim/custom_components/boiler_sim`). The acceptance scenarios run here (`docs/plan-0.2.md`,
-J4) before anything reaches a real boiler.
+Thermostat 10.5.1 (10.4.0 until 2026-10-13) and SmartPI 0.4.0 as vendored, and the test-only
+boiler simulator (`sim/custom_components/boiler_sim`). The acceptance scenarios run here
+(`docs/plan-0.2.md`, J4) before anything reaches a real boiler.
 
 Claude connects to this instance only after you say to start, only at the address in
 `devenv/local.env`, and to no other Home Assistant.
