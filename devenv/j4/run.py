@@ -21,7 +21,13 @@ import contextlib
 from itertools import pairwise
 
 from lib import CONTAINER, HA, ROOT, SIGNALS, ssh
-from options import BASE_GATEWAY, GATEWAY_ITEMS
+from options import (
+    BASE_GATEWAY,
+    CIRCUIT_ASKS,
+    CIRCUIT_ASKS_ENTITY,
+    GATEWAY_ITEMS,
+    REMOVE_CIRCUIT,
+)
 from walk import save_options
 
 RESULTS = pathlib.Path(
@@ -1539,6 +1545,72 @@ async def T1(r: Run):
         await r.zones()
 
 
+async def _circuit_options(r: Run, changes: dict, item: str) -> None:
+    """Instance 1's circuits changed through one menu item, and the entry's reload waited."""
+    entry = await r.ha.entry("vtherm_smart_boiler")
+    await save_options(
+        r.ha.rest, entry["entry_id"], changes, (item,), required=list(changes), note=r.note
+    )
+    await asyncio.sleep(15)  # the entry reloads
+
+
+async def E7(r: Run):
+    """a circuit run by other automation (I8.8a), added for the scenario, asks through its entity:
+    with no zone calling, heating goes on for it alone and the water holds its need plus 5 K; its
+    entity off, heating goes off again"""
+    asks = CIRCUIT_ASKS_ENTITY
+    if (await r.st(asks))["state"] is None:
+        r.check(False, f"{asks} missing: deploy devenv/config/configuration.yaml first")
+        return
+    await r.ha.call("input_boolean", "turn_off", entity_id=asks)
+    await _circuit_options(r, CIRCUIT_ASKS, "add_circuit")
+    try:
+        for zone, _target in ZONES:  # every room above its target: no zone calls
+            await r.ha.call(
+                "climate", "set_temperature", entity_id=f"climate.{zone}", temperature=15.0
+            )
+        await r.switch(True)
+        await r.ha.wait(120)
+        st = await r.st("control_state")
+        r.check(
+            st["state"] == "idle",
+            f"no zone calls, the circuit not asking: {st['state']} {st['attributes'].get('reasons')}",
+        )
+        t = time.time()
+        await r.ha.call("input_boolean", "turn_on", entity_id=asks)
+        await r.ha.wait(60)
+        st = await r.st("control_state")
+        reasons = st["attributes"].get("reasons") or []
+        r.check(
+            st["state"] == "heating" and "circuit_asks" in reasons,
+            f"heating for the circuit alone: {st['state']} {reasons}",
+        )
+        r.check(
+            ("ch", True) in r.cmds(t, "ch") or await _ch_is(r, True),
+            f"heating enabled: {r.cmds(t)}",
+        )
+        setpoints = [v for _k, v in r.cmds(t, "setpoint")]
+        r.check(
+            bool(setpoints) and setpoints[-1] >= 55.0,
+            f"the water at least its need, 50 °C, plus 5 K: {setpoints}",
+        )
+        t = time.time()
+        await r.ha.call("input_boolean", "turn_off", entity_id=asks)
+        await r.ha.wait(60)
+        st = await r.st("control_state")
+        r.check(st["state"] == "idle", f"idle once it no longer asks: {st['state']}")
+        r.check(
+            ("ch", False) in r.cmds(t, "ch") or await _ch_is(r, False),
+            f"heating off: {r.cmds(t)}",
+        )
+    finally:
+        await r.ha.call("input_boolean", "turn_off", entity_id=asks)
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await _circuit_options(r, REMOVE_CIRCUIT, "circuit_2")  # raises where it is not saved
+
+
 # VT publishes a thermostat's attributes at its own cycle (5 min by default) or on a change of
 # its own: the water data shown is that old at most, plus the plugin's 30-s refresh.
 VT_CYCLE_WAIT = 360
@@ -1619,7 +1691,7 @@ async def V1(r: Run):
         r.check(water is not None, f"{zone}: the water known again ({value})")
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1)})
+SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1, E7)})
 
 
 if __name__ == "__main__":

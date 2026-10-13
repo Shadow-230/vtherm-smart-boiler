@@ -205,7 +205,10 @@ the test-only fault injector `j4_faults` (on instance 1, by `configuration.yaml`
 plugin's own monitor fails, or works again), `restart_with_stores` (the entry stopped, its stores
 replaced or removed as a crash, a lost file or another version leaves them, and started again) and
 `remove_options` (answers taken from its options, as an entry made before 0.2.2 lacks them). It is
-sent to the test Home Assistant only and is never part of the plugin's release. Their results come
+sent to the test Home Assistant only and is never part of the plugin's release. Instance 1's
+`configuration.yaml` also holds `input_boolean.j4_circuit_asks`, the switch through which E7's
+circuit run by other automation asks for heat; E7 adds that circuit through "Add circuit" and
+removes it at its end. Their results come
 from entity states and the simulator's command counters (attributes of
 `sensor.boiler_sim_persistent_writes`: commands per path, `ch_writes`, `relay_commands`,
 `dhw_enable_writes`; its state counts only writes of type persistent). The starts criterion

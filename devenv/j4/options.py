@@ -60,3 +60,15 @@ BASE_GATEWAY: dict[str, object] = {
 
 # The base's keys a form asks only in some installations (above); every other key must be asked.
 ASKED_SOMETIMES = frozenset({"write_path", "gateway_id", "off_setpoint"})
+
+# E7: a circuit run by other automation (I8.8a), added through "Add circuit" and removed after.
+# It asks through a helper of instance 1's configuration (devenv/config/configuration.yaml); its
+# need, 50 °C, lies above the curve at the simulator's outdoor temperature, so the water shows it.
+CIRCUIT_ASKS_ENTITY = "input_boolean.j4_circuit_asks"
+CIRCUIT_ASKS: dict[str, object] = {
+    "name": "J4 floor",
+    "control": "separate",
+    "request_entity": CIRCUIT_ASKS_ENTITY,
+    "needed_temperature": 50.0,
+}
+REMOVE_CIRCUIT: dict[str, object] = {"remove_circuit": True}
