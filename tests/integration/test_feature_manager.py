@@ -801,3 +801,111 @@ async def test_the_attribute_publishes_the_water_rounded_on_a_change_of_1_k(
     assert (await shown(45.4))["supply_temperature"] == 46  # 0.8 K back: kept
     assert await shown(None) == {"heat_available": None, "supply_temperature": None}
     assert (await shown(45.4))["supply_temperature"] == 45  # back from None: at once
+
+
+async def _water_set_up(
+    hass: HomeAssistant,
+    zones: FakeZones,
+    values: dict[Signal, float | bool | None],
+    *,
+    room: float | None = 20.0,
+    circuits: list[dict[str, Any]] | None = None,
+    freshness: dict[str, float] | None = None,
+) -> str:
+    """The living room, heating, with the boiler's ``values``; in the last of ``circuits``."""
+    living = zones.add(
+        "living", current_temperature=room, hvac_action="heating", valve_open_percent=60
+    )
+    boiler = FakeBoiler(hass, tuple(values))
+    boiler.set_many(values)
+    options: dict[str, Any] = {"signals": boiler.mapping(), "zones": [{"entity_id": living}]}
+    if circuits is not None:
+        options["circuits"] = circuits
+        options["zones"] = [{"entity_id": living, "circuit": circuits[-1]["id"]}]
+    if freshness is not None:
+        options["freshness"] = freshness
+    entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return living
+
+
+def _water(hass: HomeAssistant, living: str) -> tuple[Any, ...]:
+    """The public API's water and heat with their reasons; the moment of the reading known
+    exactly while the water is."""
+    water = hass.data["vtherm_smart_boiler_api"].zone_water(living)
+    assert water is not None
+    assert (water["supply_measured_at"] is None) is (water["supply_temperature"] is None)
+    return tuple(
+        water[name]
+        for name in ("supply_temperature", "supply_reason", "heat_available", "heat_reason")
+    )
+
+
+async def test_the_api_says_a_mixed_circuit_without_its_own_sensor_is_not_measured(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """§4.1, §4.2: a zone on a mixed circuit with no flow sensor of its own — the boiler's flow
+    says nothing about it: a lasting `circuit_not_measured`, for the water and for the heat
+    while the flame burns."""
+    living = await _water_set_up(
+        hass,
+        zones,
+        {Signal.FLAME: True, Signal.FLOW: 45.0},
+        circuits=[
+            {"id": "main", "control": "unmixed_shared"},
+            {"id": "floor", "control": "separate"},
+        ],
+    )
+    assert _water(hass, living) == (None, "circuit_not_measured", None, "circuit_not_measured")
+
+
+async def test_the_api_says_a_flow_reading_too_old_is_stale(
+    hass: HomeAssistant, zones: FakeZones, freezer: Any
+) -> None:
+    """§4.1, §4.2: the boiler's flow older than its age limit (here set to 5 minutes) — a
+    momentary `flow_stale`, the heat unknown with it, never "no"; fresh again, known again."""
+    living = await _water_set_up(
+        hass, zones, {Signal.FLAME: True, Signal.FLOW: 45.0}, freshness={"flow": 300.0}
+    )
+    assert _water(hass, living) == (45.0, None, True, None)
+    freezer.tick(400)
+    await _refreshed(hass)
+    assert _water(hass, living) == (None, "flow_stale", None, "flow_stale")
+    FakeBoiler(hass, (Signal.FLOW,)).set(Signal.FLOW, 44.0)
+    await _refreshed(hass)
+    assert _water(hass, living) == (44.0, None, True, None)
+
+
+async def test_the_api_says_hot_water_takes_the_heat(hass: HomeAssistant, zones: FakeZones) -> None:
+    """§4.2: hot water with priority running — the water still shown, the heat "no" for
+    `dhw_active`; over, heat again."""
+    values = {Signal.FLAME: True, Signal.FLOW: 45.0, Signal.DHW_ACTIVE: True}
+    living = await _water_set_up(hass, zones, values)
+    assert _water(hass, living) == (45.0, None, False, "dhw_active")
+    FakeBoiler(hass, (Signal.DHW_ACTIVE,)).set(Signal.DHW_ACTIVE, False)
+    await _refreshed(hass)
+    assert _water(hass, living) == (45.0, None, True, None)
+
+
+@pytest.mark.parametrize(
+    ("room", "flow", "expected"),
+    [
+        (None, 45.0, (45.0, None, None, "room_unknown")),
+        (20.0, 22.0, (22.0, None, False, "flow_near_room")),
+        (20.0, 23.5, (23.5, None, True, None)),
+    ],
+    ids=["room_unknown", "flow_near_room", "above_the_margin"],
+)
+async def test_the_api_judges_the_flow_against_the_room_without_a_return(
+    hass: HomeAssistant,
+    zones: FakeZones,
+    room: float | None,
+    flow: float,
+    expected: tuple[Any, ...],
+) -> None:
+    """§4.2: no return mapped — the flow judged against the room: unknown without the room's
+    temperature (`room_unknown`); "no" within 3 K of it (`flow_near_room`); heat above."""
+    living = await _water_set_up(hass, zones, {Signal.FLAME: True, Signal.FLOW: flow}, room=room)
+    assert _water(hass, living) == expected
