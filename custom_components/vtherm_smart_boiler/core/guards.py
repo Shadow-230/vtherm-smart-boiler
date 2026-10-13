@@ -65,11 +65,11 @@ and shows another one is reported (``value_not_shown``: "confirmation missing" a
 issue), never judged by itself.
 
 Not judged: a difference seen for one step; the exempt previous value (above), shown "not
-confirmed" once the timeout has passed; a hot-water draw and the 120 s after it; the plugin's own
-expiring override lapsing after more than 60 s of its silence (sent again); a write of the
-plugin's own that failed (sent again). Keep-alive repeats and refreshes are not rewrites. A value
-shown as confirmed is one the read-back still shows: another value seen, even for one step, shows
-"not confirmed".
+confirmed" once the timeout has passed; a hot-water draw and the 120 s after it (a fall-back that
+began in them, still shown, is judged at the first step after); the plugin's own expiring override
+lapsing after more than 60 s of its silence (sent again); a write of the plugin's own that failed
+(sent again). Keep-alive repeats and refreshes are not rewrites. A value shown as confirmed is one
+the read-back still shows: another value seen, even for one step, shows "not confirmed".
 
 The guard's memory — the baseline, the block, its counters, the class "ignored from the start",
 the clip — lasts the session, across hand-backs inside it (``after_hand_back``); the one rewrite is
@@ -304,6 +304,9 @@ class GuardState:
     attempt_trace: bool = False  # a trace of an outage within it: it does not count
     held_since: float | None = None  # the read-back shows the plugin's value since
     last_kind: ReadKind | None = None  # what the last known read-back showed
+    # The read-back came into the fall-back set during a hot-water draw or the quiet time after
+    # it, which judge nothing, and has stayed there: judged at the first step after them.
+    fell_quiet: bool = False
     unknown_since: float | None = None  # the read-back unknown since
     # A setpoint's read-back known and showing another value than the plugin's — not during a
     # draw, not in the fall-back set before the start phase is over — since (Z4R2-03).
@@ -718,7 +721,9 @@ def _observe(
         else None,
     )
     last = state.last_kind
-    fell = kind is ReadKind.FALL_BACK and last is not None and last is not ReadKind.FALL_BACK
+    fell = kind is ReadKind.FALL_BACK and (
+        state.fell_quiet or (last is not None and last is not ReadKind.FALL_BACK)
+    )
     if kind is ReadKind.OURS:
         held_since = now if state.held_since is None else state.held_since
         state = replace(
@@ -758,7 +763,7 @@ def _observe(
         and since is not None
         and now - since >= (config.confirm_timeout_s)
     )
-    state = replace(state, last_kind=kind, late=late)
+    state = replace(state, last_kind=kind, late=late, fell_quiet=fell and quiet)
     state = _note_attempt_trace(state, trace)
     return state, Observation(kind, trace, quiet, returned, fell)
 
