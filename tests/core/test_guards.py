@@ -2297,7 +2297,9 @@ def test_a_clock_set_back_keeps_earlier_moments() -> None:
 def test_a_clock_set_back_below_the_send_moves_it_with_the_keep_alive() -> None:
     """C9: the clock set back below the last send moves the send with the keep-alive, a
     keep-alive period before now. After a hand-back, 45 sent at 1000 and never read back, the
-    clock set back to 900: a lost command 120 s after 870, at 990 — not later, and not never."""
+    clock set back to 900: a lost command 120 s after 870, at 990 — not later, and not never.
+    This test pins current behaviour that the review of 2026-10-13 questions (A6,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     state = after_hand_back(held(HELD))
     state, action, _ = step(state, 45.0, 0.0, 1000.0, HELD)
     assert action == WriteAction(45.0, WriteKind.CHANGE)
@@ -2350,7 +2352,9 @@ def test_a_resend_explains_no_fall_back() -> None:
 def test_a_rewrite_of_a_new_value_explains_no_fall_back() -> None:
     """Answer E: only a change explains a fall-back. The second fall-back within the hour is
     written again once, with the value the controller asks for now; a third, soon after that
-    rewrite was read back, blocks the guard."""
+    rewrite was read back, blocks the guard.
+    This test pins current behaviour that the review of 2026-10-13 questions (A7,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     state = held(HELD)
     state, _, _ = step(state, 45.0, 0.0, 400.0, HELD)  # the first: a lost command
     state, _, _ = step(state, 45.0, 45.0, 410.0, HELD)
@@ -2764,7 +2768,9 @@ def test_a_change_within_a_running_attempt_belongs_to_it() -> None:
 def test_a_change_once_an_attempt_is_over_starts_the_next() -> None:
     """The start phase: a change at a running attempt's timeout, or the new value sent as a
     failed attempt's resend, starts the next attempt — failing 120 s after its own send, with
-    its own value."""
+    its own value.
+    The first case pins current behaviour that the review of 2026-10-13 questions (A5,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     state, _, _ = step(GuardState(), 45.0, 40.0, 0.0, HELD)
     state, action, _ = step(state, 50.0, 60.0, 120.0, HELD)  # another value, one step
     assert action == WriteAction(50.0, WriteKind.CHANGE)

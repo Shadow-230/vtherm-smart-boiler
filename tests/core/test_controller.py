@@ -3350,7 +3350,9 @@ def test_frost_heatings_hysteresis_across_a_fault_and_a_reload(
     """Frost heating for a room at 4 °C; a step that stops it — the boiler's own fault (Y1), or
     VT reloading (the recognition period keeps the command, ``_keep``); then the room at 6 °C,
     between the frost limit and the release. The fault keeps frost protection's state: frost
-    heating goes on. The recognition period ends it: the room's own call heats it."""
+    heating goes on. The recognition period ends it: the room's own call heats it.
+    The ``vt_reloading`` case pins current behaviour that the review of 2026-10-13 questions (A1,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     steps = [
         inputs(0.0, zones=(started("a", 0.0, temperature=4.0),)),
         between,
@@ -3400,7 +3402,9 @@ def test_frost_not_warming_counts_from_frost_heatings_new_start(
 ) -> None:
     """P-45: frost heating at 3 °C, a step without it — the room past the release, or VT
     reloading — then frost heating again at 3 °C from 120 s: "frost not warming" is reported
-    two hours after the new start, not before."""
+    two hours after the new start, not before.
+    The ``vt_reloading`` case pins current behaviour that the review of 2026-10-13 questions (A1,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
 
     def zones(t: float) -> tuple[ZoneState, ...]:
         return between(t) if t == 60.0 else (started("a", t, temperature=3.0),)
@@ -3568,7 +3572,9 @@ def test_hot_water_between_two_decisions_is_no_heat_flow() -> None:
 def test_heat_during_the_activation_delays_last_step_counts_towards_the_rise() -> None:
     """Decision 5: the steps of VT's delay are control's steps. The flame on (heat flows, S-24)
     and a room short: the first water decision, as heating starts, counts the 10 s since the
-    last waiting step towards the comfort correction's rise."""
+    last waiting step towards the comfort correction's rise.
+    This test pins current behaviour that the review of 2026-10-13 questions (A4,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     config = replace(WATER, activation_delay_s=120.0)
     steps = [inputs(t, zones=(short(t),), flame=True) for t in stepped(0.0, 130.0)]
     _state, decisions = run(steps, config)

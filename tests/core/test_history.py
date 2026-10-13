@@ -310,7 +310,9 @@ def test_touching_or_nested_downtimes_are_one_until_the_latest_end(down: list) -
 
 def test_a_downtime_from_the_window_start_takes_its_row_as_the_state_at_the_end() -> None:
     """A downtime that begins exactly at the window's start did not begin before it: the row at
-    the start is a state inside the downtime, the state at its end."""
+    the start is a state inside the downtime, the state at its end.
+    This test pins current behaviour that the review of 2026-10-13 questions (A8,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     assert list(with_downtime([(0.0, True)], [(0.0, HOUR)], 0.0, DAY)) == [
         (0.0, None),
         (HOUR, True),

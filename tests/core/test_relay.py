@@ -2280,7 +2280,9 @@ def test_a_command_taken_as_it_is_ends_the_run_of_checks() -> None:
     """Negative (decision 6 of 0.2.3, SB-06): "off" not shown from 1000 s, then "on" again, which
     the relay still shows — taken as it is: the run of checks ends. The late "off" landing just
     after it (the plugin's own context) is left to the check, whose "on" the relay does not
-    take: "not taken" three checks after that send, not 15 min after 1000 s."""
+    take: "not taken" three checks after that send, not 15 min after 1000 s.
+    This test pins current behaviour that the review of 2026-10-13 questions (A2,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     relay, state = confirmed_on()
     relay.takes = False
 
@@ -2302,7 +2304,9 @@ def test_a_command_taken_as_it_is_ends_the_run_of_checks() -> None:
 def test_a_command_not_shown_after_the_start_phase_is_reported_and_cleared_by_a_new_one() -> None:
     """After the start phase, "on" not read back within 120 s is "not confirmed" ("write
     ignored"), and three checks on "not taken"; a new command the relay already shows clears
-    both at once — it holds that one."""
+    both at once — it holds that one.
+    This test pins current behaviour that the review of 2026-10-13 questions (A2,
+    research/2026-10-13-mutation-tests-review.md): a fix of it changes this test."""
     relay, state = stopped_taking(True)
     state, results = drive(relay, REPORTING, True, 1000.0, 1900.0, state)
     unshown = dict(results)[1000.0 + RELAY_CONFIRM_S].state
