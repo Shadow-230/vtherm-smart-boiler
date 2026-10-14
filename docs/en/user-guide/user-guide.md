@@ -30,6 +30,14 @@ the [technical documentation](../technical/technical.md).
 6. [Safety and hand-back](#6-safety-and-hand-back)
 7. [Alarms and repair issues](#7-alarms-and-repair-issues)
 8. [State diagram of control](#8-state-diagram-of-control)
+9. [Entities](#9-entities)
+10. [How often data updates](#10-how-often-data-updates)
+11. [What stays local](#11-what-stays-local)
+12. [Options and risks](#12-options-and-risks)
+13. [Automation examples](#13-automation-examples)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Known limitations](#15-known-limitations)
+16. [Removal](#16-removal)
 
 ## 1. Prerequisites
 
@@ -387,6 +395,27 @@ on the other — goes into each by its own devices (**Single devices of a zone**
 it stays one zone, watched and counted once. A zone in no circuit is neither watched nor asked
 for heat.
 
+### 4.11 Beside VT's zone algorithms
+
+The plugin reads VT's zones and never changes their settings or algorithms. What each zone's
+thermostat shows from the plugin, the attribute `smart_boiler`, is in
+[Prerequisites](#1-prerequisites).
+
+The heating curve already raises the water temperature as it gets colder outside. Some zone
+algorithms count the outdoor temperature as well, so the weather then acts twice:
+
+- **TPI** (VT's time-proportional algorithm) adds `tpi_coef_ext` × (target − outdoor) to each
+  zone's heating time. With the plugin's curve, colder weather brings both warmer water and longer
+  heating times. The term is VT's setting, per zone; the plugin does not change it.
+- **SmartPI** (0.4.0) learns an outdoor term of its own (`u_ff1`, a learned factor ×
+  (target − outdoor)). It cannot be set or switched off; it learns with the water the plugin
+  sends.
+
+How a zone behaves with both depends on its room and its algorithm; the plugin describes this and
+gives no advice on these settings. While hot water or a large change of the water temperature
+disturbs the rooms, the plugin pauses SmartPI's learning (on by default), so the swings it causes
+stay out of SmartPI's model.
+
 ## 5. Connecting the boiler
 
 The plugin reads the boiler through entities you pick in its forms. To control the boiler it
@@ -537,15 +566,23 @@ The plugin cannot read the relay's own settings, so the form asks you:
 - the tick "this is a separate relay contact, not a setting stored in the boiler's memory" —
   control does not start without it;
 - its state after a power cut, its own switch-off timer, and whether it reports its real state
-  (each defaults to "I don't know", treated cautiously);
+  (each defaults to "I don't know", treated cautiously):
+  - **reports its real state** — yes: the plugin writes only on a difference and checks the
+    relay; no or "I don't know": it repeats its command, unconfirmed;
+  - **state after a power cut** — off: the boiler waits for Home Assistant; on, last or "I don't
+    know": after a power cut the boiler may heat without control until Home Assistant is back;
+  - **own switch-off timer** — none, a length (10 to 120 minutes; "on" is repeated at half of
+    it), or "I don't know". Whether a Shelly relay restarts its auto-off timer on a repeated "on"
+    is not documented;
 - the repeat interval (10 to 300 seconds, default 300) — asked only where something is repeated:
   the relay does not report its state, or it may have its own timer; a declared timer's length
   is asked with the timer, and "boiler heats above" with the boiler's power mapped (advanced);
 - "Relay after hand-back": off (default) or on.
 
 If Home Assistant stops, the relay stays as it was; you can switch it by hand in its own app or
-web page. A relay in the boiler's power supply also cuts the boiler's pump overrun and its own
-frost protection, and the room-thermostat terminals may carry mains voltage.
+web page. A relay with its own switch-off timer switches heating off by itself. A relay in the
+boiler's power supply also cuts the boiler's pump overrun and its own frost protection, and the
+room-thermostat terminals may carry mains voltage.
 
 A relay out of reach raises an alarm after 5 minutes. There is no hand-back then, since nothing
 could reach the relay; the command is sent again when it returns.
@@ -1009,3 +1046,196 @@ Notes on the diagram:
   a relay.
 - A value the boiler ignores from the start (other than heating off or on) is left out for the
   session and written again at the next one.
+
+## 9. Entities
+
+All belong to one device, named as you named the entry ("Boiler" by default). A monitor entity
+exists only while the signals it needs are mapped; the sensor **Features** says which are
+inactive and why. Some are hidden by default (marked *hidden*); **Forecast snapshots** is
+disabled by default.
+
+**Monitor**
+
+| Entity | What it shows |
+|---|---|
+| Heating starts per hour | burner starts for heating, per hour over the last 24 h; burns that may have been hot water apart |
+| Median heating burn | the typical length of a heating burn |
+| Heating burner hours (24 h) *hidden* | burner hours for heating in the last 24 h |
+| Short heating burns *hidden* | the share of heating burns shorter than the short-burn length (10 min by default) |
+| Condensing share | the share of heating burn time with the return below 55 °C |
+| Degree-days (7 days) *hidden* | the week's degree-days, from the heating threshold |
+| Gas per degree-day | gas per degree-day, measured with a gas meter you map, else estimated |
+| Use against yesterday *hidden* | the change in use against the day before, split into weather, hot water, settings and the rest |
+| Control verdict | worth enabling, not worth enabling, or not enough data yet — with its reasons |
+| Signal problems | how many mapped signals have a problem; each one's health in the attributes |
+| Features | how many features are inactive now, and why |
+| Building loss coefficient, Building heating threshold *hidden* | the building values in use — yours, measured or the default — with their source |
+| Suggested lowest water temperature | a suggestion only, never applied |
+| Forecast snapshots *disabled* | how many recorded forecasts are kept, for later releases |
+| Critical zone, circuit … | per circuit, the zone whose own controller works hardest now |
+| Signals | on while flame and flow (and a relay) are known and fresh |
+| Outdoor sensor problem | the boiler's outdoor sensor is stuck or disagrees with the weather entity |
+| Long burn without warming | the flame on for 3 h without the rooms warming, with the likely reason |
+| Alarms (binary sensors, on = problem) | one per check: water pressure, flue gas, starts, ignition, low flow, a circuit's water too hot and the others — the [alarm table](#7-alarms-and-repair-issues) |
+
+**Control**
+
+| Entity | What it shows or does |
+|---|---|
+| Control (experimental) | switches control on and off; its attributes say what blocks it and what a hand-back does in your installation |
+| Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons |
+| Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
+| Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not — VT's central boiler sensor's place; an event fires when it changes |
+| Calling for heat, Calling power | the devices (or zones) calling and the zones' power summed, each beside its threshold, as VT's central boiler shows them |
+| Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, a zone unknown, frost not warming and the others |
+| Reset comfort correction | sets the comfort correction back to 0 |
+| Reset measured heat loss, Reset measured heating threshold | forget the measured building values |
+
+Problems that need you also show as repair issues under Settings → Repairs.
+
+## 10. How often data updates
+
+- Boiler signals and zones are read when they change, and at least every **30 s**.
+- Control takes a step every **10 s**; an expiring setpoint is repeated every **30 s**, a held one
+  on a change and every 5 minutes.
+- The monitor's metrics and verdict are computed every **5 minutes**.
+- With a weather entity, forecasts are recorded every **30 minutes** (kept for later releases;
+  nothing uses them for control yet).
+- A signal counts as stale past its age limit: automatic by default, settable per signal
+  ([Fresh data](#68-fresh-data)).
+
+## 11. What stays local
+
+Everything. The plugin talks to no cloud service and sends nothing outside Home Assistant. It
+reads entities, writes only to the targets you pick, keeps its state and recorded forecasts in
+Home Assistant's own storage (`.storage`), and its sensors go to Home Assistant's recorder like
+any other. A diagnostics download (the integration's device → Download diagnostics) replaces
+entity IDs and the gateway's identifiers before you share it.
+
+## 12. Options and risks
+
+Every option has a cautious default, and its text in the form says what it does and what it
+risks. The main ones — described, not advised:
+
+| Option | Default | What it does, and what it risks |
+|---|---|---|
+| Control (switch) | off | on, the plugin writes to the boiler; off, the boiler runs as before |
+| Heating curve | the design flow has no default — you enter it | too high wastes gas and makes the burner cycle; too low leaves rooms cold |
+| Lowest water temperature | 20 °C (provisional) | too low: in mild weather the boiler stops by itself again and again, and a non-condensing boiler condenses in its flue (its manual gives the value) |
+| A circuit's highest water temperature | 70 °C where empty | caps every setpoint on circuits fed straight from the boiler; the boiler may overshoot it by its own hysteresis |
+| Its too-hot alarm | the maximum + 5 K, for 10 min | information only; too high lets a real overshoot pass unreported |
+| Comfort correction | on, up to 3 K (at most 10 K), rising at most 3 K a day | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts |
+| Activation delay | 0 s | waits before heating starts, for slow valves; meanwhile the rooms get no heat |
+| Write type of a picked target | unknown — not written | expiring or held must be declared; a wrong declaration wears the boiler's memory or lets a value lapse |
+| Hand-back value | none — entered with its effect | the same number means "own control" on one device and "no heat" on another |
+| Frost protection | 5 °C on, 7 °C off, every zone | heats only zones whose emitters can take heat; a zone VT keeps closed gets a repair issue |
+| Alarm reactions | information — a few alarms always hand back | an alarm set to hand back stops control until you switch it off and on |
+| Return by itself after another controller | off | on, control returns 60 minutes after the last foreign value, while the other controller may still be there |
+| Learning pauses (SmartPI) | on | off, the swings the plugin causes enter SmartPI's model |
+
+Every default and the reason for it: the defaults table in [`docs/en/specification/scope.md`, §7](../specification/scope.md#7-features-by-stage). Values marked
+provisional are reviewed before the first release.
+
+## 13. Automation examples
+
+The entity IDs below are for an entry named "Boiler"; find yours on the integration's device.
+
+Tell me when control hands the boiler back and cannot confirm it:
+
+```yaml
+automation:
+  - alias: "Boiler hand-back failed"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.boiler_control_hand_back_failed
+        to: "on"
+    actions:
+      - action: notify.notify
+        data:
+          message: "The boiler's hand-back has not got through — check Settings → Repairs."
+```
+
+Tell me when the verdict is ready:
+
+```yaml
+automation:
+  - alias: "Boiler control verdict"
+    triggers:
+      - trigger: state
+        entity_id: sensor.boiler_control_verdict
+        to:
+          - "worth_it"
+          - "not_worth_it"
+    actions:
+      - action: notify.notify
+        data:
+          message: "Control verdict: {{ states('sensor.boiler_control_verdict') }}"
+```
+
+Hand the boiler back before a service visit — switching control off does it:
+
+```yaml
+action: switch.turn_off
+target:
+  entity_id: switch.boiler_control_experimental
+```
+
+## 14. Troubleshooting
+
+- **Control does not switch on, or the control state says "Not allowed".** The switch's
+  attributes (`blockers_text`, `blocked_by_text`) say what is missing; a repair issue usually says
+  what to do.
+- **The control state stays "Handed back".** The plugin stepped aside — another controller, the
+  boiler ignoring "heating off", an alarm set to hand back. Fix the cause, then switch control off
+  and on.
+- **The verdict says "Not enough data yet", or a sensor is missing.** The sensors **Features** and
+  **Signal problems** name the missing or stale signals.
+- **"Signals" is off.** Flame or flow is stale or unknown: check the boiler's integration, or the
+  signal's age limit ([Fresh data](#68-fresh-data)).
+- **An alarm is on.** The [alarm table](#7-alarms-and-repair-issues) says what each means and what to do.
+- **Logs.** Debug logging:
+
+  ```yaml
+  logger:
+    logs:
+      custom_components.vtherm_smart_boiler: debug
+  ```
+
+  With a problem report, attach the diagnostics download.
+
+## 15. Known limitations
+
+- Not released, and not yet run on a real boiler: tested against a simulated boiler and on a
+  test Home Assistant.
+- **Changes no read-back can see:** heating switched off or summer mode on the boiler's panel, a
+  lockout, the maker's app, another controller's modulation limit, the hot-water enable, a boiler
+  that clamps the setpoint behind a gateway — the gateway still shows the plugin's value. They
+  show only through their effects: the comfort correction at its limit (after about 4.5 h), or
+  frost heating that does not warm a room (after 2 h).
+- **A boiler that clips a steady setpoint** looks like another controller: a lower value is
+  recognised as the boiler's own limit only once the plugin has sent values at least 1 K apart.
+  With one steady value it is written back once, and a second change within 24 h makes the plugin
+  step aside.
+- One boiler per Home Assistant (one entry). No heat pumps, no valves, no hot-water control.
+- **VT zones with a valve that may not close fully** (VT's "Max closing degree" below 100) need
+  VT 10.5 or newer: VT 10.2–10.4 counts such a valve as heating at its floor, so the zone calls
+  for heat all the time and the boiler may never switch off.
+- Water-temperature control needs a heating on/off switch (except EMS-ESP); a gateway with an
+  on/off thermostat on its terminals is monitor only.
+- VT's own central boiler must be off, and Home Assistant restarted once.
+- Forecasts are recorded, not used for control yet.
+- On a Home Assistant install outside its container or OS image, Home Assistant installs the
+  client libraries of the MQTT and OpenTherm Gateway integrations with the plugin, even if you use
+  neither; without network access then, the plugin does not set up.
+- Many values are provisional until the review before the first release.
+
+## 16. Removal
+
+1. Optionally switch **Control (experimental)** off first and check the boiler is back under its
+   own control.
+2. Delete the entry: Settings → Devices & services → Smart Boiler for Versatile Thermostat →
+   Delete. The plugin hands the boiler back, resumes SmartPI learning it had paused, and deletes
+   its stored state and forecasts. If the hand-back could not be confirmed, a repair issue stays
+   after removal: hand the boiler back by hand.
+3. Remove it in HACS (or delete its folder) and restart Home Assistant.
+4. To return to VT's own central boiler, tick it again in VT's central configuration.
