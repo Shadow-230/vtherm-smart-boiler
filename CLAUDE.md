@@ -1,31 +1,39 @@
 # Smart Boiler for Versatile Thermostat
 
-Working rules, code conventions and verified facts for Claude. **Where to continue:** the first
-step without ✅ (optional ones aside) in [`docs/plan-0.1.md`](docs/plan-0.1.md), then in
-[`docs/plan-0.2.1.md`](docs/plan-0.2.1.md) (corrections that come before the rest of 0.2), then
-in [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md) (corrections after the review of 2026-09-26; the
-details of each step are in [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-details.md), which opens
-with "Start here"), then in [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md) (corrections after the
-review of 2026-10-04, in four parts, each ending with a stop where the user decides whether the
-next starts), then in [`docs/plan-0.2.md`](docs/plan-0.2.md), whose status line says where the
-build stands — its step I6 is planned step by step in [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md),
-its step G11 in [`docs/plan-0.2-g11.md`](docs/plan-0.2-g11.md), its step I7 in
-[`docs/plan-0.2-i7.md`](docs/plan-0.2-i7.md), its step I8 in
-[`docs/plan-0.2-i8.md`](docs/plan-0.2-i8.md), its step I9 in
-[`docs/plan-0.2-i9.md`](docs/plan-0.2-i9.md); phases run in order. A 🔒 step whose plan says it
-holds nothing up is noted in the
-report and passed; work goes on with the next step. 0.1 and 0.2 are built in one go; the first
-published version is decided at K4 and K5 (`docs/plan-0.2.2.md`, decision 16; provisionally
+Working rules, code conventions and verified facts for Claude. The documentation lives in
+`docs/<language>/` (English the default, Polish beside it for what users read); the plans are in
+[`docs/en/development/plans/`][plans]. **Where to continue:** the first step without ✅ (optional
+ones aside) in [`plan-0.1.md`][plan-0.1], then in [`plan-0.2.1.md`][plan-0.2.1] (corrections that
+come before the rest of 0.2), then in [`plan-0.2.2.md`][plan-0.2.2] (corrections after the review of
+2026-09-26; the details of each step are in [`plan-0.2.2-details.md`][plan-0.2.2-details], which
+opens with "Start here"), then in [`plan-0.2.3.md`][plan-0.2.3] (corrections after the review of
+2026-10-04, in four parts, each ending with a stop where the user decides whether the next starts),
+then in [`plan-0.2.md`][plan-0.2], whose status line says where the build stands — its steps I6,
+G11, I7, I8 and I9 are planned step by step in [`plan-0.2-i6.md`][plan-0.2-i6],
+[`plan-0.2-g11.md`][plan-0.2-g11], [`plan-0.2-i7.md`][plan-0.2-i7], [`plan-0.2-i8.md`][plan-0.2-i8]
+and [`plan-0.2-i9.md`][plan-0.2-i9]; phases run in order. A 🔒 step whose plan says it holds nothing
+up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
+go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decision 16; provisionally
 0.2.3b1).
 
-- **Scope** (general, any installation): [`SCOPE.md`](SCOPE.md)
-- **Development plan:** [`PLAN.md`](PLAN.md); plans per release:
-  [`docs/plan-0.1.md`](docs/plan-0.1.md), [`docs/plan-0.2.md`](docs/plan-0.2.md),
-  [`docs/plan-0.2.1.md`](docs/plan-0.2.1.md), [`docs/plan-0.2.2.md`](docs/plan-0.2.2.md) with
-  [`docs/plan-0.2.2-details.md`](docs/plan-0.2.2-details.md),
-  [`docs/plan-0.2.3.md`](docs/plan-0.2.3.md), [`docs/plan-0.2-i6.md`](docs/plan-0.2-i6.md),
-  [`docs/plan-0.2-g11.md`](docs/plan-0.2-g11.md), [`docs/plan-0.2-i7.md`](docs/plan-0.2-i7.md),
-  [`docs/plan-0.2-i8.md`](docs/plan-0.2-i8.md), [`docs/plan-0.2-i9.md`](docs/plan-0.2-i9.md)
+[plans]: docs/en/development/plans/
+[plan-0.1]: docs/en/development/plans/plan-0.1.md
+[plan-0.2]: docs/en/development/plans/plan-0.2.md
+[plan-0.2-g11]: docs/en/development/plans/plan-0.2-g11.md
+[plan-0.2-i6]: docs/en/development/plans/plan-0.2-i6.md
+[plan-0.2-i7]: docs/en/development/plans/plan-0.2-i7.md
+[plan-0.2-i8]: docs/en/development/plans/plan-0.2-i8.md
+[plan-0.2-i9]: docs/en/development/plans/plan-0.2-i9.md
+[plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
+[plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
+[plan-0.2.2-details]: docs/en/development/plans/plan-0.2.2-details.md
+[plan-0.2.3]: docs/en/development/plans/plan-0.2.3.md
+
+- **Scope** (general, any installation):
+  [`docs/en/specification/scope.md`](docs/en/specification/scope.md)
+- **Development plan:** [`docs/en/development/plan.md`](docs/en/development/plan.md); the plans
+  per release in [`docs/en/development/plans/`](docs/en/development/plans/), the reviews in
+  [`docs/en/development/reviews/`](docs/en/development/reviews/)
 - **Research** (network reads, and the notes and raw results of every analysis and check, dated):
   `research/`
 - **Author's own assessment**, private — never a source of values for code, defaults, tests or
@@ -36,9 +44,13 @@ Each topic lives only in its file; do not copy it here.
 ## Working rules
 
 - The user converses in Polish; everything written into the repository is in English, except
-  translation files for other languages (e.g. `translations/pl.json`). Replies to the user are in
-  plain, less technical Polish: what was done, what it means for the house and the boiler, and
-  what needs the user's answer (the user's rule, 2026-09-26/27).
+  translation files for other languages (e.g. `translations/pl.json`) and the Polish versions of
+  what users read (`README.pl.md`, `docs/pl/`). The documentation lives in `docs/<language>/`,
+  English the default, every folder and file named in English (the user's rule, 2026-10-14).
+  Replies to the user are in plain, less technical Polish: what was done, what it means for the
+  house and the boiler, and what needs the user's answer (the user's rule, 2026-09-26/27).
+- Documentation is written in plain, accessible language: short sentences and common words, no
+  needlessly sophisticated ones (the user's rule, 2026-10-14).
 - **We build a universal plugin, not a custom project for the author's HA.** Never write
   installation-specific data — entity IDs, device names, the author's boiler, house or zone
   values — into code, defaults, tests or docs. Every input comes from a config-flow field where
@@ -54,7 +66,7 @@ Each topic lives only in its file; do not copy it here.
   for that specific access.
 - External sources (VT, `vtherm_api`, SmartPI, HA, anything else) are read over the network
   only: no clones, downloads or copies on disk, temporary directories included. Exceptions,
-  consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/plan-0.1.md` A1); Python
+  consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/en/development/plans/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
   and SmartPI 0.4.0 sources in `vendor/` (A5; VT 10.5.1 there since 2026-10-13, put in by the
   user). Sources and documents of typical DIY boiler
@@ -62,13 +74,13 @@ Each topic lives only in its file; do not copy it here.
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
   for interface facts only (the user's decision, 2026-09-24). The official license text only
-  with the user's consent at that step (`docs/plan-0.2.md` K1). CI on GitHub's servers fetches VT
+  with the user's consent at that step (`docs/en/development/plans/plan-0.2.md` K1). CI on GitHub's servers fetches VT
   10.5.1 (10.4.0 until 2026-10-13, the user's decision) and SmartPI 0.4.0 from their tags for the
-  real-VT tests; nothing is downloaded locally (`docs/plan-0.2.2.md`, decision 14).
+  real-VT tests; nothing is downloaded locally (`docs/en/development/plans/plan-0.2.2.md`, decision 14).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
-  `docs/plan-0.1.md` and `docs/plan-0.2.md`) are created without asking; results of network
+  `docs/en/development/plans/plan-0.1.md` and `docs/en/development/plans/plan-0.2.md`) are created without asking; results of network
   reads, and every finding and result of an analysis or check, are kept in `research/` in the
   working directory (git-ignored) — the user's rule, 2026-09-27: all findings and results are
   saved there.
@@ -106,7 +118,7 @@ Each topic lives only in its file; do not copy it here.
   over 7 days old, and before every pull request from `dev` to `qas`; their result goes into the
   report (the user's decision, 2026-10-13).
 - Autonomous work: phases run in order without waiting; work stops at every 🔒 step; the user
-  reviews before anything reaches a real boiler (`docs/plan-0.2.md`, K4); each finished step
+  reviews before anything reaches a real boiler (`docs/en/development/plans/plan-0.2.md`, K4); each finished step
   is marked ✅ in its plan and committed, so the next session knows where to continue; a step
   found unnecessary is marked ✅ with the reason.
   Subagents may be used and are bound by these rules; a multi-agent workflow only when the user
@@ -123,8 +135,8 @@ Each topic lives only in its file; do not copy it here.
   WebSocket, MQTT, SSH, UI, add-ons). Sole exception: the dedicated test HA in its own Proxmox
   LXC. Its address and access data live only in the git-ignored `devenv/local.env`; never
   connect to an address that is not listed there, and connect only after the user has said to
-  start (`docs/plan-0.2.md`, J4). J4 may provoke an unclean restart (`docker kill` over SSH) and a
-  lost link in the test HA's own container only, after that start (`docs/plan-0.2.2.md`,
+  start (`docs/en/development/plans/plan-0.2.md`, J4). J4 may provoke an unclean restart (`docker kill` over SSH) and a
+  lost link in the test HA's own container only, after that start (`docs/en/development/plans/plan-0.2.2.md`,
   decision 15).
 - Use the Explore subagent for repository searches.
 - Read large files in parts (offset and limit, `sed -n`): the harness saves oversized tool
@@ -156,8 +168,8 @@ Each topic lives only in its file; do not copy it here.
   checks key parity across languages. The language is the Home Assistant instance's: the plugin
   has no language setting of its own (the user's rule, 2026-09-24).
 - Every user option has a cautious default and a translated description of what it does and what
-  it risks (`SCOPE.md` §3, principle 11).
-- Test layers: `PLAN.md`, section "Test environment".
+  it risks (`docs/en/specification/scope.md` §3, principle 11).
+- Test layers: `docs/en/development/plan.md`, section "Test environment".
 
 ## Verified facts
 
@@ -192,7 +204,7 @@ Each topic lives only in its file; do not copy it here.
   or automatic by the temperature's slope (the author's office values 3 °C/h to detect, 0 °C/h to
   end); its action turns the zone off, fan only, frost or eco; the climate shows `window_manager`
   (`window_state`, `window_auto_state`: "on" or "off") and, when turned off, `hvac_off_reason`
-  `hvac_off_window_detection` (`feature_window_manager.py`; `docs/plan-0.2-g11.md`, Facts).
+  `hvac_off_window_detection` (`feature_window_manager.py`; `docs/en/development/plans/plan-0.2-g11.md`, Facts).
 - **VT** uses current outdoor temperature only; forecast is on its "future improvements" list.
   Auto-TPI learns in sessions (≥ 50 cycles). `set_auto_tpi_mode` is not a pure pause: the
   `reinitialise` default is true (wipes the learning), the allow-flags are overwritten on every
@@ -213,7 +225,7 @@ Each topic lives only in its file; do not copy it here.
   the model. SmartPI 0.4.0's learning phase ("Hysteresis") runs on/off: off at setpoint + 0.5 °C,
   on at setpoint − 0.3 °C (`smartpi/const.py` `HYST_UPPER_C`, `HYST_LOWER_C`); its diagnostic
   sensor's state is "bootstrap_hysteresis" then, and the VT climate names that sensor in
-  `specific_states.regulation_diagnostics` (`docs/plan-0.2-g11.md`, Facts).
+  `specific_states.regulation_diagnostics` (`docs/en/development/plans/plan-0.2-g11.md`, Facts).
 - **HA forecasts**: only through `weather.get_forecasts`, not in entity state — the recorder
   does not keep them. HACS inclusion has no license requirement.
 - **Home Assistant 2026.9.3**: shutdown jobs (`hass.async_add_shutdown_job`) run before
@@ -284,8 +296,8 @@ Each topic lives only in its file; do not copy it here.
   central boiler and sends new features to plugins.
 - **SAT** sources consulted for ideas: `pwm.py`, `minimum_setpoint.py`, `heating_curve.py`,
   `overshoot_protection.py`, `mqtt/opentherm.py`; SAT sends the setpoint only when its loop runs
-  (no watchdog). What we take: `SCOPE.md` §8.
+  (no watchdog). What we take: `docs/en/specification/scope.md` §8.
 - **Nest** sources: Google Nest Help pages on OpenTherm, True Radiant and Seasonal Savings. What we
-  take: `SCOPE.md` §8.
+  take: `docs/en/specification/scope.md` §8.
 - **Licenses**: VT, `vtherm_api` MIT; `vtherm_hysteresis`, SmartPI Apache-2.0; SAT GPL-3.0.
   This plugin: Apache-2.0.

@@ -1,10 +1,10 @@
 """The hand-back's evidence: what shows a release, when a steady third value means another
 controller holds a target, and when a two-valued target's change is a lost command.
 
-The safe hand-back (``SCOPE.md`` §5; the user's decision of 2026-09-26/27) writes the lowest water
-temperature first, then heating on where the boiler returns to a thermostat or its own control,
-then the release — one part after another at once, waiting for no read-back. Only the
-confirmation waits for the read-back, and what counts as a release depends on the target:
+The safe hand-back (``docs/en/specification/scope.md`` §5; the user's decision of 2026-09-26/27)
+writes the lowest water temperature first, then heating on where the boiler returns to a thermostat
+or its own control, then the release — one part after another at once, waiting for no read-back.
+Only the confirmation waits for the read-back, and what counts as a release depends on the target:
 
 - a held value target (the device keeps the last value it was given: ESPHome, DIYLess and the
   like): only the hand-back value, read back within half a kelvin;

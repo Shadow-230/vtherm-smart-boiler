@@ -1,7 +1,8 @@
 """J4's fault injector: test only, for the dedicated test Home Assistant alone.
 
 What the in-process acceptance tests make happen with patches and seeded stores, made to happen
-in a real Home Assistant, so J4 can run those scenarios there too (docs/plan-0.2.md, J4):
+in a real Home Assistant, so J4 can run those scenarios there too
+(docs/en/development/plans/plan-0.2.md, J4):
 
 - ``monitor``: the plugin's own monitor fails, or works again (answer I);
 - ``restart_with_stores``: the plugin's entry stopped, its stores replaced or removed — what a

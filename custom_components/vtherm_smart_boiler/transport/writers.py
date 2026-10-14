@@ -5,13 +5,13 @@ Each writer knows the services it may call — the list a test checks. A write t
 unavailable entity without an error (and a missing one with a log line only), so a write to an
 entity first checks that it is there and available.
 
-Every hand-back is the safe hand-back (``SCOPE.md`` §5; the user's decision of 2026-09-26/27), its
-parts one after another at once, each tried whatever the others do, waiting for no read-back:
-(1) the water to the lowest water temperature set; (2) heating on where the boiler returns to a
-thermostat or its own control — on a gateway always ``CH=1``; (3) the release — ``CS=0``, the
-hand-back value, the external-control switch off, or nothing (the device's own timeout). It
-returns what each target must show once the hand-back reached it (``HandBackCheck``); only that
-confirmation waits for the read-back.
+Every hand-back is the safe hand-back (``docs/en/specification/scope.md`` §5; the user's decision of
+2026-09-26/27), its parts one after another at once, each tried whatever the others do, waiting for
+no read-back: (1) the water to the lowest water temperature set; (2) heating on where the boiler
+returns to a thermostat or its own control — on a gateway always ``CH=1``; (3) the release —
+``CS=0``, the hand-back value, the external-control switch off, or nothing (the device's own
+timeout). It returns what each target must show once the hand-back reached it (``HandBackCheck``);
+only that confirmation waits for the read-back.
 
 A relay (class 3, X8) goes to its rest state instead, through a writer of its own: "off" unless
 the user chose "on" — the relay is never switched on otherwise (S-27). Its own reported state

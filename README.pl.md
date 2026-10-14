@@ -10,7 +10,7 @@
 # Smart Boiler for Versatile Thermostat
 
 <p align="center">
-  <img src="documentation/images/logo.png" alt="Smart Boiler for Versatile Thermostat logo" width="280" />
+  <img src="docs/images/logo.png" alt="Smart Boiler for Versatile Thermostat logo" width="280" />
 </p>
 
 <p align="center"><b>
@@ -235,7 +235,7 @@ Najważniejsze — opisane, nie doradzane:
 | Powrót sam po innym sterowniku | wyłączony | włączony: sterowanie wraca 60 minut po ostatniej obcej wartości, choć inny sterownik może wciąż działać |
 | Wstrzymywanie uczenia (SmartPI) | włączone | wyłączone: wahania wywołane przez wtyczkę trafiają do modelu SmartPI |
 
-Każda wartość domyślna i jej powód: tabela wartości domyślnych w [`SCOPE.md`, część 7][scope-defaults]
+Każda wartość domyślna i jej powód: tabela wartości domyślnych w [`docs/en/specification/scope.md`, część 7][scope-defaults]
 (po angielsku). Wartości oznaczone jako tymczasowe są przeglądane przed pierwszym wydaniem.
 
 # Oddanie sterowania
@@ -422,15 +422,15 @@ target:
 | Później | ładowanie ciepłej wody, domyślna lista HACS, więcej urządzeń |
 
 Cele są zamierzeniami, nie zobowiązaniami; każde wydanie zbiera dane dla następnego. Szczegóły:
-[`PLAN.md`][plan] (po angielsku).
+[`docs/en/development/plan.md`][plan] (po angielsku).
 
 # Dokumentacja
 
 | Dokument | Co zawiera |
 |---|---|
-| [`SCOPE.md`][scope] | specyfikacja: co wtyczka robi, jej zasady i wszystkie decyzje (po angielsku) |
-| [`PLAN.md`][plan] | plan rozwoju, wydania i środowisko testowe (po angielsku) |
-| [`docs/`][docs] | plan każdego wydania i przeglądy kodu (po angielsku) |
+| [Scope][scope] | specyfikacja: co wtyczka robi, jej zasady i wszystkie decyzje (po angielsku) |
+| [Plan rozwoju][plan] | plan rozwoju, wydania i środowisko testowe (po angielsku) |
+| [Plany i przeglądy][docs] | plan każdego wydania i przeglądy kodu (po angielsku) |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | wymagania, instalacja, szybki start, jak to działa, podłączenie kotła, bezpieczeństwo, alarmy |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | części integracji, jeden krok sterowania, cykl życia, stan trwały, testy |
 | [Dane o wodzie dla algorytmów stref][water] | interfejs, który daje SmartPI i innym algorytmom stref temperaturę wody docierającej do każdej strefy (po angielsku; streszczenie w dokumentacji technicznej, rozdz. 8) |
@@ -464,20 +464,20 @@ Jeśli Smart Boiler for Versatile Thermostat Ci się przydaje, możesz wesprzeć
 
 [vt]: https://github.com/jmcollin78/versatile_thermostat
 [dev]: https://github.com/Shadow-230/vtherm-smart-boiler/tree/dev
-[scope]: SCOPE.md
-[scope-defaults]: SCOPE.md#7-features-by-stage
-[plan]: PLAN.md
-[docs]: docs/
-[guide]: documentation/en/user-guide.md
-[guide-pl]: documentation/pl/user-guide.md
-[guide-pl-connect]: documentation/pl/user-guide.md#5-podłączenie-kotła
-[guide-pl-hand-back]: documentation/pl/user-guide.md#61-bezpieczne-oddanie-sterowania
-[guide-pl-relay]: documentation/pl/user-guide.md#54-przekaźnik-kocioł-włwył
-[guide-pl-fresh]: documentation/pl/user-guide.md#68-świeżość-danych
-[guide-pl-alarms]: documentation/pl/user-guide.md#7-alarmy-i-zgłoszenia-w-naprawach
-[technical]: documentation/en/technical.md
-[technical-pl]: documentation/pl/technical.md
-[water]: documentation/en/water-interface.md
+[scope]: docs/en/specification/scope.md
+[scope-defaults]: docs/en/specification/scope.md#7-features-by-stage
+[plan]: docs/en/development/plan.md
+[docs]: docs/en/development/
+[guide]: docs/en/user-guide/user-guide.md
+[guide-pl]: docs/pl/user-guide/user-guide.md
+[guide-pl-connect]: docs/pl/user-guide/user-guide.md#5-podłączenie-kotła
+[guide-pl-hand-back]: docs/pl/user-guide/user-guide.md#61-bezpieczne-oddanie-sterowania
+[guide-pl-relay]: docs/pl/user-guide/user-guide.md#54-przekaźnik-kocioł-włwył
+[guide-pl-fresh]: docs/pl/user-guide/user-guide.md#68-świeżość-danych
+[guide-pl-alarms]: docs/pl/user-guide/user-guide.md#7-alarmy-i-zgłoszenia-w-naprawach
+[technical]: docs/en/technical/technical.md
+[technical-pl]: docs/pl/technical/technical.md
+[water]: docs/en/specification/water-interface.md
 [changelog]: CHANGELOG.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE

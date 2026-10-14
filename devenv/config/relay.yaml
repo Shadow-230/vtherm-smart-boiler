@@ -1,4 +1,4 @@
-# Test Home Assistant for J4's relay path (docs/plan-0.2.md, J4): an on/off boiler whose
+# Test Home Assistant for J4's relay path (docs/en/development/plans/plan-0.2.md, J4): an on/off boiler whose
 # room-thermostat terminals a relay closes, as tests/integration/test_acceptance.py's start_relay
 # sets it up — the relay's contact is the boiler's heat demand, no wall thermostat. Deployed with
 # `scripts/deploy_test.sh --instance N --config relay`. No default_config, so no network discovery

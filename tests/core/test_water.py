@@ -1,4 +1,5 @@
-"""I9.1: what the plugin exposes about a zone's water (documentation/en/water-interface.md, §4)."""
+"""I9.1: what the plugin exposes about a zone's water (docs/en/specification/water-interface.md,
+§4)."""
 
 from __future__ import annotations
 

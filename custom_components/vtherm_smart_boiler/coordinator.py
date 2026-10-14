@@ -422,7 +422,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._refreshes = OutageWindow()
         self.monitor_failed_since: float | None = None
         self._save_due: float | None = None  # when the pending delayed save runs
-        # Day summaries for the verdict, kept for up to a year (SCOPE.md §10).
+        # Day summaries for the verdict, kept for up to a year (docs/en/specification/scope.md §10).
         self.daily: dict[float, DaySummary] = {}
         self._history_back = False  # the recorder's history has been read (or cannot be)
         # P-95 (A11): the ``[from, to)`` intervals the plugin was not running, kept as long as the

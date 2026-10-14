@@ -285,9 +285,10 @@ def _migrate_room_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _migrate_reference_room(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """I8.1 (minor version 9): the reference room is gone (`docs/plan-0.2-i8.md` B1) — the plugin
-    is for the boiler; its stored settings go with it. Its three sensors leave the registry at
-    the next setup, as entities the options no longer create."""
+    """I8.1 (minor version 9): the reference room is gone
+    (`docs/en/development/plans/plan-0.2-i8.md` B1) — the plugin is for the boiler; its stored
+    settings go with it. Its three sensors leave the registry at the next setup, as entities the
+    options no longer create."""
     from .const import REFERENCE_ROOM
 
     options = {key: value for key, value in entry.options.items() if key != REFERENCE_ROOM}
@@ -295,9 +296,9 @@ def _migrate_reference_room(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _migrate_foreign_heat(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """I8.1c (minor version 10): foreign heat is gone (`docs/plan-0.2-i8.md` B3) — a room warmed
-    by something else is VT's and SmartPI's to handle; the zones' sources and the monitor's hold
-    time go. Their binary sensors leave the registry at the next setup."""
+    """I8.1c (minor version 10): foreign heat is gone (`docs/en/development/plans/plan-0.2-i8.md`
+    B3) — a room warmed by something else is VT's and SmartPI's to handle; the zones' sources and
+    the monitor's hold time go. Their binary sensors leave the registry at the next setup."""
     from .const import MONITOR, ZONES
 
     options = dict(entry.options)
@@ -316,9 +317,10 @@ def _migrate_foreign_heat(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _migrate_zone_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """I8.1d (minor version 11): the per-zone values are gone (`docs/plan-0.2-i8.md` B4) — the
-    zones' emitter output and exponent, which only a per-zone sensor used, and the monitor's
-    "near room temperature". Their entities leave the registry at the next setup."""
+    """I8.1d (minor version 11): the per-zone values are gone
+    (`docs/en/development/plans/plan-0.2-i8.md` B4) — the zones' emitter output and exponent, which
+    only a per-zone sensor used, and the monitor's "near room temperature". Their entities leave the
+    registry at the next setup."""
     from .const import MONITOR, ZONES
 
     options = dict(entry.options)
@@ -337,10 +339,10 @@ def _migrate_zone_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _migrate_correction_range(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """I8.3 (minor version 12): the curve's "correction range" is gone (`docs/plan-0.2-i8.md`
-    B6); the comfort correction's own limit is the only bound above the curve. A narrower
-    stored range becomes that limit, and one too small to let any correction through switches
-    the correction off — control runs as it did."""
+    """I8.3 (minor version 12): the curve's "correction range" is gone
+    (`docs/en/development/plans/plan-0.2-i8.md` B6); the comfort correction's own limit is the only
+    bound above the curve. A narrower stored range becomes that limit, and one too small to let any
+    correction through switches the correction off — control runs as it did."""
     from .control_config import without_correction_range
 
     options = dict(entry.options)
@@ -355,11 +357,12 @@ DESIGN_LOAD_BOUNDS = (0.5, 200.0)
 
 def _migrate_building(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """I8.3b (minor version 13): the floor area, the insulation and the thermal mass are gone
-    (`docs/plan-0.2-i8.md` B5) — they gave only rules of thumb no function needed. An entered
-    loss coefficient becomes the design load it gives at the stored design outdoor temperature
-    and the indoor reference (20 °C unless stored), to 0.1 kW, so the heat loss stays as entered;
-    it replaced a stored design load before, and does so now (logged). A value outside the
-    form's range is brought into it (logged); one that is no positive number is dropped."""
+    (`docs/en/development/plans/plan-0.2-i8.md` B5) — they gave only rules of thumb no function
+    needed. An entered loss coefficient becomes the design load it gives at the stored design
+    outdoor temperature and the indoor reference (20 °C unless stored), to 0.1 kW, so the heat loss
+    stays as entered; it replaced a stored design load before, and does so now (logged). A value
+    outside the form's range is brought into it (logged); one that is no positive number is
+    dropped."""
     import logging
     import math
 
@@ -404,8 +407,9 @@ def _migrate_building(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 def _migrate_room_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """I8.4 (minor version 14): "room temperature only" left the mode panel until it works
-    (`docs/plan-0.2-i8.md` C2); an entry with it reads as monitoring only — what it did. The
-    boiler class stays: both keep control off, and the class follows the connection alike."""
+    (`docs/en/development/plans/plan-0.2-i8.md` C2); an entry with it reads as monitoring only —
+    what it did. The boiler class stays: both keep control off, and the class follows the connection
+    alike."""
     from .const import BOILER
     from .control_config import ROOM_VALUES_FROM_BEFORE, ControlMode
 
@@ -419,8 +423,8 @@ def _migrate_room_values(hass: HomeAssistant, entry: ConfigEntry) -> None:
 def _migrate_topics(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """I8.4b (minor version 15): the OTGW firmware's MQTT topics were stored twice — with the
     connection, for the repeats, and in the control section, for the writes; they are stored
-    once now, with the connection (`docs/plan-0.2-i8.md` D2). Where the two differ, the control
-    section's go there — what the writes used (Claude's call), logged."""
+    once now, with the connection (`docs/en/development/plans/plan-0.2-i8.md` D2). Where the two
+    differ, the control section's go there — what the writes used (Claude's call), logged."""
     import logging
 
     from .const import BOILER
@@ -450,9 +454,9 @@ def _migrate_topics(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 def _migrate_monitor_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """I8.4c (minor version 16): a gateway that only listens ("monitor mode") was a topology;
-    it is the control mode "monitoring only" now (`docs/plan-0.2-i8.md` B7, Claude's call). The
-    control section is kept, without the topology, which allowed no control; the class follows
-    the connection where one is stored."""
+    it is the control mode "monitoring only" now (`docs/en/development/plans/plan-0.2-i8.md` B7,
+    Claude's call). The control section is kept, without the topology, which allowed no control; the
+    class follows the connection where one is stored."""
     from .const import BOILER
     from .control_config import (
         MONITOR_MODE_FROM_BEFORE,
@@ -480,9 +484,10 @@ def _migrate_monitor_mode(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 def _migrate_relay_reads(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """I8.5a (minor version 17): a relay asks whether the boiler is read through another
-    integration too (`docs/plan-0.2-i8.md` D4); an entry with a boiler signal mapped beyond what
-    a relay reads answers Yes, so none of them goes at the next save. An age limit stored for a
-    signal not mapped (or for a weather entity not set) judged nothing and goes (D7)."""
+    integration too (`docs/en/development/plans/plan-0.2-i8.md` D4); an entry with a boiler signal
+    mapped beyond what a relay reads answers Yes, so none of them goes at the next save. An age
+    limit stored for a signal not mapped (or for a weather entity not set) judged nothing and goes
+    (D7)."""
     from .const import BOILER, FRESHNESS, RELAY_READS, RELAY_SIGNALS, SIGNALS, WEATHER
     from .control_config import Connection
 
@@ -505,12 +510,12 @@ def _migrate_relay_reads(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _migrate_read_backs(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """I8.5b (minor version 18): control's read-backs are boiler signals (`docs/plan-0.2-i8.md`
-    D3) — the setpoint read-back the "CH setpoint" signal, the heating on/off read-back a
-    signal field of its own; the control section keeps neither. Where the setpoint read-back
-    and the signal were set and differ, the read-back's entity, which control was judged with,
-    replaces the signal's — logged. Signals of another shape are left as stored, with the
-    read-backs where they were, for the options' check to report."""
+    """I8.5b (minor version 18): control's read-backs are boiler signals
+    (`docs/en/development/plans/plan-0.2-i8.md` D3) — the setpoint read-back the "CH setpoint"
+    signal, the heating on/off read-back a signal field of its own; the control section keeps
+    neither. Where the setpoint read-back and the signal were set and differ, the read-back's
+    entity, which control was judged with, replaces the signal's — logged. Signals of another shape
+    are left as stored, with the read-backs where they were, for the options' check to report."""
     import logging
 
     from .const import READ_BACK_SIGNALS, SIGNALS
@@ -545,15 +550,14 @@ def _migrate_read_backs(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 def _migrate_highest_water(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """I8.7a (minor version 19): the curve's highest water temperature is merged into the
-    circuits' (`docs/plan-0.2-i8.md` F2). Each circuit's maximum becomes the lower of its own and
-    the control section's — the boiler's water never went above that — and the section keeps
-    none. A section that writes and stores none ran with the default, which counts as its; one
-    that is no number in the circuits' range is the default too. The default is what a circuit
-    without a maximum gets now, so only another value is written there (no too-hot alarm the
-    user never set); where no circuit is stored, the one the options imply (``main``, fed
-    straight) gets it. Circuits of another shape are left as stored, and the section's value
-    with them, as is a circuit maximum that is no number in the circuits' range, for the
-    options' check to report."""
+    circuits' (`docs/en/development/plans/plan-0.2-i8.md` F2). Each circuit's maximum becomes the
+    lower of its own and the control section's — the boiler's water never went above that — and the
+    section keeps none. A section that writes and stores none ran with the default, which counts as
+    its; one that is no number in the circuits' range is the default too. The default is what a
+    circuit without a maximum gets now, so only another value is written there (no too-hot alarm the
+    user never set); where no circuit is stored, the one the options imply (``main``, fed straight)
+    gets it. Circuits of another shape are left as stored, and the section's value with them, as is
+    a circuit maximum that is no number in the circuits' range, for the options' check to report."""
     from .config import CIRCUIT_BOUNDS
     from .const import CIRCUITS
     from .control_config import CONTROL_DEFAULTS, HARD_MAX_FROM_BEFORE
@@ -593,11 +597,11 @@ def _migrate_highest_water(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _migrate_circuit_zones(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """I8.7c (minor version 20): the zones are the circuits' (`docs/plan-0.2-i8.md` F4) — each
-    circuit lists the zones it feeds, and of them those with underfloor heating and those with
-    convectors (F2); the zones' section keeps whether a zone's valves close when it is off
-    (``zones_on_circuits``). What cannot move safely is left as stored, for the options' check
-    to report."""
+    """I8.7c (minor version 20): the zones are the circuits'
+    (`docs/en/development/plans/plan-0.2-i8.md` F4) — each circuit lists the zones it feeds, and of
+    them those with underfloor heating and those with convectors (F2); the zones' section keeps
+    whether a zone's valves close when it is off (``zones_on_circuits``). What cannot move safely is
+    left as stored, for the options' check to report."""
     from .config import zones_on_circuits
 
     options = dict(entry.options)

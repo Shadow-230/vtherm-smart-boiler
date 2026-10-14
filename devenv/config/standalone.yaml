@@ -1,4 +1,4 @@
-# Test Home Assistant for J4's stand-alone gateway (docs/plan-0.2.md, J4): an OpenTherm Gateway
+# Test Home Assistant for J4's stand-alone gateway (docs/en/development/plans/plan-0.2.md, J4): an OpenTherm Gateway
 # with no thermostat on its terminals, so without the plugin's override the boiler does not heat —
 # a hand-back stops heating, as the control switch says. Deployed with
 # `scripts/deploy_test.sh --instance N --config standalone`. No default_config, so no network

@@ -1,5 +1,6 @@
-# Home Assistant's and HACS's checks of the integration (docs/plan-0.2.md, K2). The actions are
-# pinned to full commits (PB-86): a moved branch changes nothing until the pin is updated by hand.
+# Home Assistant's and HACS's checks of the integration (docs/en/development/plans/plan-0.2.md,
+# K2). The actions are pinned to full commits (PB-86): a moved branch changes nothing until the
+# pin is updated by hand.
 name: Validate
 
 on:

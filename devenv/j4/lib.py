@@ -1,9 +1,9 @@
-"""A small async client for one test Home Assistant instance, for J4 (docs/plan-0.2.md).
+"""A small async client for one test Home Assistant instance, for J4 (docs/en/development/plans/plan-0.2.md).
 
 Everything about where it goes comes from devenv/local.env (git-ignored): the instance is
 HA_INSTANCE (1 to 5, default 1), its URL TEST_HA_URL[_N] — refused unless it is TEST_HA_HOST on
 port 8122 + N — and its token TEST_HA_TOKEN[_N], or TEST_HA_TOKEN where the instances share the
-first one's login (devenv/README.md, section 6). It connects to nothing else.
+first one's login (docs/en/testing/test-environment.md, section 6). It connects to nothing else.
 """
 
 from __future__ import annotations

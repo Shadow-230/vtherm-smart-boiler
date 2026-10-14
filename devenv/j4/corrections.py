@@ -1,4 +1,4 @@
-"""J4's scenarios for the corrections of 2026-10-10 (G11, docs/plan-0.2-g11.md), on test instance
+"""J4's scenarios for the corrections of 2026-10-10 (G11, docs/en/development/plans/plan-0.2-g11.md), on test instance
 1: the gateway path, full control, VT's zones with SmartPI in the bedroom and TPI elsewhere.
 
 The comfort correction with its limit and the warning at its edge (repair issue

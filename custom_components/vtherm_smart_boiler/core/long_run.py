@@ -19,7 +19,8 @@ first that fits:
 "Not warming": a room whose temperature rose less than ``NOT_RISING_K`` over the run's last
 ``LONG_RUN_S``. The flow, setpoint and modulation are averaged over the last ``AVERAGE_S`` so the
 class does not flicker with the burner's own swings; without them classes 1 and 2 are not judged.
-Every value provisional (K4), each with its reason in ``docs/plan-0.2-g11.md`` E.
+Every value provisional (K4), each with its reason in ``docs/en/development/plans/plan-0.2-g11.md``
+E.
 """
 
 from __future__ import annotations

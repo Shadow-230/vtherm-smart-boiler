@@ -1,4 +1,5 @@
-"""Acceptance scenarios (docs/plan-0.2.md, J4), in-process against the simulator component.
+"""Acceptance scenarios (docs/en/development/plans/plan-0.2.md, J4), in-process against the
+simulator component.
 
 The plugin controls the simulated boiler through the same paths as in the test Home Assistant:
 the OpenTherm Gateway — the test-only stub ``opentherm_gw`` on the simulator, set up through its
