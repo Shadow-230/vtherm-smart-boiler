@@ -1111,7 +1111,7 @@ def _circuits(inputs: ControlInputs, config: ControlConfig) -> CircuitsAsking:
     wanting = {
         z.zone_id: z.devices_active
         for z in inputs.zones
-        if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z, config.demand.zone_opening)
+        if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z)
     }
     return circuits_asking(
         config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting, wanting

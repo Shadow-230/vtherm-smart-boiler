@@ -99,8 +99,9 @@ boiler's own fault; otherwise heating on or off from frost protection and the zo
 the water temperature from the curve (`core/curve.py`), limits and ramp.
 
 **Demand (`core/demand.py`, `boiler_demand`).** What VT's central boiler decided, now the
-plugin's job: zones calling, total power or valve opening, each zone counted only while VT
-reports it clearly.
+plugin's job: devices or zones calling (VT's devices by default, as its central boiler counts
+them), total power or valve opening, each zone counted only while VT reports it clearly; where
+VT gives no device state, VT's own rule — a valve open at all, else a duty cycle above 0.
 
 **Circuits run by other automation (`core/circuit_requests.py`, `circuits_asking`).** A circuit
 whose mixer or pump something else drives asks for heat through its own entity or its zones; an

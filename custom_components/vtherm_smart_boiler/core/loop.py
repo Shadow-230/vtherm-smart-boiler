@@ -37,7 +37,14 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
-from .controller import ControlConfig, ControlDecision, ControlInputs, ControlState, decide
+from .controller import (
+    ControlConfig,
+    ControlDecision,
+    ControlInputs,
+    ControlState,
+    Reason,
+    decide,
+)
 from .guards import (
     NO_CONTEXT,
     GuardConfig,
@@ -203,6 +210,26 @@ def _gridded(value: float, grid: Grid | None, config: LoopConfig, off: bool) -> 
     return grid.put(value, low, high)
 
 
+# F14 (J4 of 2026-10-14): the water held at a bound — the lowest or highest water temperature, a
+# circuit's maximum or need, the boiler's maximum — is written exactly once the ramp has reached
+# it; elsewhere the read-back's tolerance stays a deadband on the curve's small changes.
+_BOUNDS = frozenset(
+    {
+        Reason.LIMIT_HARD_MIN,
+        Reason.LIMIT_HARD_MAX,
+        Reason.LIMIT_CIRCUIT_MAX,
+        Reason.LIMIT_BOILER_MAX,
+        Reason.LIMIT_CIRCUIT_NEED,
+    }
+)
+
+
+def at_bound(decision: ControlDecision) -> bool:
+    """The setpoint is a bound the water is held at, the ramp having reached it (F14)."""
+    reasons = decision.reasons
+    return Reason.RAMP not in reasons and not _BOUNDS.isdisjoint(reasons)
+
+
 def loop_step(
     state: LoopState,
     inputs: ControlInputs,
@@ -285,6 +312,8 @@ def loop_step(
         desired = off_value if off else heating_value
     if config.ch_writes and desired is not None:
         desired = _gridded(desired, grid, config, False)
+    if not off and at_bound(decision):
+        setpoint_context = replace(setpoint_context, exact=True)  # F14: met exactly
     planned = plan_write(
         state.setpoint, desired, confirmed_setpoint, now, config.setpoint_guard, setpoint_context
     )

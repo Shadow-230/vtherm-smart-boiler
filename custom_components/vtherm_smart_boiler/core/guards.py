@@ -117,6 +117,11 @@ ECHOES_KNOWN = 3
 # stuck test blind for the rest of the session; it drops out after this many prompt ones.
 ECHO_WINDOW = 10
 TOLERANCE_K = 0.5  # a read-back this close shows a value; kept as today
+# F14 (J4 of 2026-10-14): a value within the tolerance of the one written is not worth a write —
+# a deadband on the curve's small changes, which keeps the burner's starts down (the simulation:
+# x1.20 at +8 °C with it, x1.36 without) —, unless it is a bound to meet exactly (``exact``):
+# then it goes once it differs by more than this (float noise aside).
+EXACT_K = 0.05
 # Decision 6 with the user's answer E (2026-09-27), decided:
 FALL_BACK_WINDOW_S = HOUR  # a second fall-back without a trace this soon: another controller
 EXPLAINED_S = 120.0  # a fall-back this soon after a new value is explained by it
@@ -261,6 +266,10 @@ class GuardContext:
     # When the read-back last changed, as Home Assistant shows it: a report older than a send is
     # never its read-back (Z4R3-01). ``None``: not known — any report counts, as before.
     reported_at: float | None = None
+    # The value asked for is a bound to meet exactly — a circuit's need, the lowest or highest
+    # water, the boiler's maximum — the ramp having reached it (F14): written once it differs
+    # from the one written by more than ``EXACT_K``, within the tolerance too.
+    exact: bool = False
 
 
 NO_CONTEXT = GuardContext()
@@ -541,7 +550,7 @@ def plan_write(
     if reaction is Reaction.RESEND:
         result = _send(state, desired, WriteKind.RESEND, now, config, seen.trace)
         return replace(result, events=events, lost=lost, judged=judged)
-    return _plan(state, desired, seen, now, config, events, judged)
+    return _plan(state, desired, seen, now, config, events, judged, exact=context.exact)
 
 
 def classify(
@@ -1060,9 +1069,17 @@ def _plan(
     config: GuardConfig,
     events: tuple[GuardEvent, ...],
     judged: ChangeClass,
+    *,
+    exact: bool = False,
 ) -> GuardResult:
-    """Nothing to react to: a new value, a keep-alive or a held refresh — or nothing."""
-    if state.written is None or not _near(desired, state.written, config.tolerance):
+    """Nothing to react to: a new value — beyond the tolerance of the one written, or a bound
+    that must be met exactly (``exact``, F14) —, a keep-alive or a held refresh — or nothing."""
+    written = state.written
+    if (
+        written is None
+        or not _near(desired, written, config.tolerance)
+        or (exact and abs(desired - written) > EXACT_K)
+    ):
         result = _send(state, desired, WriteKind.CHANGE, now, config, seen.trace)
         return replace(result, events=events, judged=judged)
     written_at = state.written_at if state.written_at is not None else now
@@ -1076,7 +1093,7 @@ def _plan(
             or (refresh is not None and now - written_at >= refresh)
         )
     if due:
-        result = _send(state, state.written, WriteKind.KEEPALIVE, now, config, seen.trace)
+        result = _send(state, written, WriteKind.KEEPALIVE, now, config, seen.trace)
         return replace(result, events=events, judged=judged)
     return GuardResult(state, None, events, judged=judged)
 

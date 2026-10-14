@@ -156,6 +156,8 @@ class VtCentralBoiler:
     repeat_s: float | None = None  # the keep-alive where it lies within 10–300 s
     power_threshold_kw: float | None = None  # as VT used it: whole numbers in its unit
     count_threshold: int | None = None  # one device per zone VT counts; VT's 0 beside power
+    # VT's count as it counts — devices —, for a count of devices (2026-10-14); 0 as above.
+    count_threshold_devices: int | None = None
 
     @property
     def exists(self) -> bool:
@@ -295,8 +297,9 @@ def vt_central_boiler_settings(hass: HomeAssistant, zones: Sequence[str]) -> VtC
     thresholds as VT used them — each the whole number of its state in VT's own unit — the
     power converted to kW (``W`` ÷ 1000, ``kW`` as is, any other unit not pre-filled), each only
     above 0; the count only where every zone VT counts has one heating device, as VT counts
-    devices and the plugin rooms, or 0 where VT's count is 0 beside a power threshold. VT's
-    keep-alive becomes the repeat interval only within 10–300 s."""
+    devices and the plugin rooms, or 0 where VT's count is 0 beside a power threshold — and as
+    VT counts, for a count of devices. VT's keep-alive becomes the repeat interval only within
+    10–300 s."""
     entry = vt_central_entry(hass)
     if entry is None:
         return None
@@ -320,6 +323,7 @@ def vt_central_boiler_settings(hass: HomeAssistant, zones: Sequence[str]) -> VtC
         repeat_s=keep_alive if keep_alive is not None and low <= keep_alive <= high else None,
         power_threshold_kw=_vt_power_threshold(hass),
         count_threshold=_vt_count_threshold(hass, len(zones)),
+        count_threshold_devices=_vt_device_count_threshold(hass),
     )
 
 
@@ -342,6 +346,19 @@ def _vt_power_threshold(hass: HomeAssistant) -> float | None:
     unit = state.attributes.get("unit_of_measurement") if state is not None else None
     factor = {"W": 0.001, "kW": 1.0}.get(unit if isinstance(unit, str) else "")
     return None if factor is None else int(value) * factor
+
+
+def _vt_device_count_threshold(hass: HomeAssistant) -> int | None:
+    """VT's device-count threshold as VT counts — devices —, for a count of devices
+    (2026-10-14): its whole number above 0; its 0 beside a power threshold, as for rooms; a
+    count missing or unreadable pre-fills nothing."""
+    state = _vt_number(hass, COUNT_THRESHOLD_UNIQUE_ID)
+    value = None if state is None else parse_number(state.state)
+    if value is None or value < 0:
+        return None
+    if int(value) == 0:
+        return 0 if _vt_power_threshold(hass) is not None else None
+    return int(value)
 
 
 def _vt_count_threshold(hass: HomeAssistant, zone_count: int) -> int | None:
@@ -620,6 +637,8 @@ class VThermLink:
             auto_mode=values.auto_mode,
             device_active=values.device_active,
             devices_active=values.devices_active,
+            # What a count of devices is capped by (2026-10-14): the devices VT's entry lists.
+            device_count=len(zone_underlying_entities(self._hass, entity_id) or ()) or None,
             ready=values.ready,
             temperature_at=values.temperature_at,
             max_on_percent=values.max_on_percent,
