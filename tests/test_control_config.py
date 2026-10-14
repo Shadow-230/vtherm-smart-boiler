@@ -229,7 +229,7 @@ def test_every_blocker_is_listed() -> None:
         (OTGW, two),
         (OTGW, floor),
         (OTGW, no_zones),
-        (OTGW | {"count_threshold": 5}, RADIATORS),
+        (OTGW | {"count_threshold": 5, "count_by": "zones"}, RADIATORS),
         (ENTITY | {"off_setpoint": 30}, RADIATORS),
         (ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}, RADIATORS),
         (ENTITY | {"hand_back_value": 75}, RADIATORS),
@@ -526,9 +526,15 @@ def test_frequent_starts_are_information_only() -> None:
 
 
 def test_the_count_threshold_must_fit_the_zones() -> None:
-    options = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
+    """Counting zones, a count above the zones is a blocker. Counting VT's devices (2026-10-14)
+    it is not: the zones' devices are VT's to tell — the form checks them, and the count never
+    asks more than the known zones drive (``core.demand``)."""
+    options = parse_control(OTGW | {"count_threshold": 2, "count_by": "zones"}, RADIATORS, None)
     assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
     assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
+    devices = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
+    assert devices.loop.control.demand.count_by.value == "devices"  # the default
+    assert config_blockers(devices, RADIATORS) == []
     # I8.8b: a zone split between circuits counts once.
     split = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
@@ -1837,7 +1843,7 @@ def test_the_circuit_rules_do_not_apply_to_a_relay() -> None:
         (Zone("climate.a", "a", EmitterType.UNDERFLOOR),),
     )
     assert config_blockers(parse_control(RELAY, two, None), two) == []
-    many = parse_control({**RELAY, "count_threshold": 3}, ON_OFF, None)
+    many = parse_control({**RELAY, "count_threshold": 3, "count_by": "zones"}, ON_OFF, None)
     assert config_blockers(many, ON_OFF) == ["count_threshold_above_zones"]
     no_zones = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
     assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == ["no_zones"]
@@ -2139,7 +2145,7 @@ BLOCKER_PRECEDENCE = [
     ),
     (
         "a count above the zones",
-        OTGW | {"count_threshold": 3},
+        OTGW | {"count_threshold": 3, "count_by": "zones"},
         RADIATORS,
         None,
         _ALL_SIGNALS,

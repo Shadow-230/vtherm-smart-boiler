@@ -1237,7 +1237,7 @@ async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
     assert entry.minor_version == 21  # through the later steps too
-    assert entry.options.get("control") == expected
+    assert entry.options.get("control") == (None if expected is None else through_21(expected))
 
 
 async def test_an_upgraded_entry_drops_foreign_heat(hass: HomeAssistant) -> None:
@@ -1336,6 +1336,7 @@ def test_a_session_taken_with_a_correction_range_compares_as_migrated() -> None:
         "write_path": "entity",
         "comfort_correction": True,
         "comfort_correction_max_k": 2.0,
+        "count_by": "zones",  # 21: what it ran with
     }
 
 
@@ -1471,7 +1472,7 @@ async def test_the_mqtt_topics_are_stored_once(
     assert entry.options["control"] == through_21(expected_control)
     assert ("is replaced by the control's" in caplog.text) is (boiler.get("mqtt_node") == "old")
     # A session taken with the topics in the control section compares as it ran.
-    assert control_as_run(entry.options) == control
+    assert control_as_run(entry.options) == through_21(control)
 
 
 @pytest.mark.parametrize(
@@ -1644,7 +1645,7 @@ async def test_the_read_backs_become_boiler_signals(
         isinstance(signals, dict) and signals.get("ch_setpoint") == "sensor.old"
     )
     # A session taken with the read-backs in the control section compares as it ran.
-    assert control_as_run(entry.options) == {k: v for k, v in section.items() if v}
+    assert control_as_run(entry.options) == through_21({k: v for k, v in section.items() if v})
 
 
 _WRITES = {"write_path": "opentherm_gw"}
@@ -1726,6 +1727,8 @@ async def test_the_highest_water_temperature_becomes_the_circuits(
         # Minor version 20: each circuit lists its zones (none here); one of another shape
         # leaves them all as stored.
         expected = expected | {"circuits": [c | {"zones": []} for c in circuits]}
+    if isinstance(expected.get("control"), dict):
+        expected = expected | {"control": through_21(expected["control"])}
     assert dict(entry.options) == expected
 
 
