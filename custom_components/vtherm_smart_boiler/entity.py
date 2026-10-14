@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
+from typing import Any
 
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .control import ControlUnit
+from .control import ControlStatus, ControlUnit
 from .coordinator import SmartBoilerCoordinator
 from .core.signal_check import Feature, FeatureStatus
 
@@ -157,3 +159,45 @@ class ControlEntity(SmartBoilerEntity):
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.async_on_remove(self.control.async_add_listener(self.async_write_ha_state))
+
+
+# The demand's diagnostics change at nearly every step: shown, not recorded.
+DEMAND_ATTRIBUTES = frozenset(
+    {
+        "demand_count",
+        "count_threshold",
+        "count_by",
+        "demand_power_kw",
+        "power_threshold_kw",
+        "demand_opening",
+        "opening_threshold",
+        "activation_at",
+    }
+)
+
+
+def demand_attributes(status: ControlStatus) -> dict[str, Any]:
+    """The demand judged against its thresholds, as VT's central boiler shows its own: the
+    count (of devices or zones) and its threshold, the power in kW, the widest opening in %."""
+    return {
+        "demand_count": status.demand_count,
+        "count_threshold": status.count_threshold,
+        "count_by": status.count_by,
+        "demand_power_kw": _rounded(status.demand_power_kw, 3),
+        "power_threshold_kw": status.power_threshold_kw,
+        "demand_opening": _percent(status.demand_opening),
+        "opening_threshold": _percent(status.opening_threshold),
+        "activation_at": _moment(status.activation_at),
+    }
+
+
+def _rounded(value: float | None, digits: int) -> float | None:
+    return None if value is None else round(value, digits)
+
+
+def _percent(fraction: float | None) -> float | None:
+    return None if fraction is None else round(fraction * 100.0, 1)
+
+
+def _moment(t: float | None) -> str | None:
+    return None if t is None else dt_util.utc_from_timestamp(t).isoformat()

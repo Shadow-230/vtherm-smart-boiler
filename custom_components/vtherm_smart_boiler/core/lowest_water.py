@@ -30,7 +30,8 @@ a hand-back, from the optional "wired thermostat setpoint" signal, warned when t
 unknown or below ``WALL_THERMOSTAT_LOW``; its repair issue follows once it has been low or
 unknown for ``WALL_THERMOSTAT_ISSUE_S``.
 
-Every number here is provisional, for the user at K4 (``SCOPE.md``'s fixed values, S-37).
+Every number here is provisional, for the user at K4 (``docs/en/specification/scope.md``'s fixed
+values, S-37).
 """
 
 from __future__ import annotations

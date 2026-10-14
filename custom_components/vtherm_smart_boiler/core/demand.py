@@ -2,13 +2,16 @@
 
 A zone wants heat when it is in a mode that may heat and VT says one of its devices is active
 (its own view, the one its central boiler counts, with VT's minimum activation time respected);
-without that, when its valve opening or duty cycle is above a few percent, else when VT says it
-is heating. A zone in "auto" or heat_cool heats only while its action says so; one VT's power
-shedding holds off wants nothing. The boiler has demand when enough zones want heat, or — when
+without that, by VT's own rule — its valve open at all, or without a valve its duty cycle above
+0 — else when VT says it is heating. A valve's opening and a zone's duty cycle are two different
+things, each judged on its own (the user's decision of 2026-10-14, replacing a shared 5 %). A
+zone in "auto" or heat_cool heats only while its action says so; one VT's power shedding holds
+off wants nothing. The boiler has demand when enough zones want heat, or — when
 set — their power or the widest valve opening reaches a threshold; each criterion can stand
 alone, a count threshold of 0 turning the count off, as in VT:
 
-- the count: the zones that want heat, never more than are known;
+- the count: the zones that want heat, or — as VT's central boiler counts — their devices VT
+  lists active (a zone without a list counts one), never more than the known zones have;
 - the power: each zone's mean power over its cycle, as VT counts it — a switch zone keeps it
   through the off part of its cycle — summed over the zones in a heating mode, and counted only
   while at least one zone that calls has its valve open or its device on: without that no heat
@@ -37,24 +40,30 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
-from .readings import ZONE_OPEN, ZoneState
+from .readings import ZoneState
 
 COUNT, POWER, OPENING = "count", "power", "opening"  # the criteria, as the alarm names them
 
 
+class CountBy(StrEnum):
+    """What the count criterion counts (the user's decision of 2026-10-14)."""
+
+    DEVICES = "devices"  # each zone's devices VT lists active — VT's heads, as its central boiler
+    ZONES = "zones"
+
+
 @dataclass(frozen=True, slots=True)
 class DemandConfig:
-    count_threshold: int = 1  # zones wanting heat; 0 turns the count off
+    count_threshold: int = 1  # zones, or devices, wanting heat; 0 turns the count off
     power_threshold_kw: float | None = None  # their mean power over the cycle, summed
     opening_threshold: float | None = None  # the widest opening of a calling zone, 0 to 1
-    zone_opening: float = ZONE_OPEN  # a zone wants heat above this opening or duty cycle
+    count_by: CountBy = CountBy.ZONES
 
     def __post_init__(self) -> None:
         if self.count_threshold < 0:
-            raise ValueError("the zone count threshold must not be negative")
-        if not 0.0 <= self.zone_opening < 1.0:
-            raise ValueError("the zone opening must be between 0 and 1")
+            raise ValueError("the count threshold must not be negative")
         if (
             self.count_threshold == 0
             and self.power_threshold_kw is None
@@ -79,42 +88,59 @@ class Demand:
     criteria_without_data: tuple[str, ...] = ()
     # Calling zones that feed none of the configured criteria: named by the alarm (PB-23).
     zones_without_data: tuple[str, ...] = ()
+    devices_wanting: int = 0  # the calling zones' devices VT lists active (one without a list)
+    # The zones' mean power summed, as VT's central boiler shows it — whether heat can flow now
+    # or not; ``power_kw`` is what the criterion judges (``None``: no zone feeds power).
+    summed_power_kw: float | None = None
 
 
-def zone_wants_heat(zone: ZoneState, zone_opening: float) -> bool:
+def zone_wants_heat(zone: ZoneState) -> bool:
     if zone.heating_enabled is not True or zone.shedding:
         return False
-    opening = zone.demand
     if zone.auto_mode:
         if zone.calling is not None:
             return zone.calling
-        return opening is not None and opening > zone_opening
+        return _open(zone)
     if zone.device_active is not None:
         return zone.device_active
-    if opening is not None:
-        return opening > zone_opening
+    if zone.valve_open is not None or zone.on_percent is not None:
+        return _open(zone)
     return zone.calling is True
 
 
-def heat_can_flow(zone: ZoneState, zone_opening: float) -> bool:
+def _open(zone: ZoneState) -> bool:
+    """VT's rule where VT gives no device state (2026-10-14): a valve open at all decides where
+    the zone has one; without a valve, a duty cycle above 0 — the zone asks for some heat within
+    its cycle."""
+    if zone.valve_open is not None:
+        return zone.valve_open > 0.0
+    return zone.on_percent is not None and zone.on_percent > 0.0
+
+
+def heat_can_flow(zone: ZoneState) -> bool:
     """The zone calls and heat can reach it now: its valve is open or its device is on. A zone
     whose VT shows neither (an older VT) is judged by its call alone."""
-    if not zone_wants_heat(zone, zone_opening):
+    if not zone_wants_heat(zone):
         return False
     if zone.device_active is True:
         return True
     if zone.valve_open is not None:
-        return zone.valve_open > zone_opening
+        return zone.valve_open > 0.0
     return zone.device_active is None
 
 
-def _mean_power(zone: ZoneState, zone_opening: float) -> float:
+def _devices(zone: ZoneState) -> int:
+    """The devices a calling zone counts: those VT lists active, one without a list."""
+    return len(zone.devices_active) if zone.devices_active else 1
+
+
+def _mean_power(zone: ZoneState) -> float:
     """A zone's share of the power criterion, in kW: its mean power over the cycle; a zone VT
     gives only a device power, without a duty cycle, counts it while it calls (an older VT's
     over_climate). 0 or less counts nothing, as in VT."""
     power = zone.cycle_power
     if power is None:
-        called = zone.power is not None and zone_wants_heat(zone, zone_opening)
+        called = zone.power is not None and zone_wants_heat(zone)
         power = zone.power if called and zone.power is not None else 0.0
     return max(0.0, power)
 
@@ -152,8 +178,8 @@ def boiler_demand(
             unknown.append(zone.zone_id)
     if not known:
         return Demand(None, unknown=tuple(unknown))
-    opening = config.zone_opening
-    wanting = [z for z in known if zone_wants_heat(z, opening)]
+    wanting = [z for z in known if zone_wants_heat(z)]
+    devices = sum(_devices(z) for z in wanting)
     openings = [z.demand for z in wanting if z.demand is not None]
     widest = max(openings) if openings else None
     # What a criterion can be fed comes from the zones in a heating mode, whether they call
@@ -161,16 +187,23 @@ def boiler_demand(
     feeding = [z for z in known if z.heating_enabled is True]
     heating = [z for z in feeding if not z.shedding]
     power: float | None = None
+    summed: float | None = None
     if not feeding or any(feeds_power(z) for z in feeding):
-        flowing = any(heat_can_flow(z, opening) for z in heating)
-        power = sum(_mean_power(z, opening) for z in heating) if flowing else 0.0
+        flowing = any(heat_can_flow(z) for z in heating)
+        summed = sum(_mean_power(z) for z in heating)
+        power = summed if flowing else 0.0
     opening_fed = not feeding or any(feeds_opening(z) for z in feeding)
     judged: list[bool] = []
     without: list[str] = []
     if config.count_threshold > 0:
-        # Never more zones than are known: an unknown zone must not make the count unreachable.
-        count = min(config.count_threshold, len(known))
-        judged.append(len(wanting) >= count)
+        # Never more than the known zones have: an unknown zone must not make the count
+        # unreachable — counting devices, each known zone's devices (one where not known).
+        if config.count_by is CountBy.DEVICES:
+            have = sum(max(z.device_count or 1, len(z.devices_active or ())) for z in known)
+            calling = devices
+        else:
+            have, calling = len(known), len(wanting)
+        judged.append(calling >= min(config.count_threshold, have))
     if config.power_threshold_kw is not None:
         if power is None:
             without.append(POWER)
@@ -184,7 +217,16 @@ def boiler_demand(
     wanted = any(judged) if judged else None
     unseen = tuple(z.zone_id for z in wanting if not _feeds_any(z, config))
     return Demand(
-        wanted, len(wanting), power, widest, len(known), tuple(unknown), tuple(without), unseen
+        wanted,
+        len(wanting),
+        power,
+        widest,
+        len(known),
+        tuple(unknown),
+        tuple(without),
+        unseen,
+        devices,
+        summed,
     )
 
 

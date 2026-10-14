@@ -229,7 +229,7 @@ def test_every_blocker_is_listed() -> None:
         (OTGW, two),
         (OTGW, floor),
         (OTGW, no_zones),
-        (OTGW | {"count_threshold": 5}, RADIATORS),
+        (OTGW | {"count_threshold": 5, "count_by": "zones"}, RADIATORS),
         (ENTITY | {"off_setpoint": 30}, RADIATORS),
         (ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}, RADIATORS),
         (ENTITY | {"hand_back_value": 75}, RADIATORS),
@@ -526,9 +526,15 @@ def test_frequent_starts_are_information_only() -> None:
 
 
 def test_the_count_threshold_must_fit_the_zones() -> None:
-    options = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
+    """Counting zones, a count above the zones is a blocker. Counting VT's devices (2026-10-14)
+    it is not: the zones' devices are VT's to tell — the form checks them, and the count never
+    asks more than the known zones drive (``core.demand``)."""
+    options = parse_control(OTGW | {"count_threshold": 2, "count_by": "zones"}, RADIATORS, None)
     assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
     assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
+    devices = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
+    assert devices.loop.control.demand.count_by.value == "devices"  # the default
+    assert config_blockers(devices, RADIATORS) == []
     # I8.8b: a zone split between circuits counts once.
     split = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
@@ -597,23 +603,25 @@ def test_off_as_a_low_setpoint_must_be_below_the_hard_minimum() -> None:
     assert config_blockers(otgw, RADIATORS) == []
 
 
-def test_a_passive_fixed_circuit_sets_the_floor_and_its_valve_guards_its_maximum() -> None:
-    """S-42 with the user's answers of 2026-10-12: a fixed valve's temperature and margin are
-    the water's floor; its own maximum is the valve's to keep — the boiler's water is capped by
-    the circuits fed straight from it, the default where there is none."""
+def test_a_passive_fixed_circuit_sets_no_floor_and_its_valve_guards_its_maximum() -> None:
+    """The user's decision of 2026-10-14 (replacing S-42's setting plus 5 K): a fixed valve sets
+    no lower bound — the boiler follows its curve; its own maximum is the valve's to keep — the
+    boiler's water is capped by the circuits fed straight from it, the default where there is
+    none."""
     fixed = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
         (Circuit("main", CircuitControl.PASSIVE_FIXED, 40.0, 55.0),),
         (Zone("climate.a", "main"),),
     )
     control = parse_control(OTGW, fixed, None).loop.control
-    assert control.circuit_floor == 45.0  # its temperature and the valve's margin (S-42)
+    assert not hasattr(control, "circuit_floor")
+    assert control.other_automation == ()
     assert control.circuit_max == 70.0
 
 
 def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
-    """I8 (decision F6): the straight circuit's maximum caps the water; the highest fixed valve
-    sets the floor; a circuit run by other automation holds its need while it asks, with its
+    """I8 (decision F6): the straight circuit's maximum caps the water; a fixed valve sets no
+    floor (2026-10-14); a circuit run by other automation holds its need while it asks, with its
     request entity where it has one; the curve reads the straight circuit's zones."""
     layout = Installation(
         Boiler(BoilerClass.FLOW_SETPOINT),
@@ -630,7 +638,6 @@ def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
     )
     control = parse_control(OTGW, layout, None, requests=("floor",)).loop.control
     assert control.circuit_max == 65.0
-    assert control.circuit_floor == 45.0
     (mixer,) = control.other_automation
     assert (mixer.circuit_id, mixer.zones, mixer.requests, mixer.needed) == (
         "floor",
@@ -1339,21 +1346,11 @@ def test_the_curve_defaults_pass_the_cross_field_checks() -> None:
     assert curve_problems(None, -15.0, 20.0, 25.0, 70.0) == []  # nothing entered: nothing checked
 
 
-def test_a_passive_fixed_circuit_floor_has_a_margin() -> None:
-    """S-42 (provisional, K4): the boiler's water at least 5 K above a thermostatic mixing
-    valve's temperature, so the valve can reach it. Negative: no fixed temperature stays the
-    configuration error it is today."""
+def test_a_passive_fixed_circuit_needs_its_temperature() -> None:
+    """Negative: a thermostatic mixing valve without its temperature stays a configuration
+    error — the setting tells the zones what water they get (water-interface.md §4)."""
     from custom_components.vtherm_smart_boiler.config import ConfigError, EntryConfig
-    from custom_components.vtherm_smart_boiler.control_config import FIXED_CIRCUIT_MARGIN_K
 
-    assert FIXED_CIRCUIT_MARGIN_K == 5.0
-    fixed = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT),
-        (Circuit("main", CircuitControl.PASSIVE_FIXED, 45.0),),
-        (Zone("climate.a", "main"),),
-    )
-    assert parse_control(OTGW, fixed, None).loop.control.circuit_floor == 50.0
-    assert parse_control(OTGW, RADIATORS, None).loop.control.circuit_floor is None
     missing = {
         "signals": {"flame": "binary_sensor.flame", "flow": "sensor.flow"},
         "circuits": [{"id": "main", "control": "passive_fixed"}],
@@ -1846,7 +1843,7 @@ def test_the_circuit_rules_do_not_apply_to_a_relay() -> None:
         (Zone("climate.a", "a", EmitterType.UNDERFLOOR),),
     )
     assert config_blockers(parse_control(RELAY, two, None), two) == []
-    many = parse_control({**RELAY, "count_threshold": 3}, ON_OFF, None)
+    many = parse_control({**RELAY, "count_threshold": 3, "count_by": "zones"}, ON_OFF, None)
     assert config_blockers(many, ON_OFF) == ["count_threshold_above_zones"]
     no_zones = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
     assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == ["no_zones"]
@@ -2148,7 +2145,7 @@ BLOCKER_PRECEDENCE = [
     ),
     (
         "a count above the zones",
-        OTGW | {"count_threshold": 3},
+        OTGW | {"count_threshold": 3, "count_by": "zones"},
         RADIATORS,
         None,
         _ALL_SIGNALS,

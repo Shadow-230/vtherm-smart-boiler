@@ -1,10 +1,10 @@
-# Test Home Assistant for J4's starts criterion (docs/plan-0.2.md, J4; decision 8 of
-# docs/plan-0.2.3.md): the same house as tests/sim/test_control_loop.py's comparison — the large
+# Test Home Assistant for J4's starts criterion (docs/en/development/plans/plan-0.2.md, J4; decision 8 of
+# docs/en/development/plans/plan-0.2.3.md): the same house as tests/sim/test_control_loop.py's comparison — the large
 # condensing boiler, three radiator zones whose valves VT's thermostats drive, and no wall
 # thermostat, so that without the plugin the boiler runs its own regulation: its own curve,
 # heating whenever a zone valve is open. Deployed with `scripts/deploy_test.sh --instance N
 # --config starts`; one instance per run: under control or under the boiler's own regulation,
-# at +8 °C or at −5 °C (devenv/README.md, section 5). No default_config, so no network discovery
+# at +8 °C or at −5 °C (docs/en/testing/test-environment.md, section 5). No default_config, so no network discovery
 # looks around the local network.
 homeassistant:
   name: Smart Boiler for Versatile Thermostat test (starts)

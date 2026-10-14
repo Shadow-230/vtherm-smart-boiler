@@ -1,4 +1,5 @@
-"""I9: the contract of the water data for zone algorithms (`documentation/en/water-interface.md`).
+"""I9: the contract of the water data for zone algorithms
+(`docs/en/specification/water-interface.md`).
 
 Consumers detect what exists and changes only add, so no version number marks the interface:
 these tests pin every name, type and allowed value the specification states. A change to one
@@ -11,17 +12,37 @@ from pathlib import Path
 
 from custom_components.vtherm_smart_boiler import control, feature_manager, vtherm_link
 from custom_components.vtherm_smart_boiler.const import DOMAIN
+from custom_components.vtherm_smart_boiler.core.boiler_call import CallReason
+from custom_components.vtherm_smart_boiler.core.demand import CountBy
 from custom_components.vtherm_smart_boiler.core.heat import HeatReason
 from custom_components.vtherm_smart_boiler.core.supply import SupplyReason
 
-SPEC = Path(__file__).resolve().parents[1] / "documentation" / "en" / "water-interface.md"
+SPEC = Path(__file__).resolve().parents[1] / "docs" / "en" / "specification" / "water-interface.md"
 FIELDS = (
     "supply_temperature",
     "supply_reason",
     "supply_measured_at",
     "heat_available",
     "heat_reason",
+    # 2026-10-14, SmartPI's request (§4.3): the boiler's call and the demand.
+    "boiler_called",
+    "call_reason",
+    "demand_count",
+    "count_threshold",
+    "count_by",
+    "demand_power_kw",
+    "power_threshold_kw",
+    "demand_opening",
+    "opening_threshold",
 )
+CALL_REASONS = {
+    "below_threshold",
+    "no_demand",
+    "activation_delay",
+    "boiler_fault",
+    "not_controlling",
+    "waiting_data",
+}
 SUPPLY_REASONS = {
     "not_mapped",
     "circuit_not_measured",
@@ -91,6 +112,15 @@ def test_the_property_types_are_the_specified_ones() -> None:
         "supply_measured_at": "datetime | None",
         "heat_available": "bool | None",
         "heat_reason": "str | None",
+        "boiler_called": "bool | None",
+        "call_reason": "str | None",
+        "demand_count": "int | None",
+        "count_threshold": "int | None",
+        "count_by": "str | None",
+        "demand_power_kw": "float | None",
+        "power_threshold_kw": "float | None",
+        "demand_opening": "float | None",
+        "opening_threshold": "float | None",
     }
 
 
@@ -100,6 +130,9 @@ def test_the_reasons_are_the_specified_values() -> None:
     assert {r.value for r in HeatReason} == HEAT_REASONS
     assert _first_column(_section("### 4.1 `supply_reason`")) == SUPPLY_REASONS
     assert _first_column(_section("### 4.2 `heat_reason`")) == HEAT_REASONS
+    assert {r.value for r in CallReason} == CALL_REASONS
+    assert _first_column(_section("### 4.3 `call_reason`")) == CALL_REASONS
+    assert {by.value for by in CountBy} == {"devices", "zones"}  # count_by's values (§4)
 
 
 def test_the_specification_lists_the_fields_and_the_attribute() -> None:

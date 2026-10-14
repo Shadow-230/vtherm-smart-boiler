@@ -1,4 +1,4 @@
-"""J4: the options instance 1 is set up with (devenv/README.md, section 4), as the flat changes
+"""J4: the options instance 1 is set up with (docs/en/testing/test-environment.md, section 4), as the flat changes
 ``walk.save_options`` takes, and the menu items that ask them (I8). Pure data, so the
 in-process test that walks them through the options flow (``tests/integration/test_j4_walk.py``)
 reads the same values the runner writes."""
@@ -41,10 +41,15 @@ BASE_GATEWAY: dict[str, object] = {
     "room_mode": "manual",
     "room": 20.0,
     "room_excluded": [],
+    # The emitters' default (1.3 for radiators): an exponent another base stored (the starts
+    # criterion's 1, found on instances 3 and 4 by J4 of 2026-10-14 — 37 °C where instance 1
+    # had 40.1) is emptied.
+    "exponent": None,
     "offset": 0.0,
     "comfort_correction": False,
     # Control behaviour; "off" is asked only at the simple level, where S-49 refuses it.
     "activation_delay_s": 0,
+    "count_by": "devices",  # VT's heads, the default since 2026-10-14; at 1 the same as zones
     "count_threshold": 1,
     "learning_pauses": True,
     "ramp_k_per_min": 1.0,
@@ -58,17 +63,29 @@ BASE_GATEWAY: dict[str, object] = {
     "return_after_outside_change": False,
 }
 
+# Instances 2 to 5: the starts criterion's house (docs/en/testing/test-environment.md §5) — the plugin's curve the
+# boiler's own (design flow 55 °C at −15 °C, exponent 1, offset 5 K, lowest 25 °C, highest 70 °C),
+# the comfort correction off; a run comparing it switches it on (K4: F8). Walked back with
+# ``base.py starts`` after an instance served the other scenarios (J4 of 2026-10-14).
+BASE_STARTS: dict[str, object] = BASE_GATEWAY | {
+    "exponent": 1.0,
+    "offset": 5.0,
+    "hard_min": 25.0,
+}
+
 # The base's keys a form asks only in some installations (above); every other key must be asked.
 ASKED_SOMETIMES = frozenset({"write_path", "gateway_id", "off_setpoint"})
 
 # E7: a circuit run by other automation (I8.8a), added through "Add circuit" and removed after.
 # It asks through a helper of instance 1's configuration (devenv/config/configuration.yaml); its
-# need, 50 °C, lies above the curve at the simulator's outdoor temperature, so the water shows it.
+# need, 50 °C — a fan heater's, the kind of load the field is for —, lies above the curve at the
+# simulator's outdoor temperature, so the water shows it, nothing added (2026-10-14).
 CIRCUIT_ASKS_ENTITY = "input_boolean.j4_circuit_asks"
+CIRCUIT_ASKS_NEED = 50.0
 CIRCUIT_ASKS: dict[str, object] = {
-    "name": "J4 floor",
+    "name": "J4 heater",
     "control": "separate",
     "request_entity": CIRCUIT_ASKS_ENTITY,
-    "needed_temperature": 50.0,
+    "needed_temperature": CIRCUIT_ASKS_NEED,
 }
 REMOVE_CIRCUIT: dict[str, object] = {"remove_circuit": True}

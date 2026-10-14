@@ -2,7 +2,7 @@
 # custom_components/vtherm_smart_boiler (HACS); this file is not a package build.
 
 [dependency-groups]
-# Test environment, pinned deliberately (docs/plan-0.1.md, A3). Install with
+# Test environment, pinned deliberately (docs/en/development/plans/plan-0.1.md, A3). Install with
 #   scripts/env.sh uv pip install --group test --group ha -c <homeassistant>/package_constraints.txt
 # so shared packages (numpy, SQLAlchemy, ...) match a real Home Assistant.
 test = [

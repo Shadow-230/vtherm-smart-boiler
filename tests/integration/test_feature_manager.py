@@ -480,6 +480,34 @@ async def test_a_zone_split_between_circuits_has_heat_through_either(
     assert (manager.supply_temperature, manager.supply_reason) == (None, "several_circuits")
 
 
+def test_the_call_properties_read_their_values_defensively(hass: HomeAssistant) -> None:
+    """§4, §4.3 (SmartPI's request, 2026-10-14): the boiler's call and the demand as the
+    manager's properties, each of its type. Negative: a value of another type is "no data"."""
+    values: dict[str, Any] = {
+        "boiler_called": False,
+        "call_reason": "below_threshold",
+        "demand_count": 1,
+        "count_threshold": 2,
+        "count_by": "devices",
+        "demand_power_kw": 0.4,
+        "power_threshold_kw": 0.6,
+        "demand_opening": 0.2,
+        "opening_threshold": None,
+    }
+    manager = feature_manager.SmartBoilerFeatureManager(
+        hass, Thermostat("climate.a"), lambda _entity: dict(values)
+    )
+    assert (manager.boiler_called, manager.call_reason) == (False, "below_threshold")
+    assert (manager.demand_count, manager.count_threshold, manager.count_by) == (1, 2, "devices")
+    assert (manager.demand_power_kw, manager.power_threshold_kw) == (0.4, 0.6)
+    assert (manager.demand_opening, manager.opening_threshold) == (0.2, None)
+    values.update(boiler_called="no", demand_count=True, demand_power_kw="0.4", count_by=3)
+    assert manager.boiler_called is None
+    assert manager.demand_count is None
+    assert manager.demand_power_kw is None
+    assert manager.count_by is None
+
+
 def test_the_attribute_changes_only_when_the_value_changes(hass: HomeAssistant) -> None:
     """P-63: VT records its thermostats' attributes, so the plugin's is replaced only when heat
     availability changes. Negative: a value that goes away takes the attribute with it; back, it
@@ -674,7 +702,8 @@ async def test_a_failed_refresh_publishes_no_zone_values(
     assert feature_manager.zone_values([coordinator], living) is not None
 
 
-# --- I9.2: the water data (documentation/en/water-interface.md) --------------------------------
+# --- I9.2: the water data (docs/en/specification/water-interface.md)
+# --------------------------------
 
 
 async def _refreshed(hass: HomeAssistant) -> None:
@@ -727,6 +756,16 @@ async def test_the_api_gives_the_same_fields_without_vt_s_lookup(
         "supply_measured_at": _flow_reported(hass),
         "heat_available": True,
         "heat_reason": None,
+        # §4.3 (2026-10-14): monitoring only — the boiler is not the plugin's to call.
+        "boiler_called": None,
+        "call_reason": "not_controlling",
+        "demand_count": None,
+        "count_threshold": None,
+        "count_by": None,
+        "demand_power_kw": None,
+        "power_threshold_kw": None,
+        "demand_opening": None,
+        "opening_threshold": None,
     }
     with pytest.raises(TypeError):
         water["supply_temperature"] = 20.0  # read-only

@@ -11699,9 +11699,9 @@ FLOOR_ASKS = "input_boolean.floor_asks"
 
 
 async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Rig) -> None:
-    """I8.8 (decisions F3, F6): the living room fed straight from the boiler, idle; a floor
-    circuit whose mixer another automation runs asks through its entity: heating goes on for
-    it, and the water holds its need, 60 °C, plus the margin. Its entity unavailable: it does
+    """I8.8 (decisions F3, F6): the living room fed straight from the boiler, idle; a circuit
+    whose mixer another automation runs asks through its entity: heating goes on for it, and
+    the water holds its need, 60 °C, nothing added (2026-10-14). Its entity unavailable: it does
     not ask, and the control state says why (the user's answer of 2026-10-12)."""
     rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
     rig.hass.states.async_set(FLOOR_ASKS, "on")
@@ -11723,13 +11723,41 @@ async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Ri
     assert state.state == "heating"
     assert "circuit_asks" in state.attributes["reasons"]
     assert ("ch", True) in rig.gateway.calls
-    assert rig.gateway.setpoints()[-1] == 65.0 > EXPECTED
+    assert rig.gateway.setpoints()[-1] == 60.0 > EXPECTED
     rig.hass.states.async_set(FLOOR_ASKS, "unavailable")
     await rig.advance(30)
     state = rig.state("sensor", "control_state")
     assert state.state == "idle"
     assert "circuit_request_unknown" in state.attributes["reasons"]
     assert [call for call in rig.gateway.calls if call[0] == "ch"][-1] == ("ch", False)
+
+
+async def test_a_circuit_asking_while_control_runs_rises_to_its_need_exactly(rig: Rig) -> None:
+    """F14 (J4 of 2026-10-14, E7): control on and idle, then a circuit run by other automation
+    asks — the water rises at the ramp's 1 K/min from the idle setpoint and ends on its need
+    itself, the last step within the read-back's tolerance written too."""
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    rig.hass.states.async_set(FLOOR_ASKS, "off")
+    heater = {
+        "id": "heater",
+        "control": "separate",
+        "request_entity": FLOOR_ASKS,
+        "needed_temperature": 50,
+    }
+    entry_options = with_circuit(rig, {}) | {
+        "zones": [{"entity_id": rig.zones.entities["living"], "circuit": "main"}]
+    }
+    entry_options["circuits"].append(heater)
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.state("sensor", "control_state").state == "idle"
+    rig.hass.states.async_set(FLOOR_ASKS, "on")
+    await rig.advance(20 * 60)  # from the curve's ~38 °C at 1 K/min, with room to spare
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert "ramp" not in state.attributes["reasons"]
+    assert rig.gateway.setpoints()[-1] == 50.0
 
 
 async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
@@ -14193,3 +14221,92 @@ async def test_the_precedence_of_a_control_step(
         assert control_state is None
     else:
         assert rig.state("sensor", "control_state").state == shown
+
+
+# --- What VT's central boiler shows: the call, the demand against its thresholds (2026-10-14) --
+
+
+async def test_the_boiler_called_sensor_shows_the_call_and_why_not(rig: Rig) -> None:
+    """The user's decisions of 2026-10-14: what VT's central boiler sensor shows — on while the
+    plugin calls the boiler; off with the reason while it controls and does not (a zone calling
+    under a count of two); unknown while control is off. The demand against its thresholds
+    beside it, on the control state too, and the event VT fires when the call changes."""
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    from custom_components.vtherm_smart_boiler.const import BOILER_CALL_EVENT
+
+    events = async_capture_events(rig.hass, BOILER_CALL_EVENT)
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig, count_threshold=2)
+    await rig.advance(20)
+    called = rig.state("binary_sensor", "boiler_called")
+    assert (called.state, called.attributes["call_reason"]) == ("unknown", "not_controlling")
+    await rig.switch(True)
+    await rig.advance(20)
+    called = rig.state("binary_sensor", "boiler_called")
+    assert (called.state, called.attributes["call_reason"]) == ("off", "below_threshold")
+    assert (called.attributes["demand_count"], called.attributes["count_threshold"]) == (1, 2)
+    assert called.attributes["count_by"] == "zones"  # an entry from before counts zones (21)
+    state = rig.state("sensor", "control_state")
+    assert (state.attributes["boiler_called"], state.attributes["call_reason"]) == (
+        False,
+        "below_threshold",
+    )
+    rig.zones.set("bedroom", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(20)
+    called = rig.state("binary_sensor", "boiler_called")
+    assert (called.state, called.attributes["call_reason"]) == ("on", None)
+    assert [event.data["boiler_called"] for event in events] == [False, True]
+    assert rig.entry is not None
+    assert {event.data["entry_id"] for event in events} == {rig.entry.entry_id}
+
+
+async def test_the_demand_sensors_count_vts_devices_and_sum_the_power(rig: Rig) -> None:
+    """2026-10-14: counting devices as VT's central boiler does, a zone with two heads open
+    counts two and reaches a count of two alone; the zones' mean power summed beside its
+    threshold; the zones calling and the devices VT lists active."""
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        specific_states={"is_device_active": True, "device_actives": ["switch.a", "switch.b"]},
+        power_manager={"device_power": 2.0, "mean_cycle_power": 1.2, "power_unit": "kW"},
+    )
+    await start(rig, count_by="devices", count_threshold=2, power_threshold_kw=1.5)
+    await rig.switch(True)
+    await rig.advance(20)
+    count = rig.state("sensor", "demand_count")
+    assert count.state == "2"
+    assert (count.attributes["count_by"], count.attributes["count_threshold"]) == ("devices", 2)
+    assert count.attributes["active_devices"] == ["switch.a", "switch.b"]
+    assert count.attributes["calling_zones"] == [rig.zones.entities["living"]]
+    power = rig.state("sensor", "demand_power")
+    assert float(power.state) == pytest.approx(1.2)
+    assert power.attributes["power_threshold_kw"] == 1.5
+    assert rig.state("binary_sensor", "boiler_called").state == "on"  # by the count
+
+
+async def test_the_water_interface_tells_each_zone_whether_the_boiler_is_called(rig: Rig) -> None:
+    """SmartPI's request (2026-10-14; water-interface.md §4.3): each zone's water data says
+    whether the boiler is called and why not — here a zone calling under a count of two — with
+    the demand against its thresholds, the same for every zone of the installation, read live:
+    not controlling while control is off, called once the count is met."""
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig, count_threshold=2)
+    api = rig.hass.data["vtherm_smart_boiler_api"]
+    living, bedroom = rig.zones.entities["living"], rig.zones.entities["bedroom"]
+    await rig.advance(20)
+    water = api.zone_water(living)
+    assert (water["boiler_called"], water["call_reason"]) == (None, "not_controlling")
+    await rig.switch(True)
+    await rig.advance(20)
+    for zone in (living, bedroom):
+        water = api.zone_water(zone)
+        assert (water["boiler_called"], water["call_reason"]) == (False, "below_threshold")
+        assert (water["demand_count"], water["count_threshold"]) == (1, 2)
+        assert water["count_by"] == "zones"  # an entry from before counts zones (21)
+    rig.zones.set("bedroom", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(20)
+    water = api.zone_water(living)
+    assert (water["boiler_called"], water["call_reason"]) == (True, None)

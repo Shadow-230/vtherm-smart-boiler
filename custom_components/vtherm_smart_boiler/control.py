@@ -43,7 +43,7 @@ measured on the control clock, from the fault signals the user mapped — contro
 "off", with no hand-back and no latch, frost heating included, and heats again in the step the
 fault reads off, unknown or unavailable.
 
-How control resumes after it stopped (``SCOPE.md`` §7):
+How control resumes after it stopped (``docs/en/specification/scope.md`` §7):
 - another controller — an outside change always makes the plugin step aside, whatever reaction
   an earlier version stored: the whole safe hand-back, the target the other controller holds
   included (the user's answer H) — or an ignored write set to hand back: a latch, shown with its
@@ -147,6 +147,7 @@ from homeassistant.util.async_ import create_eager_task
 from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .const import (
+    BOILER_CALL_EVENT,
     CONTROL_TICK_SECONDS,
     DOMAIN,
     MQTT_DOMAIN,
@@ -171,6 +172,7 @@ from .control_config import (
     working_thermostat,
 )
 from .core.alarms import UNKNOWN_HOLD_S, fault_stops, follow_fault
+from .core.boiler_call import CallReason, boiler_call
 from .core.controller import (
     HA_STARTING,
     BoilerCommand,
@@ -183,7 +185,7 @@ from .core.controller import (
     clock_start,
     reset_correction,
 )
-from .core.demand import zone_wants_heat
+from .core.demand import CountBy, zone_wants_heat
 from .core.guards import (
     PREVIOUS_EXEMPT_S,
     TOLERANCE_K,
@@ -256,7 +258,7 @@ from .core.loop import (
     parse_last_command,
     remember_command,
 )
-from .core.readings import BoilerSnapshot, ZoneState
+from .core.readings import ZONE_OPEN, BoilerSnapshot, ZoneState
 from .core.relay import (
     PROOF_WINDOW_S,
     RELAY_NOT_TAKEN_CHECKS,
@@ -802,6 +804,21 @@ class ControlStatus:
     unknown_alarms: frozenset[ControlAlarm] = frozenset()
     # Y4: SmartPI zones whose learning could not be switched back on for a day: no longer tried.
     learning_not_resumed: tuple[str, ...] = ()
+    # Whether the boiler is called for heat and why not, and the demand judged against its
+    # thresholds — what VT's central boiler shows (the user's decisions of 2026-10-14;
+    # ``core.boiler_call``). The count is of devices or zones, as ``count_by`` says; both it and
+    # the threshold are ``None`` with the count off.
+    boiler_called: bool | None = None
+    call_reason: str | None = CallReason.NOT_CONTROLLING.value
+    demand_count: int | None = None
+    count_threshold: int | None = None
+    count_by: str | None = None
+    demand_power_kw: float | None = None
+    power_threshold_kw: float | None = None
+    demand_opening: float | None = None
+    opening_threshold: float | None = None
+    calling_zones: tuple[str, ...] = ()
+    active_devices: tuple[str, ...] = ()
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -1135,7 +1152,8 @@ class ControlUnit:
     def _notify(self) -> None:
         if self._status == self._published:
             return
-        self._published = self._status
+        before, self._published = self._published, self._status
+        self._fire_boiler_call(before, self._status)
         for update in list(self._listeners):
             # PB-38: one entity failing to write its state does not stop the others, nor the
             # history recorder; logged once until it works again.
@@ -1400,7 +1418,7 @@ class ControlUnit:
             return setpoint
         control = self.options.loop.control
         return within_write_bounds(
-            setpoint, control.limits, control.circuit_max, control.boiler_max, control.circuit_floor
+            setpoint, control.limits, control.circuit_max, control.boiler_max
         )
 
     @property
@@ -1842,9 +1860,7 @@ class ControlUnit:
             return False
         low, high = read_bounds(self._hass, options.setpoint_entity)
         control = options.loop.control
-        lowest, highest = write_bounds(
-            control.limits, control.circuit_max, control.boiler_max, control.circuit_floor
-        )
+        lowest, highest = write_bounds(control.limits, control.circuit_max, control.boiler_max)
         # Each value with the bounds its grid value must keep.
         values: list[tuple[float, float | None, float | None]] = [
             (control.limits.hard_min, control.limits.hard_min, highest),
@@ -2097,6 +2113,7 @@ class ControlUnit:
             blocked_by=self._blocked_by(),
             unknown_alarms=self._unknown_alarms(),
             learning_not_resumed=tuple(sorted(session.learning.given_up)),
+            **self._call_shown(now, zones, out.decision),
         )
 
     async def _async_ready_to_decide(self, now: float) -> bool:
@@ -4460,6 +4477,59 @@ class ControlUnit:
         if save:
             await self._coordinator.async_save_control_now()
 
+    def _call_shown(
+        self, now: float, zones: Sequence[ZoneState], decision: ControlDecision
+    ) -> dict[str, Any]:
+        """Whether the boiler is called and why not, and the demand judged against the
+        thresholds, as VT's central boiler shows its own (2026-10-14): the count of devices or
+        zones as configured — ``None`` with no zone known —, the zones' mean power summed, the
+        widest opening; the zones calling and their devices VT lists active."""
+        demand = decision.demand
+        config = self.options.loop.control.demand
+        max_age = self.options.loop.control.zone_max_age_s
+        calling = [z for z in zones if z.is_known(now, max_age) and zone_wants_heat(z)]
+        call = boiler_call(decision.mode, decision.reasons, 0 if demand is None else len(calling))
+        counting = config.count_threshold > 0
+        count: int | None = None
+        if demand is not None and demand.fresh_zones > 0:
+            by_devices = config.count_by is CountBy.DEVICES
+            count = demand.devices_wanting if by_devices else demand.zones_wanting
+        return {
+            "boiler_called": call.called,
+            "call_reason": None if call.reason is None else call.reason.value,
+            "demand_count": count,
+            "count_threshold": config.count_threshold if counting else None,
+            "count_by": config.count_by.value if counting else None,
+            "demand_power_kw": None if demand is None else demand.summed_power_kw,
+            "power_threshold_kw": config.power_threshold_kw,
+            "demand_opening": None if demand is None else demand.widest_opening,
+            "opening_threshold": config.opening_threshold,
+            "calling_zones": tuple(z.zone_id for z in calling),
+            "active_devices": tuple(sorted({d for z in calling for d in z.devices_active or ()})),
+        }
+
+    def _fire_boiler_call(self, before: ControlStatus | None, now: ControlStatus) -> None:
+        """The event VT's central boiler fires (2026-10-14): when the boiler's call changes, and
+        when a start begins to wait VT's activation delay — with whether it is called, why not,
+        and when a pending start is due."""
+        called = None if before is None else before.boiler_called
+        waiting = CallReason.ACTIVATION_DELAY.value
+        starts = now.call_reason == waiting and (before is None or before.call_reason != waiting)
+        if called == now.boiler_called and not starts:
+            return
+        due = now.activation_at
+        self._hass.bus.async_fire(
+            BOILER_CALL_EVENT,
+            {
+                "entry_id": self._coordinator.config_entry.entry_id,
+                "boiler_called": now.boiler_called,
+                "call_reason": now.call_reason,
+                "activation_at": None
+                if due is None
+                else dt_util.utc_from_timestamp(due).isoformat(),
+            },
+        )
+
     def _relay_status(
         self, now: float, snapshot: BoilerSnapshot
     ) -> tuple[str | None, str | None, str | None, str | None]:
@@ -4645,11 +4715,8 @@ class ControlUnit:
             return []
         control = options.loop.control
         max_age = control.zone_max_age_s
-        opening = control.demand.zone_opening
         asking = [
-            zone.zone_id
-            for zone in zones
-            if zone.is_known(now, max_age) and zone_wants_heat(zone, opening)
+            zone.zone_id for zone in zones if zone.is_known(now, max_age) and zone_wants_heat(zone)
         ]
         for zone in zones:
             temperatures = watched_temperatures([zone], now, max_age, control.frost)
@@ -4724,7 +4791,7 @@ class ControlUnit:
             await self._async_release_learning(now)
             return
         coordinator = self._coordinator
-        opening = self.options.loop.control.demand.zone_opening
+        opening = ZONE_OPEN  # a zone taking heat now, for its learning (as before 2026-10-14)
         learning_zones = []
         for zone in zones:
             algorithm = coordinator.link.zone_algorithm(zone.zone_id)

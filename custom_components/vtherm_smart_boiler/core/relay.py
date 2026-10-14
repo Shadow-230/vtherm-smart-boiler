@@ -66,19 +66,19 @@ of 0.2.3), rows in this order:
    declared length, at most ``TIMER_MULTIPLES``, since the "on" that started the on-period or
    since the last renewal (decision 6 of 0.2.3, SB-05); one repeat interval or more into it for
    "I don't know". A declared timer's is the relay's own lapse: "on" again at once, not counted —
-   no loss of any kind, so a timer that lapses all day never raises "commands lost" (``SCOPE.md``
-   §5 class 3; Q1's matrix row R5); any other switch-off is judged by rows 7 to 9. With "I don't
-   know" one such switch-off cannot be told from an automation, a person or the relay's own
-   button: "on" again at once, but counted as answer N's restart — ``RESTARTS_ANSWERED`` within a
-   day, the next one another controller, and the plugin steps aside at once (Z4-02). One that
-   comes the same time into its on-period as an earlier one, within ``TIMER_TOLERANCE_S`` — or a
-   whole multiple of it, up to ``TIMER_MULTIPLES``, where a renewal reaching the relay just after
-   its timer had switched it off restarted that timer unseen — shows the relay's own timer of
-   that length (Z4R-02), where that length is ``TIMER_RECOGNISED_S`` or more — 10 min, a
-   measurement a minute short allowed (KD-02): from then on a switch-off at that age, or a
-   multiple of it, is its lapse — "on" again, not counted — and the control unit asks the user to
-   declare the timer; a switch-off at another age still counts. A shorter regular switch-off is
-   never taken for the relay's own timer — each would start the boiler again — so it keeps
+   no loss of any kind, so a timer that lapses all day never raises "commands lost"
+   (``docs/en/specification/scope.md`` §5 class 3; Q1's matrix row R5); any other switch-off is
+   judged by rows 7 to 9. With "I don't know" one such switch-off cannot be told from an automation,
+   a person or the relay's own button: "on" again at once, but counted as answer N's restart —
+   ``RESTARTS_ANSWERED`` within a day, the next one another controller, and the plugin steps aside
+   at once (Z4-02). One that comes the same time into its on-period as an earlier one, within
+   ``TIMER_TOLERANCE_S`` — or a whole multiple of it, up to ``TIMER_MULTIPLES``, where a renewal
+   reaching the relay just after its timer had switched it off restarted that timer unseen — shows
+   the relay's own timer of that length (Z4R-02), where that length is ``TIMER_RECOGNISED_S`` or
+   more — 10 min, a measurement a minute short allowed (KD-02): from then on a switch-off at that
+   age, or a multiple of it, is its lapse — "on" again, not counted — and the control unit asks the
+   user to declare the timer; a switch-off at another age still counts. A shorter regular switch-off
+   is never taken for the relay's own timer — each would start the boiler again — so it keeps
    counting, and the fourth within a day steps aside; the latch issue names its length (K4.2,
    ``short_switch_off_s``). An on-period is counted from the relay's own last "on" where Home
    Assistant shows one later than the plugin's;

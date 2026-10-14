@@ -408,17 +408,9 @@ def test_every_limit_is_shown_with_a_reason(code: LimitCode) -> None:
     assert code in _LIMIT_REASON
 
 
-def test_a_fixed_circuit_keeps_the_flow_above_its_temperature() -> None:
-    """A mixing valve set to 45 °C needs at least that from the boiler, whatever the curve."""
-    config = replace(CONFIG, circuit_floor=45.0)
-    _state, [mild] = run([inputs(0.0, outdoor_sensor=15.0)], config)
-    assert mild.command.setpoint == 45.0
-    assert Reason.LIMIT_FIXED_CIRCUIT in mild.reasons
-
-
 # --- I8.8: circuits run by other automation (decisions F3, F6) --------------------------------
 
-MIXER = OtherAutomation("floor", requests=True, needed=35.0)
+MIXER = OtherAutomation("floor", requests=True, needed=40.0)
 MIXED = replace(CONFIG, other_automation=(MIXER,))
 
 
@@ -427,9 +419,22 @@ def not_asking(t: float) -> ZoneState:
     return zone(t, valve_open=0.0)
 
 
+def test_each_decision_carries_the_demand_it_judged() -> None:
+    """2026-10-14: the demand judged at the step — the zones and devices calling, the power,
+    the widest opening — goes with the decision, for the control state and the water interface
+    to show against the thresholds, as VT's central boiler shows its own; switched off too."""
+    _state, [decision] = run([inputs(0.0)], CONFIG)
+    assert decision.demand is not None
+    assert (decision.demand.wanted, decision.demand.zones_wanting) == (True, 1)
+    _state, [off] = run([inputs(0.0, enabled=False)], CONFIG)
+    assert off.mode is ControlMode.DISABLED
+    assert off.demand is not None
+    assert off.demand.zones_wanting == 1
+
+
 def test_a_circuit_asking_heats_and_holds_its_need() -> None:
     """A circuit run by other automation asking turns heating on by itself — no zone asks —
-    and holds the water at its need plus the margin over a cooler curve."""
+    and holds the water at its need over a cooler curve, nothing added (2026-10-14)."""
     step = inputs(
         0.0, outdoor_sensor=15.0, zones=(not_asking(0.0),), circuit_requests={"floor": True}
     )
@@ -457,7 +462,7 @@ def test_a_circuit_starting_to_ask_raises_the_water_at_once() -> None:
     """The need changing is decided at once, not at the next decision interval: the zones heat
     by the curve, then the mixer asks — the water rises in the next step."""
     slow = replace(MIXED, decision_interval_s=3600.0)
-    hot = replace(MIXER, needed=50.0)
+    hot = replace(MIXER, needed=55.0)
     config = replace(slow, other_automation=(hot,))
     steps = [
         inputs(0.0, outdoor_sensor=15.0, circuit_requests={"floor": False}),
@@ -487,7 +492,7 @@ def test_a_split_zone_asks_in_the_circuit_whose_device_runs() -> None:
     """I8.8b: the zone feeds the mixer's circuit by its floor loop only; it heats by its
     radiator alone — the mixer's circuit is not asked, and holds no water; its loop on — it is."""
     split = OtherAutomation(
-        "floor", zones=frozenset({"z"}), needed=40.0, devices={"z": frozenset({"switch.loop"})}
+        "floor", zones=frozenset({"z"}), needed=45.0, devices={"z": frozenset({"switch.loop"})}
     )
     config = replace(CONFIG, other_automation=(split,))
     radiator = zone(0.0, device_active=True, devices_active=frozenset({"switch.radiator"}))

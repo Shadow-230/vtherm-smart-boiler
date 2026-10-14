@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 DOMAIN = "vtherm_smart_boiler"
+# Fired when the boiler's call for heat changes, and when a start begins to wait VT's activation
+# delay — as VT's central boiler fires its own (2026-10-14).
+BOILER_CALL_EVENT = f"{DOMAIN}_boiler_call"
 VT_DOMAIN = "versatile_thermostat"
 # The integrations the gateway paths write through: Home Assistant's OpenTherm Gateway, and MQTT
 # for the OTGW firmware's commands.

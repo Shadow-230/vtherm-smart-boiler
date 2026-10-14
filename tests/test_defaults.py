@@ -1,7 +1,8 @@
-"""Every default of ``SCOPE.md`` §7's table "Defaults of the safety options and why" (P-127), as Q1
-left it, pinned where the plugin holds it: ``CONTROL_DEFAULTS`` and ``CURVE_DEFAULTS`` (which the
-parser and the options forms both read), the alarm bands, the forms' own defaults — the monitor
-schema among them — and what the parser applies to a control section that stores nothing.
+"""Every default of ``docs/en/specification/scope.md`` §7's table "Defaults of the safety options
+and why" (P-127), as Q1 left it, pinned where the plugin holds it: ``CONTROL_DEFAULTS`` and
+``CURVE_DEFAULTS`` (which the parser and the options forms both read), the alarm bands, the forms'
+own defaults — the monitor schema among them — and what the parser applies to a control section that
+stores nothing.
 
 Each row names its SCOPE row. A default changed in the code without the table, or in the table
 without the code, fails here; the user reviews the provisional ones at K4.
@@ -222,6 +223,10 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
         lambda: _demand(BARE),
         (1, None, None),
     ),
+    # What the count counts | VT's devices (2026-10-14)
+    ("count by", lambda: CONTROL_DEFAULTS["count_by"], "devices"),
+    ("count by (parser)", lambda: BARE.loop.control.demand.count_by.value, "devices"),
+    ("count by (form)", lambda: BEHAVIOUR_FORM["count_by"], "devices"),
     # Comfort correction | on in full control (the user, 2026-10-10, G11 B); up to its limit,
     # 3 K by default (at most 10 K), rising at most 3 K a day
     ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], True),

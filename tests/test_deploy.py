@@ -15,7 +15,7 @@ SCRIPT = ROOT / "scripts/deploy_test.sh"
 
 @pytest.mark.skipif(
     not (ROOT / "vendor/custom_components/versatile_thermostat").is_dir(),
-    reason="vendor/ is not set up (docs/plan-0.1.md, A5)",
+    reason="vendor/ is not set up (docs/en/development/plans/plan-0.1.md, A5)",
 )
 def test_the_dry_run_lists_files_and_connects_nowhere(tmp_path: Path) -> None:
     # Anything that could reach the host fails loudly and leaves a mark.
@@ -298,7 +298,7 @@ def test_each_instance_gets_its_own_container_and_port() -> None:
 
 @pytest.mark.skipif(
     not (ROOT / "vendor/custom_components/versatile_thermostat").is_dir(),
-    reason="vendor/ is not set up (docs/plan-0.1.md, A5)",
+    reason="vendor/ is not set up (docs/en/development/plans/plan-0.1.md, A5)",
 )
 def test_a_chosen_configuration_goes_as_configuration_yaml(tmp_path: Path) -> None:
     """``--config starts`` sends devenv/config/starts.yaml as the instance's configuration.yaml

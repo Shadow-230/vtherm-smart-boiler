@@ -1,5 +1,5 @@
 """J4's scenarios on the relay path, the entity path and a stand-alone gateway (test instances
-deployed with ``--config relay``, ``entity`` and ``standalone``; docs/test-reports/README.md).
+deployed with ``--config relay``, ``entity`` and ``standalone``; docs/en/testing/reports/README.md).
 
 Usage: HA_INSTANCE=N scripts/env.sh python devenv/j4/paths.py ID... — the same runner as
 run.py (its clean state, its results file), with the commands to the relay and the entities
@@ -120,21 +120,38 @@ async def relay_is(r: Run, on: bool) -> bool:
 
 async def R1(r: Run):
     """the relay follows VT's zones at once, both ways"""
+    t = time.time()
     await rooms_call(r, True)
     await r.switch(True)
-    on = await r.ha.until(lambda: relay_is(r, True), 120, 1)
-    r.check(on is not None, f"relay on with the rooms calling ({on and round(on)} s)")
-    await rooms_call(r, False)
-    t = time.time()
-    off = await r.ha.until(lambda: relay_is(r, False), 400, 1)
+    # VT acts on a call at its own cycle, up to several minutes: the relay is timed from the
+    # valves, which VT opens and closes, not from the call (L9, J4 of 2026-10-14).
+    opened = await r.ha.until(lambda: _any_valve(r), 420, 1)
+    on = await r.ha.until(lambda: relay_is(r, True), 60, 1)
     r.check(
-        off is not None,
-        f"relay off once the rooms are satisfied ({off and round(off)} s; VT's cycle decides when the valves close)",
+        opened is not None and on is not None,
+        f"relay on with a valve open ({on and round(on)} s after it; the valve "
+        f"{opened and round(opened)} s after the call)",
+    )
+    await rooms_call(r, False)
+    closed = await r.ha.until(lambda: _no_valve(r), 420, 1)
+    off = await r.ha.until(lambda: relay_is(r, False), 60, 1)
+    r.check(
+        closed is not None and off is not None,
+        f"relay off once the valves close ({off and round(off)} s after; the valves "
+        f"{closed and round(closed)} s after the rooms were satisfied)",
     )
     await rooms_call(r, True)
-    on = await r.ha.until(lambda: relay_is(r, True), 400, 1)
-    r.check(on is not None, f"relay on again with the call ({on and round(on)} s)")
+    opened = await r.ha.until(lambda: _any_valve(r), 420, 1)
+    on = await r.ha.until(lambda: relay_is(r, True), 60, 1)
+    r.check(
+        opened is not None and on is not None,
+        f"relay on again with a valve open ({on and round(on)} s after it)",
+    )
     r.note(f"relay commands: {relay_cmds(r, t)}")
+
+
+async def _no_valve(r: Run) -> bool:
+    return not await _any_valve(r)
 
 
 async def R2(r: Run):

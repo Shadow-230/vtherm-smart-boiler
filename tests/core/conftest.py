@@ -1,4 +1,5 @@
-"""Core tests: layer 1 of ``PLAN.md``'s "Test environment" — plain pytest, no Home Assistant.
+"""Core tests: layer 1 of ``docs/en/development/plan.md``'s "Test environment" — plain pytest, no
+Home Assistant.
 
 They run on their own, with Home Assistant's pytest plugin disabled, as the first of the two runs
 (P-120): ``python -m pytest -q -p no:homeassistant ... tests/core``.

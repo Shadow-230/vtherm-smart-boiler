@@ -6,7 +6,7 @@ the gas other consumers used, the time under control, and the seconds per whole 
 temperature — so the verdict over any window is built from its days. The load share is not
 kept: it is computed from the days' outdoor temperatures with the building model of now (P-91),
 so stored days never mix load models. The raw history is kept for a few days only; the
-summaries outlive it (``SCOPE.md`` §10).
+summaries outlive it (``docs/en/specification/scope.md`` §10).
 
 A burn across midnight is found whole, twelve hours on each side of the day: it is one burn of
 the day it started in, its time split at midnight, and a day waits for such a burn to end

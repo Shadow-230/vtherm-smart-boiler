@@ -31,9 +31,13 @@ version is decided then.
 
 - The water temperature on a heating curve, bounded by the lowest and highest water temperature
   and each circuit's maximum; up to four circuits at the advanced level, among them circuits run
-  by other automation and circuits behind a fixed valve.
-- Heating on and off following VT's zones — zones calling, total power or valve opening — and
-  VT's central modes; VT's activation delay.
+  by other automation and circuits behind a fixed valve. A circuit run by other automation holds
+  the water at its need while it asks, nothing added; a fixed valve sets no lower bound — the
+  boiler follows its curve, the valve standing open at or below its setting.
+- Heating on and off following VT's zones — devices calling as VT counts them (or zones), total
+  power or valve opening — and VT's central modes; VT's activation delay. What VT's central
+  boiler showed: **Heat call** with the reason it is not, the devices calling and their
+  power against the thresholds, and an event when the call changes.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
   connected is the setup's first question.
@@ -41,7 +45,7 @@ version is decided then.
   correction; SmartPI's learning paused while hot water or large swings disturb the rooms.
 - On each VT thermostat the plugin serves, the attribute `smart_boiler`: `heat_available` and
   the water reaching the zone, rounded.
-- The water data for zone algorithms (`documentation/en/water-interface.md`): per VT thermostat,
+- The water data for zone algorithms (`docs/en/specification/water-interface.md`): per VT thermostat,
   the water reaching its circuit, why it is missing (lasting or momentary), when it was measured,
   and whether heat reaches the zone — through the feature manager and a function in
   `hass.data`. A zone algorithm that uses it says so, and is then not paused for water swings.

@@ -147,7 +147,7 @@ from .core.alarms import (
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
 )
-from .core.demand import feeds_opening, feeds_power
+from .core.demand import CountBy, feeds_opening, feeds_power
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, HeatSource
 from .core.metrics import ModulationScale
@@ -166,6 +166,7 @@ from .vtherm_link import (
     vt_zones_in_area,
     zone_devices,
     zone_name,
+    zone_underlying_entities,
     zones_on_boiler_thermostat,
 )
 
@@ -1141,6 +1142,19 @@ def fed_zones(answers: Mapping[str, Any], devices: Mapping[str, str]) -> list[st
     return fed
 
 
+def circuit_need_warning(circuit: Mapping[str, Any]) -> dict[str, str]:
+    """The user's decision of 2026-10-14: a circuit run by other automation with a water need and
+    underfloor zones raises the boiler to that need at every call of those zones, while a floor
+    behind a mixer needs none — the curve is enough. A warning the form shows once."""
+    if circuit.get("control") != CircuitControl.SEPARATE:
+        return {}
+    if circuit.get(NEEDED_TEMPERATURE) is None and not circuit.get(NEEDED_ENTITY):
+        return {}
+    if not _listed(circuit.get(EMITTER_LISTS[0])):  # its zones with underfloor heating
+        return {}
+    return {"base": "need_on_underfloor"}
+
+
 def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str, str]:
     """The too-hot alarm must lie above the circuit's maximum (decision 10). At the simple level
     its field is hidden: the maximum's field says it."""
@@ -1374,6 +1388,7 @@ CONTROL_ADVANCED_KEYS = (
     "frost_limit",
     "frost_release",
     "frost_zone",
+    "count_by",
     "count_threshold",
     "power_threshold_kw",
     "opening_threshold",
@@ -1963,13 +1978,20 @@ def control_behaviour_schema(
             fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
         return vol.Schema(fields)
 
+    by = control.get("count_by", CONTROL_DEFAULTS["count_by"])
     count = control.get("count_threshold")
-    if count is None and prefill is not None and prefill.count_threshold is not None:
-        count = prefill.count_threshold
+    if count is None and prefill is not None:
+        # VT's count as VT counts — devices —, or as rooms where every zone has one device.
+        count = (
+            prefill.count_threshold_devices
+            if by == CountBy.DEVICES.value
+            else prefill.count_threshold
+        )
     power = control.get("power_threshold_kw")
     if power in (None, "") and prefill is not None:
         power = prefill.power_threshold_kw
     fields |= {
+        vol.Required("count_by", default=by): _select("count_by", [c.value for c in CountBy]),
         vol.Required(
             "count_threshold",
             default=CONTROL_DEFAULTS["count_threshold"] if count is None else count,
@@ -2655,7 +2677,8 @@ MONITOR_KEPT = ("monitoring_days", "verdict_window_days", *PRESSURE_KEYS)
 def restore_advanced_defaults(options: dict[str, Any]) -> None:
     """Drop every tuning value only the advanced level shows, so its default applies again.
     Facts about the installation — what is mapped, the boiler, circuits, zones, values the user
-    entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
+    entered — stay (``docs/en/specification/scope.md`` principle 10), and so do the monitor's
+    periods."""
     monitor = options.get(MONITOR, {})
     kept = {key: monitor[key] for key in MONITOR_KEPT if key in monitor}
     if kept:
@@ -2933,6 +2956,7 @@ class _Steps:
     _interface_draft: dict[str, Any] | None = None  # the interface form's answers so far (A2)
     _signals_draft: dict[str, Any] | None = None  # the signals form's answers so far (A2)
     _circuit_draft: dict[str, Any] | None = None  # the circuit form's answers so far (A2)
+    _circuit_warned: dict[str, Any] | None = None  # the circuit last warned of, as answered
     _entity_draft: dict[str, Any] | None = None  # the writable entity's answers so far (A2)
     _relay_draft: dict[str, Any] | None = None  # the relay's answers so far (A2)
     _changed: list[str]  # the sections whose answers changed the options, in that order
@@ -3160,7 +3184,7 @@ class _Steps:
     async def _open_circuit(self, index: int) -> ConfigFlowResult:
         """A circuit's menu item (I8, decision F1): its form, the circuit kept in the flow."""
         self._circuit_index = index
-        self._circuit_draft = None
+        self._circuit_draft = self._circuit_warned = None
         return await self.async_step_circuit()
 
     async def async_step_circuit(
@@ -3242,6 +3266,10 @@ class _Steps:
                 errors["fixed_temperature"] = "fixed_temperature_missing"
             elif alarm_error := circuit_alarm_error(circuit, advanced):
                 errors = alarm_error
+            elif (warning := circuit_need_warning(circuit)) and self._circuit_warned != circuit:
+                # A warning, not a refusal: the same answer submitted again is saved.
+                self._circuit_warned = circuit
+                errors = warning
             else:
                 if new:
                     circuits.append(circuit)
@@ -3727,7 +3755,7 @@ class _ControlSteps(_Steps):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
             elif "count_threshold" not in shown:
                 pass  # the demand is the advanced level's
-            elif count > len(watched_zones(self.options)):
+            elif count > self._countable(user_input.get("count_by")):
                 errors["count_threshold"] = "count_threshold_above_zones"
             elif count == 0 and not (
                 user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
@@ -3793,6 +3821,15 @@ class _ControlSteps(_Steps):
         if zones_not_vt(self.hass, [zone]):
             return {"frost_zone": "zone_not_vt"}
         return {"frost_zone": "entity_not_suitable"}
+
+    def _countable(self, count_by: object) -> int:
+        """The most a count can reach: the zones the circuits list, or — counting devices — the
+        devices VT drives in them (one for a zone whose list cannot be read; 2026-10-14)."""
+        zones = watched_zones(self.options)
+        if count_by != CountBy.DEVICES.value:
+            return len(zones)
+        hass: HomeAssistant = self.hass
+        return sum(len(zone_underlying_entities(hass, zone) or ()) or 1 for zone in zones)
 
     def _criterion_no_zone_feeds(self, user_input: dict[str, Any]) -> str | None:
         """P-14: a power or opening threshold no zone can feed could never be reached — VT
@@ -3903,7 +3940,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 20
+    MINOR_VERSION = 21
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

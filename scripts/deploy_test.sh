@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy the plugin, vendored VT and SmartPI and the simulator to the test Home Assistant in the
-# dedicated test LXC, then (re)start it (docs/plan-0.2.md, J1).
+# dedicated test LXC, then (re)start it (docs/en/development/plans/plan-0.2.md, J1).
 #
 # Usage: scripts/deploy_test.sh [--dry-run] [--instance 1-8] [--config NAME]
 #
@@ -158,7 +158,7 @@ case "$TEST_HA_DIR${TZ:-}" in
 esac
 KEY="$SSH_DIR/id_ed25519"
 if [ ! -f "$KEY" ]; then
-    echo "devenv/ssh/id_ed25519 is missing (see devenv/README.md)." >&2
+    echo "devenv/ssh/id_ed25519 is missing (see docs/en/testing/test-environment.md)." >&2
     exit 1
 fi
 
@@ -170,7 +170,7 @@ SSH=(ssh -F /dev/null -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes
      -o StrictHostKeyChecking=accept-new "$TEST_HA_SSH_USER@$TEST_HA_HOST")
 
 # Nothing is replaced and Home Assistant is not restarted unless the host shows it is the test
-# LXC: the user creates the marker file in TEST_HA_DIR there at J2 (PB-87; devenv/README.md). A
+# LXC: the user creates the marker file in TEST_HA_DIR there at J2 (PB-87; docs/en/testing/test-environment.md). A
 # missing directory is not created. Then everything is unpacked into a fresh directory first;
 # each integration replaces its old copy whole, so nothing removed here stays behind there.
 MARKER=.vtherm-smart-boiler-test-ha

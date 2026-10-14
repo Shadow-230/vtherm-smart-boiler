@@ -193,7 +193,6 @@ class Reason(StrEnum):
     LIMIT_HARD_MAX = "limit_hard_max"
     LIMIT_CIRCUIT_MAX = "limit_circuit_max"
     LIMIT_BOILER_MAX = "limit_boiler_max"
-    LIMIT_FIXED_CIRCUIT = "limit_fixed_circuit"
     COMFORT_CORRECTION = "comfort_correction"
     ACTIVATION_DELAY = "activation_delay"  # heating waits VT's activation delay (decision 5)
     BOILER_FAULT = "boiler_fault"  # the boiler reports its own fault that stops it (Y1)
@@ -216,7 +215,6 @@ _LIMIT_REASON = {
     LimitCode.HARD_MAX: Reason.LIMIT_HARD_MAX,
     LimitCode.CIRCUIT_MAX: Reason.LIMIT_CIRCUIT_MAX,
     LimitCode.BOILER_MAX: Reason.LIMIT_BOILER_MAX,
-    LimitCode.FIXED_CIRCUIT: Reason.LIMIT_FIXED_CIRCUIT,
     LimitCode.CIRCUIT_NEED: Reason.LIMIT_CIRCUIT_NEED,
 }
 
@@ -238,9 +236,8 @@ class ControlConfig:
     limits: FlowLimits = field(default_factory=FlowLimits)
     circuit_max: float | None = None
     boiler_max: float | None = None
-    circuit_floor: float | None = None  # a fixed circuit's temperature: the boiler flow's floor
     # I8 (decisions F3, F6): circuits run by other automation — they ask for heat, and while
-    # asking hold the water above their need; and the zones of the circuit the curve serves
+    # asking hold the water at their need at least; and the zones of the circuit the curve serves
     # (the one fed straight from the boiler), which its comfort correction, room and short
     # rooms read — ``None``: every zone.
     other_automation: tuple[OtherAutomation, ...] = ()
@@ -417,6 +414,9 @@ class ControlDecision:
     # Decision 2 of 0.2.3 (SB-01): a zone calls for heat — the zones' demand, at every step;
     # "no sign the boiler heats" counts only then.
     calling: bool = False
+    # The demand judged at this step, against the thresholds — shown as VT's central boiler shows
+    # its own (the user's decision of 2026-10-14).
+    demand: Demand | None = None
 
 
 def clock_start(since: float | None, now: float) -> float:
@@ -622,6 +622,7 @@ def decide(
         frost_closed=state.frost_closed,  # held through the recognition period
         correction=state.correction,
         calling=demand.wanted is True,
+        demand=demand,
     )
 
 
@@ -914,9 +915,7 @@ def _heating_decision(
             curve_value = config.limits.hard_min  # the fallback serves only with zones known
         else:
             curve_value = fallback_setpoint(config)
-        upper = limit_flow(
-            1e6, config.limits, config.circuit_max, config.boiler_max, config.circuit_floor
-        ).value
+        upper = limit_flow(1e6, config.limits, config.circuit_max, config.boiler_max).value
         state = replace(state, circuit_need=asks.floor)
         # An upper cap — the hard maximum, the circuit's, the boiler's — or a clip holds the
         # setpoint: a rise could not show, so it is not learned (S-25).
@@ -934,7 +933,7 @@ def _heating_decision(
             water.append(Reason.COMFORT_CORRECTION)
         limited = limit_flow(
             curve_value + correction, config.limits, config.circuit_max, config.boiler_max,
-            config.circuit_floor, asks.floor,
+            asks.floor,
         )  # fmt: skip
         water.extend(_LIMIT_REASON[code] for code in limited.applied)
         target: float = limited.value
@@ -1116,7 +1115,7 @@ def _circuits(inputs: ControlInputs, config: ControlConfig) -> CircuitsAsking:
     wanting = {
         z.zone_id: z.devices_active
         for z in inputs.zones
-        if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z, config.demand.zone_opening)
+        if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z)
     }
     return circuits_asking(
         config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting, wanting

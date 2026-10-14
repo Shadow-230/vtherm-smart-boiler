@@ -2,9 +2,11 @@
 
 Every setpoint the plugin writes passes ``limit_flow``. Caps that protect the installation — the
 hard maximum, a circuit's maximum (underfloor on an unmixed loop), the boiler's own maximum —
-win over the hard minimum and the temperature a fixed circuit (a thermostatic mixing valve)
-needs from the boiler when they conflict. There is no weather ceiling of its own (I8, decision
-B6): above the curve only the comfort correction goes, bounded by its own limit. A value for an
+win over the hard minimum and the need of a circuit run by other automation when they conflict.
+A thermostatic mixing valve sets no lower bound: the boiler follows its curve, and the valve stands
+open while the water is at or below its setting (the user's decision of 2026-10-14). There is no
+weather ceiling of its own (I8, decision B6): above the curve only the comfort correction goes,
+bounded by its own limit. A value for an
 entity with a step is put on its grid inside the limits, in the entity's own unit, before the
 write guard compares it (P-15, P-98).
 
@@ -31,7 +33,6 @@ class LimitCode(StrEnum):
     HARD_MAX = "hard_max"
     CIRCUIT_MAX = "circuit_max"
     BOILER_MAX = "boiler_max"
-    FIXED_CIRCUIT = "fixed_circuit"  # a fixed circuit needs at least its temperature
     # I8 (decision F3): a circuit run by other automation, asking, needs at least its need.
     CIRCUIT_NEED = "circuit_need"
 
@@ -59,12 +60,11 @@ def limit_flow(
     limits: FlowLimits,
     circuit_max: float | None = None,
     boiler_max: float | None = None,
-    floor: float | None = None,
     need: float | None = None,
 ) -> Limited:
-    """``requested`` within the limits. ``floor``: what a fixed circuit needs from the boiler;
-    ``need``: what circuits run by other automation, asking, need (I8, decision F3).
-    Installation caps win over the lower bounds."""
+    """``requested`` within the limits. ``need``: what circuits run by other automation, asking,
+    need (I8, decision F3), as they state it — nothing added. Installation caps win over the lower
+    bounds."""
     caps = [(limits.hard_max, LimitCode.HARD_MAX)]
     if circuit_max is not None:
         caps.append((circuit_max, LimitCode.CIRCUIT_MAX))
@@ -72,8 +72,6 @@ def limit_flow(
         caps.append((boiler_max, LimitCode.BOILER_MAX))
     install, install_code = min(caps, key=lambda cap: cap[0])
     lower, lower_code = limits.hard_min, LimitCode.HARD_MIN
-    if floor is not None and floor > lower:
-        lower, lower_code = floor, LimitCode.FIXED_CIRCUIT
     if need is not None and need > lower:
         lower, lower_code = need, LimitCode.CIRCUIT_NEED
     if requested > install:
@@ -97,13 +95,11 @@ def write_bounds(
     limits: FlowLimits,
     circuit_max: float | None = None,
     boiler_max: float | None = None,
-    floor: float | None = None,
 ) -> tuple[float, float]:
-    """The lowest and highest heating setpoint ``limit_flow`` can give: a value put on an
-    entity's grid stays inside them."""
+    """The lowest and highest heating setpoint ``limit_flow`` gives without a circuit's need: a
+    value put on an entity's grid stays inside them."""
     high = install_cap(limits, circuit_max, boiler_max)
-    low = limits.hard_min if floor is None else max(limits.hard_min, floor)
-    return min(low, high), high
+    return min(limits.hard_min, high), high
 
 
 def within_write_bounds(
@@ -111,11 +107,10 @@ def within_write_bounds(
     limits: FlowLimits,
     circuit_max: float | None = None,
     boiler_max: float | None = None,
-    floor: float | None = None,
 ) -> float:
     """``value`` moved inside ``write_bounds``: a setpoint kept from options changed since — a
     command given again after a restart — goes out within the limits as they are now (PB-11)."""
-    low, high = write_bounds(limits, circuit_max, boiler_max, floor)
+    low, high = write_bounds(limits, circuit_max, boiler_max)
     return min(max(value, low), high)
 
 

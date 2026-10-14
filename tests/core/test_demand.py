@@ -8,6 +8,7 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.demand import (
     POWER,
+    CountBy,
     Demand,
     DemandConfig,
     boiler_demand,
@@ -31,8 +32,12 @@ def zone(zid: str = "z", **kw) -> ZoneState:
     ("state", "wants"),
     [
         (zone(valve_open=0.3), True),
-        (zone(valve_open=0.03), False),
+        (zone(valve_open=0.03), True),  # VT's rule: a valve open at all (2026-10-14)
+        (zone(valve_open=0.0), False),
         (zone(on_percent=0.5), True),
+        (zone(on_percent=0.03), True),  # a duty cycle above 0: it asks within its cycle
+        (zone(on_percent=0.0), False),
+        (zone(valve_open=0.0, on_percent=0.4), False),  # a valve's opening decides, not the cycle
         (zone(calling=True), True),  # no opening: VT's own flag decides
         (zone(calling=False), False),
         (zone(valve_open=0.0, calling=True), False),  # the opening decides
@@ -48,7 +53,7 @@ def zone(zid: str = "z", **kw) -> ZoneState:
     ],
 )
 def test_zone_wants_heat(state: ZoneState, wants: bool) -> None:
-    assert zone_wants_heat(state, 0.05) is wants
+    assert zone_wants_heat(state) is wants
 
 
 def test_count_threshold() -> None:
@@ -56,7 +61,7 @@ def test_count_threshold() -> None:
     assert boiler_demand(zones, NOW, AGE, DemandConfig()).wanted is True
     two = DemandConfig(count_threshold=2)
     result = boiler_demand(zones, NOW, AGE, two)
-    assert result == Demand(False, 1, None, 0.5, 2)
+    assert result == Demand(False, 1, None, 0.5, 2, devices_wanting=1)
     assert result.unknown == ()
 
 
@@ -133,7 +138,6 @@ def test_the_count_never_asks_for_more_zones_than_are_known() -> None:
     "kwargs",
     [
         {"count_threshold": -1},
-        {"zone_opening": 1.0},
         {"count_threshold": 0},
         {"opening_threshold": 0.0},  # would mean demand for ever
         {"power_threshold_kw": 0.0},
@@ -276,7 +280,7 @@ def test_a_shed_zone_has_no_demand_and_no_power() -> None:
     """T-45's core: VT's power shedding holds the zone off — whatever its duty cycle or its
     device showed last."""
     shed = zone("a", valve_open=0.6, device_active=True, power=2.0, on_percent=0.6, shedding=True)
-    assert zone_wants_heat(shed, 0.05) is False
+    assert zone_wants_heat(shed) is False
     config = DemandConfig(count_threshold=1, power_threshold_kw=0.5, opening_threshold=0.3)
     result = boiler_demand([shed], NOW, AGE, config)
     assert result.wanted is False
@@ -574,9 +578,7 @@ def test_a_vt_restart_off_and_not_ready_then_started() -> None:
 
 
 def test_the_configs_bounds_are_valid_values() -> None:
-    """A zone opening of 0 — any opening above 0 wants heat — and an opening threshold of
-    1, fully open, are valid."""
-    assert DemandConfig(zone_opening=0.0).zone_opening == 0.0
+    """An opening threshold of 1, fully open, is valid."""
     assert DemandConfig(count_threshold=0, opening_threshold=1.0).opening_threshold == 1.0
 
 
@@ -591,24 +593,69 @@ def test_an_opening_threshold_above_fully_open_is_refused(threshold: float) -> N
 @pytest.mark.parametrize(
     "state",
     [
-        zone(valve_open=0.05),  # exactly the zone opening: not above it
-        zone(on_percent=0.05),
-        zone(auto_mode=True, valve_open=0.05),
+        zone(valve_open=0.0),  # a closed valve
+        zone(on_percent=0.0),  # a duty cycle of 0
         zone(auto_mode=True, valve_open=0.0),
         zone(auto_mode=True),  # no action and no opening: nothing says it heats
     ],
 )
-def test_a_zone_not_above_the_zone_opening_does_not_want_heat(state: ZoneState) -> None:
-    """Negative: without VT's own word, a zone wants heat only above the zone opening —
-    exactly at it, at 0, or with nothing to judge by, it does not, in "auto" alike."""
-    assert zone_wants_heat(state, 0.05) is False
+def test_a_zone_neither_open_nor_cycling_does_not_want_heat(state: ZoneState) -> None:
+    """Negative: without VT's own word, a zone wants heat only with its valve open at all, or
+    without a valve its duty cycle above 0 — VT's rule (2026-10-14); closed, at 0, or with
+    nothing to judge by, it does not, in "auto" alike."""
+    assert zone_wants_heat(state) is False
 
 
-def test_heat_cannot_flow_through_a_valve_open_no_more_than_the_zone_opening() -> None:
-    """Negative: a zone in "auto" whose action says it heats, its valve open exactly the zone
-    opening, takes no heat now; a valve open further does."""
-    assert not heat_can_flow(zone(auto_mode=True, calling=True, valve_open=0.05), 0.05)
-    assert heat_can_flow(zone(auto_mode=True, calling=True, valve_open=0.06), 0.05)
+def test_heat_cannot_flow_through_a_closed_valve() -> None:
+    """Negative: a zone in "auto" whose action says it heats, its valve closed, takes no heat
+    now; a valve open at all does (VT's rule, 2026-10-14)."""
+    assert not heat_can_flow(zone(auto_mode=True, calling=True, valve_open=0.0))
+    assert heat_can_flow(zone(auto_mode=True, calling=True, valve_open=0.01))
+
+
+# --- The count of devices, as VT's central boiler counts (2026-10-14) -----------------------
+
+
+def heads(zid: str, *devices: str, count: int | None = None) -> ZoneState:
+    """A zone whose devices VT lists active — VT's heads — of ``count`` it drives."""
+    active = frozenset(devices)
+    return zone(zid, device_active=bool(active), devices_active=active, device_count=count)
+
+
+def test_counting_devices_counts_each_zones_active_devices_as_vt_does() -> None:
+    """The user's decision of 2026-10-14: a zone with two heads open counts two, as VT's central
+    boiler counts them; counting zones it counts one. Three heads open in two zones reach a
+    count of 3 by devices, not by zones."""
+    zones = [heads("a", "s1", "s2", count=2), heads("b", "s3", count=1), heads("c", count=1)]
+    by_devices = DemandConfig(count_threshold=3, count_by=CountBy.DEVICES)
+    result = boiler_demand(zones, NOW, AGE, by_devices)
+    assert (result.wanted, result.zones_wanting, result.devices_wanting) == (True, 2, 3)
+    by_zones = DemandConfig(count_threshold=3, count_by=CountBy.ZONES)
+    assert boiler_demand(zones, NOW, AGE, by_zones).wanted is False
+
+
+def test_a_zone_wanting_heat_without_a_device_list_counts_one_device() -> None:
+    """An older VT lists no active devices: a zone wanting heat counts one, as a zone."""
+    zones = [zone("a", valve_open=0.5), zone("b", valve_open=0.5)]
+    config = DemandConfig(count_threshold=2, count_by=CountBy.DEVICES)
+    result = boiler_demand(zones, NOW, AGE, config)
+    assert (result.wanted, result.devices_wanting) == (True, 2)
+
+
+def test_a_device_count_is_never_more_than_the_known_zones_drive() -> None:
+    """As the count of zones: a threshold above the devices the known zones drive — a zone's
+    count unknown counts one — is met when all of them are open; one closed, not."""
+    config = DemandConfig(count_threshold=10, count_by=CountBy.DEVICES)
+    zones = [heads("a", "s1", "s2", count=2), heads("b", "s3")]
+    assert boiler_demand(zones, NOW, AGE, config).wanted is True
+    zones = [heads("a", "s1", count=2), heads("b", "s3")]
+    assert boiler_demand(zones, NOW, AGE, config).wanted is False
+
+
+def test_the_count_by_zones_is_the_core_default() -> None:
+    """The core counts zones unless told otherwise; new installations are set to devices by the
+    options (CONTROL_DEFAULTS), existing ones keep zones (the migration)."""
+    assert DemandConfig().count_by is CountBy.ZONES
 
 
 def test_a_zone_with_only_a_device_power_counts_it_while_it_calls() -> None:
@@ -660,3 +707,17 @@ def test_a_threshold_reached_exactly_is_demand(state: ZoneState, config: DemandC
     """A threshold is reached at its value: a power or an opening equal to it is demand, each
     criterion deciding alone."""
     assert boiler_demand([state], NOW, AGE, config).wanted is True
+
+
+def test_the_summed_power_is_shown_whether_heat_can_flow_or_not() -> None:
+    """2026-10-14: the zones' mean power summed, as VT's central boiler shows it — also through
+    the off part of a switch zone's cycle, where the criterion judges 0 (no heat can flow);
+    ``None`` where no zone feeds power."""
+    off_part = zone("a", on_percent=0.2, power=2.0, mean_power=0.4, device_active=False)
+    config = DemandConfig(count_threshold=0, power_threshold_kw=0.6)
+    result = boiler_demand([off_part], NOW, AGE, config)
+    assert (result.power_kw, result.summed_power_kw) == (0.0, 0.4)
+    on_part = replace(off_part, device_active=True)
+    result = boiler_demand([on_part], NOW, AGE, config)
+    assert (result.wanted, result.power_kw, result.summed_power_kw) == (False, 0.4, 0.4)
+    assert boiler_demand([zone("b", valve_open=0.5)], NOW, AGE, config).summed_power_kw is None

@@ -6,11 +6,13 @@ from dataclasses import replace
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core.circuit_requests import OtherAutomation
 from custom_components.vtherm_smart_boiler.core.comfort_rules import StartsBaseline
 from custom_components.vtherm_smart_boiler.core.controller import (
     ControlConfig,
     ControlInputs,
     ControlState,
+    Reason,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.guards import (
@@ -75,6 +77,64 @@ def test_first_step_writes_setpoint_and_heating_on() -> None:
     assert out.setpoint.kind is WriteKind.CHANGE
     assert out.ch_enable is True
     assert out.heating_on is True
+
+
+def _ramp_to(config: LoopConfig, first: dict, then: dict, seconds: int = 2400) -> tuple:
+    """Control started with ``first``'s inputs, then ``then``'s every 10 s, the read-back
+    following each write: the last decision, the value written and every change."""
+    state, out = loop_step(LoopState(), inputs(0.0, **first), None, config)
+    assert out.setpoint is not None
+    written = out.setpoint.value
+    changes: list[float] = []
+    for t in range(10, seconds + 10, 10):
+        state, out = loop_step(state, inputs(float(t), **then), written, config)
+        if out.setpoint is not None:
+            written = out.setpoint.value
+            if out.setpoint.kind is WriteKind.CHANGE:
+                changes.append(written)
+    return out.decision, written, changes
+
+
+@pytest.mark.parametrize("need", [44.0, 49.5, 50.0, 52.3])
+def test_a_ramp_to_a_circuits_need_ends_on_the_need(need: float) -> None:
+    """F14 (J4 of 2026-10-14, E7): the water rising at the ramp's 1 K/min to a circuit's need
+    ends on the need itself — a bound the water is held at is written exactly, its last step
+    within the read-back's tolerance too; the steps before it go no more often than one beyond
+    the tolerance."""
+    heater = OtherAutomation("heater", requests=True, needed=need)
+    control = ControlConfig(curve=HeatingCurve(), ramp_k_per_min=1.0, other_automation=(heater,))
+    config = replace(CONFIG, control=control)
+    off, on = {"circuit_requests": {"heater": False}}, {"circuit_requests": {"heater": True}}
+    decision, written, changes = _ramp_to(config, off, on)
+    assert Reason.LIMIT_CIRCUIT_NEED in decision.reasons
+    assert written == need
+    assert changes[-1] == need
+    assert len(changes) <= (need - 38.0) / 0.5 + 2
+
+
+@pytest.mark.parametrize("cap", [41.0, 42.0, 45.0])
+def test_a_ramp_up_to_a_circuits_maximum_ends_on_it(cap: float) -> None:
+    """F14: a cap is a bound too — the water rising after a cold snap to a circuit's maximum
+    ends on it (before, 0.17 to 0.5 K short)."""
+    control = ControlConfig(curve=HeatingCurve(), ramp_k_per_min=1.0, circuit_max=cap)
+    config = replace(CONFIG, control=control)
+    warm, cold = {"outdoor_sensor": 15.0}, {"outdoor_sensor": -15.0}
+    decision, written, _changes = _ramp_to(config, warm, cold)
+    assert Reason.LIMIT_CIRCUIT_MAX in decision.reasons
+    assert written == cap
+
+
+@pytest.mark.parametrize("cold", [-8.0, -1.0])
+def test_the_curves_last_step_within_the_tolerance_waits(cold: float) -> None:
+    """F14, negative: the curve's own value, no bound, keeps the read-back's tolerance as a
+    deadband — a ramp after a cold snap ends within 0.5 K of it without one more write: writing
+    every small change of the curve raised the starts in the simulation (x1.36 against x1.20 at
+    +8 °C)."""
+    control = ControlConfig(curve=HeatingCurve(), ramp_k_per_min=1.0)
+    config = replace(CONFIG, control=control)
+    decision, written, _ = _ramp_to(config, {"outdoor_sensor": 15.0}, {"outdoor_sensor": cold})
+    assert decision.target is not None
+    assert 0.0 < decision.target - written <= 0.5
 
 
 def test_keepalive_follows_between_decisions() -> None:
@@ -873,17 +933,16 @@ def test_a_new_session_keeps_the_wait_for_a_link_not_yet_reported() -> None:
     [
         ({"circuit_max": 60.0}, -30.0, 59.75),
         ({"boiler_max": 60.0}, -30.0, 59.75),
-        ({"circuit_floor": 40.4}, 20.0, 40.75),
         ({}, 20.0, 25.25),
     ],
-    ids=["circuit_max", "boiler_max", "circuit_floor", "hard_min"],
+    ids=["circuit_max", "boiler_max", "hard_min"],
 )
 def test_a_setpoint_on_a_grid_stays_inside_every_bound(
     ch_writes: bool, bounds: dict, outdoor: float, sent: float
 ) -> None:
     """P-98, P-15: on an entity's grid of 0.5 from 0.25, a circuit's or the boiler's maximum of 60
-    is sent as 59.75, never 60.25; a fixed circuit's floor of 40.4 as 40.75, never 40.25; the hard
-    minimum 25 as 25.25, never 24.75 — with a heating switch and with "off" as a low setpoint."""
+    is sent as 59.75, never 60.25; the hard minimum 25 as 25.25, never 24.75 — with a heating
+    switch and with "off" as a low setpoint."""
     control = ControlConfig(curve=HeatingCurve(design_flow=75.0), ramp_k_per_min=None, **bounds)
     config = replace(CONFIG, control=control, ch_writes=ch_writes)
     step = inputs(0.0, outdoor_sensor=outdoor)

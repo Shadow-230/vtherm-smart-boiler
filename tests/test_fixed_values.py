@@ -1,5 +1,5 @@
-"""The fixed values of ``SCOPE.md`` §7's table "Fixed values (S-37)", pinned where the plugin holds
-them (TB-17), and the clocks of ``const.py`` (TB-18).
+"""The fixed values of ``docs/en/specification/scope.md`` §7's table "Fixed values (S-37)", pinned
+where the plugin holds them (TB-17), and the clocks of ``const.py`` (TB-18).
 
 Each row names its SCOPE row. A value changed in the code without the table, or in the table
 without the code, fails here; the user reviews the provisional ones at K4.
@@ -46,6 +46,7 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("lowest OTGW CS 8 C", writers.OTGW_MIN_SETPOINT, 8.0),
     ("confirmation timeout 120 s", guards.CONFIRM_TIMEOUT_S, 120.0),
     ("confirmation tolerance 0.5 K", guards.TOLERANCE_K, 0.5),
+    ("a bound written exactly beyond 0.05 K", guards.EXACT_K, 0.05),
     ("write interval at least 5 s", guards.MIN_WRITE_INTERVAL_S, 5.0),
     ("rewrite window 24 h", guards.REWRITE_WINDOW_S, DAY),
     ("hand-back retry 60 s", control.HAND_BACK_RETRY_S, 60.0),
@@ -110,7 +111,6 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("an alarm level counts once held 5 min", alarms.ALARM_HOLD_S, 300.0),
     ("a notification closes after 60 min", alarms.NOTICE_CLOSE_S, 3600.0),
     ("an unknown input held 60 min", alarms.UNKNOWN_HOLD_S, 3600.0),
-    ("a passive fixed circuit's margin 5 K", control_config.FIXED_CIRCUIT_MARGIN_K, 5.0),
     ("timeout hand-back released within 0.5 K", hand_back.RELEASE_TOLERANCE_K, 0.5),
     ("hand-back failed 3 min after the timeout", hand_back.TIMEOUT_RELEASE_S, 180.0),
     ("relay proof-of-heat window 30 min", relay.PROOF_WINDOW_S, 1800.0),

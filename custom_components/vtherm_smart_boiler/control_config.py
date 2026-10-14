@@ -7,9 +7,10 @@ declared expiring or held, and a heating switch declared otherwise is left alone
 low setpoint). The hand-back value is bound by the highest water temperature, never clamped, and
 "off" must not read as it (S-21, S-49); "off" sent as a low setpoint stays at least 1 K below the
 lowest water temperature, or the boiler would not see a change (P-43). Provisional
-decisions of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
-installation with one circuit fed by the boiler flow (unmixed, or passive fixed); the curve must
-be entered, never silently defaulted; VT's central boiler must not run alongside.
+decisions of phase F (to be confirmed at the review, `docs/en/development/plans/plan-0.2.md` K4):
+control only for an installation with one circuit fed by the boiler flow (unmixed, or passive
+fixed); the curve must be entered, never silently defaulted; VT's central boiler must not run
+alongside.
 
 What the form refuses is a blocker too, for options that reach the plugin without it (a hand
 edit, an older version's options — X5): one entity in two roles (P-03), one entity for two
@@ -52,7 +53,7 @@ from .core.curve import (
     DESIGN_OUTDOOR_UNDER_ROOM_K,
     HeatingCurve,
 )
-from .core.demand import DemandConfig
+from .core.demand import CountBy, DemandConfig
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
 from .core.installation import Boiler, BoilerClass, CircuitControl, EmitterType, Installation
@@ -94,6 +95,9 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "frost_limit": 5.0,
         "frost_release": 7.0,
         "count_threshold": 1,
+        # What the count counts (the user's decision of 2026-10-14): VT's heads, as VT's central
+        # boiler; an entry from before keeps zones, written by the entry migration (21).
+        "count_by": CountBy.DEVICES.value,
         "ramp_k_per_min": 1.0,
         "decision_interval_min": 5.0,
         "off_setpoint": DEFAULT_OFF_SETPOINT,
@@ -463,9 +467,6 @@ _MONITOR_ONLY_CLASSES = frozenset({BoilerClass.CURVE_ONLY, BoilerClass.READ_ONLY
 # would be a low setpoint, and whether that stops the boiler and its pump is not known. Such
 # installations get the monitor. The one place that lifts the block.
 OFF_AS_LOW_SETPOINT_ALLOWED = False
-# A thermostatic mixing valve needs supply water above its own temperature: the boiler's flow is
-# kept at least this far above a passive fixed circuit's temperature (S-42; provisional, K4).
-FIXED_CIRCUIT_MARGIN_K = 5.0
 # The curve's values must fit together (P-68; provisional, K4): ``DESIGN_FLOW_OVER_ROOM_K`` and
 # ``DESIGN_OUTDOOR_UNDER_ROOM_K``, held in ``core.curve`` with the Auto room that keeps them
 # (G11 D).
@@ -734,6 +735,14 @@ def with_correction_answer(section: Any) -> Any:
     return section
 
 
+def with_count_by(section: Any) -> Any:
+    """Minor version 21 (2026-10-14): the count criterion "zones" where a section stored no
+    answer — what it ran with, before VT's devices became the default."""
+    if isinstance(section, Mapping) and section.get("write_path") and "count_by" not in section:
+        return {**section, "count_by": CountBy.ZONES.value}
+    return section
+
+
 def with_room_mode(section: Any) -> Any:
     """G11 D (minor version 8): the curve's room temperature "Manual" where a section's curve
     stored no mode — the value entered, as it ran; a section without a curve gets Auto once
@@ -826,12 +835,14 @@ def with_boiler_inputs(section: Any, boiler: Any, signals: Any) -> Any:
 
 
 def section_as_migrated(section: Any) -> Any:
-    """A control section as this version's entry migrations leave one (G11 B and D, I8 B6, F2).
+    """A control section as this version's entry migrations leave one (G11 B and D, I8 B6, F2,
+    the count by zones of 21).
     The entry migration writes each into the options; the options a stored session took the
     boiler with (``taken_with``), which no migration reaches, are read through them, so a
     restart after the update compares like with like. The highest water temperature left the
     section for the circuit's, which the restore's limits apply as they are now (PB-11)."""
     section = without_correction_range(with_room_mode(with_correction_answer(section)))
+    section = with_count_by(section)
     if isinstance(section, Mapping) and HARD_MAX_FROM_BEFORE in section:
         return {key: value for key, value in section.items() if key != HARD_MAX_FROM_BEFORE}
     return section
@@ -968,21 +979,13 @@ def parse_control(
         ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
     # The user's answer of 2026-10-12: the circuits fed straight from the boiler cap its water —
     # each its highest water temperature, the default where empty, the default where there is
-    # none; one behind a mixer or a fixed valve is guarded by it.
+    # none; one behind a mixer or a fixed valve is guarded by it. A fixed valve sets no lower
+    # bound: the boiler follows its curve, the valve standing open while the water is at or below
+    # its setting (the user's decision of 2026-10-14, replacing S-42's setting plus 5 K).
     default_max = float(CONTROL_DEFAULTS["hard_max"])
     circuit_max = min(
         (c.max_flow if c.max_flow is not None else default_max for c in direct),
         default=default_max,
-    )
-    # A mixing valve needs supply water above its own temperature (S-42): the highest of the
-    # fixed valves', while heating (the user's answer of 2026-10-12: the curve, never below it).
-    circuit_floor = max(
-        (
-            c.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
-            for c in installation.circuits
-            if c.control is CircuitControl.PASSIVE_FIXED and c.fixed_temperature is not None
-        ),
-        default=None,
     )
     other = tuple(
         OtherAutomation(
@@ -1012,7 +1015,6 @@ def parse_control(
         # I8 (decision F2): the circuit's highest water temperature, else the default.
         circuit_max=circuit_max,
         boiler_max=boiler_max,
-        circuit_floor=circuit_floor,
         other_automation=other,
         curve_zones=curve_zones,
         frost=FrostConfig(
@@ -1024,6 +1026,7 @@ def parse_control(
         ),
         demand=DemandConfig(
             count_threshold=int(_required(value, "count_threshold")),
+            count_by=CountBy(value["count_by"]),
             power_threshold_kw=_checked(data, "power_threshold_kw"),
             opening_threshold=(
                 None
@@ -1611,7 +1614,10 @@ def relay_blockers(
 def _zone_blockers(control: ControlOptions, installation: Installation) -> list[str]:
     if not installation.zones:
         return ["no_zones"]  # nothing could ever ask for heat (S-04)
-    if control.loop.control.demand.count_threshold > len(installation.zone_ids):
+    demand = control.loop.control.demand
+    # Counting devices, the zones' devices are VT's to tell: the form checks them, and the count
+    # never asks more than the known zones have (``core.demand``).
+    if demand.count_by is CountBy.ZONES and demand.count_threshold > len(installation.zone_ids):
         return ["count_threshold_above_zones"]  # heating would never be asked for
     return []
 

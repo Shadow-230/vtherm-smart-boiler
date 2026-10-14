@@ -1,4 +1,4 @@
-# The test Home Assistant, run in the dedicated test LXC only (docs/plan-0.2.md, J1).
+# The test Home Assistant, run in the dedicated test LXC only (docs/en/development/plans/plan-0.2.md, J1).
 # scripts/deploy_test.sh copies this file, config/configuration.yaml and the integrations next to
 # it on the LXC and starts it; nothing here is ever pointed at another Home Assistant. The
 # container's name and port come from the .env the script writes beside it: ha-test on 8123 for
