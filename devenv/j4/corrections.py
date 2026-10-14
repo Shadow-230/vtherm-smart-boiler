@@ -5,8 +5,9 @@ The comfort correction with its limit and the warning at its edge (repair issue
 ``curve_too_low_<entry>``, key ``curve_too_low`` or ``room_short_at_limit``, the rooms' entity IDs
 in its ``entities`` placeholder), SmartPI's learning band in "is the room short", the curve's
 room temperature in Auto (option ``room_mode``, ``room_excluded``; the control state's
-``curve_room``), the long-burn rule (binary sensor ``long_burn``, its ``reason``) and the guard
-for an open window without a sensor (binary sensor ``window_probably_open``).
+``curve_room``) and the long-burn rule (binary sensor ``long_burn``, its ``reason``). The guard for
+an open window without a sensor went with #64 (VT's own window detection stops a zone calling), and
+Q4 with it (J4 of 2026-10-14).
 
 Usage: HA_INSTANCE=1 scripts/env.sh python devenv/j4/corrections.py ID...
 """
@@ -182,40 +183,6 @@ async def Q3(r: Run):
         await r.zones()
 
 
-async def Q4(r: Run):
-    """a window opened in one room without a sensor (its temperature falls 1.5 K at once): the
-    window sensor on, no correction for it for at least 30 min"""
-    try:
-        await r.options(curve=CORRECTION_ON)
-        r.ent.update(await r.ha.entities())
-        await r.switch(True)
-        await r.ha.wait(900)
-        base = await target(r)
-        await r.sim("set_room_temperature", zone="zone_living", temperature=ZONES[0][1] - 1.5)
-        seen = await r.ha.until(lambda: _window(r), 600, 10)
-        st = await r.st("window_probably_open")
-        r.check(
-            seen is not None,
-            f"window probably open {seen and round(seen)} s after: {st['attributes']}",
-        )
-        rose_at = None
-        t = time.time()
-        while time.time() - t < 1800:
-            await r.ha.wait(60)
-            if rose_at is None and await correction_on(r):
-                rose_at = round((time.time() - t) / 60)
-        r.note(f"target {base} → {await target(r)}")
-        r.check(rose_at is None, f"no correction for 30 min (rose at {rose_at} min)")
-    finally:
-        await r.switch(False)
-        await r.ha.wait(10)
-        await r.options()
-
-
-async def _window(r: Run) -> bool:
-    return await r.s("window_probably_open") == "on"
-
-
 async def Q5(r: Run):
     """one room short while the others hold (its setpoint out of reach): the curve must hold
     every room — the correction rises for it, and at its limit for 3 h the warning names that
@@ -250,7 +217,7 @@ async def Q5(r: Run):
         await r.zones()
 
 
-SCENARIOS.update({f.__name__: f for f in (Q1, Q2, Q3, Q4, Q5)})
+SCENARIOS.update({f.__name__: f for f in (Q1, Q2, Q3, Q5)})
 
 
 if __name__ == "__main__":
