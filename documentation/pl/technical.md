@@ -294,7 +294,13 @@ Co wtyczka wystawia dla każdego termostatu VT, który jest jej strefą:
   (`flow_stale`);
 - **czas pomiaru** (`supply_measured_at`, UTC) — tylko informacyjnie;
 - **czy ciepło dociera** (`heat_available`) i dlaczego nie (`heat_reason`) — zmienia się z każdym
-  cyklem palnika.
+  cyklem palnika;
+- **czy kocioł jest wezwany do grzania** (`boiler_called`) i dlaczego nie (`call_reason`:
+  `below_threshold` — strefy wołają, ale poniżej progów zapotrzebowania, `no_demand`,
+  `activation_delay`, `boiler_fault`, `not_controlling`, `waiting_data`), z zapotrzebowaniem
+  wobec progów — dodane 2026-10-14 na prośbę SmartPI, żeby algorytm strefy nie uczył się na
+  cieple, które nie przyszło, czego przerwa palnika nie odróżnia. Wartości całej instalacji, te
+  same dla każdej strefy, czytane na bieżąco ze sterowania (`core/boiler_call.py`).
 
 Gdzie: jako właściwości modułu funkcji (feature manager) na termostacie VT (gdy VT ma
 `get_feature_manager`, od 10.5.0.beta1); przez funkcję `zone_water(entity_id)` pod kluczem

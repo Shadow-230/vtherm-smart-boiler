@@ -14285,3 +14285,28 @@ async def test_the_demand_sensors_count_vts_devices_and_sum_the_power(rig: Rig) 
     assert float(power.state) == pytest.approx(1.2)
     assert power.attributes["power_threshold_kw"] == 1.5
     assert rig.state("binary_sensor", "boiler_called").state == "on"  # by the count
+
+
+async def test_the_water_interface_tells_each_zone_whether_the_boiler_is_called(rig: Rig) -> None:
+    """SmartPI's request (2026-10-14; water-interface.md §4.3): each zone's water data says
+    whether the boiler is called and why not — here a zone calling under a count of two — with
+    the demand against its thresholds, the same for every zone of the installation, read live:
+    not controlling while control is off, called once the count is met."""
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig, count_threshold=2)
+    api = rig.hass.data["vtherm_smart_boiler_api"]
+    living, bedroom = rig.zones.entities["living"], rig.zones.entities["bedroom"]
+    await rig.advance(20)
+    water = api.zone_water(living)
+    assert (water["boiler_called"], water["call_reason"]) == (None, "not_controlling")
+    await rig.switch(True)
+    await rig.advance(20)
+    for zone in (living, bedroom):
+        water = api.zone_water(zone)
+        assert (water["boiler_called"], water["call_reason"]) == (False, "below_threshold")
+        assert (water["demand_count"], water["count_threshold"]) == (1, 2)
+        assert water["count_by"] == "zones"  # an entry from before counts zones (21)
+    rig.zones.set("bedroom", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(20)
+    water = api.zone_water(living)
+    assert (water["boiler_called"], water["call_reason"]) == (True, None)
