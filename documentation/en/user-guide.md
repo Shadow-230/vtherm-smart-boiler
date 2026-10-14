@@ -207,7 +207,7 @@ same way VT's central boiler does. You choose one or more of these criteria:
   circuit asks nothing (its zones still can, and frost protection still watches), and the
   control state shows the reason `circuit_request_unknown`.
 - **What VT's central boiler showed, the plugin shows** (with control set up):
-  - **Boiler called** — on while the plugin calls the boiler for heat (frost protection
+  - **Heat call** — on while the plugin calls the boiler for heat (frost protection
     included); off while it controls the boiler and does not call it, with the reason: nothing
     calls, zones call under the thresholds, the start waits VT's activation delay, the boiler
     reports a fault; unknown while it does not control the boiler (control off, blocked, handed

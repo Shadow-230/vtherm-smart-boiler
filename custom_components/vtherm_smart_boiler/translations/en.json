@@ -1817,7 +1817,7 @@
             "name": "Curve's room temperature"
           },
           "boiler_called": {
-            "name": "Boiler called"
+            "name": "Heat call"
           },
           "call_reason": {
             "name": "Why not called",
@@ -2307,7 +2307,7 @@
     },
     "binary_sensor": {
       "boiler_called": {
-        "name": "Boiler called",
+        "name": "Heat call",
         "state_attributes": {
           "call_reason": {
             "name": "Why not called",

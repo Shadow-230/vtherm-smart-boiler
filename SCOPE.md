@@ -1379,7 +1379,7 @@ memory, nothing sent in the recognition period (0.3 at the earliest; `docs/plan-
 radiators and underfloor behind a mixing valve as one written circuit plus passive fixed circuits
 (0.3). The recorded "heating commanded" entity and event for users leaving VT's central boiler,
 planned for 0.3, are built in 0.2 (the user's decision of 2026-10-14: the plugin shows at least
-what VT's central boiler shows): **Boiler called** (on, off with why not, unknown while not
+what VT's central boiler shows): **Heat call** (on, off with why not, unknown while not
 controlling — `core/boiler_call.py`), the devices or zones calling and their power summed
 beside the thresholds, and the event `vtherm_smart_boiler_boiler_call` when the call changes
 or a start begins to wait VT's activation delay. VT's Auto-TPI still reads only VT's own

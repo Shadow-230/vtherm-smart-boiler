@@ -181,7 +181,7 @@ disabled by default.
 | Control (experimental) | switches control on and off; its attributes say what blocks it and what a hand-back does in your installation |
 | Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
-| Boiler called | on while the plugin calls the boiler for heat, off with the reason while it does not — VT's central boiler sensor's place; an event fires when it changes |
+| Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not — VT's central boiler sensor's place; an event fires when it changes |
 | Calling for heat, Calling power | the devices (or zones) calling and the zones' power summed, each beside its threshold, as VT's central boiler shows them |
 | Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, a zone unknown, frost not warming and the others |
 | Reset comfort correction | sets the comfort correction back to 0 |

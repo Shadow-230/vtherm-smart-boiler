@@ -221,9 +221,9 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   mogą, a ochrona przed mrozem dalej czuwa), a stan sterowania pokazuje powód
   `circuit_request_unknown`.
 - **To, co pokazywał kocioł centralny VT, pokazuje wtyczka** (gdy sterowanie jest ustawione):
-  - **Kocioł wezwany** — włączony, gdy wtyczka wzywa kocioł do grzania (także ochrona przed
-    mrozem); wyłączony, gdy steruje kotłem i go nie wzywa, z powodem: nic nie woła, strefy wołają
-    poniżej progów, start czeka na opóźnienie włączenia VT, kocioł zgłasza usterkę; nieznany, gdy
+  - **Wezwanie do grzania** — włączone, gdy wtyczka wzywa kocioł do grzania (także ochrona przed
+    mrozem); wyłączone, gdy steruje kotłem i go nie wzywa, z powodem: nic nie woła, strefy wołają
+    poniżej progów, start czeka na opóźnienie włączenia VT, kocioł zgłasza usterkę; nieznane, gdy
     nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany) albo jeszcze nie wie.
     Jego atrybuty pokazują zapotrzebowanie wobec progów.
   - **Wołające o ciepło** — urządzenia (albo strefy, zależnie od liczenia) wołające teraz, z

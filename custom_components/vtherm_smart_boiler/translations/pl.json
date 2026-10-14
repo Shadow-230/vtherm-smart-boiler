@@ -1817,7 +1817,7 @@
             "name": "Temperatura pokojowa krzywej"
           },
           "boiler_called": {
-            "name": "Kocioł wezwany"
+            "name": "Wezwanie do grzania"
           },
           "call_reason": {
             "name": "Dlaczego nie wezwany",
@@ -2307,7 +2307,7 @@
     },
     "binary_sensor": {
       "boiler_called": {
-        "name": "Kocioł wezwany",
+        "name": "Wezwanie do grzania",
         "state_attributes": {
           "call_reason": {
             "name": "Dlaczego nie wezwany",
