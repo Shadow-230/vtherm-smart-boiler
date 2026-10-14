@@ -10,7 +10,7 @@ import traceback
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from lib import CONTAINER, HA, ssh
-from run import Run, append_result
+from run import CODE, Run, append_result, base_problem
 
 
 async def wait_running(limit: float = 300) -> float | None:
@@ -100,16 +100,25 @@ async def main(ids):
             "B6": "Home Assistant killed (docker kill, decision 15): the switch back as left, control resumed",
         }[sid]
         print(f"--- {sid} {start:%H:%M:%S} {doc}", flush=True)
-        try:
-            ok = await {"B3": B3, "B6": B6}[sid](notes)
-        except Exception:
-            ok = False
-            notes.append("exception: " + traceback.format_exc().strip().splitlines()[-1])
-            traceback.print_exc()
+        # The instance's base first, as every runner scenario (J4 of 2026-10-14).
+        async with HA() as ha:
+            r = Run(ha, await ha.entities())
+            problem = await base_problem(r)
+        notes += [n.strip() for n in r.notes]
+        if problem is not None:
+            ok = None
+            notes.append(f"NOT RUN — {problem}")
+        else:
+            try:
+                ok = await {"B3": B3, "B6": B6}[sid](notes)
+            except Exception:
+                ok = False
+                notes.append("exception: " + traceback.format_exc().strip().splitlines()[-1])
+                traceback.print_exc()
+        verdict = "NOT RUN" if ok is None else "PASS" if ok else "FAIL"
         text = (
-            f"\n### {sid} — {'PASS' if ok else 'FAIL'} ({start:%H:%M}–{dt.datetime.now(dt.UTC):%H:%M} UTC)\n{doc}\n"
-            + "\n".join(f"- {n}" for n in notes)
-            + "\n"
+            f"\n### {sid} — {verdict} ({start:%H:%M}–{dt.datetime.now(dt.UTC):%H:%M} UTC, "
+            f"code {CODE})\n{doc}\n" + "\n".join(f"- {n}" for n in notes) + "\n"
         )
         await asyncio.to_thread(append_result, text)
         print(text, flush=True)

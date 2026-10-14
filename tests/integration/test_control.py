@@ -11732,6 +11732,34 @@ async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Ri
     assert [call for call in rig.gateway.calls if call[0] == "ch"][-1] == ("ch", False)
 
 
+async def test_a_circuit_asking_while_control_runs_rises_to_its_need_exactly(rig: Rig) -> None:
+    """F14 (J4 of 2026-10-14, E7): control on and idle, then a circuit run by other automation
+    asks — the water rises at the ramp's 1 K/min from the idle setpoint and ends on its need
+    itself, the last step within the read-back's tolerance written too."""
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    rig.hass.states.async_set(FLOOR_ASKS, "off")
+    heater = {
+        "id": "heater",
+        "control": "separate",
+        "request_entity": FLOOR_ASKS,
+        "needed_temperature": 50,
+    }
+    entry_options = with_circuit(rig, {}) | {
+        "zones": [{"entity_id": rig.zones.entities["living"], "circuit": "main"}]
+    }
+    entry_options["circuits"].append(heater)
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.state("sensor", "control_state").state == "idle"
+    rig.hass.states.async_set(FLOOR_ASKS, "on")
+    await rig.advance(20 * 60)  # from the curve's ~38 °C at 1 K/min, with room to spare
+    state = rig.state("sensor", "control_state")
+    assert state.state == "heating"
+    assert "ramp" not in state.attributes["reasons"]
+    assert rig.gateway.setpoints()[-1] == 50.0
+
+
 async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
     short_room(rig)
     await start(rig, comfort_correction=True)  # off by default since K4.1

@@ -91,6 +91,11 @@ Each topic lives only in its file; do not copy it here.
   opened only when the user says so; the user approves and merges both and makes releases
   (`CONTRIBUTING.md`; `.github/CODEOWNERS`; the rulesets in `.github/rulesets/`). An issue or a
   comment on GitHub is published only with the user's consent.
+  Every pull request's description ends with a section "J4 impact": the J4 scenarios to repeat
+  once the change is deployed, or "none" (the user's rule, 2026-10-13). A scenario is named only
+  once its code (`devenv/j4/*.py`) shows it can bring the changed situation about in the
+  simulator; where none can, the section says so and names what covers the change instead (the
+  user's rule, 2026-10-14, after J4 found seven sections naming scenarios that could not).
   The bot's token has no `workflow` scope: a push that changes `.github/workflows/` waits until
   the user grants it for that one push (`gh auth refresh -h github.com -s workflow`) and takes it
   back at once (`gh auth refresh -h github.com --remove-scopes workflow`); Claude checks
