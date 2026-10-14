@@ -98,7 +98,7 @@ class LoopController:
         )
         confirmed = view.confirmed_setpoint if link else None
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)
-        called = any(z.opening > 0.05 for z in view.zones)
+        called = any(z.opening > 0.0 for z in view.zones)  # VT's rule (2026-10-14)
         self.heating.append((t, out.heating_on, called))
         if out.setpoint is not None:
             self.setpoints.append((t, out.setpoint.value))

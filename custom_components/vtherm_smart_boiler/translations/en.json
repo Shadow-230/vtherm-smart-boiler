@@ -395,7 +395,8 @@
           "ramp_k_per_min": "Setpoint ramp",
           "decision_interval_min": "Decision interval",
           "off_setpoint": "Off setpoint",
-          "count_threshold": "Zones calling",
+          "count_by": "Count",
+          "count_threshold": "Calling (devices or zones)",
           "power_threshold_kw": "Power calling",
           "opening_threshold": "Valve opening calling",
           "learning_pauses": "Pause zone learning"
@@ -405,7 +406,8 @@
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5. Heating on and off follows the zones every 10 s regardless. Shorter follows the weather sooner but moves the water more often under the zones' algorithms.",
           "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet.",
-          "count_threshold": "Heating is needed when at least this many zones call. Default 1, at most the number of zones. 0 leaves the power or opening threshold alone — every zone must then report what it needs, or it could never ask for heat. Higher leaves a single room without heat.",
+          "count_by": "What the count below counts: VT's devices — heads, valves, switches — as VT's central boiler counts them (the default), or zones, one each however many devices it has. With a count of 1 both are the same; counting devices, a zone with several heads open reaches a higher count alone.",
+          "count_threshold": "Heating is needed when at least this many devices — or zones, as chosen above — call. Default 1, at most the devices (or zones) the circuits list. 0 leaves the power or opening threshold alone — every zone must then report what it needs, or it could never ask for heat. Higher leaves a single room without heat.",
           "power_threshold_kw": "Optional: heating is needed when the zones' mean power, as VT counts it, reaches this, in kW, while a valve is open or a device on. A zone without a device power in VT gives no data. Too high leaves small rooms without heat.",
           "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. VT's over_climate zones give no data. Too high leaves a room that opens a little without heat.",
           "learning_pauses": "Pause SmartPI's learning while hot water runs, while control holds heating off for a boiler fault and while the water swings, so it does not learn what the boiler did; at most an hour each. Default on. Auto-TPI cannot be paused without losing what it learned: such zones are reported."
@@ -494,7 +496,7 @@
       "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to, the read-backs and write types that judge the hand-back, the device's timeout and the lowest water temperature cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
       "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
-      "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
+      "count_threshold_above_zones": "More than the circuits' zones — or, counting devices, their devices: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
       "power_criterion_no_zone": "No zone reports a device power in Versatile Thermostat, so this threshold could never be reached: set the power in VT or leave it empty.",
@@ -933,7 +935,8 @@
           "ramp_k_per_min": "Setpoint ramp",
           "decision_interval_min": "Decision interval",
           "off_setpoint": "Off setpoint",
-          "count_threshold": "Zones calling",
+          "count_by": "Count",
+          "count_threshold": "Calling (devices or zones)",
           "power_threshold_kw": "Power calling",
           "opening_threshold": "Valve opening calling",
           "learning_pauses": "Pause zone learning"
@@ -943,7 +946,8 @@
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5. Heating on and off follows the zones every 10 s regardless. Shorter follows the weather sooner but moves the water more often under the zones' algorithms.",
           "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet.",
-          "count_threshold": "Heating is needed when at least this many zones call. Default 1, at most the number of zones. 0 leaves the power or opening threshold alone — every zone must then report what it needs, or it could never ask for heat. Higher leaves a single room without heat.",
+          "count_by": "What the count below counts: VT's devices — heads, valves, switches — as VT's central boiler counts them (the default), or zones, one each however many devices it has. With a count of 1 both are the same; counting devices, a zone with several heads open reaches a higher count alone.",
+          "count_threshold": "Heating is needed when at least this many devices — or zones, as chosen above — call. Default 1, at most the devices (or zones) the circuits list. 0 leaves the power or opening threshold alone — every zone must then report what it needs, or it could never ask for heat. Higher leaves a single room without heat.",
           "power_threshold_kw": "Optional: heating is needed when the zones' mean power, as VT counts it, reaches this, in kW, while a valve is open or a device on. A zone without a device power in VT gives no data. Too high leaves small rooms without heat.",
           "opening_threshold": "Optional: heating is needed when the widest valve opening among the calling zones reaches this, in %. VT's over_climate zones give no data. Too high leaves a room that opens a little without heat.",
           "learning_pauses": "Pause SmartPI's learning while hot water runs, while control holds heating off for a boiler fault and while the water swings, so it does not learn what the boiler did; at most an hour each. Default on. Auto-TPI cannot be paused without losing what it learned: such zones are reported."
@@ -1071,7 +1075,7 @@
       "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to, the read-backs and write types that judge the hand-back, the device's timeout and the lowest water temperature cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
       "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
-      "count_threshold_above_zones": "More zones than are configured: heating would never be asked for.",
+      "count_threshold_above_zones": "More than the circuits' zones — or, counting devices, their devices: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
       "power_criterion_no_zone": "No zone reports a device power in Versatile Thermostat, so this threshold could never be reached: set the power in VT or leave it empty.",
@@ -1307,6 +1311,12 @@
       "options": {
         "auto": "Auto (the warmest room)",
         "manual": "Manual (the value entered)"
+      }
+    },
+    "count_by": {
+      "options": {
+        "devices": "Devices (as VT's central boiler)",
+        "zones": "Zones"
       }
     },
     "menu_state": {

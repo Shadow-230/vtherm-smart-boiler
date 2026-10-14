@@ -4007,6 +4007,7 @@ async def test_the_count_and_long_keep_alive_prefill_rules(
     assert settings.keep_alive_s == 600
     assert settings.power_threshold_kw == 2.0  # int(2.2) in VT's kW
     assert settings.count_threshold == 2  # int(3.7) = 3, capped at the two zones
+    assert settings.count_threshold_devices == 3  # as VT counts: devices (2026-10-14)
     assert vt_central_boiler_settings(hass, zones[:1]).count_threshold == 1  # type: ignore[union-attr]
     # A multi-device zone: VT counts devices, the plugin rooms — no count.
     entry = MockConfigEntry(
@@ -4017,6 +4018,7 @@ async def test_the_count_and_long_keep_alive_prefill_rules(
     settings = vt_central_boiler_settings(hass, zones)
     assert settings is not None
     assert settings.count_threshold is None
+    assert settings.count_threshold_devices == 3  # devices: VT's own number, as it is
     vt_threshold(hass, "boiler_activation_threshold", "0")
     vt_threshold(hass, "boiler_power_activation_threshold", "0.4", "kW")  # int() → 0: off
     settings = vt_central_boiler_settings(hass, zones)
@@ -4063,6 +4065,7 @@ async def test_vts_count_of_0_beside_a_power_threshold_is_prefilled_0(
     settings = vt_central_boiler_settings(hass, [entities["living"]])
     assert settings is not None
     assert settings.count_threshold == expected
+    assert settings.count_threshold_devices == expected  # the same rule for devices
 
 
 async def test_the_relay_behaviour_form_offers_vts_count_of_0(
@@ -4147,11 +4150,43 @@ def test_the_relay_behaviour_step_offers_vts_count() -> None:
     )
     from custom_components.vtherm_smart_boiler.vtherm_link import VtCentralBoiler, VtCommands
 
-    prefill = VtCentralBoiler(configured=True, commands=VtCommands.NONE, count_threshold=2)
+    prefill = VtCentralBoiler(
+        configured=True, commands=VtCommands.NONE, count_threshold=2, count_threshold_devices=4
+    )
     options = {"level": "advanced", "control": {"write_path": "relay"}}
     result = {"data_schema": control_behaviour_schema(options, prefill)}
-    assert form_default(result, "count_threshold") == 2
+    assert form_default(result, "count_by") == "devices"  # the default since 2026-10-14
+    assert form_default(result, "count_threshold") == 4  # VT's own number of devices
+    zones = {"level": "advanced", "control": {"write_path": "relay", "count_by": "zones"}}
+    result = {"data_schema": control_behaviour_schema(zones, prefill)}
+    assert form_default(result, "count_threshold") == 2  # as rooms
     assert _offers_own_room_controller({"write_path": "relay"})
+
+
+async def test_the_count_counts_vts_devices_or_zones(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """The user's decision of 2026-10-14: the behaviour form asks what the count counts, VT's
+    devices by default; counting devices, a count up to the devices VT drives in the circuits'
+    zones is taken — counting zones, no more than the zones."""
+    from homeassistant.helpers import entity_registry as er
+
+    vt_entry = MockConfigEntry(
+        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.a", "switch.b"]}
+    )
+    vt_entry.add_to_hass(hass)
+    er.async_get(hass).async_update_entity(entities["living"], config_entry_id=vt_entry.entry_id)
+    entry_id = await create_entry(hass, entities, "advanced", ("living",), "on_off")
+    result = await to_relay_step(hass, entry_id)
+    result = await options_step(hass, result, RELAY_ANSWERS)
+    assert form_default(result, "count_by") == "devices"
+    base = {"activation_delay_s": 0, "learning_pauses": True}
+    result = await options_step(hass, result, base | {"count_by": "zones", "count_threshold": 2})
+    assert result["errors"] == {"count_threshold": "count_threshold_above_zones"}
+    result = await options_step(hass, result, base | {"count_by": "devices", "count_threshold": 2})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert (control["count_by"], control["count_threshold"]) == ("devices", 2)
 
 
 @pytest.mark.parametrize(

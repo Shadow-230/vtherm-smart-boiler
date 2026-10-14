@@ -49,6 +49,7 @@ BASE_GATEWAY: dict[str, object] = {
     "comfort_correction": False,
     # Control behaviour; "off" is asked only at the simple level, where S-49 refuses it.
     "activation_delay_s": 0,
+    "count_by": "devices",  # VT's heads, the default since 2026-10-14; at 1 the same as zones
     "count_threshold": 1,
     "learning_pauses": True,
     "ramp_k_per_min": 1.0,

@@ -46,6 +46,7 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("lowest OTGW CS 8 C", writers.OTGW_MIN_SETPOINT, 8.0),
     ("confirmation timeout 120 s", guards.CONFIRM_TIMEOUT_S, 120.0),
     ("confirmation tolerance 0.5 K", guards.TOLERANCE_K, 0.5),
+    ("a bound written exactly beyond 0.05 K", guards.EXACT_K, 0.05),
     ("write interval at least 5 s", guards.MIN_WRITE_INTERVAL_S, 5.0),
     ("rewrite window 24 h", guards.REWRITE_WINDOW_S, DAY),
     ("hand-back retry 60 s", control.HAND_BACK_RETRY_S, 60.0),

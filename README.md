@@ -43,8 +43,8 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
   before; you may switch it on from the first day.
 - **Weather-compensated water temperature** on a curve you enter, bounded by the lowest and
   highest water temperature and each circuit's maximum.
-- **Heating on and off follow VT's zones** — by zones calling, total power or valve opening, as
-  VT's central boiler does — and VT's central modes act through the zones.
+- **Heating on and off follow VT's zones** — by devices (or zones) calling, total power or valve
+  opening, as VT's central boiler does — and VT's central modes act through the zones.
 - **Writes through what you have:** an entity you pick, the OpenTherm Gateway (Home Assistant's
   `opentherm_gw` or its firmware over MQTT), or a relay for an on/off boiler.
 - **Safety first:** frost protection, protection against short cycling, read-back of every

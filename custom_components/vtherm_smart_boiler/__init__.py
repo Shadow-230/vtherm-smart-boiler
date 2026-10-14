@@ -254,6 +254,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_highest_water(hass, entry)
     if entry.minor_version < 20:
         _migrate_circuit_zones(hass, entry)
+    if entry.minor_version < 21:
+        _migrate_count_by(hass, entry)
     return True
 
 
@@ -603,6 +605,19 @@ def _migrate_circuit_zones(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if moved is not None:
         options.update(moved)
     hass.config_entries.async_update_entry(entry, options=options, minor_version=20)
+
+
+def _migrate_count_by(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Minor version 21 (the user's decision of 2026-10-14): the count criterion counts VT's
+    devices by default, as VT's central boiler. A control section from before counted zones,
+    and keeps that: "zones" is written into it unless it holds an answer. An entry without
+    control gets the new default once control is set up."""
+    from .control_config import with_count_by
+
+    options = dict(entry.options)
+    if has_control_section(options):
+        options[CONTROL] = with_count_by(options[CONTROL])
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=21)
 
 
 def _stored_float(raw: Any, default: float) -> float:
