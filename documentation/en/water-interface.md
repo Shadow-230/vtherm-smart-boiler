@@ -4,7 +4,9 @@
 
 Status: agreed with the owner on 2026-10-12; the requirements are closed. Smart Boiler's side is
 built (step I9 of `docs/plan-0.2.md`, `docs/plan-0.2-i9.md`, 2026-10-12); a contract test
-(`tests/test_water_interface.py`) pins every name and value below.
+(`tests/test_water_interface.py`) pins every name and value below. Extended on 2026-10-14, at
+SmartPI's request and with the owner's agreement, with whether the boiler is called for heat
+(§4, §4.3) — an addition under §8.
 
 The normative part (sections 1–10) says what Smart Boiler exposes, under which names, with which
 values, what it reads from a zone algorithm and which service it calls. What a consumer does with
@@ -17,6 +19,11 @@ A zone algorithm's room model assumes that a unit of command always brings the s
 weather-compensated boiler, a mixer, burner cycling or hot water with priority, that is false.
 Smart Boiler knows the water each zone's circuit receives; it exposes it, so a zone algorithm can
 account for it. The first consumer is SmartPI.
+
+A zone may also call while the boiler is not fired at all: the demand criteria not met (too few
+devices or zones calling, too little power), VT's activation delay running, the boiler's own
+fault. Smart Boiler decides that, so it says it (`boiler_called`, §4.3) — apart from the burner's
+own pauses, which `heat_available` follows.
 
 ## 2. Principles
 
@@ -103,6 +110,20 @@ Per VT thermostat that is one of Smart Boiler's zones.
 | `supply_measured_at` | `datetime`, UTC | when the underlying reading was taken | `supply_temperature` is `None` | information only: a source that reports only on a change keeps an old time while its value is right (section 6) |
 | `heat_available` | `bool` | `True`: the flame burns (where a flame signal is mapped) and the supply is more than 2 K above the return — more than 3 K above the room where no return is known; once `True`, it stays so down to 1 K and 2 K (hysteresis). `False`: the flame is out, hot water with priority takes the heat, or the supply is not above the return or the room by that | it cannot be told | whether heat reaches the zone now — it follows the burner, so it changes every burner cycle |
 | `heat_reason` | `str` | one of 4.2 | `heat_available` is `True` | why heat does not reach the zone, or why it cannot be told |
+| `boiler_called` | `bool` | `True`: Smart Boiler asks the boiler for space heating now, frost protection included. `False`: it does not, while it controls the boiler | Smart Boiler does not control the boiler now, or cannot tell yet | whether heat is asked of the boiler, apart from the burner's own cycling |
+| `call_reason` | `str` | one of 4.3 | `boiler_called` is `True` | why the boiler is not called, or why it cannot be told |
+| `demand_count` | `int` | the devices — or zones, as `count_by` says — calling now | no zone is known | diagnostics: the demand against its threshold |
+| `count_threshold` | `int` | the count that starts the boiler | the count criterion is off (0) | diagnostics |
+| `count_by` | `str` | `devices` (VT's heads, valves and switches, as VT's central boiler counts them) or `zones` | the count criterion is off | diagnostics |
+| `demand_power_kw` | `float`, kW | the zones' mean power over their cycles, summed, as VT's central boiler shows it; it counts toward its threshold only while a calling zone's valve is open or its device on | no zone gives a power | diagnostics |
+| `power_threshold_kw` | `float`, kW | the power that starts the boiler | the power criterion is not set | diagnostics |
+| `demand_opening` | `float`, 0 to 1 | the widest opening among the calling zones — a valve's opening, else the zone's duty cycle | no calling zone publishes one | diagnostics |
+| `opening_threshold` | `float`, 0 to 1 | the opening that starts the boiler | the opening criterion is not set | diagnostics |
+
+`boiler_called`, `call_reason` and the demand fields are the installation's: the same for each of
+its zones. `True` means Smart Boiler commands heating, not proof that the boiler obeys (a write
+ignored or a relay not confirmed has its own alarm); a burner pause or hot water with priority
+stay in `heat_available` / `heat_reason`.
 
 Which water is "the water reaching this thermostat's circuit":
 
@@ -136,6 +157,22 @@ Which water is "the water reaching this thermostat's circuit":
 | `not_mapped` | no water sensor for this circuit — as in 4.1 |
 | `room_unknown` | neither a return nor the room's temperature is known to judge against |
 
+### 4.3 `call_reason`
+
+| Value | Meaning | `boiler_called` |
+|---|---|---|
+| `below_threshold` | zones call, but the demand criteria (count, power, opening) are not met | `False` |
+| `no_demand` | nothing calls — no zone, and no circuit run by other automation | `False` |
+| `activation_delay` | the criteria are met; the start waits for VT's activation delay | `False` |
+| `boiler_fault` | the boiler reports its own fault; control keeps heating off | `False` |
+| `not_controlling` | Smart Boiler does not control the boiler now: control off, not allowed, handed back, monitoring only | `None` |
+| `waiting_data` | Smart Boiler controls but cannot tell yet: the boiler link stale, the read-back unknown, the recognition period after a start holding "off", every zone unknown | `None` |
+
+When several apply: `boiler_fault`, then `activation_delay`, then `below_threshold`, then
+`no_demand`. Heating, frost protection and the fallback setpoint (heating without an outdoor
+temperature) are called, as is the heating command the recognition period holds. The on/off path
+(a relay) has the same states.
+
 ## 5. When values are missing
 
 ### 5.1 By what is mapped (normative)
@@ -159,6 +196,10 @@ shows the rest.
 | The thermostat is not one of Smart Boiler's zones (in no circuit) | no data: `zone_water` gives `None`, the manager's properties `None` | no data |
 | Smart Boiler not running, starting or reloading | no data: no API key, or `None` | no data |
 
+The call (§4.3) does not depend on what is mapped: it follows control. Without control
+(monitoring only), or while control stops, `boiler_called` is `None` with `not_controlling`, and
+the demand fields are `None`.
+
 ### 5.2 By installation (examples, not normative)
 
 What a consumer gets follows from what is mapped (5.1), not from the connection. Typically:
@@ -181,14 +222,16 @@ What a consumer gets follows from what is mapped (5.1), not from the connection.
   `supply_measured_at`: MQTT and ESPHome sources report only on a change and keep an old time
   while their value is right.
 - The values are recomputed at every Smart Boiler update — at each change of a signal it reads,
-  and at least every 30 s — and read live; no throttling.
+  and at least every 30 s — and read live; no throttling. The call and the demand (§4.3) follow
+  control's step, every 10 s, and are read live.
 
 ## 7. Units and formats
 
 - Temperatures in °C, whatever the sensor's unit (Smart Boiler converts; a sensor without a unit
   is taken as °C), also on a Home Assistant in °F.
 - Times as timezone-aware UTC `datetime`.
-- Reasons as the strings of 4.1 and 4.2.
+- Power in kW; openings as fractions from 0 to 1.
+- Reasons as the strings of 4.1, 4.2 and 4.3.
 
 ## 8. Changes
 
@@ -208,8 +251,11 @@ consumer only the key of 3.4.
 
 Smart Boiler's side: step I9 (2026-10-12) — the fields (with the reasons `not_mapped` and
 `several_circuits`), the manager's properties (3.1), the API (3.2), the attribute (3.3), the read
-of the consumer's key (3.4), the pause conditions (3.5) and the contract test (section 2). The
-consumer's side is the consumer's: for SmartPI, Annex A.
+of the consumer's key (3.4), the pause conditions (3.5) and the contract test (section 2).
+2026-10-14: the boiler's call and the demand against its thresholds (§4, §4.3), at SmartPI's
+request (SmartPI's `specs/2026-10-14-smart-boiler-boiler-call.md`), with the reason
+`below_threshold` and the corrected mapping agreed then; no learning pause added for it (3.5
+unchanged). The consumer's side is the consumer's: for SmartPI, Annex A.
 
 ## Annex A — SmartPI's use (agreed on 2026-10-12; belongs to SmartPI's own specification)
 
@@ -238,3 +284,9 @@ Kept here until SmartPI's specification holds it; informative for Smart Boiler.
    model reset.
 9. **The key of 3.4.** SmartPI writes `water_factor` (the factor it applies, or `None`) into
    `specific_states` for each thermostat of a water type that uses the data.
+10. **The boiler's call** (requested 2026-10-14). While `boiler_called` is `False` and the zone's
+    command is above 0, and for a settling time after each change, SmartPI pauses its learning
+    of the zone's model and dead times and freezes its feed-forward trim; its regulation is
+    unchanged. `None`: not known from Smart Boiler — SmartPI then reads VT's central boiler
+    where VT counts the thermostat for it, else behaves as before. Smart Boiler adds no pause
+    for this case.

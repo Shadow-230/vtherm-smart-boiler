@@ -35,6 +35,7 @@ from homeassistant.util import dt as dt_util
 
 from . import vtherm_link
 from .const import DOMAIN, VT_DOMAIN
+from .core.boiler_call import CallReason
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
@@ -54,7 +55,30 @@ SUPPLY_TEMPERATURE = "supply_temperature"
 SUPPLY_REASON = "supply_reason"
 SUPPLY_MEASURED_AT = "supply_measured_at"
 HEAT_REASON = "heat_reason"
-WATER_FIELDS = (SUPPLY_TEMPERATURE, SUPPLY_REASON, SUPPLY_MEASURED_AT, HEAT_AVAILABLE, HEAT_REASON)
+# Whether the boiler is called for heat and why not, and the demand against its thresholds (§4,
+# §4.3; SmartPI's request, the user's decisions of 2026-10-14): the installation's, the same for
+# each of its zones, read live from control.
+BOILER_CALLED = "boiler_called"
+CALL_REASON = "call_reason"
+DEMAND_FIELDS = (
+    "demand_count",
+    "count_threshold",
+    "count_by",
+    "demand_power_kw",
+    "power_threshold_kw",
+    "demand_opening",
+    "opening_threshold",
+)
+WATER_FIELDS = (
+    SUPPLY_TEMPERATURE,
+    SUPPLY_REASON,
+    SUPPLY_MEASURED_AT,
+    HEAT_AVAILABLE,
+    HEAT_REASON,
+    BOILER_CALLED,
+    CALL_REASON,
+    *DEMAND_FIELDS,
+)
 API_KEY = f"{DOMAIN}_api"
 # The attribute shows the water rounded, changed only once it has moved this far (§3.3, P-63).
 ATTRIBUTE_STEP_K = 1.0
@@ -88,8 +112,34 @@ def zone_values(
             SUPPLY_MEASURED_AT: None if measured is None else dt_util.utc_from_timestamp(measured),
             HEAT_AVAILABLE: water.heat_available,
             HEAT_REASON: None if water.heat_reason is None else water.heat_reason.value,
+            **boiler_call_values(coordinator),
         }
     return None
+
+
+def boiler_call_values(coordinator: SmartBoilerCoordinator) -> dict[str, Any]:
+    """§4, §4.3: whether the boiler is called and why not, and the demand against its
+    thresholds, as control shows them now — without control (monitoring only), or while it
+    stops, the boiler is not the plugin's: not called by it, nothing to tell."""
+    control = coordinator.control
+    if control is None or control.stopping:
+        return {
+            BOILER_CALLED: None,
+            CALL_REASON: CallReason.NOT_CONTROLLING.value,
+            **dict.fromkeys(DEMAND_FIELDS),
+        }
+    status = control.status
+    return {
+        BOILER_CALLED: status.boiler_called,
+        CALL_REASON: status.call_reason,
+        "demand_count": status.demand_count,
+        "count_threshold": status.count_threshold,
+        "count_by": status.count_by,
+        "demand_power_kw": status.demand_power_kw,
+        "power_threshold_kw": status.power_threshold_kw,
+        "demand_opening": status.demand_opening,
+        "opening_threshold": status.opening_threshold,
+    }
 
 
 class SmartBoilerApi:
@@ -194,6 +244,65 @@ class SmartBoilerFeatureManager:
         """When the reading of the water was taken, UTC — information only (§6)."""
         value = self._field(SUPPLY_MEASURED_AT)
         return value if isinstance(value, datetime) else None
+
+    @property
+    def boiler_called(self) -> bool | None:
+        """The boiler is called for space heating now, frost protection included (§4); ``None``
+        while the plugin does not control it, or cannot tell yet."""
+        value = self._field(BOILER_CALLED)
+        return value if isinstance(value, bool) else None
+
+    @property
+    def call_reason(self) -> str | None:
+        """Why the boiler is not called, or why it cannot be told (§4.3)."""
+        value = self._field(CALL_REASON)
+        return value if isinstance(value, str) else None
+
+    @property
+    def demand_count(self) -> int | None:
+        """The devices — or zones, as ``count_by`` says — calling now (§4)."""
+        return self._whole(self._field("demand_count"))
+
+    @property
+    def count_threshold(self) -> int | None:
+        """The count that starts the boiler; ``None`` with the count off (§4)."""
+        return self._whole(self._field("count_threshold"))
+
+    @property
+    def count_by(self) -> str | None:
+        """What the count counts: ``devices`` or ``zones``; ``None`` with the count off (§4)."""
+        value = self._field("count_by")
+        return value if isinstance(value, str) else None
+
+    @property
+    def demand_power_kw(self) -> float | None:
+        """The zones' mean power summed, kW, as VT's central boiler shows it (§4)."""
+        return self._number(self._field("demand_power_kw"))
+
+    @property
+    def power_threshold_kw(self) -> float | None:
+        """The power that starts the boiler, kW; ``None`` where not set (§4)."""
+        return self._number(self._field("power_threshold_kw"))
+
+    @property
+    def demand_opening(self) -> float | None:
+        """The widest opening among the calling zones, 0 to 1 (§4)."""
+        return self._number(self._field("demand_opening"))
+
+    @property
+    def opening_threshold(self) -> float | None:
+        """The opening that starts the boiler, 0 to 1; ``None`` where not set (§4)."""
+        return self._number(self._field("opening_threshold"))
+
+    @staticmethod
+    def _whole(value: Any) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    @staticmethod
+    def _number(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        return float(value)
 
     def _field(self, name: str) -> Any:
         values = self._values()

@@ -279,6 +279,13 @@ add, and a contract test (`tests/test_water_interface.py`) pins every name and v
 `coordinator.py` (each zone's `ZoneWater`), `feature_manager.py` (the properties, the attribute,
 the API), `vtherm_link.py` (the consumer's key) and `core/learning.py` (the pauses).
 
+**Added 2026-10-14, at SmartPI's request:** whether the boiler is called for heat
+(`boiler_called`) and why not (`call_reason` — `below_threshold` where zones call under the
+demand criteria, `no_demand`, `activation_delay`, `boiler_fault`, `not_controlling`,
+`waiting_data`), with the demand against its thresholds — so a zone algorithm does not learn
+from heat that never came, which a burner pause does not tell apart. The installation's values,
+the same for each zone, read live from control (`core/boiler_call.py`).
+
 The full specification — names, types, values, ranges, what happens when a value is missing:
 [`water-interface.md`](water-interface.md).
 
