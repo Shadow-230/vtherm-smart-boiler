@@ -2,6 +2,8 @@
 
 # Smart Boiler for Versatile Thermostat — zakres
 
+Status: aktualny.
+
 Ogólny zakres wtyczki, obowiązujący dla każdej instalacji. Zasady pracy i sprawdzone fakty:
 `CLAUDE.md`. Plan rozwoju: `docs/pl/development/plan.md`. „Decyzja n” i „odpowiedź X” dotyczą
 decyzji użytkownika z 2026-09-26/27 i odpowiedzi z 2026-09-27 w `docs/en/development/plans/plan-0.2.2.md`;

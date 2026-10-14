@@ -2,6 +2,8 @@
 
 # Test Home Assistant
 
+Status: current.
+
 A Home Assistant 2026.9.3 in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile
 Thermostat 10.5.1 (10.4.0 until 2026-10-13) and SmartPI 0.4.0 as vendored, and the test-only
 boiler simulator (`sim/custom_components/boiler_sim`). The acceptance scenarios run here

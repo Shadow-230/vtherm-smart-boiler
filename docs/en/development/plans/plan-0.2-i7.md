@@ -1,5 +1,7 @@
 # Plan 0.2, step I7 — A menu of sections, saved once, as in Versatile Thermostat
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: the setup and the options move through a menu of sections as Versatile Thermostat's do — a
 section returns to the menu, nothing is saved until the end, and one item at the end saves it
 all. Sections that do not apply are not shown. Step I7 of `docs/en/development/plans/plan-0.2.md`, decided by the user

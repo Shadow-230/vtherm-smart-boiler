@@ -2,6 +2,8 @@
 
 # Plan rozwoju
 
+Status: aktualny.
+
 Zakres: `docs/pl/specification/scope.md`. Własna ocena autora dotycząca jego instalacji: `home-assessment.md`
 (prywatna) — nigdy źródło wartości dla kodu, ustawień domyślnych, testów ani dokumentacji.
 

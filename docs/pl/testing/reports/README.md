@@ -2,6 +2,8 @@
 
 # Raporty z testów
 
+Status: aktualny.
+
 Każde wydanie ma raport z testów, które przeszła jego wersja: `docs/en/testing/reports/<version>.md`
 (decyzja użytkownika z 2026-10-08). Dopóki wersja nie ma nazwy (`docs/en/development/plans/plan-0.2.md`, K4 i K5),
 raport w trakcie pisania to `unreleased.md`; przy wydaniu dostaje nazwę wersji i idzie razem

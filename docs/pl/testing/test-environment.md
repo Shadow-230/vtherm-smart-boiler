@@ -2,6 +2,8 @@
 
 # Testowy Home Assistant
 
+Status: aktualny.
+
 Home Assistant 2026.9.3 w Dockerze, w dedykowanym kontenerze LXC na Proxmox, z wtyczką, Versatile
 Thermostat 10.5.1 (do 2026-10-13: 10.4.0) i SmartPI 0.4.0 w wersji dołączonej do projektu (vendored) oraz
 symulatorem kotła tylko do testów (`sim/custom_components/boiler_sim`). Scenariusze akceptacyjne działają tu

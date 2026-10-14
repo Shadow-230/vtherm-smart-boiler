@@ -2,6 +2,8 @@
 
 # Smart Boiler for Versatile Thermostat — przewodnik użytkownika
 
+Status: aktualny.
+
 > **W trakcie budowy, bez wydania.** Integracja nie pracowała jeszcze z prawdziwym kotłem. Nie ma
 > wydania ani wpisu w Home Assistant Community Store (HACS). Nie instaluj jej w ogrzewaniu, na
 > którym polegasz.

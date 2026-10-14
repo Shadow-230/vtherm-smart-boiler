@@ -1,5 +1,7 @@
 # Plan 0.2, step G11 — Comfort, the curve's room, long runs and open windows
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: the corrections the user decided on 2026-10-09/10 from the J4 tests and a review of the
 "curve too low" case. A room held above the curve's own room temperature, a SmartPI zone in its
 learning phase and an open window could each leave a boiler burning for hours on water too cool,

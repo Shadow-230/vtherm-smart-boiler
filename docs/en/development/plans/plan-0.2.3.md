@@ -1,5 +1,7 @@
 # Plan 0.2.3 — Corrections after the review of 2026-10-04
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: close every problem of the full review of 0.2.2 (`docs/en/development/reviews/review-2026-10-04.md`: PB-01–PB-101 in
 the code and the tests, SB-01–SB-39 in the specification, TB-01–TB-38 missing tests) before anything
 reaches the test HA. Each one is fixed, made moot by a recorded decision, or named in "Open after

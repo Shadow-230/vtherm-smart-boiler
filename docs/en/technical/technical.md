@@ -2,6 +2,8 @@
 
 # Smart Boiler for Versatile Thermostat — technical documentation
 
+Status: current.
+
 > **In development, not released.** The integration has not yet run on a real boiler.
 
 This document describes how the integration is built: its parts, one control step, its

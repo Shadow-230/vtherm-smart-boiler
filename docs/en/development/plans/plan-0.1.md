@@ -1,5 +1,7 @@
 # Plan 0.1 — Monitor (read-only)
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: the read-only monitor that any user configures by picking entities — the first part of
 0.2. It is published with 0.2 (the user's decision, 2026-09-24); the test HA comes with 0.2.
 Scope: `docs/en/specification/scope.md`; overview: `docs/en/development/plan.md`.

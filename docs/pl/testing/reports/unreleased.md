@@ -2,6 +2,8 @@
 
 # Raport z testów — wersja niewydana (tymczasowo 0.2.3b1)
 
+Status: aktualny.
+
 Wersja tego raportu prostym językiem: [`2026-10-11-test-report.md`](../../../en/testing/reports/2026-10-11-test-report.md).
 
 **Stan: J4 na `dev` zakończył się 2026-10-11 rano.** Następny przebieg będzie na `qas`, po
