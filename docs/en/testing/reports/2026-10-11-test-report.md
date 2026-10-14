@@ -1,5 +1,7 @@
 # Smart Boiler for Versatile Thermostat — test report
 
+Status: history — kept as it was written, in English only. The current documents: [the documentation map](../../README.md).
+
 **Tests in a real Home Assistant, 8 to 11 October 2026**
 
 This is the plain-language report. The detailed technical report, with every test and its

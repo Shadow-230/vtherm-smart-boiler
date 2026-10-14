@@ -1,5 +1,7 @@
 # Plan 0.2 — Control base and first release
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: the first release with control — the 0.1 monitor (`docs/en/development/plans/plan-0.1.md`) plus minimal, safe
 control in flow-setpoint mode: the plugin decides the water temperature. Room-value mode (the
 boiler's own curve decides it) moves to 0.3 — since I8 the thermostat-like mode. Control is opt-in, marked experimental, and

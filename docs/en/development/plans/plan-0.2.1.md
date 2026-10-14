@@ -1,5 +1,7 @@
 # Plan 0.2.1 — Corrections after the review, and the user's control model
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: finish the 0.2 build before the test HA. Every finding of the independent code review of
 2026-09-24 (`docs/en/development/reviews/review-2026-09-24.md`) is fixed, or made moot by a recorded decision, and the
 user's decisions of 2026-09-25 are applied: Versatile Thermostat decides whether to heat, no

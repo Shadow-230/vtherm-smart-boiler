@@ -2,6 +2,8 @@
 
 # Smart Boiler for Versatile Thermostat — user guide
 
+Status: current.
+
 > **In development, not released.** The integration has not yet run on a real boiler. There is
 > no release and no entry in the Home Assistant Community Store (HACS). Do not install it on a
 > heating system you rely on.

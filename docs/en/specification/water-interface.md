@@ -2,7 +2,7 @@
 
 # Smart Boiler's water data for zone algorithms — integration specification
 
-Status: agreed with the owner on 2026-10-12; the requirements are closed. Smart Boiler's side is
+Status: current; agreed with the owner on 2026-10-12; the requirements are closed. Smart Boiler's side is
 built (step I9 of `docs/en/development/plans/plan-0.2.md`, `docs/en/development/plans/plan-0.2-i9.md`, 2026-10-12); a contract test
 (`tests/test_water_interface.py`) pins every name and value below. Extended on 2026-10-14, at
 SmartPI's request and with the owner's agreement, with whether the boiler is called for heat

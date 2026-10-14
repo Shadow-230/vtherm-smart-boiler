@@ -1,5 +1,7 @@
 # Plan 0.2, step I6 — The setup starts with how the boiler is connected
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: the setup wizard and the options open with the few choices that shape everything after
 them — how the boiler is connected, the control mode, the heat source and the boiler type — and the
 later steps show only what fits those answers. Step I6 of `docs/en/development/plans/plan-0.2.md`, widened by the user's

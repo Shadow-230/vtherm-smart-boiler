@@ -2,6 +2,8 @@
 
 # Smart Boiler for Versatile Thermostat — dokumentacja techniczna
 
+Status: aktualny.
+
 > **W trakcie budowy, bez wydania.** Integracja nie pracowała jeszcze z prawdziwym kotłem.
 
 Ten dokument opisuje budowę integracji: jej części, jeden krok sterowania, cykl życia, to, co

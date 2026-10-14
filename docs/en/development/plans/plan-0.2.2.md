@@ -1,5 +1,7 @@
 # Plan 0.2.2 — Corrections after the review of 2026-09-26
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: close every problem of the independent review of 0.2.1 (`docs/en/development/reviews/review-2026-09-26.md`) before
 anything reaches the test HA. Each one is fixed, made moot by a recorded decision, or named for a
 later release, and the lessons of the comparison with the 0.2 audit

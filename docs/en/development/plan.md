@@ -2,6 +2,8 @@
 
 # Development plan
 
+Status: current.
+
 Scope: `docs/en/specification/scope.md`. The author's own assessment of their installation: `home-assessment.md`
 (private) — never a source of values for code, defaults, tests or docs.
 

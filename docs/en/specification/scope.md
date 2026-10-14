@@ -2,6 +2,8 @@
 
 # Smart Boiler for Versatile Thermostat — Scope
 
+Status: current.
+
 General scope of the plugin, valid for any installation. Working rules and verified facts:
 `CLAUDE.md`. Development plan: `docs/en/development/plan.md`. "Decision n" and "answer X" refer to the user's
 decisions of 2026-09-26/27 and answers of 2026-09-27 in `docs/en/development/plans/plan-0.2.2.md`; S-n and P-n to the

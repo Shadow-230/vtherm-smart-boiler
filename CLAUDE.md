@@ -29,6 +29,9 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2.2-details]: docs/en/development/plans/plan-0.2.2-details.md
 [plan-0.2.3]: docs/en/development/plans/plan-0.2.3.md
 
+- **Documentation map** (every document, current or history):
+  [`docs/en/README.md`](docs/en/README.md); what each reference code (`P-12`, `PB-25`, `Z4R-01` …)
+  points to: [`docs/en/specification/references.md`](docs/en/specification/references.md)
 - **Scope** (general, any installation):
   [`docs/en/specification/scope.md`](docs/en/specification/scope.md)
 - **Development plan:** [`docs/en/development/plan.md`](docs/en/development/plan.md); the plans

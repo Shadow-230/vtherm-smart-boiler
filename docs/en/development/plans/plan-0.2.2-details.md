@@ -1,5 +1,7 @@
 # Plan 0.2.2 — step details
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 The step-by-step details of [`docs/en/development/plans/plan-0.2.2.md`](plan-0.2.2.md): the order of work, the tests to write
 first, the values, the texts and what to do when an input is missing, for every step. The plan is the
 source of the decisions; where the two differ, the plan wins. Drafted on 2026-09-27 by five agents from

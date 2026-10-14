@@ -2,7 +2,7 @@
 
 # Dane Smart Boiler o wodzie dla algorytmów stref — specyfikacja integracji
 
-Status: uzgodniony z właścicielem 2026-10-12; wymagania są zamknięte. Strona Smart Boiler jest
+Status: aktualny; uzgodniony z właścicielem 2026-10-12; wymagania są zamknięte. Strona Smart Boiler jest
 zbudowana (krok I9 w `docs/en/development/plans/plan-0.2.md`, `docs/en/development/plans/plan-0.2-i9.md`, 2026-10-12); test kontraktowy
 (`tests/test_water_interface.py`) pilnuje każdej nazwy i wartości podanej poniżej. Rozszerzony
 2026-10-14, na prośbę SmartPI i za zgodą właściciela, o to, czy kocioł jest wezwany do grzania

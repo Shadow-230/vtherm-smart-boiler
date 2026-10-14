@@ -1,5 +1,7 @@
 # Plan 0.2, step I8 — A boiler plugin, one form per menu item
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: the corrections the user decided on 2026-10-10 after trying I7 on a test instance. The
 plugin does one thing — control the boiler and watch how it runs; what belongs to rooms, windows
 and zones is VT's and goes. The options become a menu of single forms with no sub-menus, each

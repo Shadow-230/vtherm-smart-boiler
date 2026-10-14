@@ -2,6 +2,8 @@
 
 # Test reports
 
+Status: current.
+
 Every release carries a report of the tests its version passed: `docs/en/testing/reports/<version>.md`
 (the user's decision, 2026-10-08). Until the version is named (`docs/en/development/plans/plan-0.2.md`, K4 and K5)
 the report being written is `unreleased.md`; at the release it is renamed to the version and

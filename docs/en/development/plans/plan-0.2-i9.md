@@ -1,5 +1,7 @@
 # Plan 0.2, step I9 — The water data for zone algorithms
 
+Status: history — kept as it was written, in English only; only the ✅ of a finished step is still added. The current documents: [the documentation map](../../README.md).
+
 Goal: build Smart Boiler's side of the water interface, as specified in
 `docs/en/specification/water-interface.md` (the user's decisions of 2026-10-12). Per VT thermostat
 that is one of the plugin's zones, the plugin exposes the water reaching the zone's circuit and
