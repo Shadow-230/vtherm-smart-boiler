@@ -107,6 +107,7 @@ async def test_instance_1_base_is_asked_and_saved(
     assert control["thermostat_kind"] == "opentherm"
     assert control["curve"]["design_flow"] == 55.0
     assert control["curve"]["room_mode"] == "manual"
+    assert "exponent" not in control["curve"]  # emptied: the emitters' default
     assert control["hard_min"] == 20.0
     assert control["comfort_correction"] is False
     assert control["activation_delay_s"] == 0
