@@ -1211,7 +1211,7 @@ reviews every provisional value at K4.
 | Control step 10 s | `const.py` | heating follows the zones at once |
 | Keep-alive 30 s | `control_config.py` | OTGW needs `CS` at least once a minute |
 | Lowest OTGW `CS` 8 °C | `transport/writers.py` | below 8 °C an override never lapses |
-| Confirmation timeout 120 s; tolerance 0.5 K | `core/guards.py` | provisional, K4 (reason to confirm) |
+| Confirmation timeout 120 s; tolerance 0.5 K — also a deadband on the curve's small changes, which keeps the starts down (the simulation: x1.20 at +8 °C with it, x1.36 without); a bound the water is held at (the lowest or highest water, a circuit's maximum or need, the boiler's maximum) is written exactly once the ramp has reached it, beyond 0.05 K (F14, J4 of 2026-10-14) | `core/guards.py`, `core/loop.py` | provisional, K4 (reason to confirm) |
 | Write interval at least 5 s | `core/guards.py` | one write per step |
 | The plugin's own lapse after 60 s of silence | `core/guards.py` | an OTGW override lapses after about a minute |
 | Rewrite window 24 h | `core/guards.py` | decided 2026-09-25 |
