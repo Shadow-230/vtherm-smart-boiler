@@ -116,6 +116,35 @@ def test_first_write_and_expiring_keepalive() -> None:
     assert action == WriteAction(45.0, WriteKind.KEEPALIVE)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [EXPIRING, HELD, replace(HELD, refresh_s=None)],
+    ids=["expiring", "held", "held_never_refreshed"],
+)
+def test_a_bound_within_the_tolerance_is_written_exactly(config: GuardConfig) -> None:
+    """F14 (J4 of 2026-10-14, E7): a bound the water is held at (``exact``) — a circuit's need,
+    the lowest water — goes once it differs from the value written, within the read-back's
+    tolerance too, whatever the write type. Negative: the same value not a bound waits — the
+    tolerance is a deadband on the curve's small changes, which keeps the starts down."""
+    state, action, _ = step(GuardState(), 54.5, 40.0, 0.0, config)  # 40: before the plugin
+    assert action == WriteAction(54.5, WriteKind.CHANGE)
+    curve, action, _ = step(state, 55.0, 54.5, 10.0, config)
+    assert action is None
+    bound, action, _ = step(state, 55.0, 54.5, 10.0, config, exact=True)
+    assert action == WriteAction(55.0, WriteKind.CHANGE)
+    assert (curve.written, bound.written) == (54.5, 55.0)
+
+
+def test_a_bound_within_float_noise_writes_nothing() -> None:
+    """F14, negative: a bound asked for again with a difference below 0.05 K (float noise) is
+    the value written: no write."""
+    state, action, _ = step(GuardState(), 50.0, None, 0.0, EXPIRING)
+    assert action == WriteAction(50.0, WriteKind.CHANGE)
+    state, action, _ = step(state, 50.0004, 50.0, 10.0, EXPIRING, exact=True)
+    assert action is None
+    assert state.written == 50.0
+
+
 def test_held_values_are_sent_again_every_five_minutes_without_an_echo() -> None:
     """M3 (decision 6): a held value — the heating switch's too — is sent again every 300 s
     (provisional, K4) with no echo required; a keep-alive, not a change. One goes at once when the
