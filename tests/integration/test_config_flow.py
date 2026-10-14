@@ -3058,9 +3058,9 @@ async def test_a_need_on_a_circuit_with_underfloor_zones_is_warned_of_once(
     entry_id = await create_entry(hass, entities, "simple")
     result = await open_circuit(hass, entry_id)
     zones = list(form_default(result, "zones"))
-    answer = {"control": "separate", "zones": zones, "needed_temperature": 45}
+    answer = {"control": "separate", "zones": zones}
     result = await options_step(hass, result, answer)  # the type's fields revealed
-    answer |= {"underfloor": zones[:1]}
+    answer |= {"needed_temperature": 45, "underfloor": zones[:1]}
     result = await options_step(hass, result, answer)
     assert result["errors"] == {"base": "need_on_underfloor"}
     result = await options_step(hass, result, answer)
