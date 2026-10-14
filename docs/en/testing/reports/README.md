@@ -1,3 +1,5 @@
+[Polska wersja](../../../pl/testing/reports/README.md)
+
 # Test reports
 
 Every release carries a report of the tests its version passed: `docs/en/testing/reports/<version>.md`
@@ -37,10 +39,10 @@ HA_INSTANCE=6 scripts/env.sh python devenv/j4/paths.py R1 ...      # relay (6), 
 HA_INSTANCE=1 scripts/env.sh python devenv/j4/corrections.py Q1 ... # the corrections of 2026-10-10
 ```
 
-`corrections.py` tests the corrections of 2026-10-10 (G11, `docs/en/development/plans/plan-0.2-g11.md`): the comfort
-correction's limit and warning, SmartPI's learning band, the curve's room temperature in Auto, the
-long-burn rule and an open window without a sensor. A long run (`run.py L1`, hours set by
-`J4_HOURS`) outlasts a background command's two hours and runs detached.
+`corrections.py` tests the corrections of 2026-10-10 (G11,
+`docs/en/development/plans/plan-0.2-g11.md`): the comfort correction's limit and warning, SmartPI's
+learning band, the curve's room temperature in Auto and the long-burn rule. A long run (`run.py L1`,
+hours set by `J4_HOURS`) outlasts a background command's two hours and runs detached.
 
 Each scenario starts and ends from a clean state — control off and handed back, the
 simulator's faults cleared, the zones heating at their targets — and checks what the in-process

@@ -235,8 +235,8 @@ Najważniejsze — opisane, nie doradzane:
 | Powrót sam po innym sterowniku | wyłączony | włączony: sterowanie wraca 60 minut po ostatniej obcej wartości, choć inny sterownik może wciąż działać |
 | Wstrzymywanie uczenia (SmartPI) | włączone | wyłączone: wahania wywołane przez wtyczkę trafiają do modelu SmartPI |
 
-Każda wartość domyślna i jej powód: tabela wartości domyślnych w [`docs/en/specification/scope.md`, część 7][scope-defaults]
-(po angielsku). Wartości oznaczone jako tymczasowe są przeglądane przed pierwszym wydaniem.
+Każda wartość domyślna i jej powód: tabela wartości domyślnych w [specyfikacji, część 7][scope-defaults].
+Wartości oznaczone jako tymczasowe są przeglądane przed pierwszym wydaniem.
 
 # Oddanie sterowania
 
@@ -422,18 +422,18 @@ target:
 | Później | ładowanie ciepłej wody, domyślna lista HACS, więcej urządzeń |
 
 Cele są zamierzeniami, nie zobowiązaniami; każde wydanie zbiera dane dla następnego. Szczegóły:
-[`docs/en/development/plan.md`][plan] (po angielsku).
+[plan rozwoju][plan].
 
 # Dokumentacja
 
 | Dokument | Co zawiera |
 |---|---|
-| [Scope][scope] | specyfikacja: co wtyczka robi, jej zasady i wszystkie decyzje (po angielsku) |
-| [Plan rozwoju][plan] | plan rozwoju, wydania i środowisko testowe (po angielsku) |
-| [Plany i przeglądy][docs] | plan każdego wydania i przeglądy kodu (po angielsku) |
+| [Specyfikacja][scope] | co wtyczka robi, jej zasady i wszystkie decyzje |
+| [Plan rozwoju][plan] | plan rozwoju, wydania i środowisko testowe |
+| [Plany i przeglądy][docs] | historia: plan każdego wydania i przeglądy kodu (po angielsku) |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | wymagania, instalacja, szybki start, jak to działa, podłączenie kotła, bezpieczeństwo, alarmy |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | części integracji, jeden krok sterowania, cykl życia, stan trwały, testy |
-| [Dane o wodzie dla algorytmów stref][water] | interfejs, który daje SmartPI i innym algorytmom stref temperaturę wody docierającej do każdej strefy (po angielsku; streszczenie w dokumentacji technicznej, rozdz. 8) |
+| [Dane o wodzie dla algorytmów stref][water] | interfejs, który daje SmartPI i innym algorytmom stref temperaturę wody docierającej do każdej strefy |
 | [`CHANGELOG.md`][changelog] | co zmienia każde wydanie (po angielsku) |
 | [`CONTRIBUTING.md`][contributing] | jak współtworzyć: gałęzie, testy, zasady (po angielsku) |
 | [`LICENSE`][license] | Apache License 2.0 |
@@ -464,9 +464,9 @@ Jeśli Smart Boiler for Versatile Thermostat Ci się przydaje, możesz wesprzeć
 
 [vt]: https://github.com/jmcollin78/versatile_thermostat
 [dev]: https://github.com/Shadow-230/vtherm-smart-boiler/tree/dev
-[scope]: docs/en/specification/scope.md
-[scope-defaults]: docs/en/specification/scope.md#7-features-by-stage
-[plan]: docs/en/development/plan.md
+[scope]: docs/pl/specification/scope.md
+[scope-defaults]: docs/pl/specification/scope.md#7-funkcje-według-etapów
+[plan]: docs/pl/development/plan.md
 [docs]: docs/en/development/
 [guide]: docs/en/user-guide/user-guide.md
 [guide-pl]: docs/pl/user-guide/user-guide.md
@@ -477,7 +477,7 @@ Jeśli Smart Boiler for Versatile Thermostat Ci się przydaje, możesz wesprzeć
 [guide-pl-alarms]: docs/pl/user-guide/user-guide.md#7-alarmy-i-zgłoszenia-w-naprawach
 [technical]: docs/en/technical/technical.md
 [technical-pl]: docs/pl/technical/technical.md
-[water]: docs/en/specification/water-interface.md
+[water]: docs/pl/specification/water-interface.md
 [changelog]: CHANGELOG.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE

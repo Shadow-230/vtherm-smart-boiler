@@ -7,7 +7,7 @@
 Ten dokument opisuje budowę integracji: jej części, jeden krok sterowania, cykl życia, to, co
 zapisuje, i sposób testowania. Co integracja robi dla użytkownika, opisuje
 [przewodnik użytkownika](../user-guide/user-guide.md); wszystkie zasady i decyzje są w
-[`docs/en/specification/scope.md`](../../en/specification/scope.md) (po angielsku). Skróty: Home Assistant (HA), Versatile Thermostat
+[`docs/pl/specification/scope.md`](../specification/scope.md). Skróty: Home Assistant (HA), Versatile Thermostat
 (VT), OpenTherm Gateway (OTGW), Message Queuing Telemetry Transport (MQTT).
 
 ## Spis treści
@@ -43,8 +43,8 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   go dopiero po następnym przeładowaniu VT, którego wtyczka nigdy sama nie wywołuje. Nic w
   sterowaniu od niego nie zależy.
 
-Szczegóły: [`docs/en/specification/scope.md`, §2](../../en/specification/scope.md#2-why-a-plugin) i
-[§5](../../en/specification/scope.md#5-hardware-circuits-and-zone-algorithms).
+Szczegóły: [`docs/pl/specification/scope.md`, §2](../specification/scope.md#2-dlaczego-wtyczka) i
+[§5](../specification/scope.md#5-sprzęt-obiegi-i-algorytmy-stref).
 
 ## 2. Struktura repozytorium
 
@@ -63,9 +63,9 @@ docs/                                     dokumentacja, osobny katalog na każdy
 │   ├── specification/                    co wtyczka robi (zakres) i jej interfejsy
 │   ├── user-guide/                       jak jej używać
 │   ├── technical/                        jak jest zbudowana
-│   ├── development/                      plan rozwoju, plany i przeglądy
+│   ├── development/                      plan rozwoju; plany i przeglądy (historia)
 │   └── testing/                          środowisko testowe i raporty z testów
-├── pl/                                   polski, dla tego, co czytają użytkownicy
+├── pl/                                   polski: każdy aktualny dokument, ten sam układ
 └── images/                               obrazy wspólne dla wszystkich języków
 ```
 
@@ -204,7 +204,7 @@ flowchart TD
   stan sterowania jest zapisywany od razu, gdy się zmieni (zobacz
   [Stan trwały](#6-stan-trwały)).
 
-Szczegóły: [`docs/en/specification/scope.md`, §7](../../en/specification/scope.md#7-features-by-stage).
+Szczegóły: [`docs/pl/specification/scope.md`, §7](../specification/scope.md#7-funkcje-według-etapów).
 
 ## 5. Cykl życia
 
@@ -259,7 +259,7 @@ wpisu, który trzyma historię monitora i podsumowania dni.
 
 ## 7. Testowanie
 
-Trzy warstwy ([`docs/en/development/plan.md`, „Test environment”](../../en/development/plan.md#test-environment)):
+Trzy warstwy ([`docs/pl/development/plan.md`, „Test environment”](../development/plan.md#środowisko-testowe)):
 
 1. **Testy rdzenia** (`tests/core/`) — zwykły pytest, bez HA, bez sieci.
 2. **Testy integracyjne** — `pytest-homeassistant-custom-component`: HA działa wewnątrz procesu
@@ -322,7 +322,7 @@ wahania wody — tylko gdy algorytm nie korzysta z danych o wodzie. Bez numeru w
 wykrywają, co istnieje, zmiany tylko dodają, a test kontraktu (`tests/test_water_interface.py`)
 pilnuje nazw i wartości.
 
-Pełna specyfikacja (po angielsku) — nazwy, typy, wartości, zakresy, co się dzieje, gdy wartości
-brak (kocioł wł./wył. na przekaźniku, integracja producenta, tryb samego monitorowania i inne):
-[`../en/water-interface.md`](../../en/specification/water-interface.md).
+Pełna specyfikacja — nazwy, typy, wartości, zakresy, co się dzieje, gdy wartości brak (kocioł
+wł./wył. na przekaźniku, integracja producenta, tryb samego monitorowania i inne):
+[`docs/pl/specification/water-interface.md`](../specification/water-interface.md).
 

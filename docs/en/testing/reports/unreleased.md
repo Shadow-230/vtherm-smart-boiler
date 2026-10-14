@@ -1,3 +1,5 @@
+[Polska wersja](../../../pl/testing/reports/unreleased.md)
+
 # Test report — unreleased (provisionally 0.2.3b1)
 
 A plain-language version of this report: [`2026-10-11-test-report.md`](2026-10-11-test-report.md).

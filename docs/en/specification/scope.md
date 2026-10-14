@@ -1,3 +1,5 @@
+[Polska wersja](../../pl/specification/scope.md)
+
 # Smart Boiler for Versatile Thermostat — Scope
 
 General scope of the plugin, valid for any installation. Working rules and verified facts:
