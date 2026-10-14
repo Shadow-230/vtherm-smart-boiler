@@ -3055,9 +3055,9 @@ async def test_a_need_on_a_circuit_with_underfloor_zones_is_warned_of_once(
     underfloor zones is warned of once — at every call of those zones the boiler goes to that
     need, while a floor behind a mixer needs none; the same answer again is saved. Without
     underfloor zones nothing is said (the test above)."""
-    entry_id = await create_entry(hass, entities, "simple")
+    entry_id = await create_entry(hass, entities, "simple", ("bedroom",))
     result = await open_circuit(hass, entry_id)
-    zones = list(form_default(result, "zones"))
+    zones = [entities["bedroom"]]
     answer = {"control": "separate", "zones": zones}
     result = await options_step(hass, result, answer)  # the type's fields revealed
     answer |= {"needed_temperature": 45, "underfloor": zones[:1]}
