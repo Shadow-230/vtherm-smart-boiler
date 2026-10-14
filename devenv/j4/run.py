@@ -25,6 +25,7 @@ from options import (
     BASE_GATEWAY,
     CIRCUIT_ASKS,
     CIRCUIT_ASKS_ENTITY,
+    CIRCUIT_ASKS_NEED,
     GATEWAY_ITEMS,
     REMOVE_CIRCUIT,
 )
@@ -1556,8 +1557,8 @@ async def _circuit_options(r: Run, changes: dict, item: str) -> None:
 
 async def E7(r: Run):
     """a circuit run by other automation (I8.8a), added for the scenario, asks through its entity:
-    with no zone calling, heating goes on for it alone and the water holds its need plus 5 K; its
-    entity off, heating goes off again"""
+    with no zone calling, heating goes on for it alone and the water rises at the ramp's rate to
+    its need exactly — nothing added (2026-10-14); its entity off, heating goes off again"""
     asks = CIRCUIT_ASKS_ENTITY
     if (await r.st(asks))["state"] is None:
         r.check(False, f"{asks} missing: deploy devenv/config/configuration.yaml first")
@@ -1589,10 +1590,19 @@ async def E7(r: Run):
             ("ch", True) in r.cmds(t, "ch") or await _ch_is(r, True),
             f"heating enabled: {r.cmds(t)}",
         )
+        # Control was idle before the ask: the water rises from there at the ramp's rate (S-23:
+        # only a session's first setpoint is the target itself) — its end awaited (L11).
+        deadline = time.time() + RAMP_WAIT
+        while "ramp" in (st["attributes"].get("reasons") or []) and time.time() < deadline:
+            await r.ha.wait(30)
+            st = await r.st("control_state")
+        reasons = st["attributes"].get("reasons") or []
+        need = CIRCUIT_ASKS_NEED
         setpoints = [v for _k, v in r.cmds(t, "setpoint")]
         r.check(
-            bool(setpoints) and setpoints[-1] >= 55.0,
-            f"the water at least its need, 50 °C, plus 5 K: {setpoints}",
+            "ramp" not in reasons and bool(setpoints) and abs(setpoints[-1] - need) < 0.05,
+            f"the water at its need, {need:.0f} °C, once the ramp ends: "
+            f"{setpoints[:2]} … {setpoints[-2:]} {reasons}",
         )
         t = time.time()
         await r.ha.call("input_boolean", "turn_off", entity_id=asks)
@@ -1614,6 +1624,8 @@ async def E7(r: Run):
 # VT publishes a thermostat's attributes at its own cycle (5 min by default) or on a change of
 # its own: the water data shown is that old at most, plus the plugin's 30-s refresh.
 VT_CYCLE_WAIT = 360
+# E7: from the idle setpoint to the circuit's need at the ramp's 1 K/min, with room to spare.
+RAMP_WAIT = 25 * 60
 
 
 async def _water_shown(r: Run) -> dict[str, dict | None]:

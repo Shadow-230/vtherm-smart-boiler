@@ -463,9 +463,6 @@ _MONITOR_ONLY_CLASSES = frozenset({BoilerClass.CURVE_ONLY, BoilerClass.READ_ONLY
 # would be a low setpoint, and whether that stops the boiler and its pump is not known. Such
 # installations get the monitor. The one place that lifts the block.
 OFF_AS_LOW_SETPOINT_ALLOWED = False
-# A thermostatic mixing valve needs supply water above its own temperature: the boiler's flow is
-# kept at least this far above a passive fixed circuit's temperature (S-42; provisional, K4).
-FIXED_CIRCUIT_MARGIN_K = 5.0
 # The curve's values must fit together (P-68; provisional, K4): ``DESIGN_FLOW_OVER_ROOM_K`` and
 # ``DESIGN_OUTDOOR_UNDER_ROOM_K``, held in ``core.curve`` with the Auto room that keeps them
 # (G11 D).
@@ -968,21 +965,13 @@ def parse_control(
         ch_write_type = WriteType(data.get("ch_write_type", WriteType.UNKNOWN))
     # The user's answer of 2026-10-12: the circuits fed straight from the boiler cap its water —
     # each its highest water temperature, the default where empty, the default where there is
-    # none; one behind a mixer or a fixed valve is guarded by it.
+    # none; one behind a mixer or a fixed valve is guarded by it. A fixed valve sets no lower
+    # bound: the boiler follows its curve, the valve standing open while the water is at or below
+    # its setting (the user's decision of 2026-10-14, replacing S-42's setting plus 5 K).
     default_max = float(CONTROL_DEFAULTS["hard_max"])
     circuit_max = min(
         (c.max_flow if c.max_flow is not None else default_max for c in direct),
         default=default_max,
-    )
-    # A mixing valve needs supply water above its own temperature (S-42): the highest of the
-    # fixed valves', while heating (the user's answer of 2026-10-12: the curve, never below it).
-    circuit_floor = max(
-        (
-            c.fixed_temperature + FIXED_CIRCUIT_MARGIN_K
-            for c in installation.circuits
-            if c.control is CircuitControl.PASSIVE_FIXED and c.fixed_temperature is not None
-        ),
-        default=None,
     )
     other = tuple(
         OtherAutomation(
@@ -1012,7 +1001,6 @@ def parse_control(
         # I8 (decision F2): the circuit's highest water temperature, else the default.
         circuit_max=circuit_max,
         boiler_max=boiler_max,
-        circuit_floor=circuit_floor,
         other_automation=other,
         curve_zones=curve_zones,
         frost=FrostConfig(

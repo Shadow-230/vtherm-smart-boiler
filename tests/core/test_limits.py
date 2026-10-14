@@ -59,25 +59,11 @@ def test_caps_that_protect_the_installation_win_over_the_hard_minimum() -> None:
     assert result == Limited(28.0, (LimitCode.HARD_MIN, LimitCode.CIRCUIT_MAX))
 
 
-def test_a_fixed_temperature_circuit_keeps_the_boiler_flow_above_it() -> None:
-    """A thermostatic mixing valve set to 40 °C needs at least that from the boiler."""
-    assert limit_flow(32.0, LIMITS, floor=40.0) == Limited(40.0, (LimitCode.FIXED_CIRCUIT,))
-    assert limit_flow(32.0, LIMITS, floor=40.0, circuit_max=38.0) == Limited(
-        38.0, (LimitCode.FIXED_CIRCUIT, LimitCode.CIRCUIT_MAX)
-    )
-
-
 def test_a_circuit_asking_holds_the_water_at_its_need() -> None:
     """I8.8 (decision F6): a circuit run by other automation that asks holds the water at its
-    need plus the margin, given here; above a fixed valve's floor it names its own code, at or
-    below it the valve's stands; the caps still win."""
+    need, given here; the caps still win. A thermostatic mixing valve sets no lower bound (the
+    user's decision of 2026-10-14): the boiler follows its curve."""
     assert limit_flow(32.0, LIMITS, need=45.0) == Limited(45.0, (LimitCode.CIRCUIT_NEED,))
-    assert limit_flow(32.0, LIMITS, floor=40.0, need=45.0) == Limited(
-        45.0, (LimitCode.CIRCUIT_NEED,)
-    )
-    assert limit_flow(32.0, LIMITS, floor=45.0, need=40.0) == Limited(
-        45.0, (LimitCode.FIXED_CIRCUIT,)
-    )
     assert limit_flow(50.0, LIMITS, need=45.0) == Limited(50.0)  # the curve above it
     assert limit_flow(32.0, LIMITS, need=60.0, circuit_max=55.0) == Limited(
         55.0, (LimitCode.CIRCUIT_NEED, LimitCode.CIRCUIT_MAX)
@@ -119,8 +105,7 @@ def test_the_bounds_a_written_value_keeps() -> None:
     limits = FlowLimits(hard_min=25.0, hard_max=70.0)
     assert write_bounds(limits) == (25.0, 70.0)
     assert write_bounds(limits, circuit_max=45.0, boiler_max=80.0) == (25.0, 45.0)
-    assert write_bounds(limits, floor=40.0) == (40.0, 70.0)
-    assert write_bounds(limits, circuit_max=35.0, floor=40.0) == (35.0, 35.0)
+    assert write_bounds(limits, circuit_max=20.0) == (20.0, 20.0)
 
 
 @pytest.mark.parametrize(
@@ -130,8 +115,7 @@ def test_the_bounds_a_written_value_keeps() -> None:
         (45.0, {"boiler_max": 42.0, "circuit_max": 44.0}, 42.0),
         (75.0, {}, 70.0),  # the hard maximum
         (20.0, {}, 25.0),  # the lowest water temperature raised since
-        (30.0, {"floor": 35.0}, 35.0),  # a fixed circuit's floor
-        (45.0, {"circuit_max": 35.0, "floor": 40.0}, 35.0),  # the cap wins over the floor
+        (45.0, {"circuit_max": 20.0}, 20.0),  # a cap below the hard minimum wins over it
         (45.0, {"circuit_max": 50.0}, 45.0),  # inside: unchanged
     ],
 )
@@ -391,19 +375,15 @@ def test_a_request_exactly_at_a_limit_is_unchanged_and_names_no_limit() -> None:
     named (a limit named where none acted would show a false reason)."""
     assert limit_flow(70.0, LIMITS) == Limited(70.0)
     assert limit_flow(25.0, LIMITS) == Limited(25.0)
-    assert limit_flow(40.0, LIMITS, floor=40.0) == Limited(40.0)
+    assert limit_flow(40.0, LIMITS, need=40.0) == Limited(40.0)
     assert limit_flow(45.0, LIMITS, circuit_max=45.0) == Limited(45.0)
 
 
 def test_on_a_tie_the_limit_named_first_stands() -> None:
-    """Equal limits: the hard maximum before a circuit's, the hard minimum before a fixed
-    circuit's floor, the floor before a circuit's need at the same value, and a lower bound
-    equal to the cap is met without naming the cap."""
+    """Equal limits: the hard maximum before a circuit's, the hard minimum before a circuit's
+    need at the same value, and a lower bound equal to the cap is met without naming the cap."""
     assert limit_flow(80.0, LIMITS, circuit_max=70.0) == Limited(70.0, (LimitCode.HARD_MAX,))
-    assert limit_flow(20.0, LIMITS, floor=25.0) == Limited(25.0, (LimitCode.HARD_MIN,))
-    assert limit_flow(32.0, LIMITS, floor=40.0, need=40.0) == Limited(
-        40.0, (LimitCode.FIXED_CIRCUIT,)
-    )
+    assert limit_flow(20.0, LIMITS, need=25.0) == Limited(25.0, (LimitCode.HARD_MIN,))
     limits = FlowLimits(hard_min=30.0, hard_max=70.0)
     assert limit_flow(20.0, limits, circuit_max=30.0) == Limited(30.0, (LimitCode.HARD_MIN,))
 

@@ -1,16 +1,14 @@
 """Circuits run by other automation (I8, decisions F3 and F6): a mixer or a pump the plugin
 never drives. Such a circuit asks for heat through an entity of its own — the boiler heats for
 it as for a VT zone asking — and through its VT zones; while it asks, the boiler's water stays
-at or above its need plus a margin. Pure logic: the entities' readings come in as values."""
+at or above its need. Nothing is added to the need: a mixer standing open with the water at its
+target is no problem (the user's decision of 2026-10-14), and a circuit needing headroom says so
+in its need. Pure logic: the entities' readings come in as values."""
 
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-
-# The water kept above a circuit's need, for the mixer to mix down from (provisional, K4) — as
-# a fixed valve's margin.
-OTHER_AUTOMATION_MARGIN_K = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,8 +41,8 @@ class OtherAutomation:
 @dataclass(frozen=True, slots=True)
 class CircuitsAsking:
     """Which circuits ask now, which cannot say (their entity unreadable: they do not ask, the
-    user's answer of 2026-10-12), and the water they hold: the highest need plus the margin
-    among those asking with a need known; ``None`` without one."""
+    user's answer of 2026-10-12), and the water they hold: the highest need among those asking
+    with a need known; ``None`` without one."""
 
     asking: tuple[str, ...] = ()
     unknown: tuple[str, ...] = ()
@@ -77,6 +75,5 @@ def circuits_asking(
         reported = needs.get(circuit.circuit_id)
         need = reported if reported is not None else circuit.needed
         if need is not None:
-            held = need + OTHER_AUTOMATION_MARGIN_K
-            floor = held if floor is None else max(floor, held)
+            floor = need if floor is None else max(floor, need)
     return CircuitsAsking(tuple(asking), tuple(unknown), floor)

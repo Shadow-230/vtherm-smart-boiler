@@ -63,12 +63,14 @@ ASKED_SOMETIMES = frozenset({"write_path", "gateway_id", "off_setpoint"})
 
 # E7: a circuit run by other automation (I8.8a), added through "Add circuit" and removed after.
 # It asks through a helper of instance 1's configuration (devenv/config/configuration.yaml); its
-# need, 50 °C, lies above the curve at the simulator's outdoor temperature, so the water shows it.
+# need, 50 °C — a fan heater's, the kind of load the field is for —, lies above the curve at the
+# simulator's outdoor temperature, so the water shows it, nothing added (2026-10-14).
 CIRCUIT_ASKS_ENTITY = "input_boolean.j4_circuit_asks"
+CIRCUIT_ASKS_NEED = 50.0
 CIRCUIT_ASKS: dict[str, object] = {
-    "name": "J4 floor",
+    "name": "J4 heater",
     "control": "separate",
     "request_entity": CIRCUIT_ASKS_ENTITY,
-    "needed_temperature": 50.0,
+    "needed_temperature": CIRCUIT_ASKS_NEED,
 }
 REMOVE_CIRCUIT: dict[str, object] = {"remove_circuit": True}

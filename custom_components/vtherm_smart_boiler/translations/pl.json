@@ -201,9 +201,9 @@
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: obowiązuje dla nich wykładnik krzywej i najwyższa temperatura wody obiegu. Pozostałe to grzejniki, chyba że konwektory.",
           "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwięcej, ile ten obieg może dostać, w °C (70, gdy puste); przy sterowaniu żadna nastawa nie idzie wyżej. Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje zimne w mrozie. Po oddaniu obowiązuje tylko maksimum kotła albo termostatu.",
-          "fixed_temperature": "Nastawa termostatycznego zaworu mieszającego, w °C; wymagana dla tego typu. Woda z kotła jest co najmniej 5 K cieplejsza, żeby zawór mógł ją osiągnąć.",
+          "fixed_temperature": "Nastawa termostatycznego zaworu mieszającego, w °C; wymagana dla tego typu. Mówi strefom, jaką wodę dostają (niższą z wody kotła i tej nastawy); kocioł idzie po krzywej, a zawór stoi otwarty, gdy woda jest na poziomie nastawy lub niżej.",
           "request_entity": "Opcjonalnie: encja włączona, gdy własny sterownik obiegu (mieszacz, pompa) chce ciepła; kocioł grzeje dla niego jak dla strefy. Nieczytelna — o nic nie prosi, a stan sterowania to pokazuje.",
-          "needed_temperature": "Opcjonalnie: gdy obieg prosi, woda z kotła ma co najmniej tyle plus 5 K — zapas, który mieszacz obniża. Puste: wodę wyznacza krzywa.",
+          "needed_temperature": "Opcjonalnie, tylko dla obiegu, który potrzebuje wody cieplejszej, niż daje krzywa, niezależnie od pogody — nagrzewnica, wentylacja, zasobnik. Gdy prosi, woda z kotła ma co najmniej tyle; nic nie jest doliczane. Dla podłogówki za mieszaczem zostaw puste: krzywa wystarcza. Puste: wodę wyznacza krzywa.",
           "needed_entity": "Opcjonalnie: encja podająca, jakiej wody obieg potrzebuje teraz — ma pierwszeństwo przed wartością powyżej; gdy nie da się jej odczytać, użyta jest wartość.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
@@ -453,6 +453,7 @@
     "error": {
       "min_power_not_below_max": "Moc minimalna musi być mniejsza od maksymalnej.",
       "fixed_temperature_missing": "Termostatyczny zawór mieszający (stały) wymaga swojej nastawy temperatury.",
+      "need_on_underfloor": "Podłogówka z potrzebną temperaturą wody: przy każdym wołaniu jej stref kocioł idzie do tej temperatury. Podłoga za mieszaczem jej nie potrzebuje — zostaw puste, wodę da krzywa. Zatwierdź ponownie, żeby zachować.",
       "missing_signal": "Brakuje wymaganego sygnału.",
       "implausible_parameter": "Parametr jest poza wiarygodnym zakresem.",
       "unknown_circuit": "Strefa wskazuje obieg, który nie istnieje.",
@@ -794,9 +795,9 @@
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: obowiązuje dla nich wykładnik krzywej i najwyższa temperatura wody obiegu. Pozostałe to grzejniki, chyba że konwektory.",
           "convectors": "Strefy tego obiegu z konwektorami (klimakonwektorami). Pozostałe to grzejniki, chyba że wskazano je jako podłogówkę.",
           "max_flow": "Najwięcej, ile ten obieg może dostać, w °C (70, gdy puste); przy sterowaniu żadna nastawa nie idzie wyżej. Wymagana dla podłogówki bez mieszacza. Za wysoka przegrzewa grzejniki albo podłogę; za niska zostawia pokoje zimne w mrozie. Po oddaniu obowiązuje tylko maksimum kotła albo termostatu.",
-          "fixed_temperature": "Nastawa termostatycznego zaworu mieszającego, w °C; wymagana dla tego typu. Woda z kotła jest co najmniej 5 K cieplejsza, żeby zawór mógł ją osiągnąć.",
+          "fixed_temperature": "Nastawa termostatycznego zaworu mieszającego, w °C; wymagana dla tego typu. Mówi strefom, jaką wodę dostają (niższą z wody kotła i tej nastawy); kocioł idzie po krzywej, a zawór stoi otwarty, gdy woda jest na poziomie nastawy lub niżej.",
           "request_entity": "Opcjonalnie: encja włączona, gdy własny sterownik obiegu (mieszacz, pompa) chce ciepła; kocioł grzeje dla niego jak dla strefy. Nieczytelna — o nic nie prosi, a stan sterowania to pokazuje.",
-          "needed_temperature": "Opcjonalnie: gdy obieg prosi, woda z kotła ma co najmniej tyle plus 5 K — zapas, który mieszacz obniża. Puste: wodę wyznacza krzywa.",
+          "needed_temperature": "Opcjonalnie, tylko dla obiegu, który potrzebuje wody cieplejszej, niż daje krzywa, niezależnie od pogody — nagrzewnica, wentylacja, zasobnik. Gdy prosi, woda z kotła ma co najmniej tyle; nic nie jest doliczane. Dla podłogówki za mieszaczem zostaw puste: krzywa wystarcza. Puste: wodę wyznacza krzywa.",
           "needed_entity": "Opcjonalnie: encja podająca, jakiej wody obieg potrzebuje teraz — ma pierwszeństwo przed wartością powyżej; gdy nie da się jej odczytać, użyta jest wartość.",
           "max_flow_alarm": "Alarm informacyjny, gdy zmierzone zasilanie utrzymuje się powyżej tej wartości, w °C. Wstępnie maksimum + 5 °C. Wymaga odczytu zasilania. Za wysoko przepuszcza prawdziwe przegrzanie bez zgłoszenia.",
           "max_flow_alarm_min": "Po ilu minutach alarm się podnosi. Wstępnie 10. Za krótko zgłasza każde przekroczenie z histerezy kotła.",
@@ -1056,6 +1057,7 @@
     "error": {
       "min_power_not_below_max": "Moc minimalna musi być mniejsza od maksymalnej.",
       "fixed_temperature_missing": "Termostatyczny zawór mieszający (stały) wymaga swojej nastawy temperatury.",
+      "need_on_underfloor": "Podłogówka z potrzebną temperaturą wody: przy każdym wołaniu jej stref kocioł idzie do tej temperatury. Podłoga za mieszaczem jej nie potrzebuje — zostaw puste, wodę da krzywa. Zatwierdź ponownie, żeby zachować.",
       "hand_back_value_missing": "Sposób „wartość” wymaga wartości oddania.",
       "hand_back_entity_missing": "Sposób „przełącznik” wymaga przełącznika sterowania zewnętrznego.",
       "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna.",
@@ -1671,13 +1673,12 @@
               "limit_hard_max": "Ograniczona do najwyższej temperatury wody",
               "limit_circuit_max": "Ograniczona do maksimum obiegu",
               "limit_boiler_max": "Ograniczona do maksimum kotła",
-              "limit_fixed_circuit": "Podniesiona dla obiegu ze stałym zaworem mieszającym",
               "comfort_correction": "Zastosowana korekta komfortu",
               "activation_delay": "Czeka na opóźnienie włączenia",
               "boiler_fault": "Kocioł zgłasza własną usterkę: grzanie wyłączone",
               "circuit_asks": "Obieg sterowany przez inną automatykę prosi o ciepło",
               "circuit_request_unknown": "Prośby obiegu nie da się odczytać: nie prosi",
-              "limit_circuit_need": "Podniesiona dla obiegu sterowanego przez inną automatykę: jego potrzeba plus 5 K"
+              "limit_circuit_need": "Podniesiona dla obiegu sterowanego przez inną automatykę: jego potrzeba"
             }
           },
           "reasons_text": {

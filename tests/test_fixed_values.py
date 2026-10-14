@@ -110,7 +110,6 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("an alarm level counts once held 5 min", alarms.ALARM_HOLD_S, 300.0),
     ("a notification closes after 60 min", alarms.NOTICE_CLOSE_S, 3600.0),
     ("an unknown input held 60 min", alarms.UNKNOWN_HOLD_S, 3600.0),
-    ("a passive fixed circuit's margin 5 K", control_config.FIXED_CIRCUIT_MARGIN_K, 5.0),
     ("timeout hand-back released within 0.5 K", hand_back.RELEASE_TOLERANCE_K, 0.5),
     ("hand-back failed 3 min after the timeout", hand_back.TIMEOUT_RELEASE_S, 180.0),
     ("relay proof-of-heat window 30 min", relay.PROOF_WINDOW_S, 1800.0),

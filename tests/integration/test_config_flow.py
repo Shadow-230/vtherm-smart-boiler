@@ -3048,6 +3048,28 @@ async def test_a_circuit_run_by_other_automation_asks_its_request_and_need(
     assert (circuit["needed_temperature"], circuit["needed_entity"]) == (35, "sensor.mixer_target")
 
 
+async def test_a_need_on_a_circuit_with_underfloor_zones_is_warned_of_once(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """The user's decision of 2026-10-14: a circuit run by other automation with a water need and
+    underfloor zones is warned of once — at every call of those zones the boiler goes to that
+    need, while a floor behind a mixer needs none; the same answer again is saved. Without
+    underfloor zones nothing is said (the test above)."""
+    entry_id = await create_entry(hass, entities, "simple")
+    result = await open_circuit(hass, entry_id)
+    zones = list(form_default(result, "zones"))
+    answer = {"control": "separate", "zones": zones, "needed_temperature": 45}
+    result = await options_step(hass, result, answer)  # the type's fields revealed
+    answer |= {"underfloor": zones[:1]}
+    result = await options_step(hass, result, answer)
+    assert result["errors"] == {"base": "need_on_underfloor"}
+    result = await options_step(hass, result, answer)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    circuit = circuits_of(hass, entry_id)[0]
+    assert (circuit["needed_temperature"], circuit["underfloor"]) == (45, zones[:1])
+
+
 async def test_the_only_circuit_has_no_tick_to_remove_it(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:

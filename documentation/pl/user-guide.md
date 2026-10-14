@@ -243,10 +243,11 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
    wyłączać; w kotle niekondensacyjnym może dojść do kondensacji w przewodzie spalinowym. Weź tę
    wartość z instrukcji kotła. Monitor może zaproponować wyższą wartość, jeśli widzi wiele
    krótkich cykli pracy palnika; nic nie zmienia się samo.
-3. **Czego potrzebują inne obiegi** — podczas grzania woda nigdy nie spada poniżej nastawy
-   stałego zaworu plus 5 K ani, gdy prosi, poniżej potrzeby obiegu sterowanego przez inną
-   automatykę plus 5 K (wartość tymczasowa): od tego jego mieszacz schodzi w dół. Gdy ta
-   potrzeba trzyma wodę, stan sterowania pokazuje powód `limit_circuit_need`.
+3. **Czego potrzebują inne obiegi** — gdy prosi, woda nigdy nie spada poniżej potrzeby obiegu
+   sterowanego przez inną automatykę; nic nie jest do niej doliczane. Stały zawór żadnej dolnej
+   granicy nie wyznacza: kocioł idzie po krzywej, a zawór stoi otwarty, gdy woda jest na poziomie
+   nastawy lub niżej. Gdy potrzeba trzyma wodę, stan sterowania pokazuje powód
+   `limit_circuit_need`.
 4. **Najwyższa temperatura wody** — ta z obiegu, w jego formularzu (**Obieg: <nazwa>**):
    nigdy powyżej niej, cokolwiek wyliczy krzywa, korekta komfortu albo inny obieg; 70 °C, gdy
    pole jest puste. Wodę ograniczają tylko obiegi zasilane prosto z kotła; obieg za mieszaczem
@@ -371,12 +372,16 @@ przestaje wołać o ciepło. Wtyczka nie ma własnej obsługi okien.
 Obieg to część instalacji zasilana w jeden sposób, wybrany jako jego **Typ obiegu**:
 
 - **Prosto z kotła** — obieg krzywej; sterowany jest najwyżej jeden.
-- **Termostatyczny zawór mieszający (stały)** — pytamy o jego nastawę; woda z kotła jest co
-  najmniej 5 K cieplejsza.
+- **Termostatyczny zawór mieszający (stały)** — pytamy o jego nastawę: mówi strefom, jaką wodę
+  dostają. Kocioł idzie po krzywej; zawór stoi otwarty, gdy woda jest na poziomie nastawy lub
+  niżej.
 - **Sterowany przez inną automatykę** — mieszacz albo pompa, którymi steruje coś innego; wtyczka
   nigdy nimi nie steruje. Może wskazać encję włączoną, gdy chce ciepła (**Obieg prosi o
   ciepło**), i potrzebną wodę (wartość albo encja, której odczyt ma pierwszeństwo); gdy prosi,
-  woda trzyma tę potrzebę plus 5 K.
+  woda trzyma co najmniej tę potrzebę, bez dodatku. Potrzeba jest dla odbiornika, który chce wody
+  cieplejszej, niż daje krzywa, niezależnie od pogody — nagrzewnicy, wentylacji, zasobnika. Dla
+  podłogówki za mieszaczem zostaw ją pustą: krzywa wystarcza, a potrzeba podnosi kocioł przy
+  każdym wołaniu jej stref (formularz raz ostrzeże).
 - **Mieszany przez kocioł** (drugi obieg grzewczy kotła) — jeszcze nie sterowany.
 
 Każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką albo konwektorami; pozostałe to

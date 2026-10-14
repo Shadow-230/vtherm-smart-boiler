@@ -227,10 +227,11 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
    Too low, and the boiler may stop by itself again and again in mild weather; a boiler that does
    not condense may condense in its flue. Take the value from the boiler's manual. The monitor
    may suggest a higher value if it sees many short burns; nothing changes by itself.
-3. **What other circuits need** — while heating, the water never goes below a fixed valve's
-   setting plus 5 K, nor, while it asks, below the need of a circuit controlled by other
-   automation plus 5 K (provisional): its mixer mixes down from there. The control state shows
-   the reason `limit_circuit_need` when that need holds the water.
+3. **What other circuits need** — while it asks, the water never goes below the need of a
+   circuit controlled by other automation; nothing is added to it. A fixed valve sets no lower
+   bound: the boiler follows its curve, and the valve stands open while the water is at or below
+   its setting. The control state shows the reason `limit_circuit_need` when a need holds the
+   water.
 4. **Highest water temperature** — the circuit's, in its form (**Circuit: <name>**): never
    above it, whatever the curve, the comfort correction or another circuit asks; 70 °C where it
    is empty. Only the circuits fed straight from the boiler cap the water; one behind a mixer or
@@ -348,12 +349,16 @@ longer asks for heat. The plugin has no window handling of its own.
 A circuit is the part of the heating fed one way, picked as its **Circuit type**:
 
 - **Straight from the boiler** — the curve's circuit; at most one is controlled.
-- **Thermostatic mixing valve (fixed)** — its setting is asked; the boiler's water is kept at
-  least 5 K above it.
+- **Thermostatic mixing valve (fixed)** — its setting is asked: it tells the zones what water
+  they get. The boiler follows its curve; the valve stands open while the water is at or below
+  its setting.
 - **Controlled by other automation** — a mixer or a pump that something else runs; the plugin
   never drives it. It may name an entity that is on while it wants heat (**Circuit asks for
   heat**) and the water it needs (a value, or an entity whose reading comes first); while it
-  asks, the water stays at that need plus 5 K.
+  asks, the water stays at that need at least, nothing added. A need is for a load that wants
+  water hotter than the curve whatever the weather — a fan heater, a ventilation coil, a tank.
+  Leave it empty for underfloor heating behind a mixer: the curve is enough, and a need there
+  raises the boiler at every call of its zones (the form warns once).
 - **Mixed through the boiler** (a second heating circuit of the boiler) — not controlled yet.
 
 Each circuit lists the VT zones it feeds, and of them those with underfloor heating or

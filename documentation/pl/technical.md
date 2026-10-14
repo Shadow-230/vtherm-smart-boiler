@@ -106,8 +106,9 @@ każda strefa liczy się tylko wtedy, gdy VT podaje jej stan jednoznacznie.
 **Obiegi sterowane przez inną automatykę (`core/circuit_requests.py`, `circuits_asking`).**
 Obieg, którego mieszaczem albo pompą steruje coś innego, prosi o ciepło przez własną encję albo
 przez swoje strefy; encja, której nie da się odczytać, o nic nie prosi i jest wskazana. Gdy obieg
-prosi, jego potrzeba — najpierw odczyt encji, inaczej wpisana wartość — plus 5 K jest dolną
-granicą wody (`core/limits.py`, `limit_flow`), tak jak nastawa stałego zaworu plus 5 K.
+prosi, jego potrzeba — najpierw odczyt encji, inaczej wpisana wartość — jest dolną granicą wody,
+bez żadnego dodatku (`core/limits.py`, `limit_flow`). Stały zawór żadnej granicy nie wyznacza:
+kocioł idzie po krzywej, a zawór stoi otwarty, gdy woda jest na poziomie nastawy lub niżej.
 
 **Pilnowanie stref (`core/zone_watch.py`, `follow_zones`).** Okres rozpoznania po starcie
 (najwyżej 10 minut), okres przejściowy każdej strefy i przypadek, gdy wszystkie strefy są
@@ -182,7 +183,7 @@ flowchart TD
 - **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku — zapotrzebowanie
   stref albo prośba obiegu sterowanego przez inną automatykę; temperatura wody co odstęp decyzji
   (domyślnie 5 minut) i od razu po końcu blokady albo usterki lub gdy zmienia się potrzeba
-  obiegu: krzywa, nigdy poniżej nastawy stałego zaworu ani potrzeby proszącego obiegu plus 5 K,
+  obiegu: krzywa, nigdy poniżej potrzeby proszącego obiegu,
   ograniczona przez obiegi zasilane prosto z kotła i maksimum kotła. Przy kilku obiegach
   temperatura pokojowa krzywej i korekta komfortu biorą pod uwagę strefy obiegu zasilanego
   prosto z kotła.
