@@ -1,4 +1,5 @@
-"""I9: the contract of the water data for zone algorithms (`documentation/en/water-interface.md`).
+"""I9: the contract of the water data for zone algorithms
+(`docs/en/specification/water-interface.md`).
 
 Consumers detect what exists and changes only add, so no version number marks the interface:
 these tests pin every name, type and allowed value the specification states. A change to one
@@ -16,7 +17,7 @@ from custom_components.vtherm_smart_boiler.core.demand import CountBy
 from custom_components.vtherm_smart_boiler.core.heat import HeatReason
 from custom_components.vtherm_smart_boiler.core.supply import SupplyReason
 
-SPEC = Path(__file__).resolve().parents[1] / "documentation" / "en" / "water-interface.md"
+SPEC = Path(__file__).resolve().parents[1] / "docs" / "en" / "specification" / "water-interface.md"
 FIELDS = (
     "supply_temperature",
     "supply_reason",

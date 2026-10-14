@@ -49,7 +49,7 @@ RELOAD_GRACE_S = 15 * 60  # a started thermostat shows the value within this, el
 # The public name of "heat reaches the zone now" (P-61; "hot water" is the boiler's domestic hot
 # water).
 HEAT_AVAILABLE = "heat_available"
-# The water interface (I9; documentation/en/water-interface.md): its fields, in its order, and
+# The water interface (I9; docs/en/specification/water-interface.md): its fields, in its order, and
 # the public API's key in ``hass.data``.
 SUPPLY_TEMPERATURE = "supply_temperature"
 SUPPLY_REASON = "supply_reason"

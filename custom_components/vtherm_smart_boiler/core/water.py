@@ -1,4 +1,4 @@
-"""What the plugin exposes about a zone's water (I9; documentation/en/water-interface.md, §4):
+"""What the plugin exposes about a zone's water (I9; docs/en/specification/water-interface.md, §4):
 the water reaching the zone's circuit, why it is not known, when it was measured, and whether
 heat reaches the zone. Pure: the integration layer turns the time into a ``datetime``."""
 

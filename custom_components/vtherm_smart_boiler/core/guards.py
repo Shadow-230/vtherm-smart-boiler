@@ -75,8 +75,8 @@ the read-back still shows: another value seen, even for one step, shows "not con
 The guard's memory — the baseline, the block, its counters, the class "ignored from the start",
 the clip — lasts the session, across hand-backs inside it (``after_hand_back``); the one rewrite is
 remembered for its day, across sessions too (``for_new_session``). Heating on/off follows what the
-controller asks at once: nothing counted or timed holds it against VT (``SCOPE.md`` principle 12)
-beyond the one-step write-rate guard.
+controller asks at once: nothing counted or timed holds it against VT
+(``docs/en/specification/scope.md`` principle 12) beyond the one-step write-rate guard.
 
 A hand-back write is not planned here: nothing holds it back.
 """
@@ -560,14 +560,14 @@ def classify(
     now: float,
     config: GuardConfig,
 ) -> ChangeClass:
-    """The class of a step's read-back — the one table of decision 6, in its order (``SCOPE.md``
-    §7): unknown; confirmed; a draw; the plugin's own lapse; a held target back; the rewrite not
-    read back; the fall-back set (the start phase's attempts, then lost command or another
-    controller); the previous value while it is exempt (its successor not read back by its own
-    echo; heating on/off within ``PREVIOUS_EXEMPT_S`` of that send, before the fall-back set, and
-    not stuck); clipped; another value held two steps — the previous one too, once no longer
-    exempt — after a confirmation, the timeout of the first send not read back, or a stuck
-    heating read-back (KD-01)."""
+    """The class of a step's read-back — the one table of decision 6, in its order
+    (``docs/en/specification/scope.md`` §7): unknown; confirmed; a draw; the plugin's own lapse; a
+    held target back; the rewrite not read back; the fall-back set (the start phase's attempts, then
+    lost command or another controller); the previous value while it is exempt (its successor not
+    read back by its own echo; heating on/off within ``PREVIOUS_EXEMPT_S`` of that send, before the
+    fall-back set, and not stuck); clipped; another value held two steps — the previous one too,
+    once no longer exempt — after a confirmation, the timeout of the first send not read back, or a
+    stuck heating read-back (KD-01)."""
     if state.written is None or not config.read_back or read_back is None or seen.kind is None:
         return ChangeClass.NOT_JUDGED
     if seen.kind is ReadKind.OURS:

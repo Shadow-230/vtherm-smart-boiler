@@ -10,7 +10,7 @@
 # Smart Boiler for Versatile Thermostat
 
 <p align="center">
-  <img src="documentation/images/logo.png" alt="Smart Boiler for Versatile Thermostat logo" width="280" />
+  <img src="docs/images/logo.png" alt="Smart Boiler for Versatile Thermostat logo" width="280" />
 </p>
 
 <p align="center"><b>
@@ -229,7 +229,7 @@ risks. The main ones — described, not advised:
 | Return by itself after another controller | off | on, control returns 60 minutes after the last foreign value, while the other controller may still be there |
 | Learning pauses (SmartPI) | on | off, the swings the plugin causes enter SmartPI's model |
 
-Every default and the reason for it: the defaults table in [`SCOPE.md`, section 7][scope-defaults]. Values marked
+Every default and the reason for it: the defaults table in [`docs/en/specification/scope.md`, section 7][scope-defaults]. Values marked
 provisional are reviewed before the first release.
 
 # Hand-back
@@ -413,15 +413,15 @@ target:
 | Later | hot-water charging, the HACS default list, more devices |
 
 Targets are aims, not commitments; each release collects data for the next. Details:
-[`PLAN.md`][plan].
+[`docs/en/development/plan.md`][plan].
 
 # Documentation
 
 | Document | What it holds |
 |---|---|
-| [`SCOPE.md`][scope] | the specification: what the plugin does, its principles and every decision |
-| [`PLAN.md`][plan] | the development plan, releases and the test environment |
-| [`docs/`][docs] | the plan of each release and the reviews of the code |
+| [Scope][scope] | the specification: what the plugin does, its principles and every decision |
+| [Development plan][plan] | the development plan, releases and the test environment |
+| [Plans and reviews][docs] | the plan of each release and the reviews of the code |
 | 🇬🇧 [User guide][guide] · 🇵🇱 [Przewodnik użytkownika][guide-pl] | prerequisites, installation, quick start, how it works, boiler connections, safety, alarms |
 | 🇬🇧 [Technical documentation][technical] · 🇵🇱 [Dokumentacja techniczna][technical-pl] | the integration's parts, one control step, lifecycle, stored state, tests |
 | [Water data for zone algorithms][water] | the interface that gives SmartPI and other zone algorithms the water reaching each zone |
@@ -455,20 +455,20 @@ If Smart Boiler for Versatile Thermostat is useful to you, you can support its d
 
 [vt]: https://github.com/jmcollin78/versatile_thermostat
 [dev]: https://github.com/Shadow-230/vtherm-smart-boiler/tree/dev
-[scope]: SCOPE.md
-[scope-defaults]: SCOPE.md#7-features-by-stage
-[plan]: PLAN.md
-[docs]: docs/
-[guide]: documentation/en/user-guide.md
-[guide-connect]: documentation/en/user-guide.md#5-connecting-the-boiler
-[guide-hand-back]: documentation/en/user-guide.md#61-the-safe-hand-back
-[guide-relay]: documentation/en/user-guide.md#54-the-relay-onoff-boiler
-[guide-fresh]: documentation/en/user-guide.md#68-fresh-data
-[guide-alarms]: documentation/en/user-guide.md#7-alarms-and-repair-issues
-[guide-pl]: documentation/pl/user-guide.md
-[technical]: documentation/en/technical.md
-[technical-pl]: documentation/pl/technical.md
-[water]: documentation/en/water-interface.md
+[scope]: docs/en/specification/scope.md
+[scope-defaults]: docs/en/specification/scope.md#7-features-by-stage
+[plan]: docs/en/development/plan.md
+[docs]: docs/en/development/
+[guide]: docs/en/user-guide/user-guide.md
+[guide-connect]: docs/en/user-guide/user-guide.md#5-connecting-the-boiler
+[guide-hand-back]: docs/en/user-guide/user-guide.md#61-the-safe-hand-back
+[guide-relay]: docs/en/user-guide/user-guide.md#54-the-relay-onoff-boiler
+[guide-fresh]: docs/en/user-guide/user-guide.md#68-fresh-data
+[guide-alarms]: docs/en/user-guide/user-guide.md#7-alarms-and-repair-issues
+[guide-pl]: docs/pl/user-guide/user-guide.md
+[technical]: docs/en/technical/technical.md
+[technical-pl]: docs/pl/technical/technical.md
+[water]: docs/en/specification/water-interface.md
 [changelog]: CHANGELOG.md
 [contributing]: CONTRIBUTING.md
 [license]: LICENSE

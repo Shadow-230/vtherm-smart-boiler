@@ -7,9 +7,10 @@ declared expiring or held, and a heating switch declared otherwise is left alone
 low setpoint). The hand-back value is bound by the highest water temperature, never clamped, and
 "off" must not read as it (S-21, S-49); "off" sent as a low setpoint stays at least 1 K below the
 lowest water temperature, or the boiler would not see a change (P-43). Provisional
-decisions of phase F (to be confirmed at the review, `docs/plan-0.2.md` K4): control only for an
-installation with one circuit fed by the boiler flow (unmixed, or passive fixed); the curve must
-be entered, never silently defaulted; VT's central boiler must not run alongside.
+decisions of phase F (to be confirmed at the review, `docs/en/development/plans/plan-0.2.md` K4):
+control only for an installation with one circuit fed by the boiler flow (unmixed, or passive
+fixed); the curve must be entered, never silently defaulted; VT's central boiler must not run
+alongside.
 
 What the form refuses is a blocker too, for options that reach the plugin without it (a hand
 edit, an older version's options — X5): one entity in two roles (P-03), one entity for two

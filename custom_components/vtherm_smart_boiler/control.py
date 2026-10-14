@@ -43,7 +43,7 @@ measured on the control clock, from the fault signals the user mapped — contro
 "off", with no hand-back and no latch, frost heating included, and heats again in the step the
 fault reads off, unknown or unavailable.
 
-How control resumes after it stopped (``SCOPE.md`` §7):
+How control resumes after it stopped (``docs/en/specification/scope.md`` §7):
 - another controller — an outside change always makes the plugin step aside, whatever reaction
   an earlier version stored: the whole safe hand-back, the target the other controller holds
   included (the user's answer H) — or an ignored write set to hand back: a latch, shown with its

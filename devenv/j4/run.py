@@ -1,4 +1,4 @@
-"""J4's scenarios on a test Home Assistant instance (docs/test-reports/README.md).
+"""J4's scenarios on a test Home Assistant instance (docs/en/testing/reports/README.md).
 
 Usage: scripts/env.sh python devenv/j4/run.py ID... — with HA_INSTANCE set (default 1). Each
 scenario starts and ends from a clean state; its result is printed and appended, with its
@@ -946,7 +946,7 @@ SCENARIOS = {
 
 # --- the instance's base state, and the evidence of a failure ---------------------------------
 
-# What every scenario of a path expects to find, as each instance is set up (devenv/README.md):
+# What every scenario of a path expects to find, as each instance is set up (docs/en/testing/test-environment.md):
 # keys of the plugin's stored control options ("curve.x" inside the curve; "circuit.x" in the
 # first circuit, which holds the highest water temperature since I8). A key the entry does not
 # store takes the plugin's default, which is what the base means — so a key expected empty

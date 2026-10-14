@@ -9,8 +9,8 @@ from .installation import Circuit, CircuitControl
 
 
 class SupplyReason(StrEnum):
-    """Why a circuit's water is not known (documentation/en/water-interface.md, §4.1): lasting —
-    nothing to measure it with, or a zone in circuits with different water — or momentary."""
+    """Why a circuit's water is not known (docs/en/specification/water-interface.md, §4.1): lasting
+    — nothing to measure it with, or a zone in circuits with different water — or momentary."""
 
     NOT_MAPPED = "not_mapped"  # lasting: no boiler flow mapped and no circuit sensor
     CIRCUIT_NOT_MEASURED = "circuit_not_measured"  # lasting: a mixed circuit without its sensor

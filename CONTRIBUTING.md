@@ -18,8 +18,8 @@ every minute. Changes are therefore small, tested and reviewed before they reach
   `qas` or `main` from other branches are closed. A contributor's pull request into `dev` is
   reviewed and merged by the repository owner; the maintainer's automation merges only its own.
 - Releases (tags `v*` and GitHub releases) are made by the repository owner only, from `main`.
-  Each release carries the report of the tests its version passed, `docs/test-reports/<version>.md`
-  (`docs/test-reports/README.md`).
+  Each release carries the report of the tests its version passed, `docs/en/testing/reports/<version>.md`
+  (`docs/en/testing/reports/README.md`).
 - History is never rewritten on `dev`, `qas` or `main` (no force pushes, no deletions).
 
 ## Checks
@@ -39,8 +39,7 @@ Every pull request runs these checks on GitHub Actions:
   Home Assistant, the other tests, and the coverage floor: every module at least 95 % with
   branches, the config and options flows 100 %. The Home Assistant version tested is in each
   run's summary.
-- A pull request that changes documentation only (Markdown files, `documentation/`, `docs/`,
-  `LICENSE`; not `CLAUDE.md`, nothing under `.github/`) passes the two test checks without running
+- A pull request that changes documentation only (Markdown files, `docs/`, `LICENSE`; not `CLAUDE.md`, nothing under `.github/`) passes the two test checks without running
   the tests, as no test reads those files; anything else runs them in full.
 - An early warning tests this integration against the newest releases of the projects it works
   with. Its failure is not a fault of the pull request: it says that something upstream changed

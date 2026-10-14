@@ -1,7 +1,8 @@
-"""Every default of ``SCOPE.md`` §7's table "Defaults of the safety options and why" (P-127), as Q1
-left it, pinned where the plugin holds it: ``CONTROL_DEFAULTS`` and ``CURVE_DEFAULTS`` (which the
-parser and the options forms both read), the alarm bands, the forms' own defaults — the monitor
-schema among them — and what the parser applies to a control section that stores nothing.
+"""Every default of ``docs/en/specification/scope.md`` §7's table "Defaults of the safety options
+and why" (P-127), as Q1 left it, pinned where the plugin holds it: ``CONTROL_DEFAULTS`` and
+``CURVE_DEFAULTS`` (which the parser and the options forms both read), the alarm bands, the forms'
+own defaults — the monitor schema among them — and what the parser applies to a control section that
+stores nothing.
 
 Each row names its SCOPE row. A default changed in the code without the table, or in the table
 without the code, fails here; the user reviews the provisional ones at K4.

@@ -1,9 +1,10 @@
-# Tests, lint, formatting and types on every push and pull request (docs/plan-0.2.md, K2;
-# docs/plan-0.2.1.md, R3), on the Home Assistant version tested and on the declared minimum
-# (hacs.json). vendor/ (VT 10.5.1 and SmartPI 0.4.0) is not in the repository: CI fetches both
-# on GitHub's servers by the full commit their release tags pointed at, so a tag moved later
-# changes nothing, and so runs the real-VT tests on every change (docs/plan-0.2.2.md, decision
-# 14; PB-86; nothing is downloaded on the developer's machine). Coverage counts branches, and
+# Tests, lint, formatting and types on every push and pull request
+# (docs/en/development/plans/plan-0.2.md, K2; docs/en/development/plans/plan-0.2.1.md, R3), on the
+# Home Assistant version tested and on the declared minimum (hacs.json). vendor/ (VT 10.5.1 and
+# SmartPI 0.4.0) is not in the repository: CI fetches both on GitHub's servers by the full commit
+# their release tags pointed at, so a tag moved later changes nothing, and so runs the real-VT
+# tests on every change (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86; nothing is
+# downloaded on the developer's machine). Coverage counts branches, and
 # every module keeps its own floor (P-35). The canaries (newest vtherm_api; newest VT and
 # SmartPI releases) are early warnings of a change upstream, not of ours: they run on demand and
 # on pull requests into qas and main, not on every pull request (PB-85). GitHub runs a schedule
@@ -44,9 +45,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # A pull request that changes documentation only (Markdown, documentation/, docs/, LICENSE —
-      # not CLAUDE.md, nothing under .github/) passes without the tests: no test reads those
-      # files. Anything else, and every push, schedule and manual run, runs everything.
+      # A pull request that changes documentation only (Markdown, docs/, LICENSE — not CLAUDE.md,
+      # not the water interface's specification, which its contract test reads, nothing under
+      # .github/) passes without the tests: no test reads those files. Anything else, and every
+      # push, schedule and manual run, runs everything.
       - name: Documentation only?
         id: docs
         env:
@@ -57,8 +59,9 @@ jobs:
             files="$(git diff --name-only "$BASE" HEAD)"
             echo "$files"
             if [ -n "$files" ] && ! printf '%s\n' "$files" \
-                | grep -v -E '^(documentation/.*|docs/.*|LICENSE|[^/]*\.md|[^.][^/]*/.*\.md)$' \
-                | grep -q . && ! printf '%s\n' "$files" | grep -q -E '^(CLAUDE\.md|\.github/)'; then
+                | grep -v -E '^(docs/.*|LICENSE|[^/]*\.md|[^.][^/]*/.*\.md)$' \
+                | grep -q . && ! printf '%s\n' "$files" \
+                | grep -q -E '^(CLAUDE\.md|\.github/|docs/en/specification/water-interface\.md)'; then
               only=true
               echo "Documentation only: tests skipped." | tee -a "$GITHUB_STEP_SUMMARY"
             fi
@@ -87,9 +90,9 @@ jobs:
           assert __version__ == minimum, (__version__, minimum)
           PY
       # Decision 14 (P-119): the commits the VT 10.5.1 tag (the user's decision, 2026-10-13;
-      # 10.4.0 before) and the SmartPI 0.4.0 tag (docs/plan-0.1.md A5) pointed at when checked,
-      # fetched by their full hash (PB-86); an archive that cannot be reached fails the job
-      # rather than skipping tests.
+      # 10.4.0 before) and the SmartPI 0.4.0 tag (docs/en/development/plans/plan-0.1.md A5)
+      # pointed at when checked, fetched by their full hash (PB-86); an archive that cannot be
+      # reached fails the job rather than skipping tests.
       - name: VT 10.5.1 and SmartPI 0.4.0 by their release commits
         if: steps.docs.outputs.only != 'true'
         run: |
@@ -123,9 +126,9 @@ jobs:
         if: steps.docs.outputs.only != 'true'
         run: mypy
       # Two runs (P-120): the core tests on their own, without Home Assistant's pytest plugin
-      # (layer 1 of PLAN.md's "Test environment"; sockets stay closed, as that plugin keeps them),
-      # then every other test with it; coverage adds up over both, and its floor is checked once,
-      # at the end of the second run.
+      # (layer 1 of docs/en/development/plan.md's "Test environment"; sockets stay closed, as that
+      # plugin keeps them), then every other test with it; coverage adds up over both, and its
+      # floor is checked once, at the end of the second run.
       - name: Core tests, without Home Assistant
         if: steps.docs.outputs.only != 'true'
         run: |

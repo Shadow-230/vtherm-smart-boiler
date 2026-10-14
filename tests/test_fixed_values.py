@@ -1,5 +1,5 @@
-"""The fixed values of ``SCOPE.md`` §7's table "Fixed values (S-37)", pinned where the plugin holds
-them (TB-17), and the clocks of ``const.py`` (TB-18).
+"""The fixed values of ``docs/en/specification/scope.md`` §7's table "Fixed values (S-37)", pinned
+where the plugin holds them (TB-17), and the clocks of ``const.py`` (TB-18).
 
 Each row names its SCOPE row. A value changed in the code without the table, or in the table
 without the code, fails here; the user reviews the provisional ones at K4.

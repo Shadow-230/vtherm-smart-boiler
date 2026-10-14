@@ -2677,7 +2677,8 @@ MONITOR_KEPT = ("monitoring_days", "verdict_window_days", *PRESSURE_KEYS)
 def restore_advanced_defaults(options: dict[str, Any]) -> None:
     """Drop every tuning value only the advanced level shows, so its default applies again.
     Facts about the installation — what is mapped, the boiler, circuits, zones, values the user
-    entered — stay (``SCOPE.md`` principle 10), and so do the monitor's periods."""
+    entered — stay (``docs/en/specification/scope.md`` principle 10), and so do the monitor's
+    periods."""
     monitor = options.get(MONITOR, {})
     kept = {key: monitor[key] for key in MONITOR_KEPT if key in monitor}
     if kept:

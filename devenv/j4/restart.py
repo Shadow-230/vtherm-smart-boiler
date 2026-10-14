@@ -84,7 +84,7 @@ async def B6(notes):
             f"after start: switch {sw}, state {state}, override {ovr}, simulator's gateway commands since its start {p.get('gateway_commands')}, CH writes {p.get('ch_writes')}",
             f"log: {log.strip()[:800]}",
         ]
-        # SCOPE.md §7: after a restart without a clean stop a hand-back is pending until
+        # docs/en/specification/scope.md §7: after a restart without a clean stop a hand-back is pending until
         # control resumes, and the control switch comes back as the user left it — on.
         ok = held and sw == "on" and ovr and state in ("heating", "idle")
         await r.reset()

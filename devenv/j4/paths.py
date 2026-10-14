@@ -1,5 +1,5 @@
 """J4's scenarios on the relay path, the entity path and a stand-alone gateway (test instances
-deployed with ``--config relay``, ``entity`` and ``standalone``; docs/test-reports/README.md).
+deployed with ``--config relay``, ``entity`` and ``standalone``; docs/en/testing/reports/README.md).
 
 Usage: HA_INSTANCE=N scripts/env.sh python devenv/j4/paths.py ID... — the same runner as
 run.py (its clean state, its results file), with the commands to the relay and the entities

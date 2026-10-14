@@ -1,5 +1,5 @@
 """J4: an instance's options walked back to a base (``options.py``) — instance 1's gateway base,
-or the starts criterion's house on instances 2 to 5 (devenv/README.md §5), the comfort correction
+or the starts criterion's house on instances 2 to 5 (docs/en/testing/test-environment.md §5), the comfort correction
 on where a run compares it (K4: F8). Refused while control is on: a change of how the hand-back
 is made waits until none is owed — switch control off first, and let the hand-back finish.
 

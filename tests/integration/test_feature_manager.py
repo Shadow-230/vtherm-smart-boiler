@@ -702,7 +702,8 @@ async def test_a_failed_refresh_publishes_no_zone_values(
     assert feature_manager.zone_values([coordinator], living) is not None
 
 
-# --- I9.2: the water data (documentation/en/water-interface.md) --------------------------------
+# --- I9.2: the water data (docs/en/specification/water-interface.md)
+# --------------------------------
 
 
 async def _refreshed(hass: HomeAssistant) -> None:

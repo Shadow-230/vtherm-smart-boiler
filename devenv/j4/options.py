@@ -1,4 +1,4 @@
-"""J4: the options instance 1 is set up with (devenv/README.md, section 4), as the flat changes
+"""J4: the options instance 1 is set up with (docs/en/testing/test-environment.md, section 4), as the flat changes
 ``walk.save_options`` takes, and the menu items that ask them (I8). Pure data, so the
 in-process test that walks them through the options flow (``tests/integration/test_j4_walk.py``)
 reads the same values the runner writes."""
@@ -63,7 +63,7 @@ BASE_GATEWAY: dict[str, object] = {
     "return_after_outside_change": False,
 }
 
-# Instances 2 to 5: the starts criterion's house (devenv/README.md §5) — the plugin's curve the
+# Instances 2 to 5: the starts criterion's house (docs/en/testing/test-environment.md §5) — the plugin's curve the
 # boiler's own (design flow 55 °C at −15 °C, exponent 1, offset 5 K, lowest 25 °C, highest 70 °C),
 # the comfort correction off; a run comparing it switches it on (K4: F8). Walked back with
 # ``base.py starts`` after an instance served the other scenarios (J4 of 2026-10-14).
