@@ -1,8 +1,8 @@
 # Smart Boiler for Versatile Thermostat
 
 Working rules, code conventions and verified facts for Claude. The documentation lives in
-`docs/<language>/` (English the default, Polish beside it for what users read); the plans are in
-[`docs/en/development/plans/`][plans]. **Where to continue:** the first step without ✅ (optional
+`docs/<language>/` (English the default, Polish beside it for every current document); the plans are
+in [`docs/en/development/plans/`][plans]. **Where to continue:** the first step without ✅ (optional
 ones aside) in [`plan-0.1.md`][plan-0.1], then in [`plan-0.2.1.md`][plan-0.2.1] (corrections that
 come before the rest of 0.2), then in [`plan-0.2.2.md`][plan-0.2.2] (corrections after the review of
 2026-09-26; the details of each step are in [`plan-0.2.2-details.md`][plan-0.2.2-details], which
@@ -45,8 +45,11 @@ Each topic lives only in its file; do not copy it here.
 
 - The user converses in Polish; everything written into the repository is in English, except
   translation files for other languages (e.g. `translations/pl.json`) and the Polish versions of
-  what users read (`README.pl.md`, `docs/pl/`). The documentation lives in `docs/<language>/`,
-  English the default, every folder and file named in English (the user's rule, 2026-10-14).
+  the documentation (`README.pl.md`, `docs/pl/`). The documentation lives in `docs/<language>/`,
+  English the default, every folder and file named in English. Every current document has its
+  Polish twin at the same place under `docs/pl/`, with the same headings, and a change to one is
+  made in the other in the same pull request; history — the plans, the reviews, a dated test
+  report — stays in English only, frozen (the user's rules, 2026-10-14).
   Replies to the user are in plain, less technical Polish: what was done, what it means for the
   house and the boiler, and what needs the user's answer (the user's rule, 2026-09-26/27).
 - Documentation is written in plain, accessible language: short sentences and common words, no

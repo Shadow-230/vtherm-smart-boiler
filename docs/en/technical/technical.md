@@ -63,9 +63,9 @@ docs/                                     the documentation, one folder per lang
 │   ├── specification/                    what the plugin does (scope) and its interfaces
 │   ├── user-guide/                       how to use it
 │   ├── technical/                        how it is built (this document)
-│   ├── development/                      the development plan, the plans and the reviews
+│   ├── development/                      the development plan; the plans and reviews (history)
 │   └── testing/                          the test environment and the test reports
-├── pl/                                   Polish, for what users read
+├── pl/                                   Polish: every current document, the same layout
 └── images/                               pictures shared by every language
 ```
 

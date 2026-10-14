@@ -14,7 +14,7 @@ sterowanie, decyduje, kiedy kocioł grzeje i jak ciepła jest jego woda. Nie ste
 ani zaworami.
 
 Ten przewodnik jest streszczeniem. Specyfikacja, ze wszystkimi zasadami i decyzjami, to
-[`docs/en/specification/scope.md`](../../en/specification/scope.md) (po angielsku). Gdy oba teksty się różnią, rozstrzygają `docs/en/specification/scope.md`
+[`docs/pl/specification/scope.md`](../specification/scope.md). Gdy oba teksty się różnią, rozstrzygają `docs/pl/specification/scope.md`
 i teksty w formularzach samej integracji. Niektóre wartości w specyfikacji są wciąż oznaczone
 jako „tymczasowe” (provisional): mogą się zmienić przed pierwszym wydaniem. Budowę wtyczki
 opisuje [dokumentacja techniczna](../technical/technical.md).
@@ -61,7 +61,7 @@ pomieszczenia, gdy powrót nie jest znany), „nie”, gdy płomień zgasł albo
 woda z priorytetem, i puste, gdy nie da się tego ocenić. Obok niej `supply_temperature`: woda
 docierająca do obiegu strefy, zaokrąglona do 1 °C i odświeżana po zmianie o 1 K, pusta, gdy nie
 jest znana. Algorytm strefy może czytać pełne dane ([interfejs danych o wodzie, po
-angielsku](../../en/specification/water-interface.md)); SmartPI 0.4.0 z nich nie korzysta. Nic w VT ani w
+angielsku](../specification/water-interface.md)); SmartPI 0.4.0 z nich nie korzysta. Nic w VT ani w
 sterowaniu od tego nie zależy.
 
 ## 2. Instalacja
@@ -130,8 +130,8 @@ zatrzymałaby sterowanie, najpierw pyta.
 ## 4. Jak to działa
 
 Szczegóły każdej zasady są w specyfikacji:
-[`docs/en/specification/scope.md`, §7](../../en/specification/scope.md#7-features-by-stage) i
-[§10](../../en/specification/scope.md#10-assess-alongside-control).
+[`docs/pl/specification/scope.md`, §7](../specification/scope.md#7-funkcje-według-etapów) i
+[§10](../specification/scope.md#10-ocena-obok-sterowania).
 
 ### 4.1 Monitorowanie i werdykt
 
@@ -415,8 +415,8 @@ Wtyczka czyta kocioł przez encje, które wybierasz w jej formularzach. Do stero
 też sposobu **zapisu** do kotła — „ścieżki zapisu” — oraz sposobu oddania kotła jego własnemu
 sterowaniu — **oddania sterowania**.
 
-Szczegóły: [`docs/en/specification/scope.md`, §5](../../en/specification/scope.md#5-hardware-circuits-and-zone-algorithms) i
-[Gateway topology](../../en/specification/scope.md#gateway-topology).
+Szczegóły: [`docs/pl/specification/scope.md`, §5](../specification/scope.md#5-sprzęt-obiegi-i-algorytmy-stref) i
+[Gateway topology](../specification/scope.md#topologia-bramki).
 
 Pierwszy ekran pyta, **jak kocioł jest podłączony**. Odpowiedź decyduje, co wtyczka może
 zapisywać, jak oddaje kocioł i co proponuje urządzenie sterujące:
@@ -657,8 +657,8 @@ kocioł w ciągu około minuty wraca do własnego ustawienia.
 Ta część wyjaśnia, jak wtyczka oddaje kocioł, jak reaguje, gdy coś innego zmienia kocioł, i jak
 sterowanie wraca po zatrzymaniu.
 
-Szczegóły: [`docs/en/specification/scope.md`, §5](../../en/specification/scope.md#5-hardware-circuits-and-zone-algorithms)
-(bezpieczne oddanie sterowania) i [§7](../../en/specification/scope.md#7-features-by-stage) (podstawa
+Szczegóły: [`docs/pl/specification/scope.md`, §5](../specification/scope.md#5-sprzęt-obiegi-i-algorytmy-stref)
+(bezpieczne oddanie sterowania) i [§7](../specification/scope.md#7-funkcje-według-etapów) (podstawa
 sterowania).
 
 ### 6.1 Bezpieczne oddanie sterowania
@@ -998,7 +998,7 @@ Dwa ostatnie pojawiają się, gdy integracja została usunięta, zanim zdążył
 
 Diagram pokazuje stany, przez które przechodzi sterowanie, i to, co przenosi je z jednego do
 drugiego. Odpowiada tabeli „How control resumes” w
-[`docs/en/specification/scope.md`, §7](../../en/specification/scope.md#7-features-by-stage) oraz części
+[`docs/pl/specification/scope.md`, §7](../specification/scope.md#7-funkcje-według-etapów) oraz części
 [Jak sterowanie wraca](#67-jak-sterowanie-wraca) wyżej.
 
 ```mermaid

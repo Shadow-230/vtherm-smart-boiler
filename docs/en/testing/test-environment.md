@@ -1,3 +1,5 @@
+[Polska wersja](../../pl/testing/test-environment.md)
+
 # Test Home Assistant
 
 A Home Assistant 2026.9.3 in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile

@@ -1,6 +1,6 @@
-# Smart Boiler's water data for zone algorithms — integration specification
+[Polska wersja](../../pl/specification/water-interface.md)
 
-[Polska wersja: dokumentacja techniczna, rozdział 8](../../pl/technical/technical.md#8-dane-o-wodzie-dla-algorytmów-stref)
+# Smart Boiler's water data for zone algorithms — integration specification
 
 Status: agreed with the owner on 2026-10-12; the requirements are closed. Smart Boiler's side is
 built (step I9 of `docs/en/development/plans/plan-0.2.md`, `docs/en/development/plans/plan-0.2-i9.md`, 2026-10-12); a contract test

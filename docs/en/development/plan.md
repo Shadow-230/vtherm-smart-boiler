@@ -1,3 +1,5 @@
+[Polska wersja](../../pl/development/plan.md)
+
 # Development plan
 
 Scope: `docs/en/specification/scope.md`. The author's own assessment of their installation: `home-assessment.md`
