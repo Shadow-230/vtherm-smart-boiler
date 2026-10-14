@@ -419,6 +419,19 @@ def not_asking(t: float) -> ZoneState:
     return zone(t, valve_open=0.0)
 
 
+def test_each_decision_carries_the_demand_it_judged() -> None:
+    """2026-10-14: the demand judged at the step — the zones and devices calling, the power,
+    the widest opening — goes with the decision, for the control state and the water interface
+    to show against the thresholds, as VT's central boiler shows its own; switched off too."""
+    _state, [decision] = run([inputs(0.0)], CONFIG)
+    assert decision.demand is not None
+    assert (decision.demand.wanted, decision.demand.zones_wanting) == (True, 1)
+    _state, [off] = run([inputs(0.0, enabled=False)], CONFIG)
+    assert off.mode is ControlMode.DISABLED
+    assert off.demand is not None
+    assert off.demand.zones_wanting == 1
+
+
 def test_a_circuit_asking_heats_and_holds_its_need() -> None:
     """A circuit run by other automation asking turns heating on by itself — no zone asks —
     and holds the water at its need over a cooler curve, nothing added (2026-10-14)."""

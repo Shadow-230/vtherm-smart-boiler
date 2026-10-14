@@ -19,7 +19,14 @@ from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .core.alarms import AlarmKind
 from .core.signal_check import OutdoorStatus, link_problems
 from .core.signals import Signal
-from .entity import ControlEntity, SmartBoilerEntity, coded_text, feature_configured
+from .entity import (
+    DEMAND_ATTRIBUTES,
+    ControlEntity,
+    SmartBoilerEntity,
+    coded_text,
+    demand_attributes,
+    feature_configured,
+)
 
 # Early warnings are advanced: created but hidden until the user shows them.
 EARLY_WARNINGS = frozenset(
@@ -59,6 +66,7 @@ async def async_setup_entry(
     if feature_configured(coordinator, "long_burn"):
         entities.append(LongBurnSensor(coordinator))
     if coordinator.control is not None:
+        entities.append(BoilerCalledSensor(coordinator))  # VT's central boiler sensor's place
         # Each path's own alarms (R15): the relay's only on the relay path, the boiler link's
         # and the missing confirmation not there; each only where its feature is not inactive.
         kinds = control_alarms_for(coordinator.control.options)
@@ -190,6 +198,27 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
         if check is None:
             return {}
         return {"status": check.status.value, "mean_difference": check.mean_difference}
+
+
+class BoilerCalledSensor(ControlEntity, BinarySensorEntity):
+    """On while the plugin calls the boiler for space heating, frost protection included — what
+    VT's central boiler sensor shows (the user's decisions of 2026-10-14); off while it controls
+    the boiler and does not call it; unknown while it does not control it, or cannot tell yet.
+    Why not, and the demand against its thresholds, in its attributes."""
+
+    _unrecorded_attributes = DEMAND_ATTRIBUTES
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "boiler_called")
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.control.status.boiler_called
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        status = self.control.status
+        return {"call_reason": status.call_reason, **demand_attributes(status)}
 
 
 class ControlAlarmSensor(ControlEntity, BinarySensorEntity):

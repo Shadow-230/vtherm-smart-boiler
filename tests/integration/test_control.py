@@ -14221,3 +14221,67 @@ async def test_the_precedence_of_a_control_step(
         assert control_state is None
     else:
         assert rig.state("sensor", "control_state").state == shown
+
+
+# --- What VT's central boiler shows: the call, the demand against its thresholds (2026-10-14) --
+
+
+async def test_the_boiler_called_sensor_shows_the_call_and_why_not(rig: Rig) -> None:
+    """The user's decisions of 2026-10-14: what VT's central boiler sensor shows — on while the
+    plugin calls the boiler; off with the reason while it controls and does not (a zone calling
+    under a count of two); unknown while control is off. The demand against its thresholds
+    beside it, on the control state too, and the event VT fires when the call changes."""
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    from custom_components.vtherm_smart_boiler.const import BOILER_CALL_EVENT
+
+    events = async_capture_events(rig.hass, BOILER_CALL_EVENT)
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig, count_threshold=2)
+    await rig.advance(20)
+    called = rig.state("binary_sensor", "boiler_called")
+    assert (called.state, called.attributes["call_reason"]) == ("unknown", "not_controlling")
+    await rig.switch(True)
+    await rig.advance(20)
+    called = rig.state("binary_sensor", "boiler_called")
+    assert (called.state, called.attributes["call_reason"]) == ("off", "below_threshold")
+    assert (called.attributes["demand_count"], called.attributes["count_threshold"]) == (1, 2)
+    assert called.attributes["count_by"] == "zones"  # an entry from before counts zones (21)
+    state = rig.state("sensor", "control_state")
+    assert (state.attributes["boiler_called"], state.attributes["call_reason"]) == (
+        False,
+        "below_threshold",
+    )
+    rig.zones.set("bedroom", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(20)
+    called = rig.state("binary_sensor", "boiler_called")
+    assert (called.state, called.attributes["call_reason"]) == ("on", None)
+    assert [event.data["boiler_called"] for event in events] == [False, True]
+    assert rig.entry is not None
+    assert {event.data["entry_id"] for event in events} == {rig.entry.entry_id}
+
+
+async def test_the_demand_sensors_count_vts_devices_and_sum_the_power(rig: Rig) -> None:
+    """2026-10-14: counting devices as VT's central boiler does, a zone with two heads open
+    counts two and reaches a count of two alone; the zones' mean power summed beside its
+    threshold; the zones calling and the devices VT lists active."""
+    rig.zones.set(
+        "living",
+        hvac_action="heating",
+        valve_open_percent=60,
+        on_percent=0.6,
+        specific_states={"is_device_active": True, "device_actives": ["switch.a", "switch.b"]},
+        power_manager={"device_power": 2.0, "mean_cycle_power": 1.2, "power_unit": "kW"},
+    )
+    await start(rig, count_by="devices", count_threshold=2, power_threshold_kw=1.5)
+    await rig.switch(True)
+    await rig.advance(20)
+    count = rig.state("sensor", "demand_count")
+    assert count.state == "2"
+    assert (count.attributes["count_by"], count.attributes["count_threshold"]) == ("devices", 2)
+    assert count.attributes["active_devices"] == ["switch.a", "switch.b"]
+    assert count.attributes["calling_zones"] == [rig.zones.entities["living"]]
+    power = rig.state("sensor", "demand_power")
+    assert float(power.state) == pytest.approx(1.2)
+    assert power.attributes["power_threshold_kw"] == 1.5
+    assert rig.state("binary_sensor", "boiler_called").state == "on"  # by the count

@@ -206,6 +206,19 @@ same way VT's central boiler does. You choose one or more of these criteria:
   zones is set — its mixer needs the water. If that entity is unavailable or unknown, the
   circuit asks nothing (its zones still can, and frost protection still watches), and the
   control state shows the reason `circuit_request_unknown`.
+- **What VT's central boiler showed, the plugin shows** (with control set up):
+  - **Heat call** — on while the plugin calls the boiler for heat (frost protection
+    included); off while it controls the boiler and does not call it, with the reason: nothing
+    calls, zones call under the thresholds, the start waits VT's activation delay, the boiler
+    reports a fault; unknown while it does not control the boiler (control off, blocked, handed
+    back) or cannot tell yet. Its attributes show the demand against the thresholds.
+  - **Calling for heat** — the devices (or zones, as counted) calling now, with the zones
+    calling and the devices VT lists active; **Calling power** — the zones' mean power summed,
+    as VT shows it. The power counts toward its threshold only while a calling zone's valve is
+    open or its device on, so the boiler never heats against closed valves.
+  - The event `vtherm_smart_boiler_boiler_call`, fired when the call changes and when a start
+    begins to wait VT's activation delay, for your automations (`boiler_called`,
+    `call_reason`, `activation_at`).
 
 ### 4.4 The water temperature
 

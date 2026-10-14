@@ -707,3 +707,17 @@ def test_a_threshold_reached_exactly_is_demand(state: ZoneState, config: DemandC
     """A threshold is reached at its value: a power or an opening equal to it is demand, each
     criterion deciding alone."""
     assert boiler_demand([state], NOW, AGE, config).wanted is True
+
+
+def test_the_summed_power_is_shown_whether_heat_can_flow_or_not() -> None:
+    """2026-10-14: the zones' mean power summed, as VT's central boiler shows it — also through
+    the off part of a switch zone's cycle, where the criterion judges 0 (no heat can flow);
+    ``None`` where no zone feeds power."""
+    off_part = zone("a", on_percent=0.2, power=2.0, mean_power=0.4, device_active=False)
+    config = DemandConfig(count_threshold=0, power_threshold_kw=0.6)
+    result = boiler_demand([off_part], NOW, AGE, config)
+    assert (result.power_kw, result.summed_power_kw) == (0.0, 0.4)
+    on_part = replace(off_part, device_active=True)
+    result = boiler_demand([on_part], NOW, AGE, config)
+    assert (result.wanted, result.power_kw, result.summed_power_kw) == (False, 0.4, 0.4)
+    assert boiler_demand([zone("b", valve_open=0.5)], NOW, AGE, config).summed_power_kw is None
