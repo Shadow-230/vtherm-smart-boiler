@@ -203,6 +203,12 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła; ochrona przed mrozem dalej
   czuwa.
 - Wtyczka nie ma przełącznika lato/zima. Jeśli strefy VT są wyłączone, kocioł nie grzeje.
+- **Strefy z zaworem, który nie zamyka się do końca** (w VT **Maksymalny stopień zamknięcia**
+  poniżej 100): używaj VT 10.5 lub nowszego. Od 10.5 zawór trzymany na tym minimum nie liczy się
+  jako grzejący, a strefa prosi o ciepło dopiero, gdy VT otworzy go bardziej. VT 10.2–10.4 liczył
+  go jako grzejący, więc taka strefa prosiła o ciepło bez przerwy i kocioł mógł się nigdy nie
+  wyłączać. Przy ustawieniu domyślnym (100: zawór zamyka się całkiem) wszystkie wersje działają
+  tak samo.
 - Obieg sterowany przez inną automatykę prosi o ciepło, gdy jego encja **Obieg prosi o ciepło**
   jest włączona albo gdy potrzebuje ciepła któraś z jego stref: grzanie włącza się wtedy dla
   niego samego, bez względu na ustawioną liczbę stref — jego mieszacz potrzebuje wody. Gdy tej
@@ -830,7 +836,7 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu przez jego czas (obieg prosto z kotła: nie podczas grzania ciepłej wody) | sprawdź jego maksimum |
-| Długie palenie bez nagrzewania | płomień 3 h bez przerwy, a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń, kocioł na granicy mocy, czy woda za ciepła | korekta podnosi za chłodną wodę; przy za ciepłej obniż krzywą |
+| Długie palenie bez nagrzewania | płomień 3 h bez przerwy, a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń, kocioł na granicy mocy, czy woda za ciepła | korekta podnosi za chłodną wodę; przy za ciepłej obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
 
 Zgłoszenia w Naprawach:
 

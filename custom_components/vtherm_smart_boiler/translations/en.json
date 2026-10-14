@@ -2592,7 +2592,7 @@
             "state": {
               "power_limit": "The boiler at its power limit: below its setpoint at high modulation",
               "water_too_cool": "The water too cool for the rooms short: the comfort correction raises it",
-              "water_too_hot": "The water too hot: lower the curve"
+              "water_too_hot": "The water too hot: lower it (the curve, or the boiler's own setting)"
             }
           },
           "rooms": {

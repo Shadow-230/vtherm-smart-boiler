@@ -191,6 +191,11 @@ same way VT's central boiler does. You choose one or more of these criteria:
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
   VT does not hand the boiler back; frost protection still watches.
 - There is no summer switch in the plugin. If VT's zones are off, the boiler does not heat.
+- **Valve zones whose valve may not close fully** (VT's **Max closing degree** below 100): use
+  VT 10.5 or newer. From 10.5, a valve held at that floor does not count as heating, and the zone
+  calls only once VT opens it further. VT 10.2–10.4 counted it as heating, so such a zone called
+  for heat all the time and the boiler might never switch off. With the default (100: the valve
+  closes fully) every version behaves the same.
 - A circuit controlled by other automation asks for heat while its **Circuit asks for heat**
   entity is on, or one of its zones calls: heating goes on for it alone, whatever number of
   zones is set — its mixer needs the water. If that entity is unavailable or unknown, the
@@ -789,7 +794,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
-| Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; lower the curve if too hot |
+| Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; if too hot, lower it — the curve, or on an on/off boiler its own water setting |
 
 Repair issues:
 

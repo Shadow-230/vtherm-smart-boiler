@@ -19,6 +19,12 @@ logger:
     custom_components.boiler_sim: info
     custom_components.opentherm_gw: info
 
+# J4's scenario E7: the switch through which a circuit run by other automation asks for heat (its
+# "Circuit asks for heat" entity), on and off by the runner.
+input_boolean:
+  j4_circuit_asks:
+    name: J4 circuit asks for heat
+
 # J4's test-only fault injector (sim/custom_components/j4_faults): makes the plugin's own monitor
 # fail, starts the plugin on the stores a crash or another version leaves, or removes answers
 # from its options — what the in-process acceptance tests do with patches. Test only: the plugin's
