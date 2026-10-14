@@ -1400,7 +1400,7 @@ class ControlUnit:
             return setpoint
         control = self.options.loop.control
         return within_write_bounds(
-            setpoint, control.limits, control.circuit_max, control.boiler_max, control.circuit_floor
+            setpoint, control.limits, control.circuit_max, control.boiler_max
         )
 
     @property
@@ -1842,9 +1842,7 @@ class ControlUnit:
             return False
         low, high = read_bounds(self._hass, options.setpoint_entity)
         control = options.loop.control
-        lowest, highest = write_bounds(
-            control.limits, control.circuit_max, control.boiler_max, control.circuit_floor
-        )
+        lowest, highest = write_bounds(control.limits, control.circuit_max, control.boiler_max)
         # Each value with the bounds its grid value must keep.
         values: list[tuple[float, float | None, float | None]] = [
             (control.limits.hard_min, control.limits.hard_min, highest),

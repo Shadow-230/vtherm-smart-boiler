@@ -1141,6 +1141,19 @@ def fed_zones(answers: Mapping[str, Any], devices: Mapping[str, str]) -> list[st
     return fed
 
 
+def circuit_need_warning(circuit: Mapping[str, Any]) -> dict[str, str]:
+    """The user's decision of 2026-10-14: a circuit run by other automation with a water need and
+    underfloor zones raises the boiler to that need at every call of those zones, while a floor
+    behind a mixer needs none — the curve is enough. A warning the form shows once."""
+    if circuit.get("control") != CircuitControl.SEPARATE:
+        return {}
+    if circuit.get(NEEDED_TEMPERATURE) is None and not circuit.get(NEEDED_ENTITY):
+        return {}
+    if not _listed(circuit.get(EMITTER_LISTS[0])):  # its zones with underfloor heating
+        return {}
+    return {"base": "need_on_underfloor"}
+
+
 def circuit_alarm_error(circuit: Mapping[str, Any], advanced: bool) -> dict[str, str]:
     """The too-hot alarm must lie above the circuit's maximum (decision 10). At the simple level
     its field is hidden: the maximum's field says it."""
@@ -2933,6 +2946,7 @@ class _Steps:
     _interface_draft: dict[str, Any] | None = None  # the interface form's answers so far (A2)
     _signals_draft: dict[str, Any] | None = None  # the signals form's answers so far (A2)
     _circuit_draft: dict[str, Any] | None = None  # the circuit form's answers so far (A2)
+    _circuit_warned: dict[str, Any] | None = None  # the circuit last warned of, as answered
     _entity_draft: dict[str, Any] | None = None  # the writable entity's answers so far (A2)
     _relay_draft: dict[str, Any] | None = None  # the relay's answers so far (A2)
     _changed: list[str]  # the sections whose answers changed the options, in that order
@@ -3160,7 +3174,7 @@ class _Steps:
     async def _open_circuit(self, index: int) -> ConfigFlowResult:
         """A circuit's menu item (I8, decision F1): its form, the circuit kept in the flow."""
         self._circuit_index = index
-        self._circuit_draft = None
+        self._circuit_draft = self._circuit_warned = None
         return await self.async_step_circuit()
 
     async def async_step_circuit(
@@ -3242,6 +3256,10 @@ class _Steps:
                 errors["fixed_temperature"] = "fixed_temperature_missing"
             elif alarm_error := circuit_alarm_error(circuit, advanced):
                 errors = alarm_error
+            elif (warning := circuit_need_warning(circuit)) and self._circuit_warned != circuit:
+                # A warning, not a refusal: the same answer submitted again is saved.
+                self._circuit_warned = circuit
+                errors = warning
             else:
                 if new:
                     circuits.append(circuit)

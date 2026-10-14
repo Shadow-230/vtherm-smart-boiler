@@ -1,13 +1,13 @@
 """I8.8 (decisions F3, F6): circuits run by other automation — a mixer or a pump the plugin
 never drives — ask for heat through an entity of their own and their VT zones; while one asks,
-the boiler's water stays at or above its need plus a margin."""
+the boiler's water stays at or above its need — no margin of the plugin's own (the user's
+decision of 2026-10-14)."""
 
 from __future__ import annotations
 
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.circuit_requests import (
-    OTHER_AUTOMATION_MARGIN_K,
     OtherAutomation,
     circuits_asking,
 )
@@ -16,18 +16,19 @@ MIXER = OtherAutomation("floor", zones=frozenset({"climate.bath"}), requests=Tru
 
 
 def test_a_circuit_asks_through_its_entity_and_its_need_holds_the_water() -> None:
-    """Its entity on: it asks, and the water holds its need plus the margin."""
+    """Its entity on: it asks, and the water holds its need exactly — nothing added (the user's
+    decision of 2026-10-14: a mixer standing open at its target is no problem)."""
     found = circuits_asking((MIXER,), {"floor": True}, {}, frozenset())
     assert found.asking == ("floor",)
     assert found.unknown == ()
-    assert found.floor == 35.0 + OTHER_AUTOMATION_MARGIN_K
+    assert found.floor == 35.0
 
 
 def test_a_circuit_asks_through_its_zones_too() -> None:
     """Its entity off, one of its VT zones asking: it asks, as a zone does."""
     found = circuits_asking((MIXER,), {"floor": False}, {}, frozenset({"climate.bath"}))
     assert found.asking == ("floor",)
-    assert found.floor == 40.0
+    assert found.floor == 35.0
 
 
 @pytest.mark.parametrize("reading", [None, False])
@@ -43,8 +44,8 @@ def test_an_unknown_or_quiet_request_does_not_ask(reading: bool | None) -> None:
 def test_the_needs_entity_comes_first_its_value_without_it() -> None:
     """The need an entity reports comes first; unknown, the value entered; neither, no floor —
     the curve gives the water (Claude's call)."""
-    assert circuits_asking((MIXER,), {"floor": True}, {"floor": 50.0}, frozenset()).floor == 55.0
-    assert circuits_asking((MIXER,), {"floor": True}, {"floor": None}, frozenset()).floor == 40.0
+    assert circuits_asking((MIXER,), {"floor": True}, {"floor": 50.0}, frozenset()).floor == 50.0
+    assert circuits_asking((MIXER,), {"floor": True}, {"floor": None}, frozenset()).floor == 35.0
     bare = OtherAutomation("floor", requests=True)
     found = circuits_asking((bare,), {"floor": True}, {}, frozenset())
     assert found.asking == ("floor",)
@@ -52,14 +53,14 @@ def test_the_needs_entity_comes_first_its_value_without_it() -> None:
 
 
 def test_the_highest_need_of_those_asking_wins() -> None:
-    """Several asking: the highest need, plus the margin; one not asking adds none."""
+    """Several asking: the highest need; one not asking adds none."""
     hot = OtherAutomation("pool", requests=True, needed=55.0)
     cool = OtherAutomation("floor", requests=True, needed=35.0)
     quiet = OtherAutomation("garage", requests=True, needed=70.0)
     requests = {"pool": True, "floor": True, "garage": False}
     found = circuits_asking((cool, hot, quiet), requests, {}, frozenset())
     assert found.asking == ("floor", "pool")
-    assert found.floor == 60.0
+    assert found.floor == 55.0
 
 
 def test_a_circuit_without_its_own_entity_asks_through_its_zones_alone() -> None:
@@ -67,7 +68,7 @@ def test_a_circuit_without_its_own_entity_asks_through_its_zones_alone() -> None
     zones_only = OtherAutomation("floor", zones=frozenset({"climate.bath"}), needed=30.0)
     assert circuits_asking((zones_only,), {}, {}, frozenset()).asking == ()
     found = circuits_asking((zones_only,), {}, {}, frozenset({"climate.bath"}))
-    assert (found.asking, found.unknown, found.floor) == (("floor",), (), 35.0)
+    assert (found.asking, found.unknown, found.floor) == (("floor",), (), 30.0)
 
 
 def test_a_zone_split_by_its_devices_asks_through_its_devices_there() -> None:
@@ -113,7 +114,7 @@ def test_a_quiet_circuit_listed_first_does_not_hide_those_after_it() -> None:
     asking = OtherAutomation("floor", requests=True, needed=35.0)
     found = circuits_asking((quiet, asking), {"garage": False, "floor": True}, {}, frozenset())
     assert found.asking == ("floor",)
-    assert found.floor == 35.0 + OTHER_AUTOMATION_MARGIN_K
+    assert found.floor == 35.0
 
 
 def test_a_lower_need_listed_after_a_higher_one_does_not_lower_the_floor() -> None:
@@ -123,4 +124,4 @@ def test_a_lower_need_listed_after_a_higher_one_does_not_lower_the_floor() -> No
     cool = OtherAutomation("floor", requests=True, needed=35.0)
     found = circuits_asking((hot, cool), {"pool": True, "floor": True}, {}, frozenset())
     assert found.asking == ("pool", "floor")
-    assert found.floor == 55.0 + OTHER_AUTOMATION_MARGIN_K
+    assert found.floor == 55.0

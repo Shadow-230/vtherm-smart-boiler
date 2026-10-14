@@ -375,9 +375,11 @@ What the plugin can do depends on what the integration can write:
   or a second one fed straight, keeps the monitor running and a blocker says why. One curve, in
   the control options, serves the circuit fed straight — with none, the first circuit; the
   comfort correction and the curve's room (Auto) read that circuit's zones, every zone where it
-  is the only circuit or there is none. The water is the curve, never below a fixed valve's
-  setting plus 5 K, nor below the need of a circuit run by other automation plus 5 K while it
-  asks (provisional, K4); the highest water temperature of the circuits fed straight (70 °C
+  is the only circuit or there is none. The water is the curve, never below the need of a
+  circuit run by other automation while it asks — nothing added; a fixed valve sets no lower
+  bound, standing open while the water is at or below its setting (the user's decision of
+  2026-10-14: a mixer or valve need not mix all the time); the highest water temperature of the
+  circuits fed straight (70 °C
   where empty or where there is none) and the boiler's maximum cap it — a circuit behind a
   mixer or a fixed valve is guarded by them, and its too-hot alarm tells (the user's answers of
   2026-10-12). Per-circuit curves come with CH2.
@@ -456,8 +458,8 @@ takes the emitter types of its zones (S-33); the burner is shared.
 |---|---|---|
 | Unmixed, shared | radiators and underfloor on one loop, no mixing valve | one curve for the loop, capped by the most sensitive emitter (underfloor maximum flow) |
 | Controlled through the boiler | OpenTherm CH2, EMS-ESP HC2, the boiler's mixing module | own curve and setpoint per circuit; boiler flow = highest circuit need + mixing margin |
-| Controlled by other automation (mixer, pump) | external mixing controller, a mixer driven by HA, a separate weather controller | heats while its "circuit asks for heat" entity is on or one of its zones asks — an entity that cannot be read asks nothing, and the control state says why; while it asks, keeps the boiler's water at or above its need (an entity's reading first, else the value entered) + 5 K (provisional, K4); never drives the mixer or the pump (I8, decisions F3, F6) |
-| Passive fixed | thermostatic mixing valve | declared fixed temperature; boiler flow kept at least 5 K above it (S-42; provisional, K4) |
+| Controlled by other automation (mixer, pump) | external mixing controller, a mixer driven by HA, a separate weather controller | heats while its "circuit asks for heat" entity is on or one of its zones asks — an entity that cannot be read asks nothing, and the control state says why; while it asks, keeps the boiler's water at or above its need (an entity's reading first, else the value entered), nothing added — a need is for a load hotter than the curve whatever the weather (a fan heater, a ventilation coil, a tank), not for a floor behind a mixer, which the form warns of once (2026-10-14); never drives the mixer or the pump (I8, decisions F3, F6) |
+| Passive fixed | thermostatic mixing valve | declared fixed temperature, which tells its zones what water they get; no lower bound on the boiler's flow — the curve, the valve standing open at or below its setting (2026-10-14, replacing S-42's setting + 5 K) |
 
 - Each VT zone is assigned to a circuit in the wizard; zone arbitration (the critical zone) runs
   per circuit. A zone fed by two circuits — a radiator on one, a floor loop on the other — is in
@@ -1245,7 +1247,6 @@ reviews every provisional value at K4.
 | An alarm level counts once held 5 min; a notification closes after 60 min in range; an unknown input held 60 min, then unknown | alarms | provisional, K4 |
 | A boiler fault stops heating after 5 min on | control | provisional, K4 |
 | Wall-thermostat warning below 15 °C | monitor | provisional, K4 |
-| A passive fixed circuit's margin 5 K | limits | provisional, K4 (reason to confirm) |
 | A timeout hand-back released within 0.5 K of the baseline, or 0.5 K away from both the plugin's last value and the lowest; "hand-back failed" 3 min after the device's timeout (asked in the form) | hand-back | provisional, K4 (S-20; decision 5 of `docs/plan-0.2.3.md`) |
 | A relay's proof-of-heat window 30 min after "on" | control | longer than a common 20-min restart lockout; provisional, K4 |
 | "No sign the boiler heats" on the water-temperature paths: 30 min running of heating commanded while a zone calls, the flame known off (or, with it unknown, no 5-K rise of the flow) | control (decision 2 of 0.2.3) | longer than a common 20-min restart lockout, as the relay's window; provisional, K4 |
@@ -1550,8 +1551,8 @@ Starts per hour count the hours with heating.
   gateway; N — a fourth relay restart within 24 h is another controller; O — "heating off" ignored
   from the start blocks control and hands back.
 - Provisional control decisions (K4): control for at most one circuit fed straight from the
-  boiler, with circuits behind a fixed valve or run by other automation beside it (each holding
-  the water at its setting or need plus 5 K), and a boiler of the class "flow setpoint" or "on/off" (a relay); the curve's design flow is entered,
+  boiler, with circuits behind a fixed valve or run by other automation beside it (the latter
+  holding the water at its need while it asks), and a boiler of the class "flow setpoint" or "on/off" (a relay); the curve's design flow is entered,
   never defaulted; control refused while VT's own central boiler is configured (no monitoring
   period holds it: 2026-10-08); the first setpoint of a session is the curve's value, not ramped from the
   current flow; alarm reactions as decision 7; frost protection

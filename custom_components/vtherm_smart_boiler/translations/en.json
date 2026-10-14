@@ -201,9 +201,9 @@
           "underfloor": "This circuit's zones with underfloor heating: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
           "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C (70 where empty); with control no setpoint goes above it. Needed for unmixed underfloor. Too high overheats emitters or a floor; too low: rooms stay cold in frost. After a hand-back the boiler's or thermostat's own maximum is the only one.",
-          "fixed_temperature": "A thermostatic mixing valve's setting, in °C; required for that type. The boiler's water stays at least 5 K above it, so the valve can reach it.",
+          "fixed_temperature": "A thermostatic mixing valve's setting, in °C; required for that type. It tells the zones what water they get (the lower of the boiler's flow and this setting); the boiler follows its curve, and the valve stands open while the water is at or below its setting.",
           "request_entity": "Optional: an entity on while the circuit's own controller (a mixer, a pump) wants heat; the boiler heats for it as for a zone. Unreadable, it asks nothing and the control state says so.",
-          "needed_temperature": "Optional: while the circuit asks, the boiler's water stays at or above this plus 5 K — the margin its mixer mixes down from. Empty, the curve gives the water.",
+          "needed_temperature": "Optional, only for a circuit that needs water hotter than the curve gives whatever the weather — a fan heater, a ventilation coil, a tank. While it asks, the boiler's water stays at or above this; nothing is added. Leave it empty for underfloor heating behind a mixer: the curve is enough. Empty, the curve gives the water.",
           "needed_entity": "Optional: an entity reporting the water the circuit needs now, taken before the value above; unreadable, the value is used.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
@@ -453,6 +453,7 @@
     "error": {
       "min_power_not_below_max": "The minimum power must be below the maximum power.",
       "fixed_temperature_missing": "A thermostatic mixing valve (fixed) needs its temperature setting.",
+      "need_on_underfloor": "Underfloor heating with a water need: at every call of its zones the boiler goes to this temperature. A floor behind a mixer needs none — leave it empty and the curve gives the water. Submit again to keep it.",
       "missing_signal": "A required signal is missing.",
       "implausible_parameter": "A parameter is outside its plausible range.",
       "unknown_circuit": "A zone refers to a circuit that does not exist.",
@@ -794,9 +795,9 @@
           "underfloor": "This circuit's zones with underfloor heating: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
           "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C (70 where empty); with control no setpoint goes above it. Needed for unmixed underfloor. Too high overheats emitters or a floor; too low: rooms stay cold in frost. After a hand-back the boiler's or thermostat's own maximum is the only one.",
-          "fixed_temperature": "A thermostatic mixing valve's setting, in °C; required for that type. The boiler's water stays at least 5 K above it, so the valve can reach it.",
+          "fixed_temperature": "A thermostatic mixing valve's setting, in °C; required for that type. It tells the zones what water they get (the lower of the boiler's flow and this setting); the boiler follows its curve, and the valve stands open while the water is at or below its setting.",
           "request_entity": "Optional: an entity on while the circuit's own controller (a mixer, a pump) wants heat; the boiler heats for it as for a zone. Unreadable, it asks nothing and the control state says so.",
-          "needed_temperature": "Optional: while the circuit asks, the boiler's water stays at or above this plus 5 K — the margin its mixer mixes down from. Empty, the curve gives the water.",
+          "needed_temperature": "Optional, only for a circuit that needs water hotter than the curve gives whatever the weather — a fan heater, a ventilation coil, a tank. While it asks, the boiler's water stays at or above this; nothing is added. Leave it empty for underfloor heating behind a mixer: the curve is enough. Empty, the curve gives the water.",
           "needed_entity": "Optional: an entity reporting the water the circuit needs now, taken before the value above; unreadable, the value is used.",
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
@@ -1056,6 +1057,7 @@
     "error": {
       "min_power_not_below_max": "The minimum power must be below the maximum power.",
       "fixed_temperature_missing": "A thermostatic mixing valve (fixed) needs its temperature setting.",
+      "need_on_underfloor": "Underfloor heating with a water need: at every call of its zones the boiler goes to this temperature. A floor behind a mixer needs none — leave it empty and the curve gives the water. Submit again to keep it.",
       "hand_back_value_missing": "The value method needs a hand-back value.",
       "hand_back_entity_missing": "The switch method needs the external control switch.",
       "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts.",
@@ -1671,13 +1673,12 @@
               "limit_hard_max": "Held at the highest water temperature",
               "limit_circuit_max": "Held at the circuit's maximum",
               "limit_boiler_max": "Held at the boiler's maximum",
-              "limit_fixed_circuit": "Raised for the circuit with a fixed mixing valve",
               "comfort_correction": "Comfort correction applied",
               "activation_delay": "Waiting for the activation delay",
               "boiler_fault": "The boiler reports its own fault: heating off",
               "circuit_asks": "A circuit run by other automation asks for heat",
               "circuit_request_unknown": "A circuit's request cannot be read: it does not ask",
-              "limit_circuit_need": "Raised for a circuit run by other automation: its need plus 5 K"
+              "limit_circuit_need": "Raised for a circuit run by other automation: its need"
             }
           },
           "reasons_text": {

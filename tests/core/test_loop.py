@@ -873,17 +873,16 @@ def test_a_new_session_keeps_the_wait_for_a_link_not_yet_reported() -> None:
     [
         ({"circuit_max": 60.0}, -30.0, 59.75),
         ({"boiler_max": 60.0}, -30.0, 59.75),
-        ({"circuit_floor": 40.4}, 20.0, 40.75),
         ({}, 20.0, 25.25),
     ],
-    ids=["circuit_max", "boiler_max", "circuit_floor", "hard_min"],
+    ids=["circuit_max", "boiler_max", "hard_min"],
 )
 def test_a_setpoint_on_a_grid_stays_inside_every_bound(
     ch_writes: bool, bounds: dict, outdoor: float, sent: float
 ) -> None:
     """P-98, P-15: on an entity's grid of 0.5 from 0.25, a circuit's or the boiler's maximum of 60
-    is sent as 59.75, never 60.25; a fixed circuit's floor of 40.4 as 40.75, never 40.25; the hard
-    minimum 25 as 25.25, never 24.75 — with a heating switch and with "off" as a low setpoint."""
+    is sent as 59.75, never 60.25; the hard minimum 25 as 25.25, never 24.75 — with a heating
+    switch and with "off" as a low setpoint."""
     control = ControlConfig(curve=HeatingCurve(design_flow=75.0), ramp_k_per_min=None, **bounds)
     config = replace(CONFIG, control=control, ch_writes=ch_writes)
     step = inputs(0.0, outdoor_sensor=outdoor)

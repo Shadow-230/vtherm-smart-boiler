@@ -199,9 +199,7 @@ def _gridded(value: float, grid: Grid | None, config: LoopConfig, off: bool) -> 
     if off:
         return grid.put(value, None, value)
     control = config.control
-    low, high = write_bounds(
-        control.limits, control.circuit_max, control.boiler_max, control.circuit_floor
-    )
+    low, high = write_bounds(control.limits, control.circuit_max, control.boiler_max)
     return grid.put(value, low, high)
 
 

@@ -31,7 +31,9 @@ version is decided then.
 
 - The water temperature on a heating curve, bounded by the lowest and highest water temperature
   and each circuit's maximum; up to four circuits at the advanced level, among them circuits run
-  by other automation and circuits behind a fixed valve.
+  by other automation and circuits behind a fixed valve. A circuit run by other automation holds
+  the water at its need while it asks, nothing added; a fixed valve sets no lower bound — the
+  boiler follows its curve, the valve standing open at or below its setting.
 - Heating on and off following VT's zones — zones calling, total power or valve opening — and
   VT's central modes; VT's activation delay.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome

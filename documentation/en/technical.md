@@ -105,8 +105,9 @@ reports it clearly.
 **Circuits run by other automation (`core/circuit_requests.py`, `circuits_asking`).** A circuit
 whose mixer or pump something else drives asks for heat through its own entity or its zones; an
 entity that cannot be read asks nothing and is named. While it asks, its need — an entity's
-reading first, else the value entered — plus 5 K is a lower bound of the water
-(`core/limits.py`, `limit_flow`), as a fixed valve's setting plus 5 K is.
+reading first, else the value entered — is a lower bound of the water, nothing added
+(`core/limits.py`, `limit_flow`). A fixed valve sets none: the boiler follows its curve, the
+valve standing open while the water is at or below its setting.
 
 **Zone watch (`core/zone_watch.py`, `follow_zones`).** The recognition period after a start
 (at most 10 minutes), each zone's grace period, and the case where every zone is unknown.
@@ -175,7 +176,7 @@ flowchart TD
 - **Decide:** heating on or off is decided at every step — the zones' demand, or a circuit run
   by other automation asking; the water temperature every decision interval (5 minutes by
   default), and at once after a blocker or fault ends or when a circuit's need changes: the
-  curve, never below a fixed valve's setting or an asking circuit's need plus 5 K, capped by
+  curve, never below an asking circuit's need, capped by
   the circuits fed straight from the boiler and the boiler's maximum. With several circuits the
   curve's room and the comfort correction read the zones of the circuit fed straight.
 - **Guards** see the read-back of every write; a hand-back is never held back by a guard.

@@ -11699,9 +11699,9 @@ FLOOR_ASKS = "input_boolean.floor_asks"
 
 
 async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Rig) -> None:
-    """I8.8 (decisions F3, F6): the living room fed straight from the boiler, idle; a floor
-    circuit whose mixer another automation runs asks through its entity: heating goes on for
-    it, and the water holds its need, 60 °C, plus the margin. Its entity unavailable: it does
+    """I8.8 (decisions F3, F6): the living room fed straight from the boiler, idle; a circuit
+    whose mixer another automation runs asks through its entity: heating goes on for it, and
+    the water holds its need, 60 °C, nothing added (2026-10-14). Its entity unavailable: it does
     not ask, and the control state says why (the user's answer of 2026-10-12)."""
     rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
     rig.hass.states.async_set(FLOOR_ASKS, "on")
@@ -11723,7 +11723,7 @@ async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Ri
     assert state.state == "heating"
     assert "circuit_asks" in state.attributes["reasons"]
     assert ("ch", True) in rig.gateway.calls
-    assert rig.gateway.setpoints()[-1] == 65.0 > EXPECTED
+    assert rig.gateway.setpoints()[-1] == 60.0 > EXPECTED
     rig.hass.states.async_set(FLOOR_ASKS, "unavailable")
     await rig.advance(30)
     state = rig.state("sensor", "control_state")
