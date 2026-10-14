@@ -222,6 +222,10 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
         lambda: _demand(BARE),
         (1, None, None),
     ),
+    # What the count counts | VT's devices (2026-10-14)
+    ("count by", lambda: CONTROL_DEFAULTS["count_by"], "devices"),
+    ("count by (parser)", lambda: BARE.loop.control.demand.count_by.value, "devices"),
+    ("count by (form)", lambda: BEHAVIOUR_FORM["count_by"], "devices"),
     # Comfort correction | on in full control (the user, 2026-10-10, G11 B); up to its limit,
     # 3 K by default (at most 10 K), rising at most 3 K a day
     ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], True),

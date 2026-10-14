@@ -395,7 +395,8 @@
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
           "off_setpoint": "Nastawa „wyłączone”",
-          "count_threshold": "Strefy potrzebujące ciepła",
+          "count_by": "Co liczyć",
+          "count_threshold": "Wołające (urządzenia albo strefy)",
           "power_threshold_kw": "Moc stref potrzebujących ciepła",
           "opening_threshold": "Otwarcie zaworów stref potrzebujących ciepła",
           "learning_pauses": "Wstrzymuj naukę stref"
@@ -405,7 +406,8 @@
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie za strefami co 10 s. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
           "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
-          "count_threshold": "Ogrzewanie jest potrzebne, gdy prosi co najmniej tyle stref. Domyślnie 1, najwyżej liczba stref. 0 zostawia sam próg mocy albo otwarcia — każda strefa musi wtedy podawać, czego on potrzebuje, inaczej nigdy nie poprosi o ciepło. Więcej zostawia pojedynczy pokój bez ciepła.",
+          "count_by": "Co liczy próg poniżej: urządzenia VT — głowice, zawory, przełączniki — tak jak liczy je kocioł centralny VT (domyślnie), albo strefy, każdą jako jedną, ile by nie miała urządzeń. Przy progu 1 jedno i drugie działa tak samo; przy liczeniu urządzeń strefa z kilkoma otwartymi głowicami sama osiąga wyższy próg.",
+          "count_threshold": "Ogrzewanie jest potrzebne, gdy woła co najmniej tyle urządzeń — albo stref, zależnie od wyboru powyżej. Domyślnie 1, najwyżej tyle urządzeń (albo stref), ile mają obiegi. 0 zostawia sam próg mocy albo otwarcia — każda strefa musi wtedy podawać, czego on potrzebuje, inaczej nigdy nie poprosi o ciepło. Więcej zostawia pojedynczy pokój bez ciepła.",
           "power_threshold_kw": "Opcjonalnie: ogrzewanie jest potrzebne, gdy średnia moc stref, liczona jak w VT, osiągnie tyle, w kW, przy otwartym zaworze albo włączonym urządzeniu. Strefa bez mocy urządzenia w VT nie daje danych. Za wysoki zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród proszących stref osiągnie tyle, w %. Strefy VT over_climate nie dają danych. Za wysoki zostawia bez ciepła pokój, który otwiera się trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas ciepłej wody, gdy sterowanie trzyma grzanie wyłączone przez usterkę kotła i gdy woda się waha, żeby nie uczył się tego, co zrobił kocioł; najwyżej godzinę każdą. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez utraty nauki: takie strefy są zgłaszane."
@@ -494,7 +496,7 @@
       "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, odczyty zwrotne i typy zapisu, po których ocenia się oddanie, limit czasu urządzenia oraz najniższa temperatura wody nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
       "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
-      "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
+      "count_threshold_above_zones": "Więcej niż stref w obiegach — albo, przy liczeniu urządzeń, ich urządzeń: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
       "power_criterion_no_zone": "Żadna strefa nie podaje mocy urządzenia w Versatile Thermostat, więc tego progu nie da się osiągnąć: ustaw moc w VT albo zostaw puste.",
@@ -933,7 +935,8 @@
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
           "off_setpoint": "Nastawa „wyłączone”",
-          "count_threshold": "Strefy potrzebujące ciepła",
+          "count_by": "Co liczyć",
+          "count_threshold": "Wołające (urządzenia albo strefy)",
           "power_threshold_kw": "Moc stref potrzebujących ciepła",
           "opening_threshold": "Otwarcie zaworów stref potrzebujących ciepła",
           "learning_pauses": "Wstrzymuj naukę stref"
@@ -943,7 +946,8 @@
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie za strefami co 10 s. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
           "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
-          "count_threshold": "Ogrzewanie jest potrzebne, gdy prosi co najmniej tyle stref. Domyślnie 1, najwyżej liczba stref. 0 zostawia sam próg mocy albo otwarcia — każda strefa musi wtedy podawać, czego on potrzebuje, inaczej nigdy nie poprosi o ciepło. Więcej zostawia pojedynczy pokój bez ciepła.",
+          "count_by": "Co liczy próg poniżej: urządzenia VT — głowice, zawory, przełączniki — tak jak liczy je kocioł centralny VT (domyślnie), albo strefy, każdą jako jedną, ile by nie miała urządzeń. Przy progu 1 jedno i drugie działa tak samo; przy liczeniu urządzeń strefa z kilkoma otwartymi głowicami sama osiąga wyższy próg.",
+          "count_threshold": "Ogrzewanie jest potrzebne, gdy woła co najmniej tyle urządzeń — albo stref, zależnie od wyboru powyżej. Domyślnie 1, najwyżej tyle urządzeń (albo stref), ile mają obiegi. 0 zostawia sam próg mocy albo otwarcia — każda strefa musi wtedy podawać, czego on potrzebuje, inaczej nigdy nie poprosi o ciepło. Więcej zostawia pojedynczy pokój bez ciepła.",
           "power_threshold_kw": "Opcjonalnie: ogrzewanie jest potrzebne, gdy średnia moc stref, liczona jak w VT, osiągnie tyle, w kW, przy otwartym zaworze albo włączonym urządzeniu. Strefa bez mocy urządzenia w VT nie daje danych. Za wysoki zostawia małe pokoje bez ciepła.",
           "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród proszących stref osiągnie tyle, w %. Strefy VT over_climate nie dają danych. Za wysoki zostawia bez ciepła pokój, który otwiera się trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas ciepłej wody, gdy sterowanie trzyma grzanie wyłączone przez usterkę kotła i gdy woda się waha, żeby nie uczył się tego, co zrobił kocioł; najwyżej godzinę każdą. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez utraty nauki: takie strefy są zgłaszane."
@@ -1071,7 +1075,7 @@
       "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, odczyty zwrotne i typy zapisu, po których ocenia się oddanie, limit czasu urządzenia oraz najniższa temperatura wody nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
       "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
-      "count_threshold_above_zones": "Więcej stref, niż jest skonfigurowanych: grzanie nigdy nie zostałoby wezwane.",
+      "count_threshold_above_zones": "Więcej niż stref w obiegach — albo, przy liczeniu urządzeń, ich urządzeń: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
       "power_criterion_no_zone": "Żadna strefa nie podaje mocy urządzenia w Versatile Thermostat, więc tego progu nie da się osiągnąć: ustaw moc w VT albo zostaw puste.",
@@ -1307,6 +1311,12 @@
       "options": {
         "auto": "Auto (najcieplejszy pokój)",
         "manual": "Ręcznie (wpisana wartość)"
+      }
+    },
+    "count_by": {
+      "options": {
+        "devices": "Urządzenia (jak kocioł centralny VT)",
+        "zones": "Strefy"
       }
     },
     "menu_state": {

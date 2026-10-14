@@ -256,7 +256,7 @@ from .core.loop import (
     parse_last_command,
     remember_command,
 )
-from .core.readings import BoilerSnapshot, ZoneState
+from .core.readings import ZONE_OPEN, BoilerSnapshot, ZoneState
 from .core.relay import (
     PROOF_WINDOW_S,
     RELAY_NOT_TAKEN_CHECKS,
@@ -4643,11 +4643,8 @@ class ControlUnit:
             return []
         control = options.loop.control
         max_age = control.zone_max_age_s
-        opening = control.demand.zone_opening
         asking = [
-            zone.zone_id
-            for zone in zones
-            if zone.is_known(now, max_age) and zone_wants_heat(zone, opening)
+            zone.zone_id for zone in zones if zone.is_known(now, max_age) and zone_wants_heat(zone)
         ]
         for zone in zones:
             temperatures = watched_temperatures([zone], now, max_age, control.frost)
@@ -4722,7 +4719,7 @@ class ControlUnit:
             await self._async_release_learning(now)
             return
         coordinator = self._coordinator
-        opening = self.options.loop.control.demand.zone_opening
+        opening = ZONE_OPEN  # a zone taking heat now, for its learning (as before 2026-10-14)
         learning_zones = []
         for zone in zones:
             algorithm = coordinator.link.zone_algorithm(zone.zone_id)

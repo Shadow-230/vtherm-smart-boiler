@@ -147,7 +147,7 @@ from .core.alarms import (
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
 )
-from .core.demand import feeds_opening, feeds_power
+from .core.demand import CountBy, feeds_opening, feeds_power
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, HeatSource
 from .core.metrics import ModulationScale
@@ -166,6 +166,7 @@ from .vtherm_link import (
     vt_zones_in_area,
     zone_devices,
     zone_name,
+    zone_underlying_entities,
     zones_on_boiler_thermostat,
 )
 
@@ -1387,6 +1388,7 @@ CONTROL_ADVANCED_KEYS = (
     "frost_limit",
     "frost_release",
     "frost_zone",
+    "count_by",
     "count_threshold",
     "power_threshold_kw",
     "opening_threshold",
@@ -1976,13 +1978,20 @@ def control_behaviour_schema(
             fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
         return vol.Schema(fields)
 
+    by = control.get("count_by", CONTROL_DEFAULTS["count_by"])
     count = control.get("count_threshold")
-    if count is None and prefill is not None and prefill.count_threshold is not None:
-        count = prefill.count_threshold
+    if count is None and prefill is not None:
+        # VT's count as VT counts — devices —, or as rooms where every zone has one device.
+        count = (
+            prefill.count_threshold_devices
+            if by == CountBy.DEVICES.value
+            else prefill.count_threshold
+        )
     power = control.get("power_threshold_kw")
     if power in (None, "") and prefill is not None:
         power = prefill.power_threshold_kw
     fields |= {
+        vol.Required("count_by", default=by): _select("count_by", [c.value for c in CountBy]),
         vol.Required(
             "count_threshold",
             default=CONTROL_DEFAULTS["count_threshold"] if count is None else count,
@@ -3745,7 +3754,7 @@ class _ControlSteps(_Steps):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
             elif "count_threshold" not in shown:
                 pass  # the demand is the advanced level's
-            elif count > len(watched_zones(self.options)):
+            elif count > self._countable(user_input.get("count_by")):
                 errors["count_threshold"] = "count_threshold_above_zones"
             elif count == 0 and not (
                 user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
@@ -3811,6 +3820,15 @@ class _ControlSteps(_Steps):
         if zones_not_vt(self.hass, [zone]):
             return {"frost_zone": "zone_not_vt"}
         return {"frost_zone": "entity_not_suitable"}
+
+    def _countable(self, count_by: object) -> int:
+        """The most a count can reach: the zones the circuits list, or — counting devices — the
+        devices VT drives in them (one for a zone whose list cannot be read; 2026-10-14)."""
+        zones = watched_zones(self.options)
+        if count_by != CountBy.DEVICES.value:
+            return len(zones)
+        hass: HomeAssistant = self.hass
+        return sum(len(zone_underlying_entities(hass, zone) or ()) or 1 for zone in zones)
 
     def _criterion_no_zone_feeds(self, user_input: dict[str, Any]) -> str | None:
         """P-14: a power or opening threshold no zone can feed could never be reached — VT
@@ -3921,7 +3939,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 20
+    MINOR_VERSION = 21
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

@@ -100,8 +100,10 @@ wyłączenie grzania z ochrony przed mrozem i zapotrzebowania stref, a temperatu
 (`core/curve.py`), limitów i rampy.
 
 **Zapotrzebowanie (`core/demand.py`, `boiler_demand`).** To, o czym decydował kocioł centralny
-VT, teraz zadanie wtyczki: strefy potrzebujące ciepła, łączna moc albo otwarcie zaworów, przy czym
-każda strefa liczy się tylko wtedy, gdy VT podaje jej stan jednoznacznie.
+VT, teraz zadanie wtyczki: wołające urządzenia albo strefy (domyślnie urządzenia VT, tak jak
+liczy je jego kocioł centralny), łączna moc albo otwarcie zaworów, przy czym każda strefa liczy
+się tylko wtedy, gdy VT podaje jej stan jednoznacznie; gdy VT nie podaje stanu urządzenia,
+zasada VT — zawór choć trochę otwarty, inaczej cykl pracy powyżej 0.
 
 **Obiegi sterowane przez inną automatykę (`core/circuit_requests.py`, `circuits_asking`).**
 Obieg, którego mieszaczem albo pompą steruje coś innego, prosi o ciepło przez własną encję albo

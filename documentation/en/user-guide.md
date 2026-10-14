@@ -178,13 +178,18 @@ same way VT's central boiler does. You choose one or more of these criteria:
 
 | Criterion | Heating is on when |
 |---|---|
-| Zones calling | at least the set number of zones call for heat (default 1) |
+| Calling | at least the set number of devices — or zones — call for heat (default 1) |
 | Total power | the zones' power together reaches the set threshold |
 | Valve opening | the calling zones' valve opening reaches the set threshold |
 
 - The decision is checked every 10 seconds and acts at once, in both directions.
-- VT counts heating devices; this plugin counts **zones**. If you move over from VT's central
-  boiler, check the number.
+- **Count** (advanced): **Devices** counts VT's heads, valves and switches as VT's central boiler
+  does — the default for a new installation, and VT's own number is taken over as it is; **Zones**
+  counts each zone once, however many devices it has — what an installation from before keeps.
+  With the default number, 1, both are the same.
+- Where VT gives no device state, a zone calls with its valve open at all, or, without a valve,
+  with its duty cycle above 0 — VT's own rule; the valve's opening and the zone's duty cycle are
+  judged each on its own.
 - A zone counts only while VT reports it clearly. A zone that is unavailable, or that VT has not
   started yet, is "unknown" — never "no demand".
 - VT's central mode (Auto, Stopped, Heat only, Cool only, Frost protection) acts through the
