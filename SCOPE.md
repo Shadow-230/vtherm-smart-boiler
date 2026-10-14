@@ -634,14 +634,18 @@ How control decides (principle 12):
 - Heating goes on and off with the zones' demand at every control step (10 s), at once and in
   both directions. The decision interval (an option, default 5 min) applies only to the water
   temperature.
-- Demand comes from the zones calling — VT's zones against thresholds: the number of zones
-  calling, total power, valve opening — each usable alone or with the others, as in VT, and
-  checked against the configured zones. VT counts heating devices where the plugin counts zones:
-  a user coming from VT's central boiler sets the number of zones, and the migration pre-fills it
-  only where every zone has one heating device (S-36; provisional, K4), or as 0 where VT used no
-  count (§5, moving over from VT). Its source follows the VT
-  type (valve opening, VT's device state, heating action) and respects VT's minimum activation
-  time. Switch zones follow VT's device state, so the boiler may start once per TPI cycle (S-38).
+- Demand comes from the zones calling — VT's zones against thresholds: the number calling,
+  total power, valve opening — each usable alone or with the others, as in VT, and checked
+  against the configured zones. The number counts VT's devices (heads, valves, switches) as VT's
+  central boiler does, or zones, as the user picks (the user's decision of 2026-10-14; devices by
+  default for a new installation, an entry from before keeps zones): VT's own count is
+  pre-filled as it is for devices, and for zones only where every zone has one heating device
+  (S-36), or as 0 where VT used no count (§5, moving over from VT); a count of devices never
+  asks more than the known zones drive. Its source follows the VT type (valve opening, VT's
+  device state, heating action) and respects VT's minimum activation time; where VT gives no
+  device state, VT's own rule: a valve open at all, or without a valve a duty cycle above 0 —
+  the valve's opening and the zone's duty cycle judged each on its own (2026-10-14, replacing a
+  shared 5 %). Switch zones follow VT's device state, so the boiler may start once per TPI cycle (S-38).
   The power criterion, for every write path, takes a zone's mean power over its cycle, as VT
   counts it, but only while at least one calling zone has its valve open or its device active;
   a VT device power of 0 or less is no data, and a criterion no zone can feed is refused in the
@@ -1180,6 +1184,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Frost limit / release | 5 / 7 °C | above freezing with a margin, below any comfort setpoint |
 | Frost protection | every zone, heated only where its emitter can take heat | heat for a zone VT keeps closed cannot arrive; a repair issue says what to do instead (decision 4) |
 | Demand threshold | one zone calling | any zone calling heats, as with VT's central boiler |
+| What the count counts | VT's devices, as VT's central boiler (decided by the user 2026-10-14; an entry from before keeps zones) | the same as a zone at the default count of 1; a user moving over from VT keeps VT's number |
 | Comfort correction | on in full control (decided by the user 2026-10-10, reversing 2026-10-03; an upgraded entry keeps what it ran with); up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day; the starts comparison with it on (about 2026-10-12) may revisit the default | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: 1.75 to 5 times the starts in the simulation, up to 6.3 with a daily outdoor swing; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Learning pauses | on | keep swings the plugin causes out of SmartPI's model |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
@@ -1222,7 +1227,7 @@ reviews every provisional value at K4.
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
 | Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
 | Frost not warming: 2 h, 0.5 K | `core/controller.py` | provisional, K4 (reason to confirm) |
-| A zone takes heat above 5 % open, saturated at 95 % | `core/readings.py` | existing |
+| A zone takes heat above 5 % open, saturated at 95 % — for the learning, the alarms and the history; whether a zone calls follows VT's rule instead (above 0, 2026-10-14) | `core/readings.py` | existing |
 | Heat available: the flow 2 K above the return, or 3 K above the room without a return; 1 K hysteresis | `core/heat.py` | provisional, K4 (I8, decision C1) |
 | Plausible room reading −30 to 45 °C, one rule for every room reading | `core/limits.py` | a narrower range would hide a cold room from frost protection (S-06; provisional, K4) |
 | Learning pauses: a swing of 5 K in 30 min, a pause of at least 10 min (a draw or a boiler-fault "off" pauses even within 10 min of a resume), resume within 3 K, longest pause 60 min from its start, read back after 1 min | `core/learning.py` | existing; the draw and fault rules and the cap's start: decision 14 of `docs/plan-0.2.3.md` |

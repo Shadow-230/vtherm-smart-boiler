@@ -49,6 +49,25 @@ async def test_zones_from_vt_climate_entities(hass: HomeAssistant, zones: FakeZo
     assert vt_climate_entities(hass) == sorted([living, bedroom])
 
 
+async def test_a_zones_device_count_comes_from_its_vt_entry(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """2026-10-14: what a count of devices is capped by — the devices VT's entry lists for the
+    zone; a zone whose list cannot be read has none (``None``: it counts one)."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    living = zones.add("living", hvac_action="heating", valve_open_percent=80)
+    bedroom = zones.add("bedroom", hvac_action="idle")
+    entry = MockConfigEntry(
+        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.a", "switch.b"]}
+    )
+    entry.add_to_hass(hass)
+    er.async_get(hass).async_update_entity(living, config_entry_id=entry.entry_id)
+    states = {z.zone_id: z for z in VThermLink(hass, [living, bedroom]).zones()}
+    assert states[living].device_count == 2
+    assert states[bedroom].device_count is None
+
+
 @pytest.mark.parametrize(
     ("specific", "sensor", "expected"),
     [

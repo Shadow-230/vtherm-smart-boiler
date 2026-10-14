@@ -44,9 +44,9 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
   pracuje jak dotąd; włączyć je możesz od pierwszego dnia.
 - **Temperatura wody zależna od pogody** według krzywej, którą wpisujesz, ograniczona najniższą
   i najwyższą temperaturą wody oraz maksimum każdego obiegu.
-- **Włączanie i wyłączanie grzania idzie za strefami VT** — według liczby stref potrzebujących
-  ciepła, łącznej mocy albo otwarcia zaworów, tak jak w kotle centralnym VT — a tryby centralne
-  VT działają przez strefy.
+- **Włączanie i wyłączanie grzania idzie za strefami VT** — według liczby wołających urządzeń
+  (albo stref), łącznej mocy albo otwarcia zaworów, tak jak w kotle centralnym VT — a tryby
+  centralne VT działają przez strefy.
 - **Zapisuje przez to, co masz:** wybraną encję, OpenTherm Gateway (`opentherm_gw` z Home
   Assistant albo jego firmware przez MQTT) albo przekaźnik dla kotła wł./wył.
 - **Najpierw bezpieczeństwo:** ochrona przed mrozem, ochrona przed częstym taktowaniem, odczyt

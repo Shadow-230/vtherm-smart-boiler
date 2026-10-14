@@ -189,13 +189,18 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
 
 | Kryterium | Grzanie jest włączone, gdy |
 |---|---|
-| Strefy potrzebujące ciepła | ciepła potrzebuje co najmniej ustawiona liczba stref (domyślnie 1) |
+| Wołające | ciepła potrzebuje co najmniej ustawiona liczba urządzeń — albo stref (domyślnie 1) |
 | Łączna moc | łączna moc stref osiąga ustawiony próg |
 | Otwarcie zaworów | otwarcie zaworów stref potrzebujących ciepła osiąga ustawiony próg |
 
 - Decyzja jest sprawdzana co 10 sekund i działa od razu, w obie strony.
-- VT liczy urządzenia grzewcze; ta wtyczka liczy **strefy**. Jeśli przechodzisz z kotła
-  centralnego VT, sprawdź tę liczbę.
+- **Co liczyć** (poziom zaawansowany): **Urządzenia** liczy głowice, zawory i przełączniki VT tak
+  jak kocioł centralny VT — domyślnie w nowej instalacji, a liczba z VT przechodzi bez zmian;
+  **Strefy** liczy każdą strefę raz, ile by nie miała urządzeń — tak zostaje instalacja sprzed
+  zmiany. Przy domyślnej liczbie 1 jedno i drugie działa tak samo.
+- Gdy VT nie podaje stanu urządzenia, strefa woła, gdy jej zawór jest choć trochę otwarty, a bez
+  zaworu — gdy jej cykl pracy jest powyżej 0 — tak jak w VT; otwarcie zaworu i cykl pracy strefy
+  są oceniane osobno.
 - Strefa się liczy tylko wtedy, gdy VT podaje jej stan jednoznacznie. Strefa niedostępna albo
   taka, której VT jeszcze nie uruchomił, ma stan „nieznany” — nigdy „brak zapotrzebowania”.
 - Tryb centralny VT (Auto, Zatrzymany, Tylko grzanie, Tylko chłodzenie, Ochrona przed mrozem)

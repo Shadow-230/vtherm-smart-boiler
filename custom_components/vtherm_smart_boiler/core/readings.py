@@ -101,7 +101,8 @@ class ZoneState:
     else by the entity's report. ``room_sensor_lost``: the room sensor VT reads is gone,
     unavailable or unknown now, or VT's own safety mode is on — VT keeps the last temperature it
     had (live only). ``safety_on``: VT's safety mode; ``shedding``: VT's power shedding holds
-    the zone off (live only).
+    the zone off (live only). ``device_count``: the devices VT drives in the zone, from its entry
+    (``None``: not readable) — what a count of devices is capped by.
     """
 
     zone_id: str
@@ -125,6 +126,7 @@ class ZoneState:
     reported: bool | None = None
     smartpi_learning_phase: bool | None = None
     devices_active: frozenset[str] | None = None
+    device_count: int | None = None
 
     @property
     def started(self) -> bool:
