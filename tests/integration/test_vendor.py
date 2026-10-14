@@ -173,14 +173,16 @@ async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_value
 
 
 def _water(hass: HomeAssistant) -> dict[str, Any]:
-    """The public API's fields for the living room, the moment of the reading aside — known
-    while the water is."""
+    """The public API's water fields for the living room, the moment of the reading aside —
+    known while the water is; the boiler's call (§4.3) is pinned in-process with control."""
     water = hass.data["vtherm_smart_boiler_api"].zone_water(LIVING)
     assert water is not None
-    fields = dict(water)
-    measured = fields.pop("supply_measured_at")
-    assert (measured is None) is (fields["supply_temperature"] is None)
+    fields = {key: water[key] for key in WATER_KEYS}
+    assert (water["supply_measured_at"] is None) is (fields["supply_temperature"] is None)
     return fields
+
+
+WATER_KEYS = ("supply_temperature", "supply_reason", "heat_available", "heat_reason")
 
 
 async def test_a_real_vt_thermostat_finds_the_plugins_manager_by_its_name(
