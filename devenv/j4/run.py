@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import time
 import traceback
@@ -39,6 +40,28 @@ LOWEST = 20.0
 SAFE = [("setpoint", LOWEST), ("ch", True), ("setpoint", 0)]
 TRACE = 310
 ZONES = (("zone_living", 20.5), ("zone_bedroom", 19.5), ("zone_bath", 22.0))
+
+
+def code_under_test() -> str:
+    """The commit the runner's tree stands at — the code deployed from it — with "+changes" for
+    uncommitted ones: every result names the code it tested (J4 of 2026-10-14)."""
+    try:
+        git = ["git", "-C", str(ROOT)]
+        sha = subprocess.run(
+            [*git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        dirty = subprocess.run(
+            [*git, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except OSError, subprocess.CalledProcessError:
+        return "unknown"
+    return f"{sha}+changes" if dirty else sha
+
+
+CODE = code_under_test()
 
 
 def append_result(text: str) -> None:
@@ -525,6 +548,46 @@ async def D8(r: Run):
     )
 
 
+async def D8b(r: Run):
+    """#110, #112: the gateway drops the plugin's writes through a hot-water draw — its override
+    lapsing, the read-back falling back to the thermostat's — and takes them again 2 min after
+    the draw: never another controller, the setpoint shown not confirmed meanwhile, confirmed
+    again after"""
+    await r.switch(True)
+    await r.ha.wait(300)  # the start phase over: the setpoint confirmed
+    before = await r.attr("control_setpoint", "confirmation")
+    r.check(before in ("confirmed", "confirmed_by_gateway"), f"confirmed first: {before}")
+    seen: set[object] = set()
+    try:
+        await r.sim("start_dhw", minutes=5)
+        await r.sim("ignore_writes", enabled=True, at="gateway")
+        end = time.time() + 5 * 60 + 120  # the draw, then 2 min more
+        while time.time() < end:
+            seen.add(await r.attr("control_setpoint", "confirmation"))
+            await r.ha.wait(10)
+    finally:
+        await r.sim("ignore_writes", enabled=False, at="gateway")
+    r.check(
+        bool(seen & {"waiting", "not_confirmed"}),
+        f"not confirmed while the writes are dropped: {sorted(map(str, seen))}",
+    )
+    back = await r.ha.until(
+        lambda: _confirmation_in(r, ("confirmed", "confirmed_by_gateway")), 300, 5
+    )
+    r.check(back is not None, f"confirmed again ({back and round(back)} s after)")
+    alarms = await r.alarms_on()
+    r.check("alarm_outside_change" not in alarms, f"never another controller: {alarms}")
+    st = await r.st("control_state")
+    r.check(
+        st["state"] != "handed_back" and st["attributes"].get("latched_by") == [],
+        f"not handed back, nothing latched: {st['state']}",
+    )
+
+
+async def _confirmation_in(r: Run, values: tuple[str, ...]) -> bool:
+    return await r.attr("control_setpoint", "confirmation") in values
+
+
 async def F1(r: Run, fault="low_pressure_fault"):
     """the boiler's own fault: "off" after 5 min, no hand-back, no latch, repair issue; back when it clears"""
     # The rooms call, so heating is on when the fault comes (the reset leaves them at target).
@@ -770,43 +833,74 @@ async def _demand(r: Run) -> bool:
 
 async def E3(r: Run):
     """VT's activation delay of 120 s holds a start"""
-    d = await r.options(behaviour={"activation_delay_s": 120})
-    r.note(f"options {d.get('type')} {d.get('errors')}")
-    await r.switch(True)
-    starts = []
-    for _ in range(2):
-        # The rooms satisfied first, so heating goes off; then they call again.
-        for zone, _target in ZONES:
-            await r.ha.call(
-                "climate", "set_temperature", entity_id=f"climate.{zone}", temperature=15.0
+    try:
+        d = await r.options(behaviour={"activation_delay_s": 120})
+        r.note(f"options {d.get('type')} {d.get('errors')}")
+        # Every valve closed for longer than the delay before each call: a start left pending by
+        # an earlier pulse runs on through a drop (VT's rule) and would shorten the wait measured
+        # here — the clean-up leaves the rooms at their targets, VT's TPI pulsing (L7, J4 of
+        # 2026-10-14; as R18).
+        await _rooms_satisfied(r)
+        r.check(await _valves_closed_for(r, 150, 900), "every valve closed for 150 s first")
+        await r.switch(True)
+        starts = []
+        for cycle in range(2):
+            if cycle:
+                await _rooms_satisfied(r)
+                got = await r.ha.until(lambda: _ch_is(r, False), 420, 5)
+                r.check(
+                    got is not None,
+                    f"heating off once the rooms are satisfied (after {got and round(got)} s)",
+                )
+                r.check(
+                    await _valves_closed_for(r, 150, 900),
+                    "every valve closed for 150 s before the call",
+                )
+            # A long call: rooms 3 K below their setpoints keep a valve open well past the
+            # delay; a pulse shorter than the delay would never start the boiler (VT's rule,
+            # said in the option's description).
+            for zone, target in ZONES:
+                await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+            await r.zones()
+            opened = await r.ha.until(lambda: _any_valve_open(r), 420, 1)
+            t_call = time.time()
+            on = await r.ha.until(lambda: _ch_is(r, True), 300, 1)
+            waited = None if on is None else round(time.time() - t_call)
+            starts.append(waited)
+            r.note(
+                f"a valve opened {opened and round(opened)} s after the call; heating on "
+                f"{waited} s after it"
             )
-        got = await r.ha.until(lambda: _ch_is(r, False), 420, 5)
         r.check(
-            got is not None,
-            f"heating off once the rooms are satisfied (after {got and round(got)} s)",
+            all(s is not None and s >= 115 for s in starts),
+            f"each start waited at least 120 s: {starts}",
         )
-        await r.ha.wait(30)
-        # A long call: rooms 3 K below their setpoints keep a valve open well past the delay; a
-        # pulse shorter than the delay would never start the boiler (VT's rule, said in the
-        # option's description).
-        for zone, target in ZONES:
-            await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
-        await r.zones()
-        opened = await r.ha.until(lambda: _any_valve_open(r), 420, 1)
-        t_call = time.time()
-        on = await r.ha.until(lambda: _ch_is(r, True), 300, 1)
-        waited = None if on is None else round(time.time() - t_call)
-        starts.append(waited)
-        r.note(
-            f"a valve opened {opened and round(opened)} s after the call; heating on {waited} s after it"
-        )
-    r.check(
-        all(s is not None and s >= 115 for s in starts),
-        f"each start waited at least 120 s: {starts}",
-    )
-    await r.switch(False)
-    await r.ha.wait(10)
-    await r.options()
+    finally:
+        # Restored whatever failed above, so the next scenario finds the base (L7).
+        if await r.s("control") == "on":
+            await r.switch(False)
+            await r.ha.wait(10)
+        await r.options()
+
+
+async def _rooms_satisfied(r: Run) -> None:
+    """Every room above its setpoint: VT closes the valves at its next cycle."""
+    for zone, _target in ZONES:
+        await r.ha.call("climate", "set_temperature", entity_id=f"climate.{zone}", temperature=15.0)
+
+
+async def _valves_closed_for(r: Run, seconds: float, limit: float) -> bool:
+    """Every valve closed for ``seconds`` running, within ``limit`` seconds."""
+    start, since = time.time(), None
+    while time.time() - start < limit:
+        if await _any_valve_open(r):
+            since = None
+        elif since is None:
+            since = time.time()
+        elif time.time() - since >= seconds:
+            return True
+        await r.ha.wait(5)
+    return False
 
 
 async def _any_valve_open(r: Run) -> bool:
@@ -836,6 +930,7 @@ SCENARIOS = {
         D6,
         D7,
         D8,
+        D8b,
         F1,
         F2,
         G1,
@@ -909,6 +1004,24 @@ def base_drift(control: dict[str, object]) -> list[str]:
     ]
 
 
+async def base_problem(r: Run) -> str | None:
+    """``None`` with the instance in its base state; else why a scenario must not run on it —
+    its base changed, or it could not be read: a scenario never runs unchecked (J4 of
+    2026-10-14)."""
+    try:
+        control = await asyncio.to_thread(stored_control)
+    except Exception as err:
+        return f"the base could not be read ({err}): check the instance, then run again"
+    r.note(f"base: {base_line(control)}")
+    drift = base_drift(control)
+    if drift:
+        return (
+            "the instance is not in its base state (an earlier scenario left it changed; "
+            "restore it first): " + "; ".join(drift)
+        )
+    return None
+
+
 def base_line(control: dict[str, object]) -> str:
     keys = ["write_path", "topology", *BASE_EXPECT.get(str(control.get("write_path")), {})]
     return ", ".join(f"{k} {control[k]!r}" for k in dict.fromkeys(keys) if k in control)
@@ -952,19 +1065,10 @@ async def main(ids: list[str]) -> None:
             print(f"--- {sid} {start:%H:%M:%S} {fn.__doc__.strip()}", flush=True)
             # The instance as the scenario finds it: a scenario never runs on an instance an
             # earlier one left changed — its result would be another configuration's.
-            try:
-                control = await asyncio.to_thread(stored_control)
-                drift = base_drift(control)
-                r.note(f"base: {base_line(control)}")
-            except Exception as err:
-                drift = []
-                r.note(f"base: not read ({err})")
-            if drift:
+            problem = await base_problem(r)
+            if problem is not None:
                 r.ok = False
-                r.notes.append(
-                    "NOT RUN — the instance is not in its base state (an earlier scenario left it "
-                    "changed; restore it first): " + "; ".join(drift)
-                )
+                r.notes.append(f"NOT RUN — {problem}")
                 verdict = "NOT RUN"
             else:
                 try:
@@ -984,7 +1088,8 @@ async def main(ids: list[str]) -> None:
                 if not r.ok:
                     r.notes += [f"diagnosis — {line}" for line in await diagnosis(r, start)]
             text = (
-                f"\n### {sid} — {verdict} ({start:%H:%M}–{dt.datetime.now(dt.UTC):%H:%M} UTC)\n{fn.__doc__.strip()}\n"
+                f"\n### {sid} — {verdict} ({start:%H:%M}–{dt.datetime.now(dt.UTC):%H:%M} UTC, "
+                f"code {CODE})\n{fn.__doc__.strip()}\n"
                 + "\n".join(f"- {n}" for n in r.notes)
                 + "\n"
             )
@@ -1633,6 +1738,61 @@ async def _water_shown(r: Run) -> dict[str, dict | None]:
     return {zone: await r.attr(f"climate.{zone}", "smart_boiler") for zone, _target in ZONES}
 
 
+def _moment(raw: object) -> float | None:
+    """An ISO time of Home Assistant's REST API, in epoch seconds; ``None`` where unreadable."""
+    try:
+        return dt.datetime.fromisoformat(str(raw)).timestamp()
+    except ValueError:
+        return None
+
+
+# The plugin follows a signal's change at once; a VT write this soon after a flame change may
+# still show the value from before it.
+FLAME_SETTLE_S = 30.0
+
+
+async def _heat_expected_at_write(
+    r: Run, zone: str, flame: dict, flame_after: dict
+) -> tuple[bool | None, ...]:
+    """With the flow failed, the heat a zone's attribute may show: as of VT's last write of the
+    zone — unknown while the flame burned then, "no" while it was out; either where the flame
+    changed since that write, around the reading, or just before the write."""
+    written = _moment((await r.st(f"climate.{zone}")).get("last_updated"))
+    changed = _moment(flame.get("last_changed"))
+    if (
+        flame.get("state") != flame_after.get("state")
+        or written is None
+        or changed is None
+        or changed > written - FLAME_SETTLE_S
+    ):
+        return (None, False)
+    return (None,) if flame.get("state") == "on" else (False,)
+
+
+async def _heat_while_burning(r: Run, within: float = 900.0) -> dict[str, object]:
+    """Waits for a moment the flame has burned since before VT's last write of a zone, and
+    checks that zone shows heat available: the zones judged, each with what it showed; empty
+    where the flame never burned long enough within ``within`` seconds."""
+    judged: dict[str, object] = {}
+    start = time.time()
+    while time.time() - start < within and not judged:
+        flame = await r.st("binary_sensor.boiler_sim_flame")
+        changed = _moment(flame.get("last_changed"))
+        if flame.get("state") == "on" and changed is not None:
+            for zone, _target in ZONES:
+                written = _moment((await r.st(f"climate.{zone}")).get("last_updated"))
+                # A minute of flame before the write: the water above the return by then.
+                if written is None or written < changed + 2 * FLAME_SETTLE_S:
+                    continue
+                value = await r.attr(f"climate.{zone}", "smart_boiler")
+                heat = value.get("heat_available") if isinstance(value, dict) else "missing"
+                r.check(heat is True, f"{zone}: heat available while the flame burns ({value})")
+                judged[zone] = heat
+        if not judged:
+            await r.ha.wait(15)
+    return judged
+
+
 async def _flow_now(r: Run) -> float | None:
     try:
         return float(await r.s("sensor.boiler_sim_flow"))
@@ -1658,15 +1818,19 @@ async def V1(r: Run):
         )
     flows = [f for f in (before, after) if f is not None]
     if flows:
-        # Rounded to 1 °C, published again on a change of 1 K, up to a VT cycle old: within 2 K
-        # of the flow seen around it (more only if the flow moved fast).
+        # Rounded to 1 °C (a whole number), published again on a change of 1 K, up to a VT cycle
+        # old: within 2 K of the flow seen around it (more only if the flow moved fast).
         low, high = min(flows) - 2.0, max(flows) + 2.0
         for zone, value in shown.items():
             water = value.get("supply_temperature") if isinstance(value, dict) else None
             r.check(
-                isinstance(water, int | float) and low <= water <= high,
-                f"{zone}: water {water} within {low:.1f}–{high:.1f}",
+                isinstance(water, int) and not isinstance(water, bool) and low <= water <= high,
+                f"{zone}: water {water}, rounded to 1 °C, within {low:.1f}–{high:.1f}",
             )
+    # The positive case (L8): with the flame burning since before VT's last write of a zone, and
+    # the water warm, the zone shows heat available.
+    judged = await _heat_while_burning(r)
+    r.check(bool(judged), f"heat available while the flame burns: {judged or 'never judged'}")
     await r.sim("start_dhw", minutes=10)
     await r.ha.wait(VT_CYCLE_WAIT)
     r.check(await r.s("binary_sensor.boiler_sim_dhw_active") == "on", "the draw runs")
@@ -1678,17 +1842,14 @@ async def V1(r: Run):
     await r.sim("fail_signal", signal="flow")
     await r.ha.wait(VT_CYCLE_WAIT)
     # The water unknown; the heat unknown while the flame burns, and "no" while it is out — the
-    # flame decides first (heat.py). Where the flame changed around the reading, either.
-    before = await r.s("binary_sensor.boiler_sim_flame")
+    # flame decides first (heat.py). The attribute is as old as VT's last write of the zone (the
+    # plugin asks VT for none): the flame is judged as it was then — either where it changed
+    # since, or just before (L8, J4 of 2026-10-14).
+    flame = await r.st("binary_sensor.boiler_sim_flame")
     shown = await _water_shown(r)
-    after = await r.s("binary_sensor.boiler_sim_flame")
-    heats: tuple[bool | None, ...] = (None, False)
-    if before == after == "on":
-        heats = (None,)
-    elif before == after == "off":
-        heats = (False,)
-    r.note(f"the flame {before}, then {after}, around the reading: the heat expected {heats}")
+    flame_after = await r.st("binary_sensor.boiler_sim_flame")
     for zone, value in shown.items():
+        heats = await _heat_expected_at_write(r, zone, flame, flame_after)
         water = value.get("supply_temperature", "missing") if isinstance(value, dict) else "missing"
         heat = value.get("heat_available", "missing") if isinstance(value, dict) else "missing"
         r.check(

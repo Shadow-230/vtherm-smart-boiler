@@ -246,6 +246,12 @@ heating switchings, and each room's mean temperature (comfort parity: at most 0.
 boiler's own regulation's); the criterion is at most 1.10 times its starts per hour
 (provisional, K4).
 
+An instance that served the other scenarios meanwhile (`--config configuration`) goes back with
+its deploy, then its options walked to the starts base — control off and its hand-back finished
+first: `HA_INSTANCE=N scripts/env.sh python devenv/j4/base.py starts` (`--correction` for a run
+comparing the comfort correction, K4: F8); `base.py gateway` walks one to instance 1's base
+(`devenv/j4/options.py`).
+
 ## 6. More instances (optional)
 
 Up to eight Home Assistants can run in the same LXC, so long scenarios run side by side — the starts
