@@ -187,6 +187,8 @@ domyślnie wyłączone.
 | Sterowanie (eksperymentalne) | włącza i wyłącza sterowanie; jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
 | Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
+| Kocioł wezwany | włączony, gdy wtyczka wzywa kocioł do grzania, wyłączony z powodem, gdy nie — w miejsce czujnika kotła centralnego VT; przy zmianie wysyłane jest zdarzenie |
+| Wołające o ciepło, Moc wołających | wołające urządzenia (albo strefy) i zsumowana moc stref, każde obok swojego progu, tak jak pokazuje je kocioł centralny VT |
 | Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, nieznana strefa, mróz bez nagrzewania i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
 | Wyzeruj zmierzone straty ciepła, Wyzeruj zmierzony próg grzania | zapominają zmierzone wartości budynku |

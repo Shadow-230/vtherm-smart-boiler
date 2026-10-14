@@ -283,6 +283,17 @@ def test_coded_states_and_attributes_are_translated() -> None:
     }
     # SB-16: a stand-alone gateway's setpoint lapses within about a minute of an outage.
     assert _values(SOURCE["entity"]["switch"]["control"], "outage_effect") == {"heating_stops"}
+    # 2026-10-14: why the boiler is not called, and what the count counts, wherever shown.
+    from custom_components.vtherm_smart_boiler.core.boiler_call import CallReason
+    from custom_components.vtherm_smart_boiler.core.demand import CountBy
+
+    reasons = {reason.value for reason in CallReason}
+    assert _values(binary["boiler_called"], "call_reason") == reasons
+    assert _values(sensors["control_state"], "call_reason") == reasons
+    counted = {by.value for by in CountBy}
+    for entity in (binary["boiler_called"], sensors["demand_count"], sensors["control_state"]):
+        assert _values(entity, "count_by") == counted
+    assert set(SOURCE["selector"]["count_by"]["options"]) == counted
 
 
 def test_every_icon_belongs_to_an_entity() -> None:

@@ -35,7 +35,9 @@ version is decided then.
   the water at its need while it asks, nothing added; a fixed valve sets no lower bound — the
   boiler follows its curve, the valve standing open at or below its setting.
 - Heating on and off following VT's zones — devices calling as VT counts them (or zones), total
-  power or valve opening — and VT's central modes; VT's activation delay.
+  power or valve opening — and VT's central modes; VT's activation delay. What VT's central
+  boiler showed: **Boiler called** with the reason it is not, the devices calling and their
+  power against the thresholds, and an event when the call changes.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
   connected is the setup's first question.

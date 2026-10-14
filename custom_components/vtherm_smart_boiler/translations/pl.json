@@ -1815,6 +1815,74 @@
           },
           "curve_room": {
             "name": "Temperatura pokojowa krzywej"
+          },
+          "boiler_called": {
+            "name": "Kocioł wezwany"
+          },
+          "call_reason": {
+            "name": "Dlaczego nie wezwany",
+            "state": {
+              "no_demand": "Nic nie woła",
+              "below_threshold": "Strefy wołają, poniżej progów",
+              "activation_delay": "Start czeka na opóźnienie włączenia VT",
+              "boiler_fault": "Kocioł zgłasza usterkę",
+              "not_controlling": "Wtyczka nie steruje teraz kotłem",
+              "waiting_data": "Jeszcze nie wiadomo"
+            }
+          },
+          "demand_count": {
+            "name": "Wołające o ciepło"
+          },
+          "count_threshold": {
+            "name": "Liczba, od której rusza kocioł"
+          },
+          "count_by": {
+            "name": "Liczone",
+            "state": {
+              "devices": "Urządzenia",
+              "zones": "Strefy"
+            }
+          },
+          "demand_power_kw": {
+            "name": "Moc wołających stref"
+          },
+          "power_threshold_kw": {
+            "name": "Moc, od której rusza kocioł"
+          },
+          "demand_opening": {
+            "name": "Największe otwarcie"
+          },
+          "opening_threshold": {
+            "name": "Otwarcie, od którego rusza kocioł"
+          }
+        }
+      },
+      "demand_count": {
+        "name": "Wołające o ciepło",
+        "state_attributes": {
+          "count_threshold": {
+            "name": "Liczba, od której rusza kocioł"
+          },
+          "count_by": {
+            "name": "Liczone",
+            "state": {
+              "devices": "Urządzenia",
+              "zones": "Strefy"
+            }
+          },
+          "calling_zones": {
+            "name": "Wołające strefy"
+          },
+          "active_devices": {
+            "name": "Aktywne urządzenia"
+          }
+        }
+      },
+      "demand_power": {
+        "name": "Moc wołających",
+        "state_attributes": {
+          "power_threshold_kw": {
+            "name": "Moc, od której rusza kocioł"
           }
         }
       },
@@ -2238,6 +2306,50 @@
       }
     },
     "binary_sensor": {
+      "boiler_called": {
+        "name": "Kocioł wezwany",
+        "state_attributes": {
+          "call_reason": {
+            "name": "Dlaczego nie wezwany",
+            "state": {
+              "no_demand": "Nic nie woła",
+              "below_threshold": "Strefy wołają, poniżej progów",
+              "activation_delay": "Start czeka na opóźnienie włączenia VT",
+              "boiler_fault": "Kocioł zgłasza usterkę",
+              "not_controlling": "Wtyczka nie steruje teraz kotłem",
+              "waiting_data": "Jeszcze nie wiadomo"
+            }
+          },
+          "demand_count": {
+            "name": "Wołające o ciepło"
+          },
+          "count_threshold": {
+            "name": "Liczba, od której rusza kocioł"
+          },
+          "count_by": {
+            "name": "Liczone",
+            "state": {
+              "devices": "Urządzenia",
+              "zones": "Strefy"
+            }
+          },
+          "demand_power_kw": {
+            "name": "Moc wołających stref"
+          },
+          "power_threshold_kw": {
+            "name": "Moc, od której rusza kocioł"
+          },
+          "demand_opening": {
+            "name": "Największe otwarcie"
+          },
+          "opening_threshold": {
+            "name": "Otwarcie, od którego rusza kocioł"
+          },
+          "activation_at": {
+            "name": "Start zaplanowany na"
+          }
+        }
+      },
       "connection": {
         "name": "Sygnały",
         "state_attributes": {

@@ -89,6 +89,9 @@ class Demand:
     # Calling zones that feed none of the configured criteria: named by the alarm (PB-23).
     zones_without_data: tuple[str, ...] = ()
     devices_wanting: int = 0  # the calling zones' devices VT lists active (one without a list)
+    # The zones' mean power summed, as VT's central boiler shows it — whether heat can flow now
+    # or not; ``power_kw`` is what the criterion judges (``None``: no zone feeds power).
+    summed_power_kw: float | None = None
 
 
 def zone_wants_heat(zone: ZoneState) -> bool:
@@ -184,9 +187,11 @@ def boiler_demand(
     feeding = [z for z in known if z.heating_enabled is True]
     heating = [z for z in feeding if not z.shedding]
     power: float | None = None
+    summed: float | None = None
     if not feeding or any(feeds_power(z) for z in feeding):
         flowing = any(heat_can_flow(z) for z in heating)
-        power = sum(_mean_power(z) for z in heating) if flowing else 0.0
+        summed = sum(_mean_power(z) for z in heating)
+        power = summed if flowing else 0.0
     opening_fed = not feeding or any(feeds_opening(z) for z in feeding)
     judged: list[bool] = []
     without: list[str] = []
@@ -221,6 +226,7 @@ def boiler_demand(
         tuple(without),
         unseen,
         devices,
+        summed,
     )
 
 

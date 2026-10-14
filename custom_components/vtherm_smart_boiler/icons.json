@@ -17,9 +17,12 @@
       "forecast_snapshots": { "default": "mdi:weather-partly-cloudy" },
       "critical_zone": { "default": "mdi:radiator" },
       "control_state": { "default": "mdi:state-machine" },
+      "demand_count": { "default": "mdi:radiator" },
+      "demand_power": { "default": "mdi:flash" },
       "control_setpoint": { "default": "mdi:thermometer-water" }
     },
     "binary_sensor": {
+      "boiler_called": { "default": "mdi:fire", "state": { "off": "mdi:fire-off" } },
       "connection": { "default": "mdi:lan-connect", "state": { "off": "mdi:lan-disconnect" } },
       "alarm_frequent_starts": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_unstable_ignition": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },

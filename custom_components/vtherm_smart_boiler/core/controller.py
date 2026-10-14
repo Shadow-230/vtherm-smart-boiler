@@ -414,6 +414,9 @@ class ControlDecision:
     # Decision 2 of 0.2.3 (SB-01): a zone calls for heat — the zones' demand, at every step;
     # "no sign the boiler heats" counts only then.
     calling: bool = False
+    # The demand judged at this step, against the thresholds — shown as VT's central boiler shows
+    # its own (the user's decision of 2026-10-14).
+    demand: Demand | None = None
 
 
 def clock_start(since: float | None, now: float) -> float:
@@ -619,6 +622,7 @@ def decide(
         frost_closed=state.frost_closed,  # held through the recognition period
         correction=state.correction,
         calling=demand.wanted is True,
+        demand=demand,
     )
 
 

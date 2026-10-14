@@ -220,6 +220,20 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   encji nie da się odczytać (niedostępna, nieznana), obieg o nic nie prosi (jego strefy dalej
   mogą, a ochrona przed mrozem dalej czuwa), a stan sterowania pokazuje powód
   `circuit_request_unknown`.
+- **To, co pokazywał kocioł centralny VT, pokazuje wtyczka** (gdy sterowanie jest ustawione):
+  - **Kocioł wezwany** — włączony, gdy wtyczka wzywa kocioł do grzania (także ochrona przed
+    mrozem); wyłączony, gdy steruje kotłem i go nie wzywa, z powodem: nic nie woła, strefy wołają
+    poniżej progów, start czeka na opóźnienie włączenia VT, kocioł zgłasza usterkę; nieznany, gdy
+    nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany) albo jeszcze nie wie.
+    Jego atrybuty pokazują zapotrzebowanie wobec progów.
+  - **Wołające o ciepło** — urządzenia (albo strefy, zależnie od liczenia) wołające teraz, z
+    wołającymi strefami i urządzeniami, które VT podaje jako aktywne; **Moc wołających** —
+    zsumowana średnia moc stref, tak jak pokazuje ją VT. Moc liczy się do progu tylko wtedy, gdy
+    zawór wołającej strefy jest otwarty albo jej urządzenie włączone, więc kocioł nigdy nie grzeje
+    na zamknięte zawory.
+  - Zdarzenie `vtherm_smart_boiler_boiler_call`, wysyłane przy zmianie wezwania i gdy start
+    zaczyna czekać na opóźnienie włączenia VT, do twoich automatyzacji (`boiler_called`,
+    `call_reason`, `activation_at`).
 
 ### 4.4 Temperatura wody
 
