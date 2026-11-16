@@ -3261,9 +3261,13 @@
       "title": "A room below the frost limit cannot get heat: a VT function keeps it off",
       "description": "{zones}: one of Versatile Thermostat's own functions (its safety mode, or auto start/stop) keeps the valve closed, so the plugin cannot heat it and does not start the boiler for it. The room stays unheated until VT opens it again: check that thermostat's room sensor and its auto start/stop settings."
     },
+    "frost_zone_closed_inhibition": {
+      "title": "A room below the frost limit cannot get heat: another plugin holds it",
+      "description": "{zones}: another plugin has taken this thermostat out of Versatile Thermostat's control, so VT keeps the valve closed and the plugin cannot heat it and does not start the boiler for it. The room stays unheated until that plugin gives the thermostat back to VT: check the plugin that holds it."
+    },
     "frost_zone_closed_mixed": {
       "title": "Rooms below the frost limit cannot get heat",
-      "description": "{zones}: VT keeps their valves closed for different reasons, so the plugin cannot heat them. For a thermostat that is off, use VT's frost preset instead; a room closed for a window, VT's \"Stopped\" or another VT function stays unheated until VT opens it."
+      "description": "{zones}: VT keeps their valves closed for different reasons, so the plugin cannot heat them. For a thermostat that is off, use VT's frost preset instead; a room closed for a window, VT's \"Stopped\" or another VT function stays unheated until VT opens it, and a room another plugin holds until that plugin gives it back."
     },
     "thermostat_kind_missing": {
       "title": "Say what is wired to the gateway's thermostat terminals",

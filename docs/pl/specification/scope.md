@@ -769,10 +769,12 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   mówi, dlaczego wtyczka nie może go ogrzać i co zrobić, w słowach dobranych do powodu zamknięcia
   podanego przez VT (`hvac_off_reason`) — dla „off” zamiast tego preset ochrony przed mrozem VT; dla
   otwartego okna albo trybu centralnego VT „Stopped” — że pokój zostaje nieogrzewany, dopóki VT go
-  nie otworzy; centralny tryb ochrony przed mrozem VT wymaga temperatury ochrony przed mrozem
-  w każdym termostacie. Wtyczka nigdy nie zmienia trybu VT. Grzanie przeciwmrozowe, które trwa bez
-  ocieplania się strefy, podnosi alarm; nie jest zatrzymywane. Grzanie przeciwmrozowe czeka na
-  opóźnienie włączenia. To zmienia decyzję z 2026-09-25 („siatka bezpieczeństwa obejmuje cały dom”).
+  nie otworzy; dla innej wtyczki, która wyłączyła termostat spod sterowania VT (wstrzymanie
+  z VT 10.6.1) — dopóki tamta wtyczka go nie odda; centralny tryb ochrony przed mrozem VT wymaga
+  temperatury ochrony przed mrozem w każdym termostacie. Wtyczka nigdy nie zmienia trybu VT.
+  Grzanie przeciwmrozowe, które trwa bez ocieplania się strefy, podnosi alarm; nie jest
+  zatrzymywane. Grzanie przeciwmrozowe czeka na opóźnienie włączenia. To zmienia decyzję
+  z 2026-09-25 („siatka bezpieczeństwa obejmuje cały dom”).
 - **Opóźnienie włączenia VT** (decyzja 5), przeniesione tak jak w VT 10.4.0: 0–600 s co 10 s,
   domyślnie 0, także na ścieżce przekaźnika. Opóźnia tylko włączanie. Czekanie zaczyna się przy
   pierwszym prawdziwym wezwaniu do grzania, po okresie rozpoznania; wezwanie, które znika i wraca

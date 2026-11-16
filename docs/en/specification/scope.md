@@ -729,10 +729,12 @@ How control decides (principle 12):
   and on; provisional, K4) and does not start the boiler: it names the room and its temperature,
   says why the plugin cannot heat it, and what to do, worded by VT's reason for closing it
   (`hvac_off_reason`) — for "off", VT's frost preset instead; for an open window or VT's central
-  mode "Stopped", that the room stays unheated until VT opens it; VT's central frost mode needs a
-  frost temperature in every thermostat. The plugin never switches VT's mode. Frost heating that goes on without the zone
-  warming raises an alarm; it is not stopped. Frost heating waits for the activation delay. This
-  changes the decision of 2026-09-25 ("the safety net covers the whole house").
+  mode "Stopped", that the room stays unheated until VT opens it; for a plugin that took the
+  thermostat out of VT's control (VT 10.6.1's inhibition), until that plugin gives it back; VT's
+  central frost mode needs a frost temperature in every thermostat. The plugin never switches VT's
+  mode. Frost heating that goes on without the zone warming raises an alarm; it is not stopped.
+  Frost heating waits for the activation delay. This changes the decision of 2026-09-25 ("the
+  safety net covers the whole house").
 - **VT's activation delay** (decision 5), carried over as in VT 10.4.0: 0–600 s in steps of 10,
   default 0, on the relay path too. It delays switching on only. The wait starts at the first
   real call for heat, after the recognition period; a call that drops and returns during the wait

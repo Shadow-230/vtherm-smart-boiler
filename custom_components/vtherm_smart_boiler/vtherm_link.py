@@ -50,7 +50,9 @@ CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (VT 10.4.0)
 # VT's central boiler seen configured at any moment of this Home Assistant run (X7): VT's manager
 # lives in its API and may switch the boiler until Home Assistant restarts, even once unticked,
-# with or without its keep-alive. Kept in Home Assistant's data, so a reload of the plugin does
+# with or without its keep-alive (VT 10.4.0 to 10.6.4; 10.6.5 stops its listeners when the
+# central entry unloads, ``__init__.py`` — kept as it is for the older versions). Kept in Home
+# Assistant's data, so a reload of the plugin does
 # not clear it and a restart does; never from VT's keep-alive. Also set (decision 9 of plan
 # 0.2.3) when VT's central entry changed in this run while no entry of the plugin watched VT —
 # its ``modified_at`` — or VT's sensor is a stand-in written in this run while the entry says
@@ -97,7 +99,7 @@ COUNT_THRESHOLD_UNIQUE_ID = "boiler_activation_threshold"
 POWER_THRESHOLD_UNIQUE_ID = "boiler_power_activation_threshold"
 # The plugin's repeat interval takes VT's keep-alive only within its own range (R3).
 REPEAT_RANGE_S = (10.0, 300.0)
-HVAC_OFF_REASON = "hvac_off_reason"  # a thermostat's attribute (VT 10.4.0)
+HVAC_OFF_REASON = "hvac_off_reason"  # in a thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5)
 # SmartPI 0.4.0 (G11 C): the VT climate's ``specific_states`` names its diagnostic sensor, whose
 # state is the phase — "bootstrap_hysteresis" its learning phase, run on/off (``handler.py``,
 # ``sensor.py``). Any other state, or none, tells nothing: the phase is unknown.
@@ -676,12 +678,20 @@ class VThermLink:
         return self._hass.states.get(entity_id)
 
     def zone_off_reason(self, entity_id: str) -> str | None:
-        """Why VT keeps a zone off (SB-27): its ``hvac_off_reason`` attribute (VT 10.4.0
-        ``base_thermostat.py``: ``hvac_off_manual``, ``hvac_off_sleep_mode``,
-        ``hvac_off_window_detection``, ``hvac_off_central_mode``, ``hvac_off_safety_detection``,
-        ``hvac_off_auto_start_stop``); ``None`` when it is away, missing or not a text."""
+        """Why VT keeps a zone off (SB-27): ``hvac_off_reason``, which VT publishes in the
+        thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5 ``base_thermostat.py``:
+        ``hvac_off_manual``, ``hvac_off_sleep_mode``, ``hvac_off_window_detection``,
+        ``hvac_off_central_mode``, ``hvac_off_safety_detection``, ``hvac_off_auto_start_stop``;
+        from 10.6.1 ``hvac_off_inhibition``, a plugin that took the thermostat out of VT's
+        control). Beside the other attributes only where ``specific_states`` lacks it (assumed,
+        a VT not seen). ``None`` when it is away, missing or not a text."""
         state = self._hass.states.get(entity_id)
-        reason = None if state is None else state.attributes.get(HVAC_OFF_REASON)
+        if state is None:
+            return None
+        specific = state.attributes.get("specific_states")
+        reason = specific.get(HVAC_OFF_REASON) if isinstance(specific, dict) else None
+        if reason is None:
+            reason = state.attributes.get(HVAC_OFF_REASON)
         return reason if isinstance(reason, str) else None
 
     def shows_attribute(self, entity_id: str, attribute: str) -> bool | None:
