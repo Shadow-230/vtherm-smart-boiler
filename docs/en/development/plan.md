@@ -28,7 +28,7 @@ circuit, and per-circuit curves come with CH2 (`docs/en/specification/scope.md` 
 | B. Data | common format, history importer, forecast snapshot store, assessment verdict from live and exported data | Python 3.14 |
 | C. Simulator | boiler (minimum power, hysteresis, water volume), house as one mass, one unmixed loop (`sim/custom_components/boiler_sim/profiles.py`), zones; generic profiles per boiler class; mixed and separately controlled circuits with 0.3 | Python 3.14 |
 | D. HA integration | own scaffold (`vtherm_hysteresis` as a reference), config flow with simple/advanced levels, entities, translations, `vtherm_api` registration, entity-based transport (read; write from 0.2), built-in OTGW support, learning pauses | test environment |
-| E. Release | docs, license, HACS, VT plugin list submission | — |
+| E. Release | docs, license, HACS (the Marketplace from Home Assistant 2026.11), VT plugin list submission | — |
 
 ## Test environment
 
@@ -66,7 +66,7 @@ After that, release early and in small steps: every release collects data for th
 | 0.3 Anti-cycling and the thermostat-like mode | duty cycling — to be decided against principle 12 (`docs/en/development/plans/plan-0.2.2.md` decision 13); modulation cap, forecast planning (FC2); the thermostat-like mode — the boiler gets the temperature and setpoint, or the difference, of the zone asking for heat that lacks most, and sets its own water (ID 24 / 16 or picked entities; `docs/en/development/plans/plan-0.2-i8.md` G); the wall thermostat as a fallback for Home Assistant failing — one way, VT to the thermostat, off by default (at the earliest; `docs/en/development/plans/plan-0.2-i8.md` I1); the "apply" mode of the lowest water temperature; radiators and underfloor behind a mixing valve (one written circuit plus passive fixed circuits) | fewer starts, same comfort | December–January |
 | 0.4 Learning and tuning | water-side learning, advisor suggestions, tuning band, seasonal tune-up — each per circuit, also the water a circuit run by other automation needs where no value is given | lower return, less gas per degree-day | January–February |
 | 0.5 Forecast | anticipation for slow emitters (FC3), lead time from recorded forecasts | better comfort on weather changes without extra gas | late winter or next season |
-| Later | DHW charging; HACS default list and VT plugin list submission; built-in support for more devices; the gas estimated from the boiler's power where no gas rates are given; relay commands beyond a switch and a boiler thermostat entity (VT's free-form actions), if asked | — | spring 2027 onward |
+| Later | DHW charging; the Marketplace's default list (`hacs/default`) and VT plugin list submission; built-in support for more devices; the gas estimated from the boiler's power where no gas rates are given; relay commands beyond a switch and a boiler thermostat entity (VT's free-form actions), if asked | — | spring 2027 onward |
 
 Targets are aims, not commitments. The simulator stays minimal: enough to accept 0.2 before it
 reaches a real boiler.
@@ -76,6 +76,75 @@ in-process; Claude connects only to the test HA.
 ## Before 0.2
 
 Checks before control code: `docs/en/development/plans/plan-0.2.md`, phase F (done 2026-09-24; answers in `docs/en/specification/scope.md` §11).
+
+## Before the first release — open for the review (K4)
+
+Added on 2026-11-16, after a check against the newest Home Assistant and VT and a review of
+published research (the notes `research/2026-11-16-*`, not in the repository). Each point waits
+for the user's decision at K4.
+
+**How the plugin is published.** From Home Assistant 2026.11, HACS is part of Home Assistant,
+named the Marketplace. A repository that is not on its list can still be added from its link.
+
+- The code goes to `main` (from `qas`) before the release: today `main` holds only the
+  documents, and the Marketplace may install from it.
+- The first release is either a GitHub pre-release or a regular release that its notes call a
+  beta. A pre-release is hidden until the user switches pre-releases on for this repository, and
+  while there is no regular release, the Marketplace installs the default branch instead.
+- After installing, Home Assistant is restarted or VT reloaded: VT finds the plugin only when its
+  thermostats start.
+- Once the kind of release is chosen, the user guide (§2) and the README describe both ways to
+  install: HACS up to Home Assistant 2026.10, the Marketplace from 2026.11.
+- The Marketplace's default list (`hacs/default`) needs a release, passing checks and an
+  open-source licence (Apache-2.0 passes); its queue takes months. VT's list of plugins is a
+  form on VT's website.
+
+**Versions.** The tests move to the newest versions — Home Assistant 2026.11, VT 10.6.5,
+SmartPI 0.6.5, `vtherm_api` 0.9.0 — in a separate test session; the plugin's code must work with
+them (the user's decision, 2026-11-16). To decide: whether the oldest Home Assistant supported
+stays 2026.9.0 (VT 10.6.5 needs 2026.10.4).
+
+**Home Assistant 2027.11** removes five old interfaces. The plugin used one — the old way an
+entity's ID is renamed — and is ready for the new one (#147, 2026-11-16). VT 10.6.5 still uses the old
+temperature properties of thermostats, which stop working in 2027.11; the plugin's zones depend
+on VT changing them. Watched at each early-warning run; not raised with VT (the user's decision,
+2026-11-16).
+
+**From the research.** Proposals; each changes a default or a rule.
+
+1. The comfort correction off by default, at least where the zones run VT's TPI, and offered by
+   the advisor instead. In the research it is a shift of the curve from one reference room
+   without a radiator valve, in proportion to the room's shortfall — not a correction that
+   climbs to its limit over rooms VT throttles. J4's ×1.30 to ×4.42 starts (F8) agree. This
+   reverses the decision of 2026-10-10 (G11).
+2. Advise a TPI cycle of at least 10 minutes for zones that call a boiler (VT's default is 5).
+   The extra starts at −5 °C (F9) come from the gaps between VT's pulses, at a load where a
+   modulating boiler would seldom stop. UK practice for gas boilers is 6 cycles an hour.
+3. Frequent starts in two steps: information above about 6 an hour for some hours, the alarm
+   above 12 (today 12 only).
+4. The building's heat loss counted as known only after about 3 weeks of heating, and shown with
+   a range.
+5. Gas per degree-day over 7 days; the change against the day before with a band for noise.
+6. The verdict's text names an oversized boiler as the main cause of short burns.
+7. For 0.3: a short pause before the burner starts again (3 to 5 minutes), cut short by a large
+   shortfall, frost protection or hot water, and never delaying a stop. It goes against
+   principle 12 (heating follows VT at once), so it is the user's to decide. With it, the
+   correction in proportion to the shortfall: only from rooms at full demand for whole cycles,
+   past a dead band, from at least two rooms, 1 to 2 K at most.
+8. For 0.4: learn the curve's shift first and its slope only once outdoor temperatures vary;
+   "suggest" as the default; stop lowering the water when starts rise or burns get shorter; show
+   the measured effect of each change.
+9. For 0.5: anticipation kept simple — a limited look-ahead outdoor temperature for slow circuits
+   only; the sun only lowers the water, and only a little. The research finds little gain from
+   forecasts where rooms already have their own control.
+10. Later: the mean return temperature, or the share below about 45 °C, beside the share below
+    55 °C.
+
+The research agrees with what is built: the curve's shape, the circuit's highest water
+temperature, the most demanding circuit setting the water, short burns counted under
+10 minutes, hot water told from the boiler's own signals. It has nothing on: forecast-based
+anti-cycling (FC2), ignition and flue-gas limits, the tuning band's 3 / 8 / 15 %, and whether real
+boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
 
 ## Before 0.3
 
