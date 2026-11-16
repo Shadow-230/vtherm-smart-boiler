@@ -28,7 +28,7 @@ obieg, a krzywe dla poszczególnych obiegów przychodzą z CH2 (`docs/pl/specifi
 | B. Dane | wspólny format, importer historii, magazyn migawek prognozy, werdykt oceny z danych na żywo i wyeksportowanych | Python 3.14 |
 | C. Symulator | kocioł (minimalna moc, histereza, objętość wody), dom jako jedna masa, jedna niemieszana pętla (`sim/custom_components/boiler_sim/profiles.py`), strefy; ogólne profile dla klasy kotła; obiegi mieszane i sterowane osobno od 0.3 | Python 3.14 |
 | D. Integracja z HA | własny szkielet (`vtherm_hysteresis` jako wzór), config flow z poziomami prosty/zaawansowany, encje, tłumaczenia, rejestracja w `vtherm_api`, transport przez encje (odczyt; zapis od 0.2), wbudowana obsługa OTGW, wstrzymania nauki | środowisko testowe |
-| E. Wydanie | dokumentacja, licencja, HACS, zgłoszenie na listę wtyczek VT | — |
+| E. Wydanie | dokumentacja, licencja, HACS (od Home Assistanta 2026.11 Marketplace), zgłoszenie na listę wtyczek VT | — |
 
 ## Środowisko testowe
 
@@ -66,7 +66,7 @@ Potem wydawać wcześnie i małymi krokami: każde wydanie zbiera dane dla nast�
 | 0.3 Przeciwdziałanie częstym startom i tryb podobny do termostatu | sterowanie cyklem pracy — do rozstrzygnięcia w świetle zasady 12 (`docs/en/development/plans/plan-0.2.2.md` decyzja 13); ograniczenie modulacji, planowanie z prognozą (FC2); tryb podobny do termostatu — kocioł dostaje temperaturę i nastawę, albo różnicę, strefy proszącej o ciepło, której brakuje najwięcej, i sam ustala swoją wodę (ID 24 / 16 albo wskazane encje; `docs/en/development/plans/plan-0.2-i8.md` G); termostat ścienny jako rezerwa na awarię Home Assistanta — jedna droga, od VT do termostatu, domyślnie wyłączona (najwcześniej; `docs/en/development/plans/plan-0.2-i8.md` I1); tryb „zastosuj” dla najniższej temperatury wody; grzejniki i podłogówka za zaworem mieszającym (jeden zapisywany obieg plus bierne obiegi stałe) | mniej startów, ten sam komfort | grudzień–styczeń |
 | 0.4 Nauka i strojenie | nauka po stronie wody, podpowiedzi doradcy, pasmo strojenia, sezonowe dostrojenie — każde dla obiegu, także woda, której potrzebuje obieg sterowany przez inną automatykę, gdy nie podano wartości | niższy powrót, mniej gazu na stopniodzień | styczeń–luty |
 | 0.5 Prognoza | wyprzedzanie dla wolnych odbiorników ciepła (FC3), czas wyprzedzenia z zapisanych prognoz | lepszy komfort przy zmianach pogody bez dodatkowego gazu | późna zima albo następny sezon |
-| Później | ładowanie c.w.u.; domyślna lista HACS i zgłoszenie na listę wtyczek VT; wbudowana obsługa kolejnych urządzeń; gaz szacowany z mocy kotła tam, gdzie nie podano zużycia gazu; polecenia przekaźnika poza włącznikiem i encją termostatu kotła (swobodne akcje VT), jeśli ktoś o to poprosi | — | od wiosny 2027 |
+| Później | ładowanie c.w.u.; domyślna lista Marketplace (`hacs/default`) i zgłoszenie na listę wtyczek VT; wbudowana obsługa kolejnych urządzeń; gaz szacowany z mocy kotła tam, gdzie nie podano zużycia gazu; polecenia przekaźnika poza włącznikiem i encją termostatu kotła (swobodne akcje VT), jeśli ktoś o to poprosi | — | od wiosny 2027 |
 
 Terminy są celami, nie zobowiązaniami. Symulator pozostaje minimalny: wystarczy, by przyjąć 0.2, zanim trafi
 do prawdziwego kotła.
@@ -76,6 +76,76 @@ w jednym procesie; Claude łączy się tylko z testowym HA.
 ## Przed 0.2
 
 Kontrole przed kodem sterowania: `docs/en/development/plans/plan-0.2.md`, faza F (zrobiona 2026-09-24; odpowiedzi w `docs/pl/specification/scope.md` §11).
+
+## Przed pierwszym wydaniem — do przeglądu (K4)
+
+Dodane 2026-11-16, po sprawdzeniu najnowszego Home Assistanta i VT oraz po przeglądzie
+opublikowanych badań (notatki `research/2026-11-16-*`, poza repozytorium). Każdy punkt czeka na
+decyzję użytkownika w K4.
+
+**Jak wtyczka jest publikowana.** Od Home Assistanta 2026.11 HACS jest częścią Home Assistanta
+i nazywa się Marketplace. Repozytorium spoza jego listy nadal można dodać z linku.
+
+- Kod trafia na `main` (z `qas`) przed wydaniem: dziś na `main` są tylko dokumenty, a Marketplace
+  może instalować właśnie z niego.
+- Pierwsze wydanie to albo „pre-release” na GitHubie, albo zwykłe wydanie, które w opisie nazywa
+  się betą. „Pre-release” jest ukryty, dopóki użytkownik nie włączy wersji przedpremierowych dla
+  tego repozytorium, a dopóki nie ma zwykłego wydania, Marketplace instaluje zamiast niego gałąź
+  domyślną.
+- Po instalacji trzeba zrestartować Home Assistanta albo przeładować VT: VT znajduje wtyczkę
+  dopiero, gdy uruchamia swoje termostaty.
+- Gdy rodzaj wydania będzie wybrany, instrukcja (§2) i README opiszą obie drogi instalacji: HACS do
+  Home Assistanta 2026.10, Marketplace od 2026.11.
+- Domyślna lista Marketplace (`hacs/default`) wymaga wydania, przechodzących kontroli i licencji
+  open source (Apache-2.0 przechodzi); kolejka trwa miesiące. Lista wtyczek VT to formularz na
+  stronie VT.
+
+**Wersje.** Testy przechodzą na najnowsze wersje — Home Assistant 2026.11, VT 10.6.5, SmartPI
+0.6.5, `vtherm_api` 0.9.0 — w osobnej sesji testowej; kod wtyczki musi z nimi działać (decyzja
+użytkownika, 2026-11-16). Do decyzji: czy najstarszy obsługiwany Home Assistant zostaje 2026.9.0
+(VT 10.6.5 wymaga 2026.10.4).
+
+**Home Assistant 2027.11** usuwa pięć starych interfejsów. Wtyczka używała jednego — starego
+sposobu zmiany ID encji — i jest gotowa na nowy (#147, 2026-11-16). VT 10.6.5 nadal używa starych
+właściwości temperatury termostatów, które w 2027.11 przestają działać; strefy wtyczki zależą od
+tego, czy VT je zmieni. Sprawdzane przy każdym przebiegu wczesnego ostrzegania; bez zgłaszania do
+VT (decyzja użytkownika, 2026-11-16).
+
+**Z badań.** Propozycje; każda zmienia ustawienie domyślne albo regułę.
+
+1. Korekta komfortu domyślnie wyłączona, przynajmniej gdy strefy działają na TPI z VT, a zamiast
+   tego proponowana przez doradcę. W badaniach to przesunięcie krzywej na podstawie jednego pokoju
+   wzorcowego bez zaworu termostatycznego, proporcjonalne do niedogrzania pokoju — a nie korekta,
+   która rośnie do swojego limitu na pokojach dławionych przez VT. Zgadzają się z tym starty z J4,
+   od ×1,30 do ×4,42 (F8). To odwraca decyzję z 2026-10-10 (G11).
+2. Zalecić cykl TPI co najmniej 10 minut dla stref, które wołają kocioł (domyślnie w VT 5). Dodatkowe
+   starty przy −5 °C (F9) biorą się z przerw między impulsami VT, przy obciążeniu, przy którym kocioł
+   z modulacją rzadko by gasł. Praktyka brytyjska dla kotłów gazowych to 6 cykli na godzinę.
+3. Częste starty w dwóch stopniach: informacja powyżej około 6 na godzinę przez kilka godzin, alarm
+   powyżej 12 (dziś tylko 12).
+4. Straty ciepła budynku uznawane za znane dopiero po około 3 tygodniach grzania i pokazywane
+   z zakresem.
+5. Gaz na stopniodzień z 7 dni; zmiana względem poprzedniego dnia z pasmem na szum.
+6. Tekst werdyktu wskazuje przewymiarowany kocioł jako główną przyczynę krótkich paleń.
+7. Do 0.3: krótka przerwa przed ponownym startem palnika (3 do 5 minut), skracana przy dużym
+   niedogrzaniu, ochronie przed mrozem albo ciepłej wodzie i nigdy nieopóźniająca wyłączenia. Jest
+   sprzeczna z zasadą 12 (grzanie od razu za VT), więc decyduje użytkownik. Razem z nią korekta
+   proporcjonalna do niedogrzania: tylko z pokoi przy pełnym zapotrzebowaniu przez całe cykle, poza
+   strefą martwą, z co najmniej dwóch pokoi, najwyżej 1 do 2 K.
+8. Do 0.4: najpierw uczyć się przesunięcia krzywej, a jej nachylenia dopiero przy różnych
+   temperaturach zewnętrznych; domyślnie „proponuj”; przestać obniżać wodę, gdy starty rosną albo
+   palenia się skracają; pokazywać zmierzony skutek każdej zmiany.
+9. Do 0.5: wyprzedzanie w prostej formie — ograniczona temperatura zewnętrzna „z wyprzedzeniem”
+   tylko dla wolnych obiegów; słońce tylko obniża wodę i tylko trochę. Badania pokazują mały zysk
+   z prognoz tam, gdzie pokoje mają już własne sterowanie.
+10. Później: średnia temperatura powrotu albo udział poniżej około 45 °C obok udziału poniżej
+    55 °C.
+
+Badania zgadzają się z tym, co jest zbudowane: kształt krzywej, najwyższa temperatura wody obiegu,
+woda ustawiana przez najbardziej wymagający obieg, krótkie palenia liczone poniżej 10 minut, ciepła
+woda rozpoznawana z sygnałów samego kotła. Nie mówią nic o: zapobieganiu taktowaniu na podstawie
+prognozy (FC2), progach zapłonu i spalin, paśmie strojenia 3 / 8 / 15 % ani o tym, czy prawdziwe
+kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
 
 ## Przed 0.3
 
