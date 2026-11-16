@@ -10231,6 +10231,32 @@ async def test_the_control_switch_renamed_while_controlling_keeps_control(rig: R
     assert rig.state("switch", "control").state == "off"
 
 
+@pytest.mark.parametrize("home_assistant_has_it", [True, False])
+async def test_the_rename_hook_passes_on_to_home_assistants_own(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, home_assistant_has_it: bool
+) -> None:
+    """The control entities' ``async_entity_id_changed`` passes the rename on to Home
+    Assistant's own where the running version has one (2026.11 onward), and does nothing else
+    where it has none."""
+    from homeassistant.helpers.entity import Entity
+
+    await start(rig)
+    calls: list[tuple[str, str]] = []
+    if home_assistant_has_it:
+
+        def own(self: Entity, old_entity_id: str) -> None:
+            calls.append((self.entity_id, old_entity_id))
+
+        monkeypatch.setattr(Entity, "async_entity_id_changed", own, raising=False)
+    else:
+        monkeypatch.delattr(Entity, "async_entity_id_changed", raising=False)
+    switch_id = rig.entity("switch", "control")
+    switch = rig.hass.data["switch"].get_entity(switch_id)
+    assert switch is not None
+    switch.async_entity_id_changed("switch.before")
+    assert calls == ([(switch_id, "switch.before")] if home_assistant_has_it else [])
+
+
 def no_zone_issue(rig: Rig) -> ir.IssueEntry | None:
     return issue(rig, "no_zone_known")
 
