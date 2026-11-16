@@ -8,6 +8,7 @@ from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import Any
 
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -159,6 +160,17 @@ class ControlEntity(SmartBoilerEntity):
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.async_on_remove(self.control.async_add_listener(self.async_write_ha_state))
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """The user renamed the entity's ID: Home Assistant 2026.11 onward changes it in place
+        rather than removing the entity and adding it again — for a class that defines this,
+        until 2027.11; for every entity after. Nothing of the plugin is kept under the entity's
+        ID (the control unit and the coordinator look it up by its unique ID), so nothing
+        moves. Older versions never call it."""
+        changed = getattr(super(), "async_entity_id_changed", None)
+        if changed is not None:
+            changed(old_entity_id)
 
 
 # The demand's diagnostics change at nearly every step: shown, not recorded.

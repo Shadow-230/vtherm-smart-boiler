@@ -931,7 +931,7 @@ not confirmed.
 |---|---|
 | Versatile Thermostat gives no answer (3 variants) | check that VT runs, thermostats on |
 | No demand criterion can be judged (3 variants) | set VT's device power, or another one |
-| A room below the frost limit cannot get heat (5 variants) | VT keeps it closed; see text |
+| A room below the frost limit cannot get heat (6 variants) | VT keeps it closed; see text |
 | A heating circuit has no rooms | add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Auto-TPI cannot learn in some zones | clear "used by the central boiler" in VT |

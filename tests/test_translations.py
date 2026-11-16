@@ -227,7 +227,7 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         assert no_criterion["title"], kind
         assert set(PLACEHOLDER.findall(no_criterion["description"])) == {"criteria"}, kind
     # Decision 4 (X4); SB-27: the advice by VT's reason for closing the room.
-    for advice in ("", "_window", "_central_mode", "_vt_function", "_mixed"):
+    for advice in ("", "_window", "_central_mode", "_vt_function", "_inhibition", "_mixed"):
         frost = SOURCE["issues"][f"frost_zone_closed{advice}"]
         assert frost["title"], advice
         assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}, advice

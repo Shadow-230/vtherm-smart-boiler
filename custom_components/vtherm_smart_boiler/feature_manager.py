@@ -5,9 +5,10 @@ VT picks up external feature managers from the ``vtherm_api`` registry when a th
 (research F4): a thermostat already running sees the manager only after VT's next reload, which
 the plugin never triggers itself. The factory is registered only while VT is loaded — asking
 ``vtherm_api`` for its API before VT sets it up would leave VT a bare one — and again whenever VT
-has created a new API (VT drops it with its last entry). Every method of the manager catches its
-own errors, and every call the plugin makes on VT's API is inside ``try``, so no error of the
-plugin's ever reaches VT (T-53).
+has created a new API (VT up to 10.6.4 drops it with its last entry; 10.6.5 keeps it while a
+plugin is registered, ``vtherm_central_api.py`` ``remove_entry``). Every method of the manager
+catches its own errors, and every call the plugin makes on VT's API is inside ``try``, so no
+error of the plugin's ever reaches VT (T-53).
 
 The managers reach the plugin's data through a stable access point, not through the installation
 that created them: after the plugin reloads (an options change), the managers VT already holds

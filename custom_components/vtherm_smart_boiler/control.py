@@ -393,14 +393,17 @@ CURVE_TOO_LOW_ISSUE = "curve_too_low"
 ROOM_SHORT_KEY = "room_short_at_limit"
 FROST_CLOSED_SHOWN_K = 1.0
 # SB-27: the issue's advice by VT's reason for keeping a room off (``hvac_off_reason``, VT
-# 10.4.0): "off" by hand or in sleep mode, or a reason not known — VT's frost preset instead;
-# an open window, VT's central mode, another VT function (safety, auto start/stop) — the room
-# stays unheated until VT opens it; rooms closed for different reasons get every advice.
+# 10.4.0 to 10.6.5): "off" by hand or in sleep mode, or a reason not known — VT's frost preset
+# instead; an open window, VT's central mode, another VT function (safety, auto start/stop) —
+# the room stays unheated until VT opens it; a plugin that took the thermostat out of VT's
+# control (VT 10.6.1's inhibition) — until that plugin hands it back; rooms closed for
+# different reasons get every advice.
 _FROST_ADVICE: dict[str, str] = {
     "hvac_off_window_detection": "_window",
     "hvac_off_central_mode": "_central_mode",
     "hvac_off_safety_detection": "_vt_function",
     "hvac_off_auto_start_stop": "_vt_function",
+    "hvac_off_inhibition": "_inhibition",
 }
 _FROST_ADVICE_MIXED = "_mixed"
 ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported

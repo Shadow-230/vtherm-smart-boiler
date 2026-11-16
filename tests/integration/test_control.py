@@ -10207,6 +10207,56 @@ async def test_a_renamed_entity_carries_what_control_stored_for_it(
     assert {"entity_id": "climate.lounge", "learning_enabled": True} in learning
 
 
+async def test_the_control_switch_renamed_while_controlling_keeps_control(rig: Rig) -> None:
+    """The user renames the control switch's entity ID while control holds the boiler: Home
+    Assistant 2026.11 onward changes it in place (the plugin opts in; the only way from
+    2027.11), older versions remove the switch and add it again. Either way control stays on and
+    holds the boiler, the switch shows under its new ID only, and it still switches control
+    off."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    assert rig.gateway.setpoints()
+    old = rig.entity("switch", "control")
+    new = "switch.renamed_boiler_control"
+    er.async_get(rig.hass).async_update_entity(old, new_entity_id=new)
+    await rig.hass.async_block_till_done()
+    rig.gateway.calls.clear()
+    await rig.advance(60)
+    assert rig.entity("switch", "control") == new
+    assert rig.hass.states.get(old) is None
+    assert rig.state("switch", "control").state == "on"
+    assert rig.gateway.setpoints()  # still controlling: the setpoint is repeated
+    await rig.switch(False)
+    assert rig.state("switch", "control").state == "off"
+
+
+@pytest.mark.parametrize("home_assistant_has_it", [True, False])
+async def test_the_rename_hook_passes_on_to_home_assistants_own(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, home_assistant_has_it: bool
+) -> None:
+    """The control entities' ``async_entity_id_changed`` passes the rename on to Home
+    Assistant's own where the running version has one (2026.11 onward), and does nothing else
+    where it has none."""
+    from homeassistant.helpers.entity import Entity
+
+    await start(rig)
+    calls: list[tuple[str, str]] = []
+    if home_assistant_has_it:
+
+        def own(self: Entity, old_entity_id: str) -> None:
+            calls.append((self.entity_id, old_entity_id))
+
+        monkeypatch.setattr(Entity, "async_entity_id_changed", own, raising=False)
+    else:
+        monkeypatch.delattr(Entity, "async_entity_id_changed", raising=False)
+    switch_id = rig.entity("switch", "control")
+    switch = rig.hass.data["switch"].get_entity(switch_id)
+    assert switch is not None
+    switch.async_entity_id_changed("switch.before")
+    assert calls == ([(switch_id, "switch.before")] if home_assistant_has_it else [])
+
+
 def no_zone_issue(rig: Rig) -> ir.IssueEntry | None:
     return issue(rig, "no_zone_known")
 
@@ -11011,8 +11061,14 @@ async def test_a_blocker_while_the_restore_waits_hands_back_and_tells_where_heat
 # pauses by cause and the flow's own age limit (P-89) ---------------------------------------------
 
 
-def closed_room(rig: Rig, zone: str, temperature: float, **extra: Any) -> None:
-    """VT keeps the zone off: valve closed, device off (as VT 10.4.0 shows it)."""
+def closed_room(
+    rig: Rig, zone: str, temperature: float, *, off_reason: object = None, **extra: Any
+) -> None:
+    """VT keeps the zone off: valve closed, device off, and its ``hvac_off_reason`` where VT
+    publishes it — in ``specific_states`` (VT 10.4.0 to 10.6.5 ``base_thermostat.py``)."""
+    specific: dict[str, Any] = {"is_device_active": False}
+    if off_reason is not None:
+        specific["hvac_off_reason"] = off_reason
     rig.zones.set(
         zone,
         "off",
@@ -11020,7 +11076,7 @@ def closed_room(rig: Rig, zone: str, temperature: float, **extra: Any) -> None:
         hvac_action="off",
         valve_open_percent=0,
         on_percent=0.0,
-        specific_states={"is_device_active": False},
+        specific_states=specific,
         **extra,
     )
 
@@ -11098,6 +11154,7 @@ async def test_a_cold_zone_vt_keeps_closed_raises_a_repair_issue(rig: Rig) -> No
         (("hvac_off_central_mode",), "frost_zone_closed_central_mode"),
         (("hvac_off_safety_detection",), "frost_zone_closed_vt_function"),
         (("hvac_off_auto_start_stop",), "frost_zone_closed_vt_function"),
+        (("hvac_off_inhibition",), "frost_zone_closed_inhibition"),
         (("hvac_off_window_detection", "hvac_off_window_detection"), "frost_zone_closed_window"),
         (("hvac_off_window_detection", "hvac_off_manual"), "frost_zone_closed_mixed"),
     ],
@@ -11105,15 +11162,17 @@ async def test_a_cold_zone_vt_keeps_closed_raises_a_repair_issue(rig: Rig) -> No
 async def test_the_closed_zone_advice_follows_vts_reason(
     rig: Rig, reasons: tuple[object, ...], key: str
 ) -> None:
-    """SB-27: the advice is worded by VT's ``hvac_off_reason`` — "off" (or a reason unknown,
-    missing or of another VT version): VT's frost preset; an open window or VT's central mode:
-    the room stays unheated until VT opens it; rooms closed for different reasons: every
-    advice. An error-level issue whichever it is, and the boiler is not started for them."""
+    """SB-27: the advice is worded by VT's ``hvac_off_reason``, read where VT publishes it — in
+    ``specific_states`` — "off" (or a reason unknown, missing or of another VT version): VT's
+    frost preset; an open window or VT's central mode: the room stays unheated until VT opens
+    it; a plugin that took the thermostat out of VT's control (VT 10.6.1's inhibition): until
+    that plugin hands it back; rooms closed for different reasons: every advice. An error-level
+    issue whichever it is, and the boiler is not started for them."""
     satisfied_room(rig)
     rooms = [f"cold{index}" for index in range(len(reasons))]
     for room, reason in zip(rooms, reasons, strict=True):
         rig.zones.add(room)
-        closed_room(rig, room, 4.0, **({} if reason is None else {"hvac_off_reason": reason}))
+        closed_room(rig, room, 4.0, off_reason=reason)
     await start(rig)
     await rig.switch(True)
     await rig.advance(10)
@@ -11129,18 +11188,41 @@ async def test_a_closed_zone_whose_reason_changes_is_advised_anew(rig: Rig) -> N
     thermostat off: the issue is shown again with the new advice."""
     rig.zones.add("garage")
     satisfied_room(rig)
-    closed_room(rig, "garage", 4.0, hvac_off_reason="hvac_off_window_detection")
+    closed_room(rig, "garage", 4.0, off_reason="hvac_off_window_detection")
     await start(rig)
     await rig.switch(True)
     await rig.advance(10)
     found = frost_issue(rig)
     assert found is not None
     assert found.translation_key == "frost_zone_closed_window"
-    closed_room(rig, "garage", 4.0, hvac_off_reason="hvac_off_manual")
+    closed_room(rig, "garage", 4.0, off_reason="hvac_off_manual")
     await rig.advance(10)
     found = frost_issue(rig)
     assert found is not None
     assert found.translation_key == "frost_zone_closed"
+
+
+@pytest.mark.parametrize(
+    ("specific", "top", "key"),
+    [
+        (None, "hvac_off_window_detection", "frost_zone_closed_window"),
+        ("hvac_off_central_mode", "hvac_off_window_detection", "frost_zone_closed_central_mode"),
+    ],
+)
+async def test_the_closed_zone_reason_at_the_top_level_is_a_fallback(
+    rig: Rig, specific: str | None, top: str, key: str
+) -> None:
+    """SB-27: a VT that publishes ``hvac_off_reason`` beside its other attributes (assumed for
+    a version not seen) is still read; where ``specific_states`` has it, that one counts."""
+    rig.zones.add("garage")
+    satisfied_room(rig)
+    closed_room(rig, "garage", 4.0, off_reason=specific, hvac_off_reason=top)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    found = frost_issue(rig)
+    assert found is not None
+    assert found.translation_key == key
 
 
 async def test_no_closed_zone_issue_during_recognition(rig: Rig) -> None:

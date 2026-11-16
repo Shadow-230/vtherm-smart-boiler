@@ -3261,9 +3261,13 @@
       "title": "Pokój poniżej progu mrozu nie może dostać ciepła: wyłącza go funkcja VT",
       "description": "{zones}: jedna z funkcji samego Versatile Thermostat (tryb bezpieczeństwa albo automatyczny start/stop) trzyma zawór zamknięty, więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. Pokój zostaje nieogrzewany, dopóki VT go znów nie otworzy: sprawdź czujnik temperatury pokoju w tym termostacie i jego ustawienia automatycznego startu/stopu."
     },
+    "frost_zone_closed_inhibition": {
+      "title": "Pokój poniżej progu mrozu nie może dostać ciepła: trzyma go inna wtyczka",
+      "description": "{zones}: inna wtyczka wyłączyła ten termostat spod sterowania Versatile Thermostat, więc VT trzyma zawór zamknięty, a wtyczka nie może go ogrzać i nie włącza dla niego kotła. Pokój zostaje nieogrzewany, dopóki tamta wtyczka nie odda termostatu VT: sprawdź wtyczkę, która go trzyma."
+    },
     "frost_zone_closed_mixed": {
       "title": "Pokoje poniżej progu mrozu nie mogą dostać ciepła",
-      "description": "{zones}: VT trzyma ich zawory zamknięte z różnych powodów, więc wtyczka nie może ich ogrzać. Dla termostatu wyłączonego użyj presetu przeciwmrozowego VT zamiast wyłączenia; pokój zamknięty przez okno, „Zatrzymany” VT albo inną funkcję VT zostaje nieogrzany, dopóki VT go nie otworzy."
+      "description": "{zones}: VT trzyma ich zawory zamknięte z różnych powodów, więc wtyczka nie może ich ogrzać. Dla termostatu wyłączonego użyj presetu przeciwmrozowego VT zamiast wyłączenia; pokój zamknięty przez okno, „Zatrzymany” VT albo inną funkcję VT zostaje nieogrzany, dopóki VT go nie otworzy, a pokój trzymany przez inną wtyczkę — dopóki tamta wtyczka go nie odda."
     },
     "thermostat_kind_missing": {
       "title": "Podaj, co jest podłączone do zacisków termostatu bramki",
