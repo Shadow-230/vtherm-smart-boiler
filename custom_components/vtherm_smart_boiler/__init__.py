@@ -798,6 +798,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_options_invalid",
         "auto_tpi_blocked",
         "learning_not_paused",
+        "zone_cycle_short",  # VT zones cycling under 10 min while controlling (K4)
         "learning_not_resumed",  # SmartPI resumes given up after a day (Y4)
         "vt_central_entry_not_running",  # VT's central entry not running (X7)
         UNREADABLE_ISSUE,

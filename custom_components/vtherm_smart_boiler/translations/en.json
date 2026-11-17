@@ -3153,6 +3153,10 @@
       "title": "SmartPI's learning may still be off in some zones",
       "description": "The integration was removed while control had paused SmartPI's learning in these zones, and it could not be seen switched back on: {zones}. SmartPI keeps learning off until it is switched on — in SmartPI's own settings, or with its service \"set_smartpi_learning\". Switch it on there, and then ignore this issue."
     },
+    "zone_cycle_short": {
+      "title": "Short cycles in VT: more boiler starts",
+      "description": "{zones}: Versatile Thermostat switches these rooms' heating on and off in cycles shorter than 10 minutes. The plugin starts and stops the boiler with them, so short cycles mean many short burns, which waste gas and wear the boiler. For rooms that call a gas boiler, set the cycle in VT to 10–15 minutes: in the simulation it cut the boiler's starts by a third to a half in mild weather, with the rooms as warm."
+    },
     "learning_not_paused": {
       "title": "The plugin cannot pause learning in some zones",
       "description": "Control cannot pause learning in these zones during hot water and water swings: {zones}. Auto-TPI could only be paused by wiping what it learned; a SmartPI without a learning flag cannot be paused. They keep learning through those moments, which can skew what they learn."

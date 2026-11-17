@@ -206,6 +206,12 @@ same way VT's central boiler does. You choose one or more of these criteria:
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
   VT does not hand the boiler back; frost protection still watches.
 - There is no summer switch in the plugin. If VT's zones are off, the boiler does not heat.
+- **VT's cycle for rooms that call the boiler: 10 to 15 minutes.** VT switches a room's heating
+  on and off in cycles (5 minutes by default). The plugin follows the rooms at once, so each gap
+  between their pulses stops the burner. Gas boilers are usually given 6 cycles an hour at most;
+  in the simulation a 10–15 minute cycle cut the boiler's starts by a third to a half in mild
+  weather, with the rooms as warm. While control is set up, the plugin names the rooms VT
+  switches in cycles under 10 minutes ("Short cycles in VT").
 - **Valve zones whose valve may not close fully** (VT's **Max closing degree** below 100): use
   VT 10.5 or newer. From 10.5, a valve held at that floor does not count as heating, and the zone
   calls only once VT opens it further. VT 10.2–10.4 counted it as heating, so such a zone called
@@ -935,6 +941,7 @@ not confirmed.
 | A heating circuit has no rooms | add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Auto-TPI cannot learn in some zones | clear "used by the central boiler" in VT |
+| Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
 | The plugin cannot pause learning in some zones | information |
 | The plugin could not switch learning back on in some zones | switch SmartPI learning on |
 | VT's thermostats cannot show the plugin's zone value | update VT; nothing else depends on it |

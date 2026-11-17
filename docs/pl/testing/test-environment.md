@@ -218,8 +218,10 @@ ze stanów encji i liczników poleceń symulatora (atrybuty
 `dhw_enable_writes`; jego stan liczy tylko zapisy typu „zapisywany na stałe” (`persistent`)). Kryterium startów
 (decyzja 8 z `docs/en/development/plans/plan-0.2.3.md`; `docs/pl/specification/scope.md`, wartości stałe) odczytuje starty na godzinę z monitora
 w ciągu 24 h przy +8 °C i przy −5 °C, każdy z dobowym wahaniem temperatury zewnętrznej ±3 K, i porównuje je ze startami
-przy własnej regulacji kotła, przy czym pokoje są tak samo ciepłe jak przy niej (równy komfort); dopuszczalny stosunek zostanie przesądzony
-w K4 (do tego czasu 1.10), a test z wahaniem, uruchamiany w jednym procesie, jest do K4 ścisłym xfail. W Z3
+przy własnej regulacji kotła, przy czym pokoje są tak samo ciepłe jak przy niej (równy komfort): co najwyżej 1.10 razy tyle startów
+albo co najwyżej 6 startów na godzinę przy medianie palenia co najmniej 10 min (postanowione w K4, 2026-11-17).
+Test z wahaniem, uruchamiany w jednym procesie, zostaje ścisłym xfail przy domyślnym 5-minutowym cyklu TPI w VT
+i przechodzi przy cyklu 15-minutowym, który zaleca wtyczka. W Z3
 zmierzono, że kryterium jest spełnione tylko przy wyłączonej korekcie komfortu
 (`research/2026-10-02-z3-starts-ratio.md`). Jedyne kontaktowane adresy to `TEST_HA_URL` i
 `TEST_HA_URL_N` instancji.
@@ -248,7 +250,8 @@ ustawiona w `input_number.j4_outdoor_mean`; sterowanie włączone tylko na 2 i 4
 porównuje się kolejne 24 h: starty palnika na godzinę (`binary_sensor.boiler_sim_flame` wyłączony → włączony),
 przełączenia grzania i średnią temperaturę każdego pokoju (równy komfort: co najwyżej 0.3 K poniżej wartości
 przy własnej regulacji kotła); kryterium to co najwyżej 1.10 razy starty na godzinę przy tej regulacji
-(tymczasowe, K4).
+albo co najwyżej 6 startów na godzinę przy medianie palenia co najmniej 10 min (K4, 2026-11-17). Przebiegi
+robi się z domyślnym 5-minutowym cyklem VT i z cyklem 15-minutowym.
 
 Instancję, która w międzyczasie obsługiwała inne scenariusze (`--config configuration`), przywraca się
 jej wdrożeniem, a potem jej opcje przeprowadza się do bazy dla startów — najpierw sterowanie wyłączone

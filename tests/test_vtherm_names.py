@@ -25,6 +25,7 @@ VT_NAMES = frozenset(
         "central_boiler_deactivation_service",
         "central_boiler_state",
         "configuration",
+        "cycle_min",
         "device_power",
         "hvac_off_reason",
         "is_central_boiler_configured",
