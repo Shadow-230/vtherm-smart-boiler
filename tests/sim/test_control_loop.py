@@ -425,14 +425,14 @@ def test_tpi_switch_zones_starts_per_hour_under_control(mean: float) -> None:
     assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
 
 
-def test_the_defaults_are_the_correction_on_run() -> None:
-    """The plugin's defaults — the comfort correction on in full control since the user's
-    decision of 2026-10-10 (G11 B, reversing K4.1): the defaults' loop is the one the
-    correction-on test runs, so that test is J4's criterion with the defaults (PB-94: no second
-    run of the same). Negative: the correction off is another loop."""
+def test_the_defaults_are_the_correction_off_run() -> None:
+    """The plugin's defaults — the comfort correction off since K4 (the user's decision of
+    2026-11-17, reversing G11 B): the defaults' loop is the one the correction-off tests run, so
+    those are J4's criterion with the defaults (PB-94: no second run of the same). Negative: the
+    correction on is another loop."""
     boiler = BOILERS["condensing_large"]
-    assert own_curve_loop(boiler, None) == own_curve_loop(boiler, True)
-    assert own_curve_loop(boiler, None) != own_curve_loop(boiler, False)
+    assert own_curve_loop(boiler, None) == own_curve_loop(boiler, False)
+    assert own_curve_loop(boiler, None) != own_curve_loop(boiler, True)
 
 
 @pytest.mark.parametrize("mean", [8.0, -5.0])
@@ -541,9 +541,8 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
         (-5.0, False, SWING_K, 2.0, 2.3),
         (8.0, True, 0.0, 1.65, 1.85),
         (-5.0, True, 0.0, 4.7, 5.5),
-        # G11 B: the correction on by default — with the daily swing, x1.39 and x6.28 (the
-        # "up to 6.3" the option's text names); the default may be revisited after J4's starts
-        # comparison with it on (about 2026-10-12).
+        # The correction on — with the daily swing, x1.39 and x6.28 (the "1.4 to 6 times" the
+        # option's text names): why it is off by default since K4 (2026-11-17).
         (8.0, True, SWING_K, 1.3, 1.5),
         (-5.0, True, SWING_K, 5.9, 6.7),
     ],

@@ -302,8 +302,8 @@ Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
 krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 
-**Korekta komfortu** — **domyślnie włączona przy pełnym sterowaniu** (wpis ustawiony przed tą
-wersją zachowuje to, z czym działał). Gdy pomieszczenie nie dochodzi do swojej nastawy mimo w
+**Korekta komfortu** — **domyślnie wyłączona** (wpis zachowuje to, co zapisał). Po włączeniu: gdy
+pomieszczenie nie dochodzi do swojej nastawy mimo w
 pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K,
 najwyżej 10 K, ustawianego w **Krzywej grzewczej** obok korekty; nigdy więcej niż 3 K na dobę.
 Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy +
@@ -311,9 +311,10 @@ Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znacz
 Jedno niedogrzane pomieszczenie liczy się jak każde inne — woda nigdy nie idzie wyżej dla jednego
 pokoju. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, korekta
 tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
-mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i możliwie więcej startów
-palnika — przy strefach TPI w VT może stać na limicie i kilkakrotnie zwiększyć liczbę startów.
-Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
+mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i więcej startów palnika — przy
+strefach TPI w VT często stoi na limicie i kilkakrotnie zwiększa liczbę startów, prawie nie dodając
+ciepła. Dlatego jest wyłączona: gdy pokój zostaje zimny, najpierw podnieś krzywą. Przycisk
+„Wyzeruj korektę komfortu” cofa ją do zera.
 
 ### 4.5 Ochrona przed mrozem
 
@@ -1177,7 +1178,7 @@ Najważniejsze — opisane, nie doradzane:
 | Najniższa temperatura wody | 20 °C (tymczasowo) | za niska: przy łagodnej pogodzie kocioł raz po raz sam staje, a kocioł niekondensacyjny skrapla się w kominie (wartość podaje jego instrukcja) |
 | Najwyższa temperatura wody obiegu | 70 °C, gdy pole puste | ogranicza każdą nastawę w obiegach zasilanych prosto z kotła; kocioł może ją przekroczyć o własną histerezę |
 | Jej alarm za gorącej wody | maksimum + 5 K przez 10 min | tylko informacja; za wysoki przepuszcza prawdziwe przekroczenie bez słowa |
-| Korekta komfortu | włączona, do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika |
+| Korekta komfortu | wyłączona; po włączeniu do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika |
 | Opóźnienie włączenia | 0 s | czeka przed włączeniem grzania, dla wolnych zaworów; w tym czasie pomieszczenia nie dostają ciepła |
 | Typ zapisu wybranego celu | nieznany — bez zapisu | trzeba zadeklarować „wygasa” albo „trzymany”; zła deklaracja zużywa pamięć kotła albo pozwala wartości wygasnąć |
 | Wartość przy oddaniu sterowania | brak — wpisywana razem ze skutkiem | ta sama liczba na jednym urządzeniu znaczy „własne sterowanie”, na innym „bez ciepła” |

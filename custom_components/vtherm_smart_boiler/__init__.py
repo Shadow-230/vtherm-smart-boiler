@@ -260,7 +260,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 def _migrate_comfort_correction(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """G11 B (minor version 7): the comfort correction is on by default in full control. A
+    """G11 B (minor version 7): the comfort correction was on by default in full control (until
+    K4, 2026-11-17, where it is off again). A
     control section that never stored an answer ran with it off (its default since K4.1), and
     keeps that: "off" is written into it. A stored answer stays; an entry without control gets
     the new default once control is set up."""

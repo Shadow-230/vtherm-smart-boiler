@@ -154,7 +154,7 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
 | Sterowanie | domyślnie wyłączone; po włączeniu sterowanie działa automatycznie w wybranym trybie; zmiany krzywej: podpowiedzi (domyślnie) albo automatycznie w ustawionym paśmie (Niskie / Średnie / Wysokie) | pasmo własne, nadpisania pojedynczych parametrów, ręczna edycja wyuczonych wartości, reset do profilu |
 | Alarmy | rozsądne reakcje domyślne | progi dla każdego alarmu; reakcja tylko tam, gdzie pozwala na nią decyzja 7 (§7) |
 | Diagnostyka | ukryta | parametry modelu, pewność, powody odrzucenia próbek |
-| Nauka | korekta komfortu, dotąd jedyna nauka przy sterowaniu, jest domyślnie włączona przy pełnym sterowaniu i pokazana na obu poziomach (użytkownik, 2026-10-10, odwracając K4.1 — wpis po aktualizacji zachowuje to, z czym działał; `docs/en/development/plans/plan-0.2-g11.md`); jej limit ustawia użytkownik, na poziomie zaawansowanym; późniejsza nauka włączana w bezpiecznych granicach | wstrzymanie i wznowienie, korekta komfortu, pasmo strojenia (zasada 13), okna nauki, ustawienia ochrony algorytmów stref |
+| Nauka | korekta komfortu, dotąd jedyna nauka przy sterowaniu, jest domyślnie wyłączona i pokazana na obu poziomach (K4, decyzja użytkownika z 2026-11-17, odwracająca decyzję z 2026-10-10 — wpis zachowuje to, co zapisał; `docs/en/development/plans/plan-0.2-g11.md`); jej limit ustawia użytkownik, na poziomie zaawansowanym; późniejsza nauka włączana w bezpiecznych granicach | wstrzymanie i wznowienie, korekta komfortu, pasmo strojenia (zasada 13), okna nauki, ustawienia ochrony algorytmów stref |
 
 Przejście z zaawansowanego na proste oferuje „przywróć ustawienia zaawansowane do wartości domyślnych” (domyślnie
 niezaznaczone). Nigdy nie rusza wyuczonych wartości; mają one własny przycisk „przywróć domyślne
@@ -817,9 +817,10 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   widziała, że czujnik pokazuje cieplej (decyzja 12). Gdy nie ma żadnego z nich, ostatnia
   efektywna temperatura zewnętrzna obowiązuje przez 3 h, potem zastępuje ją stała wartość awaryjna
   użytkownika albo projektowa temperatura zasilania (decyzja 9).
-- **Korekta komfortu** (zasada 13; domyślnie włączona przy pełnym sterowaniu — decyzja użytkownika
-  z 2026-10-10, odwracająca decyzję z 2026-10-03; wpis po aktualizacji zachowuje to, z czym działał,
-  „wyłączona” tam, gdzie nigdy nie zapisał odpowiedzi; nie przy sterowaniu włącz/wyłącz;
+- **Korekta komfortu** (zasada 13; domyślnie wyłączona — K4, decyzja użytkownika z 2026-11-17,
+  odwracająca decyzję z 2026-10-10 po F8 z J4 i przeglądzie literatury,
+  `docs/pl/development/plan.md`; wpis zachowuje to, co zapisał, „wyłączona” tam, gdzie nigdy nie
+  zapisał odpowiedzi; nie przy sterowaniu włącz/wyłącz;
   `docs/en/development/plans/plan-0.2-g11.md` B): gdy zawór strefy jest w pełni otwarty, a pokój
   wciąż nie dochodzi do nastawy, woda rośnie ponad krzywą — najwyżej o limit użytkownika (domyślnie
   3 K, do 10 K; jedyna granica ponad krzywą, odkąd zniknął „zakres korekty”, I8 B6), nigdy więcej
@@ -1271,7 +1272,7 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Ochrona przed mrozem | każda strefa, ogrzewana tylko tam, gdzie jej odbiornik ciepła może przyjąć ciepło | ciepło dla strefy, którą VT trzyma zamkniętą, nie dotrze; zgłoszenie naprawy mówi, co zrobić zamiast tego (decyzja 4) |
 | Próg zapotrzebowania | jedna wołająca strefa | każda wołająca strefa grzeje, jak w centralnym kotle VT |
 | Co liczy licznik | urządzenia VT, jak centralny kocioł VT (decyzja użytkownika z 2026-10-14; wpis sprzed tej daty zostaje przy strefach) | to samo co strefa przy domyślnej liczbie 1; użytkownik przechodzący z VT zachowuje liczbę z VT |
-| Korekta komfortu | włączona w pełnym sterowaniu (decyzja użytkownika z 2026-10-10, odwracająca tę z 2026-10-03; wpis po aktualizacji zostaje przy tym, z czym działał); do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie; porównanie startów z nią włączoną (około 2026-10-12) może zmienić wartość domyślną | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: od 1.75 do 5 razy więcej startów w symulacji, do 6.3 przy dobowym wahaniu temperatury zewnętrznej; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
+| Korekta komfortu | wyłączona (K4, decyzja użytkownika z 2026-11-17, odwracająca tę z 2026-10-10 po F8 z J4 i przeglądzie literatury; wpis zostaje przy tym, co zapisał); po włączeniu do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: od 1.4 do 6.3 razy więcej startów w symulacji przy dobowym wahaniu temperatury zewnętrznej, za mniej niż 0.1 K komfortu; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
 | Wstrzymania nauki | włączone | chronią model SmartPI przed wahaniami, które wywołuje wtyczka |
 | Reakcja alarmu | informacja; oddania sterowania z decyzji 7 zawsze | inny sterownik zapisuje wartości — nigdy z nim nie walczymy; wtyczka zatrzymuje grzanie tylko tam, gdzie sam kocioł się zatrzymuje |
 | Alarm maksimum obiegu | maksimum obiegu + 5 K, przez 10 min (informacja); na obiegu zasilanym prosto z kotła c.w.u. z priorytetem nie jest liczona | kocioł może przekroczyć maksimum; użytkownik to widzi (decyzja 10); c.w.u. nie dociera do tego obiegu (2026-10-12) |
@@ -1492,8 +1493,8 @@ dostają dane, na których się opiera. Sterowanie można włączyć od pierwsze
 użytkownika z 2026-10-08). Dopóki użytkownik go nie włączy, kocioł pracuje jak dotąd — pod
 centralnym kotłem VT, termostatem ściennym albo własną regulacją — a wtyczka tylko patrzy. Po
 włączeniu nic nie rusza samo poza twardymi granicami: woda idzie za krzywą użytkownika, w granicach
-najniższej i najwyższej temperatury wody, a jedyna nauka przy sterowaniu, korekta komfortu, jest w
-pełnym sterowaniu domyślnie włączona i dodaje najwyżej swój limit (domyślnie 3 K), rosnąc najwyżej o
+najniższej i najwyższej temperatury wody, a jedyna nauka przy sterowaniu, korekta komfortu, jest
+domyślnie wyłączona, a włączona dodaje najwyżej swój limit (domyślnie 3 K), rosnąc najwyżej o
 3 K na dobę (zasady 8 i 13; pasmo dostrajania przyjdzie później). Dlatego tydzień czekania niczego
 nie chroni. Werdykt potrzebuje określonej liczby dni danych: domyślnie 7, co najmniej 7, najwyżej
 60, liczonych w dniach kalendarzowych od utworzenia wpisu, więc utrata magazynu danych nie zaczyna
