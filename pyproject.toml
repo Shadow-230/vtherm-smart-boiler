@@ -27,7 +27,9 @@ ha-minimum = ["pytest-homeassistant-custom-component==0.13.375"]  # pins homeass
 testpaths = ["tests"]
 # vendor/ holds VT 10.5.1 and SmartPI 0.4.0; vendor/custom_components links their integrations.
 pythonpath = [".", "vendor", "sim"]
-addopts = "--basetemp=.tmp/pytest"
+# Work stealing: with -n, an idle worker takes tests from a busy one, so a few long tests do not
+# hold the run at its end (on 4 workers, as GitHub's runner: 268 s → 212 s, 2026-11-17).
+addopts = "--basetemp=.tmp/pytest --dist worksteal"
 timeout = 300  # a test that hangs fails instead of holding up the run (pytest-timeout)
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
