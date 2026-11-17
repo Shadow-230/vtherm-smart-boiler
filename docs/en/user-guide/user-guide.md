@@ -862,7 +862,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
-| Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; if too hot, lower it — the curve, or on an on/off boiler its own water setting |
+| Long burn without warming | the burner on for 3 h — gaps of up to 30 min included, so a boiler that keeps stopping and starting counts too — and the rooms not warming: its reason says the water too cool for the rooms short (the flow at its setpoint), the boiler at its power limit (the flame on throughout, below its setpoint at high modulation), or the water too hot | water too cool: raise the curve (the correction, where on, raises it); too hot: lower it — the curve, or on an on/off boiler its own water setting |
 
 Repair issues:
 
@@ -1082,7 +1082,7 @@ disabled by default.
 | Critical zone, circuit … | per circuit, the zone whose own controller works hardest now |
 | Signals | on while flame and flow (and a relay) are known and fresh |
 | Outdoor sensor problem | the boiler's outdoor sensor is stuck or disagrees with the weather entity |
-| Long burn without warming | the flame on for 3 h without the rooms warming, with the likely reason |
+| Long burn without warming | the burner on for 3 h (short gaps included) without the rooms warming, with the likely reason |
 | Alarms (binary sensors, on = problem) | one per check: water pressure, flue gas, starts, ignition, low flow, a circuit's water too hot and the others — the [alarm table](#7-alarms-and-repair-issues) |
 
 **Control**

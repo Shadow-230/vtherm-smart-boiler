@@ -2714,7 +2714,7 @@
             "name": "Dlaczego",
             "state": {
               "power_limit": "Kocioł na granicy mocy: poniżej nastawy przy wysokiej modulacji",
-              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: korekta komfortu ją podnosi",
+              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: podnieś krzywą (korekta komfortu, gdy jest włączona, ją podnosi)",
               "water_too_hot": "Woda za ciepła: obniż ją (krzywą albo nastawę kotła)"
             }
           },
@@ -2725,7 +2725,7 @@
             "name": "Strefy"
           },
           "burning_hours": {
-            "name": "Palenie (h)"
+            "name": "Przebieg (h), z krótkimi przerwami płomienia"
           },
           "kept": {
             "name": "Zapisane do strojenia"
