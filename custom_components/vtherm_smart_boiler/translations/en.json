@@ -2714,7 +2714,7 @@
             "name": "Why",
             "state": {
               "power_limit": "The boiler at its power limit: below its setpoint at high modulation",
-              "water_too_cool": "The water too cool for the rooms short: the comfort correction raises it",
+              "water_too_cool": "The water too cool for the rooms short: raise the curve (the comfort correction, where it is on, raises it)",
               "water_too_hot": "The water too hot: lower it (the curve, or the boiler's own setting)"
             }
           },
@@ -2725,7 +2725,7 @@
             "name": "Zones"
           },
           "burning_hours": {
-            "name": "Burning (h)"
+            "name": "Run (h), short flame gaps included"
           },
           "kept": {
             "name": "Kept for tuning"
