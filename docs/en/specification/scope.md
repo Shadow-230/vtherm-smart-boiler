@@ -1199,7 +1199,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | "Add water" threshold | none | the value comes from the boiler's manual; a wrong default stops nothing but misleads |
 | High-pressure warning / alarm | none — entered below the safety valve's rating, read on the valve | ratings differ (often 3 bar in Europe, about 2.1 bar in North America): a default of 2.8 bar would never fire below a 2.1-bar valve (decision 13 of `docs/en/development/plans/plan-0.2.3.md`) |
 | Flue gas warning / alarm | 85 / 100 °C on a condensing boiler; none on a non-condensing one | hotter flue gas means the boiler is not condensing; too high warns too late for plastic flue pipes; a non-condensing boiler runs far hotter (reason to confirm at K4) |
-| Frequent starts | more than 12 starts in an hour | one start per 5-min cycle, VT's default; too high hides short-cycling (reason to confirm at K4) |
+| Frequent starts | the alarm: more than 12 starts in an hour; a warning: more than 6 an hour over 3 h | the alarm: one start per 5-min cycle, VT's default; the warning (K4, the user's decision of 2026-11-17): gas boilers' TPI design value, 6 an hour (Bennett 2019: 70 % of heating starts under 10 min); too high hides short-cycling |
 | Unstable ignition | more than 10 burns under a minute in a day | a few can come from short hot-water draws; too many hides an ignition problem (reason to confirm at K4) |
 | Boiler-fault signals | none | the user maps the boiler's own fault where the integration shows it |
 | Thermostat terminals (gateway) | none — required; "I don't know" blocks control | an on/off contact could not heat the house after a crash while "off" (decision 1) |
@@ -1285,6 +1285,8 @@ reviews every provisional value at K4.
 | Alarm holds 5 min; an unknown input held 1 h; 50 % known flame; the limit − 2; 2 K; a 10-K slope span; 0.05 bar/K; 40 °C; 0.1 bar; a pressure sample every 10 min, taken after 10 min without a flame | `core/alarms.py` (Y1) | provisional, K4 (reason to confirm) |
 | Hot-water inference 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | provisional, K4 (reason to confirm) |
 | Building model: 8 K; 12 K; 2 K; 3 of 4; 2 of 3; outdoor readings within −30…+30 °C | monitor (Y3) | provisional, K4 (reason to confirm) |
+| A measured loss used only from 21 heating days, shown with a ±20 % range | `core/building.py` | decided at K4 (the user, 2026-11-17): published methods need about 3 weeks of heating-season data and reach about ±15 % at best (IEA EBC Annex 71; SMETER), data choices moving them up to 27 % |
+| "The rest" of the day-to-day change within 15 % of the day before shown as normal variation | `core/report.py` | K4 (the user, 2026-11-17): daily figures are mostly noise and thermal lag; the 15 % provisional — no published number, 0.4's regression gives the house's own scatter |
 | Forecast call timeout 30 s | forecasts (Y4) | provisional, K4 (reason to confirm) |
 | Starts and ignition alarms unknown when the last analysis is older than 15 min; the last-run record written every 10 min | monitor (Y2) | provisional, K4 (reason to confirm) |
 | The frost "closed zone" issue updated on a 1 K move; the control switch's restore waited for 60 s | control (X4, V3) | provisional, K4 (reason to confirm) |

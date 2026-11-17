@@ -254,7 +254,7 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
           "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
           "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony z rejestratora przy starcie. Nigdy krótsze niż okres monitorowania."
         }
@@ -850,7 +850,7 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
           "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
           "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony z rejestratora przy starcie. Nigdy krótsze niż okres monitorowania."
         }
@@ -1394,12 +1394,12 @@
               "heating_burns": "Policzone palenia c.o.",
               "frequent_starts": "Częste starty",
               "few_starts": "Mało startów",
-              "short_burns": "Głównie krótkie palenia",
+              "short_burns": "Głównie krótkie palenia — najczęściej kocioł za duży dla domu",
               "long_burns": "Palenia dość długie",
               "low_condensing": "Mało kondensacji",
               "good_condensing": "Dobra kondensacja",
               "condensing_unknown": "Kondensacja nieznana: brak temperatury powrotu albo za mało jej danych",
-              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła",
+              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła: kocioł jest przewymiarowany — to główna przyczyna krótkich paleń",
               "load_rarely_below_min_power": "Obciążenie budynku rzadko poniżej mocy minimalnej kotła",
               "load_unknown": "Obciążenie budynku nieznane",
               "criteria_judged": "Za mało ocenionych kryteriów do uznania sterowania za niewarte włączenia",
@@ -1437,7 +1437,12 @@
         }
       },
       "change_report": {
-        "name": "Zużycie wobec wczoraj"
+        "name": "Zużycie wobec wczoraj",
+        "state_attributes": {
+          "other_within_normal": {
+            "name": "Reszta w normalnej zmienności z dnia na dzień"
+          }
+        }
       },
       "loss_coefficient": {
         "name": "Współczynnik strat budynku",
@@ -1466,6 +1471,9 @@
           },
           "mismatch": {
             "name": "Wpisana i zmierzona się różnią"
+          },
+          "measured_range": {
+            "name": "Zmierzona, prawdopodobny zakres (±20 %)"
           }
         }
       },

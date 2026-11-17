@@ -161,6 +161,20 @@ Then the sensor **Control verdict** shows one of:
 The verdict is advice. You decide. Before it comes, and outside the heating season when the days
 pass without enough data, the control switch says that control starts without a verdict.
 
+What the verdict and the building values mean:
+
+- **Short burns** most often come from a boiler too big for the house: its lowest output is more
+  than the house needs, so it starts and stops. The verdict says so when the building's load is
+  often below the boiler's minimum power.
+- **The building's heat loss**, measured from the boiler's use and the weather, counts only after
+  about **3 weeks of heating** (21 heating days); before that it is shown, never used. It is
+  shown with a likely range of about ±20 % — the accuracy published methods reach. A measured
+  loss below the design load is common: it means the boiler is oversized, not that the
+  measurement is wrong.
+- **Use against yesterday** compares two days; a day's use moves a lot on its own (the building
+  still warm or cold from yesterday, sun, people). When the part no cause explains stays within
+  15 % of the day before, it is marked as normal variation.
+
 ### 4.2 Control is opt-in
 
 Control is **off by default**. It is the switch **Control (experimental)**. You can switch it on
@@ -857,7 +871,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Water pressure falling | falling over days, water temperature allowed for | look for a leak |
 | Flue gas too hot | above the limit you set | book a boiler service |
 | Flue gas rising above return | flue gas hotter above the return than before | book a service |
-| Frequent starts | more starts in the last hour than the limit | check the curve and limits |
+| Frequent starts | the alarm: more starts in the last hour than the limit (12); a warning: more than 6 an hour over the last 3 hours | check VT's cycle (10–15 min), the curve and the limits |
 | Unstable ignition | many burns lost soon after ignition in a day | have it checked |
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
@@ -1072,11 +1086,11 @@ disabled by default.
 | Condensing share | the share of heating burn time with the return below 55 °C |
 | Degree-days (7 days) *hidden* | the week's degree-days, from the heating threshold |
 | Gas per degree-day | gas per degree-day, measured with a gas meter you map, else estimated |
-| Use against yesterday *hidden* | the change in use against the day before, split into weather, hot water, settings and the rest |
+| Use against yesterday *hidden* | the change in use against the day before, split into weather, hot water, settings and the rest — the rest marked when it is normal day-to-day variation |
 | Control verdict | worth enabling, not worth enabling, or not enough data yet — with its reasons |
 | Signal problems | how many mapped signals have a problem; each one's health in the attributes |
 | Features | how many features are inactive now, and why |
-| Building loss coefficient, Building heating threshold *hidden* | the building values in use — yours, measured or the default — with their source |
+| Building loss coefficient, Building heating threshold *hidden* | the building values in use — yours, measured or the default — with their source; a measured loss with its likely range |
 | Suggested lowest water temperature | a suggestion only, never applied |
 | Forecast snapshots *disabled* | how many recorded forecasts are kept, for later releases |
 | Critical zone, circuit … | per circuit, the zone whose own controller works hardest now |
