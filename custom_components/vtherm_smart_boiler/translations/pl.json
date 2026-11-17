@@ -3153,6 +3153,10 @@
       "title": "Nauka SmartPI może być nadal wyłączona w części stref",
       "description": "Integrację usunięto, gdy sterowanie miało wstrzymaną naukę SmartPI w tych strefach, i nie widać, by nauka znów się włączyła: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Włącz ją tam, a potem zignoruj to zgłoszenie."
     },
+    "zone_cycle_short": {
+      "title": "Krótkie cykle w VT: więcej startów kotła",
+      "description": "{zones}: Versatile Thermostat włącza i wyłącza grzanie tych pokoi w cyklach krótszych niż 10 minut. Wtyczka włącza i wyłącza kocioł razem z nimi, więc krótkie cykle oznaczają wiele krótkich paleń, które marnują gaz i zużywają kocioł. Dla pokoi, które wołają kocioł gazowy, ustaw w VT cykl na 10–15 minut: w symulacji zmniejszyło to liczbę startów kotła o jedną trzecią do połowy w łagodną pogodę, przy równie ciepłych pokojach."
+    },
     "learning_not_paused": {
       "title": "Wtyczka nie może wstrzymać nauki w części stref",
       "description": "Sterowanie nie może wstrzymać nauki w tych strefach podczas ciepłej wody i wahań wody: {zones}. Auto-TPI dałoby się wstrzymać tylko kasując jego naukę; SmartPI bez flagi nauki nie da się wstrzymać. Uczą się więc i w tych chwilach, co może zniekształcić ich naukę."

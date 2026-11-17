@@ -221,6 +221,13 @@ REPEATABLE_SIGNALS = frozenset(
     }
 )
 LOWEST_WATER_ISSUE = "lowest_water_suggestion"
+# K4 (the user's decision of 2026-11-17): VT zones that switch their heating on and off — VT's
+# "over_switch" — in cycles shorter than this, while the plugin controls the boiler, are named in
+# a warning: each gap between their pulses stops the burner. Gas boilers' TPI convention is 6
+# cycles an hour (UK room-thermostat manuals); in the simulation 10–15 min cut the plugin's starts
+# by a third to a half in mild weather, the rooms as warm (research, 2026-11-17).
+ZONE_CYCLE_ISSUE = "zone_cycle_short"
+SHORT_CYCLE_MIN = 10.0
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 # Y1's notifications: repair issues the plugin raises itself — warnings, not fixable
 # (provisional, K4) — one per cause per entry, each saying what to do. They stay through a reload;
@@ -574,6 +581,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         for key in (
             "auto_tpi_blocked",
             "learning_not_paused",
+            ZONE_CYCLE_ISSUE,
             NO_ZONE_KNOWN_ISSUE,
             WALL_ISSUE,
             LOWEST_WATER_ISSUE,
@@ -1932,12 +1940,15 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         says nothing about Auto-TPI's learning in the zones VT's central boiler uses: the first
         issue is left as it is, and those zones are in neither (P-54). A zone whose algorithm
         cannot be read — VT not started, the zone unknown — keeps its last answer (PB-47), so
-        an issue the user ignored is not deleted and raised anew."""
+        an issue the user ignored is not deleted and raised anew. With control configured, also
+        the zones VT switches on and off in cycles under ``SHORT_CYCLE_MIN`` (K4): their gaps
+        stop the burner."""
         central = self.link.vt_central_boiler_configured()
         control = self.config.control
         pauses = control.configured and control.learning_pauses
         blocked: list[str] = []
         unpaused: list[str] = []
+        short_cycles: list[str] = []
         for zone_id in self.config.zone_entities:
             algorithm = self.link.zone_algorithm(zone_id)
             if algorithm.known:
@@ -1954,9 +1965,17 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 blocked.append(self.link.zone_name(zone_id))
             elif pauses and (algorithm.auto_tpi or flagless_smartpi):
                 unpaused.append(self.link.zone_name(zone_id))
+            if (
+                control.configured
+                and algorithm.switches_on_off
+                and algorithm.cycle_min is not None
+                and algorithm.cycle_min < SHORT_CYCLE_MIN
+            ):
+                short_cycles.append(f"{self.link.zone_name(zone_id)} ({algorithm.cycle_min:g} min)")
         if central is not None:
             self._issue("auto_tpi_blocked", blocked)
         self._issue("learning_not_paused", unpaused)
+        self._issue(ZONE_CYCLE_ISSUE, short_cycles)
 
     def report_no_zone_known(self, kind: str | None, criteria: Sequence[str] = ()) -> None:
         """Decision 3's repair issue: ``kind`` — "off", "handed_back" or "monitor" — while every
