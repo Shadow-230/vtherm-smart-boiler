@@ -254,7 +254,7 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
           "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
           "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony z rejestratora przy starcie. Nigdy krótsze niż okres monitorowania."
         }
@@ -850,7 +850,7 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
           "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
           "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony z rejestratora przy starcie. Nigdy krótsze niż okres monitorowania."
         }
