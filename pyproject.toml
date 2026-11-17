@@ -17,9 +17,11 @@ test = [
     "scipy==1.18.1",
 ]
 # Home Assistant with its test harness: the version tested, and the declared minimum
-# (hacs.json), on which CI runs the tests too.
-ha = ["pytest-homeassistant-custom-component==0.13.366"]  # pins homeassistant==2026.9.3
-ha-minimum = ["pytest-homeassistant-custom-component==0.13.363"]  # pins homeassistant==2026.9.0
+# (hacs.json), on which CI runs the tests too. The minimum follows the newest VT (10.6.5 needs
+# 2026.10.4; the user, 2026-11-17). 0.13.375 is the last of this harness; Home Assistant 2026.11
+# needs its successor, pytest-homeassistant — the test environment's move (the user, 2026-11-16).
+ha = ["pytest-homeassistant-custom-component==0.13.375"]  # pins homeassistant==2026.10.4
+ha-minimum = ["pytest-homeassistant-custom-component==0.13.375"]  # pins homeassistant==2026.10.4
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

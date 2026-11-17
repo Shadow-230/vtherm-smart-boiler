@@ -1622,6 +1622,7 @@ control is off by default — as pre-release 0.2.2b1, then as a release. Which v
 first is decided after the independent check of 0.2.2 and at K4; whether the repository carries
 `CLAUDE.md`, the plans and the reviews, and so whether it starts from a clean history, at K5. HACS installs only from public
 repositories, so the repository is public from the first pre-release. The plugin needs Home
-Assistant 2026.9 or later, the version it is tested on. Submission to the HACS default list and
+Assistant 2026.10.4 or later: the newest VT (10.6.5) needs it, and the plugin is tested on it (the
+user, 2026-11-17). Submission to the HACS default list and
 the VT plugin list later (HACS review takes months). Creating the repository and every
 publication need the author's consent.
