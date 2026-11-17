@@ -101,8 +101,8 @@ named the Marketplace. A repository that is not on its list can still be added f
 
 **Versions.** The tests move to the newest versions — Home Assistant 2026.11, VT 10.6.5,
 SmartPI 0.6.5, `vtherm_api` 0.9.0 — in a separate test session; the plugin's code must work with
-them (the user's decision, 2026-11-16). To decide: whether the oldest Home Assistant supported
-stays 2026.9.0 (VT 10.6.5 needs 2026.10.4).
+them (the user's decision, 2026-11-16). The oldest Home Assistant supported follows the newest
+VT: 2026.10.4, as VT 10.6.5 needs (the user, 2026-11-17; `hacs.json`, CI's two harness pins).
 
 **Home Assistant 2027.11** removes five old interfaces. The plugin used one — the old way an
 entity's ID is renamed — and is ready for the new one (#147, 2026-11-16). VT 10.6.5 still uses the old

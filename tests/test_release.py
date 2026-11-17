@@ -27,7 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components/vtherm_smart_boiler"
 TRANSLATIONS = sorted((COMPONENT / "translations").glob("*.json"))
 RELEASE = "0.2.3b1"  # decision 16's provisional first version (Z2); K5, K7 move it
-MIN_HOME_ASSISTANT = "2026.9.0"  # the version tested (the user, 2026-09-25)
+# The newest VT (10.6.5) needs Home Assistant 2026.10.4 (its hacs.json): the plugin's minimum
+# follows it (the user, 2026-11-17; 2026.9.0 from 2026-09-25).
+MIN_HOME_ASSISTANT = "2026.10.4"
 
 
 def _load(path: Path) -> Any:

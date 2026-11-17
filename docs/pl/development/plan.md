@@ -102,8 +102,8 @@ i nazywa się Marketplace. Repozytorium spoza jego listy nadal można dodać z l
 
 **Wersje.** Testy przechodzą na najnowsze wersje — Home Assistant 2026.11, VT 10.6.5, SmartPI
 0.6.5, `vtherm_api` 0.9.0 — w osobnej sesji testowej; kod wtyczki musi z nimi działać (decyzja
-użytkownika, 2026-11-16). Do decyzji: czy najstarszy obsługiwany Home Assistant zostaje 2026.9.0
-(VT 10.6.5 wymaga 2026.10.4).
+użytkownika, 2026-11-16). Najstarszy obsługiwany Home Assistant idzie za najnowszym VT: 2026.10.4,
+jak wymaga VT 10.6.5 (użytkownik, 2026-11-17; `hacs.json`, dwie wersje środowiska testowego w CI).
 
 **Home Assistant 2027.11** usuwa pięć starych interfejsów. Wtyczka używała jednego — starego
 sposobu zmiany ID encji — i jest gotowa na nowy (#147, 2026-11-16). VT 10.6.5 nadal używa starych

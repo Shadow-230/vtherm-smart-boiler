@@ -1716,6 +1716,6 @@ sterowanie jest domyślnie wyłączone — jako wersja wstępna 0.2.2b1, a potem
 wersja zostanie opublikowana pierwsza, rozstrzyga się po niezależnym sprawdzeniu 0.2.2 i przy K4;
 czy repozytorium zawiera `CLAUDE.md`, plany i przeglądy, a więc czy startuje z czystą historią, przy
 K5. HACS instaluje tylko z publicznych repozytoriów, więc repozytorium jest publiczne od pierwszej
-wersji wstępnej. Wtyczka wymaga Home Assistanta 2026.9 lub nowszego, czyli wersji, na której jest
-testowana. Zgłoszenie do domyślnej listy HACS i do listy wtyczek VT później (przegląd HACS trwa
+wersji wstępnej. Wtyczka wymaga Home Assistanta 2026.10.4 lub nowszego: wymaga go najnowszy VT
+(10.6.5), a wtyczka jest na nim testowana (użytkownik, 2026-11-17). Zgłoszenie do domyślnej listy HACS i do listy wtyczek VT później (przegląd HACS trwa
 miesiące). Utworzenie repozytorium i każda publikacja wymagają zgody autora.

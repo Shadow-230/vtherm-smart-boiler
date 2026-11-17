@@ -42,11 +42,13 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
 
 ## 1. Wymagania
 
-- **Home Assistant 2026.9 lub nowszy** — wersja, na której wtyczka jest testowana.
+- **Home Assistant 2026.10.4 lub nowszy** — wymaga go najnowszy Versatile Thermostat (10.6.5), a
+  wtyczka jest na nim testowana.
 - **Versatile Thermostat 10.2.0 lub nowszy**, z termostatami (wtyczka nazywa je strefami)
   ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł. VT wczytuje zewnętrzne moduły funkcji
-  (feature managers) od wersji 10.2.0; testowana jest wersja 10.5.1. To minimum jest tymczasowe
-  i zostanie potwierdzone przed pierwszym wydaniem.
+  (feature managers) od wersji 10.2.0; testowane są 10.5.1 i najnowsza, 10.6.5. To minimum jest
+  tymczasowe i zostanie potwierdzone przed pierwszym wydaniem. Sam VT 10.6.5 wymaga Home
+  Assistanta 2026.10.4 i `vtherm_api` 0.9.0.
 - Biblioteka `vtherm_api` w wersji 0.5.0 lub nowszej. Home Assistant instaluje ją razem z
   wtyczką.
 - **Kocioł, który Home Assistant potrafi odczytać**, przez dowolną integrację pokazującą jego
