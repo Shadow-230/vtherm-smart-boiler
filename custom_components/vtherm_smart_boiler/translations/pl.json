@@ -2722,7 +2722,7 @@
             "name": "Dlaczego",
             "state": {
               "power_limit": "Kocioł na granicy mocy: poniżej nastawy przy wysokiej modulacji",
-              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: korekta komfortu ją podnosi",
+              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: podnieś krzywą (korekta komfortu, gdy jest włączona, ją podnosi)",
               "water_too_hot": "Woda za ciepła: obniż ją (krzywą albo nastawę kotła)"
             }
           },
@@ -2733,7 +2733,7 @@
             "name": "Strefy"
           },
           "burning_hours": {
-            "name": "Palenie (h)"
+            "name": "Przebieg (h), z krótkimi przerwami płomienia"
           },
           "kept": {
             "name": "Zapisane do strojenia"
@@ -3160,6 +3160,10 @@
     "learning_left_off_after_removal": {
       "title": "Nauka SmartPI może być nadal wyłączona w części stref",
       "description": "Integrację usunięto, gdy sterowanie miało wstrzymaną naukę SmartPI w tych strefach, i nie widać, by nauka znów się włączyła: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Włącz ją tam, a potem zignoruj to zgłoszenie."
+    },
+    "zone_cycle_short": {
+      "title": "Krótkie cykle w VT: więcej startów kotła",
+      "description": "{zones}: Versatile Thermostat włącza i wyłącza grzanie tych pokoi w cyklach krótszych niż 10 minut. Wtyczka włącza i wyłącza kocioł razem z nimi, więc krótkie cykle oznaczają wiele krótkich paleń, które marnują gaz i zużywają kocioł. Dla pokoi, które wołają kocioł gazowy, ustaw w VT cykl na 10–15 minut: w symulacji zmniejszyło to liczbę startów kotła o jedną trzecią do połowy w łagodną pogodę, przy równie ciepłych pokojach."
     },
     "learning_not_paused": {
       "title": "Wtyczka nie może wstrzymać nauki w części stref",

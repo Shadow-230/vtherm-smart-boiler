@@ -1467,6 +1467,65 @@ async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -
     )
 
 
+@pytest.mark.parametrize(
+    ("kind", "cycle", "named"),
+    [
+        ("over_switch", 5, True),  # VT's default cycle
+        ("over_switch", 9.5, True),
+        ("over_switch", 10, False),  # the gas-boiler convention: 6 cycles an hour
+        ("over_switch", 15, False),
+        ("over_valve", 5, False),  # a valve opens in proportion: no gaps
+        ("over_climate", 5, False),
+        (None, 5, False),  # a VT that does not say what the zone is
+        ("over_switch", None, False),  # nor its cycle
+        ("over_switch", True, False),
+    ],
+)
+async def test_a_short_vt_cycle_is_named_while_controlling(
+    rig: Rig, kind: str | None, cycle: object, named: bool
+) -> None:
+    """K4 (the user's decision of 2026-11-17): a zone VT switches on and off in cycles under
+    10 min is named, with its cycle, in a warning while control is configured — each gap between
+    its pulses stops the burner (J4's F9; the literature's 6 cycles an hour for gas boilers)."""
+    configuration: dict[str, Any] = {"proportional_function": "tpi", "cycle_min": cycle}
+    if kind is not None:
+        configuration["type"] = kind
+    rig.zones.set("living", configuration=configuration)
+    await start(rig)
+    assert rig.entry is not None
+    found = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"zone_cycle_short_{rig.entry.entry_id}")
+    if not named:
+        assert found is None
+        return
+    assert found is not None
+    assert found.translation_key == "zone_cycle_short"
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.translation_placeholders == {"zones": f"fake living ({cycle:g} min)"}
+
+
+async def test_a_short_vt_cycle_is_not_named_without_control_and_goes_once_lengthened(
+    rig: Rig,
+) -> None:
+    """K4: the warning is the boiler's, so it needs control — not in monitor mode, where the
+    plugin starts nothing; and it goes once the cycle in VT is 10 min or more."""
+    configuration = {"type": "over_switch", "cycle_min": 5}
+    rig.zones.set("living", configuration=configuration)
+    await set_up(rig, add_entry(rig, without_control(options(rig.zones))))
+    assert rig.entry is not None
+    issue_id = f"zone_cycle_short_{rig.entry.entry_id}"
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is None
+    await rig.hass.config_entries.async_unload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    rig.entry = None
+    await start(rig)
+    assert rig.entry is not None
+    issue_id = f"zone_cycle_short_{rig.entry.entry_id}"
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is not None
+    rig.zones.set("living", configuration=configuration | {"cycle_min": 15})
+    rig.entry.runtime_data.check_learning()
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 @pytest.mark.parametrize("state", ["unavailable", "heat"])
 async def test_an_ignored_learning_issue_outlives_a_zone_that_cannot_be_read(
     rig: Rig, state: str

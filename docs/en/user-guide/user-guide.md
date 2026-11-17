@@ -220,6 +220,12 @@ same way VT's central boiler does. You choose one or more of these criteria:
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
   VT does not hand the boiler back; frost protection still watches.
 - There is no summer switch in the plugin. If VT's zones are off, the boiler does not heat.
+- **VT's cycle for rooms that call the boiler: 10 to 15 minutes.** VT switches a room's heating
+  on and off in cycles (5 minutes by default). The plugin follows the rooms at once, so each gap
+  between their pulses stops the burner. Gas boilers are usually given 6 cycles an hour at most;
+  in the simulation a 10–15 minute cycle cut the boiler's starts by a third to a half in mild
+  weather, with the rooms as warm. While control is set up, the plugin names the rooms VT
+  switches in cycles under 10 minutes ("Short cycles in VT").
 - **Valve zones whose valve may not close fully** (VT's **Max closing degree** below 100): use
   VT 10.5 or newer. From 10.5, a valve held at that floor does not count as heating, and the zone
   calls only once VT opens it further. VT 10.2–10.4 counted it as heating, so such a zone called
@@ -870,7 +876,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
-| Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; if too hot, lower it — the curve, or on an on/off boiler its own water setting |
+| Long burn without warming | the burner on for 3 h — gaps of up to 30 min included, so a boiler that keeps stopping and starting counts too — and the rooms not warming: its reason says the water too cool for the rooms short (the flow at its setpoint), the boiler at its power limit (the flame on throughout, below its setpoint at high modulation), or the water too hot | water too cool: raise the curve (the correction, where on, raises it); too hot: lower it — the curve, or on an on/off boiler its own water setting |
 
 Repair issues:
 
@@ -949,6 +955,7 @@ not confirmed.
 | A heating circuit has no rooms | add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Auto-TPI cannot learn in some zones | clear "used by the central boiler" in VT |
+| Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
 | The plugin cannot pause learning in some zones | information |
 | The plugin could not switch learning back on in some zones | switch SmartPI learning on |
 | VT's thermostats cannot show the plugin's zone value | update VT; nothing else depends on it |
@@ -1089,7 +1096,7 @@ disabled by default.
 | Critical zone, circuit … | per circuit, the zone whose own controller works hardest now |
 | Signals | on while flame and flow (and a relay) are known and fresh |
 | Outdoor sensor problem | the boiler's outdoor sensor is stuck or disagrees with the weather entity |
-| Long burn without warming | the flame on for 3 h without the rooms warming, with the likely reason |
+| Long burn without warming | the burner on for 3 h (short gaps included) without the rooms warming, with the likely reason |
 | Alarms (binary sensors, on = problem) | one per check: water pressure, flue gas, starts, ignition, low flow, a circuit's water too hot and the others — the [alarm table](#7-alarms-and-repair-issues) |
 
 **Control**

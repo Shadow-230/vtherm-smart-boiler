@@ -2722,7 +2722,7 @@
             "name": "Why",
             "state": {
               "power_limit": "The boiler at its power limit: below its setpoint at high modulation",
-              "water_too_cool": "The water too cool for the rooms short: the comfort correction raises it",
+              "water_too_cool": "The water too cool for the rooms short: raise the curve (the comfort correction, where it is on, raises it)",
               "water_too_hot": "The water too hot: lower it (the curve, or the boiler's own setting)"
             }
           },
@@ -2733,7 +2733,7 @@
             "name": "Zones"
           },
           "burning_hours": {
-            "name": "Burning (h)"
+            "name": "Run (h), short flame gaps included"
           },
           "kept": {
             "name": "Kept for tuning"
@@ -3160,6 +3160,10 @@
     "learning_left_off_after_removal": {
       "title": "SmartPI's learning may still be off in some zones",
       "description": "The integration was removed while control had paused SmartPI's learning in these zones, and it could not be seen switched back on: {zones}. SmartPI keeps learning off until it is switched on — in SmartPI's own settings, or with its service \"set_smartpi_learning\". Switch it on there, and then ignore this issue."
+    },
+    "zone_cycle_short": {
+      "title": "Short cycles in VT: more boiler starts",
+      "description": "{zones}: Versatile Thermostat switches these rooms' heating on and off in cycles shorter than 10 minutes. The plugin starts and stops the boiler with them, so short cycles mean many short burns, which waste gas and wear the boiler. For rooms that call a gas boiler, set the cycle in VT to 10–15 minutes: in the simulation it cut the boiler's starts by a third to a half in mild weather, with the rooms as warm."
     },
     "learning_not_paused": {
       "title": "The plugin cannot pause learning in some zones",

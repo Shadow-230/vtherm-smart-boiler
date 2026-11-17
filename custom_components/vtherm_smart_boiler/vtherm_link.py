@@ -99,6 +99,7 @@ COUNT_THRESHOLD_UNIQUE_ID = "boiler_activation_threshold"
 POWER_THRESHOLD_UNIQUE_ID = "boiler_power_activation_threshold"
 # The plugin's repeat interval takes VT's keep-alive only within its own range (R3).
 REPEAT_RANGE_S = (10.0, 300.0)
+OVER_SWITCH = "over_switch"  # VT's ``configuration`` ``type`` of a zone it switches on and off
 HVAC_OFF_REASON = "hvac_off_reason"  # in a thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5)
 # SmartPI 0.4.0 (G11 C): the VT climate's ``specific_states`` names its diagnostic sensor, whose
 # state is the phase — "bootstrap_hysteresis" its learning phase, run on/off (``handler.py``,
@@ -121,9 +122,19 @@ class ZoneAlgorithm:
     # I9 (water-interface.md §3.4): the zone's algorithm uses the plugin's water data — the key
     # it writes into VT's ``specific_states`` is there.
     uses_water_data: bool = False
+    # K4 (2026-11-17): VT's thermostat type ("over_switch", "over_valve", "over_climate", …) and
+    # its cycle in minutes (``configuration``, VT 10.5.1 and 10.6.5 ``base_thermostat.py``).
+    vtherm_type: str | None = None
+    cycle_min: float | None = None
     # PB-47: VT's state was read — the zone known and its configuration published; else none
     # of the above can be told (VT not started, the zone unknown or unavailable).
     known: bool = False
+
+    @property
+    def switches_on_off(self) -> bool:
+        """VT switches the zone's heating on and off in its cycle (over_switch, TPI or SmartPI):
+        each gap between its pulses can stop the boiler. Valve zones open in proportion."""
+        return self.vtherm_type == OVER_SWITCH
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,6 +726,8 @@ class VThermLink:
         smartpi = specific.get("smartpi_learning_enabled")
         used = configuration.get("is_used_by_central_boiler")
         function = configuration.get("proportional_function")
+        kind = configuration.get("type")
+        cycle = configuration.get("cycle_min")
         return ZoneAlgorithm(
             proportional_function=function if isinstance(function, str) else None,
             smartpi_learning=smartpi if isinstance(smartpi, bool) else None,
@@ -723,6 +736,12 @@ class VThermLink:
             in (specific.get("auto_tpi_state"), specific.get("auto_tpi_continuous_kext")),
             used_by_central_boiler=used if isinstance(used, bool) else None,
             uses_water_data=WATER_DATA_KEY in specific,
+            vtherm_type=kind if isinstance(kind, str) else None,
+            cycle_min=(
+                float(cycle)
+                if isinstance(cycle, int | float) and not isinstance(cycle, bool) and cycle > 0
+                else None
+            ),
             known=known,
         )
 
