@@ -4,9 +4,12 @@
 
 Status: current.
 
-A Home Assistant 2026.9.3 in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile
-Thermostat 10.5.1 (10.4.0 until 2026-10-13) and SmartPI 0.4.0 as vendored, and the test-only
-boiler simulator (`sim/custom_components/boiler_sim`). The acceptance scenarios run here
+Home Assistant in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile Thermostat,
+SmartPI and the test-only boiler simulator (`sim/custom_components/boiler_sim`). The test
+instances keep themselves on the current releases of Home Assistant, VT and SmartPI (the user,
+2026-11-17; Home Assistant 2026.9.3, VT 10.5.1 and SmartPI 0.4.0 as vendored until then), so each
+test report records the versions its run found. The plugin needs Home Assistant 2026.10.4 or
+later. The acceptance scenarios run here
 (`docs/en/development/plans/plan-0.2.md`, J4) before anything reaches a real boiler.
 
 Claude connects to this instance only after you say to start, only at the address in
@@ -76,7 +79,7 @@ user, Claude — can change it (the user's decision, 2026-10-08).
   (it pulls the image), for each address and port:
 
   ```
-  docker run --rm --entrypoint python3 ghcr.io/home-assistant/home-assistant:2026.9.3 -c "
+  docker run --rm --entrypoint python3 ghcr.io/home-assistant/home-assistant:stable -c "
   import errno, socket, sys
   host = sys.argv[1]
   try:
@@ -218,8 +221,10 @@ from entity states and the simulator's command counters (attributes of
 `dhw_enable_writes`; its state counts only writes of type persistent). The starts criterion
 (decision 8 of `docs/en/development/plans/plan-0.2.3.md`; `docs/en/specification/scope.md`, fixed values) reads the monitor's starts per hour
 over 24 h at +8 °C and at −5 °C, each with a ±3 K daily outdoor swing, against the boiler's own
-regulation's, with the rooms as warm as under it (comfort parity); the acceptable ratio is decided
-at K4 (1.10 until then), and in-process the test carrying the swing is a strict xfail until K4. Z3
+regulation's, with the rooms as warm as under it (comfort parity): at most 1.10 times its starts,
+or at most 6 starts an hour with a median burn of at least 10 min (decided at K4, 2026-11-17).
+In-process the test carrying the swing stays a strict xfail with VT's default 5-min TPI cycle and
+passes with a 15-min one, the cycle the plugin advises. Z3
 measured the criterion holding only with the comfort correction off
 (`research/2026-10-02-z3-starts-ratio.md`). The only addresses contacted are the instances'
 `TEST_HA_URL` and `TEST_HA_URL_N`.
@@ -247,8 +252,9 @@ the plugin's curve the boiler's own (design flow 55 °C at −15 °C, exponent 1
 set on `input_number.j4_outdoor_mean`; control switched on on 2 and 4 only. After a day to settle,
 the next 24 h are compared: burner starts per hour (`binary_sensor.boiler_sim_flame` off → on),
 heating switchings, and each room's mean temperature (comfort parity: at most 0.3 K below the
-boiler's own regulation's); the criterion is at most 1.10 times its starts per hour
-(provisional, K4).
+boiler's own regulation's); the criterion is at most 1.10 times its starts per hour, or at most 6
+starts an hour with a median burn of at least 10 min (K4, 2026-11-17). The runs are made with VT's
+default 5-min cycle and with a 15-min one.
 
 An instance that served the other scenarios meanwhile (`--config configuration`) goes back with
 its deploy, then its options walked to the starts base — control off and its hand-back finished

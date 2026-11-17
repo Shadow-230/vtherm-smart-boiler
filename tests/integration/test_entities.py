@@ -4,6 +4,7 @@ the event loop through setup, reload and removal (TB-22)."""
 from __future__ import annotations
 
 import importlib
+import inspect
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity as ha_entity
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.vtherm_smart_boiler import PLATFORMS
@@ -38,6 +40,48 @@ DEVICE_CLASSES = {
     "burner_hours": SensorDeviceClass.DURATION,
     "heating_threshold": SensorDeviceClass.TEMPERATURE,
 }
+
+
+# Home Assistant 2026.11 (``helpers/entity.py``): an entity-ID change is made in place, without
+# removing and adding the entity again, for a custom entity whose every class that defines one of
+# these methods has ``async_entity_id_changed`` defined in it or in a subclass; from 2027.11 for
+# every entity.
+ADD_REMOVE_METHODS = (
+    "async_prepare_to_add_to_hass",
+    "async_added_to_hass",
+    "async_will_remove_from_hass",
+)
+
+
+def _plugin_entity_classes() -> list[type[ha_entity.Entity]]:
+    found: dict[str, type[ha_entity.Entity]] = {}
+    for module_name in ("entity", *PLATFORMS):
+        module = importlib.import_module(f"custom_components.vtherm_smart_boiler.{module_name}")
+        for _name, cls in inspect.getmembers(module, inspect.isclass):
+            if issubclass(cls, ha_entity.Entity) and cls.__module__.startswith(
+                "custom_components.vtherm_smart_boiler"
+            ):
+                found[f"{cls.__module__}.{cls.__qualname__}"] = cls
+    return list(found.values())
+
+
+def test_every_entity_takes_an_id_change_in_place() -> None:
+    """Home Assistant 2026.11 to 2027.10 changes a custom entity's ID in place only where its
+    classes opt in, and from 2027.11 for every entity: each class of the plugin that defines an
+    add or remove method is covered by ``async_entity_id_changed`` in itself or a subclass — the
+    rule of ``helpers/entity.py``, checked here on any Home Assistant version, and by Home
+    Assistant's own check where it has one."""
+    classes = _plugin_entity_classes()
+    assert classes
+    for cls in classes:
+        own = [c for c in cls.__mro__ if not c.__module__.startswith("homeassistant.")]
+        hooks = [c for c in own if "async_entity_id_changed" in c.__dict__]
+        for owner in own:
+            if any(method in owner.__dict__ for method in ADD_REMOVE_METHODS):
+                assert any(issubclass(hook, owner) for hook in hooks), (cls, owner)
+        requires_readd = getattr(ha_entity, "_entity_class_requires_readd", None)
+        if requires_readd is not None:
+            assert not requires_readd(cls), cls
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)

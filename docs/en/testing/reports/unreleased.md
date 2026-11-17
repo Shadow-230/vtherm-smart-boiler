@@ -4,22 +4,29 @@
 
 Status: current.
 
-A plain-language version of this report: [`2026-10-11-test-report.md`](2026-10-11-test-report.md).
+Plain-language versions of this report: [`2026-10-11-test-report.md`](2026-10-11-test-report.md)
+(J4 on `dev`, 2026-10-08 to 2026-10-11) and [`2026-10-14-test-report.md`](2026-10-14-test-report.md)
+(J4 on `qas` c488e90, 2026-10-14).
 
-**Status: J4 on `dev` ended on 2026-10-11 in the morning.** The next run is on `qas`, after the
-fixes from this report's review (the user's rule: from now on J4 tests what is on `qas`). Over
-2026-10-08 to 2026-10-11, eight test Home Assistants ran some 120 scenario runs on three code
-states (section 1). Plugin faults found: one (F7, fixed in #51 and confirmed). Open for the review:
-the starts criterion at −5 °C (F9) and the comfort correction's starts cost (F8), and the long-burn
-rule's trigger (F10). How reports are made: `docs/en/testing/reports/README.md`.
+**Status: J4 on `qas` c488e90 ran on 2026-10-14** (section 4.6): the fixes since G11 on VT 10.5.1 —
+B1, D1, D8, E3, H1, V1, the "Control mode" save (G2), G1, G3, an upgrade under control (P1), the
+relay (R1, R7, R17), the entity path (N1, N2) and a circuit run by other automation (E7). Every
+scenario passed; four first failed on the runner and were reviewed (E3, V1, R1, E7). Plugin
+faults found for this run: two — F12 by reading before it (the "Control mode" save on an entry
+made before the connection question; fixed in #127 and confirmed by G2), and F14 by E7 (after a
+ramp the setpoint stopped 0.5 K below its target; fixed in #135). The run on `dev` (2026-10-08 to
+2026-10-11, some 120 scenario runs on three code states) found one (F7, fixed in #51 and
+confirmed). The review's questions (F8, F9, F10) were decided at K4 on 2026-11-17 (#149–#152);
+the code since `qas` c488e90 is not tested here yet. How reports are made:
+`docs/en/testing/reports/README.md`.
 
 ## 1. Version and code
 
 | | |
 |---|---|
 | Version | 0.2.3b1 in the manifest (provisional, decided at K4 and K5) |
-| Plugin code tested | (a) `dev` at 9df2f06 — instance 1's first run, 2026-10-08/09; (b) `dev` through I6 (737b2db … b832a0e) — instances 6 to 8 and instance 1's second run, 2026-10-09/10; (c) `dev` through G11 (4378e02, with #51's F7 fix) — instances 1, 2–5, 7 and 8 from 2026-10-10 16:45 UTC; instance 6 runs `dev` through I7 (663983d) for the user to look at live, untested. `dev` has moved on since (I8, up to 1d6d724): not tested here |
-| Test tools | branch `claude/j4-results`: the runner (`devenv/j4/run.py`, `paths.py`, `restart.py`, `corrections.py`), the simulator's services for the relay, the write types, the boiler and its lockout, and the configurations in `devenv/config/`. On 2026-10-12, after this run, the runner was brought to `dev` (#93) and its saving of the options adapted to I8's menu (`devenv/j4/walk.py`, `options.py`): each change goes through the item that asks it now — the read-backs among the boiler signals, the gateway's questions in the boiler interface, the hard maximum as the circuit's (E1), monitoring only as the control mode (G2), the underfloor zones in the circuit (U1, U2). Checked in-process against the real options flow over its REST API (`tests/integration/test_j4_walk.py`); not yet run in a test Home Assistant |
+| Plugin code tested | (a) `dev` at 9df2f06 — instance 1's first run, 2026-10-08/09; (b) `dev` through I6 (737b2db … b832a0e) — instances 6 to 8 and instance 1's second run, 2026-10-09/10; (c) `dev` through G11 (4378e02, with #51's F7 fix) — instances 1, 2–5, 7 and 8 from 2026-10-10 16:45 UTC; instance 6 runs `dev` through I7 (663983d) for the user to look at live, untested; (d) `qas` at c488e90 (#133, the same files as `dev` a614299: I8, I9, the mutation tests' fixes #110–#120, VT 10.5.1, #127–#132) — instances 1, 2–4, 6 and 7 on 2026-10-14 (section 4.6), deployed from a detached checkout of that commit |
+| Test tools | branch `claude/j4-results`: the runner (`devenv/j4/run.py`, `paths.py`, `restart.py`, `corrections.py`), the simulator's services for the relay, the write types, the boiler and its lockout, and the configurations in `devenv/config/`. On 2026-10-12, after this run, the runner was brought to `dev` (#93) and its saving of the options adapted to I8's menu (`devenv/j4/walk.py`, `options.py`): each change goes through the item that asks it now — the read-backs among the boiler signals, the gateway's questions in the boiler interface, the hard maximum as the circuit's (E1), monitoring only as the control mode (G2), the underfloor zones in the circuit (U1, U2). Checked in-process against the real options flow over its REST API (`tests/integration/test_j4_walk.py`); first run in a test Home Assistant on 2026-10-14 (code d): every save and restore went through — E3, G1, G2, G3, R17 and the base of instances 2–4 |
 | J4 started | 2026-10-08, by the user |
 
 ## 2. Environment
@@ -27,20 +34,20 @@ rule's trigger (F10). How reports are made: `docs/en/testing/reports/README.md`.
 | | |
 |---|---|
 | Home Assistant | 2026.9.3 (the test Home Assistants and CI); 2026.9.0 in CI, the oldest supported |
-| Versatile Thermostat | 10.4.0 |
+| Versatile Thermostat | 10.4.0 (codes a to c); 10.5.1 (code d, 2026-10-14) |
 | SmartPI | 0.4.0 |
-| `vtherm_api` | 0.5.0, as Home Assistant installed it in the test Home Assistant |
+| `vtherm_api` | 0.5.0, as Home Assistant installed it in the test Home Assistant; still 0.5.0 under VT 10.5.1 on 2026-10-14 (VT asks `>=0.5.0`, which the installed version meets); 0.6.0 only in CI's early warning |
 | Python | 3.14 |
-| Test Home Assistant | the dedicated test LXC (Debian 13, Docker, the firewall on the Proxmox host blocking the home network: T-25 passed), eight instances: 1 the gateway with an OpenTherm wall thermostat; 2–5 the starts criterion; 6 the relay; 7 the entity path (a held device); 8 a stand-alone gateway |
+| Test Home Assistant | the dedicated test LXC (Debian 13, Docker, the firewall on the Proxmox host blocking the home network: T-25 passed), eight instances: 1 the gateway with an OpenTherm wall thermostat; 2–5 the starts criterion; 6 the relay; 7 the entity path (a held device); 8 a stand-alone gateway. On 2026-10-14 instances 2–4 were set as instance 1 (`configuration`, the base walked; the starts criterion's house is to be set again for its next run); the LXC had run since 2026-10-08 14:34 UTC, and a partial check passed: the home router out of reach from the LXC and from a Home Assistant container, a public address in reach |
 
 ## 3. Automated tests
 
 | Suite | Result |
 |---|---|
-| Core, without Home Assistant (`tests/core`) | 1473 passed (`dev` through G11) |
-| The others, with Home Assistant | 2956 passed, 4 expected failures (`dev` through G11) |
-| `ruff check`, `ruff format --check`, `mypy` (strict) | clean |
-| CI (both Home Assistant versions, hassfest, HACS) | green on every pull request merged into `dev` |
+| Core, without Home Assistant (`tests/core`) | 1473 passed (`dev` through G11); 2036 passed (`qas` c488e90, CI, both Home Assistant versions) |
+| The others, with Home Assistant | 2956 passed, 4 expected failures (`dev` through G11); 3116 passed, 4 expected failures (`qas` c488e90, CI, both versions) |
+| `ruff check`, `ruff format --check`, `mypy` (strict) | clean (on c488e90 in CI too) |
+| CI (both Home Assistant versions, hassfest, HACS) | green on every pull request merged into `dev`; PR #133 and the push to `qas` c488e90 green, the early warnings (the newest VT and SmartPI; the newest `vtherm_api`) included |
 
 The four expected failures are strict ones that wait for decisions at K4: J4's starts criterion
 with the daily outdoor swing (×1.20 at +8 °C and ×2.16 at −5 °C against the boiler's own
@@ -224,6 +231,61 @@ in Auto followed the warmest room (22 → 23 °C), capped at 23 °C, unmoved by 
 excluded bath ignored (21 °C); Q4 pass — a 1.5-K drop in one room: "window probably open" 10 s
 after, no correction for 30 min.
 
+### 4.6 `qas` c488e90 on VT 10.5.1 (code d, 2026-10-14)
+
+The scope: the scenarios the pull requests since G11 name (#125, #126, #133), the gaps of the
+scope check before the run (`research/2026-10-13-j4-scope-check.md`) and the user's choice. Six
+instances side by side, one runner each, 05:45–06:45 UTC. Every entry migrated from minor version 8
+to 20 at its first start on this code with no warning or error from the plugin; VT 10.5.1 and
+`vtherm_api` 0.5.0 in every container. Before every scenario the runner compared the instance's
+stored options with its base (none drifted). Evidence: `research/2026-10-14-j4-results-instance<N>.md`.
+
+| ID | Scenario | Instance | Result | Evidence |
+|---|---|---|---|---|
+| P1 | an upgrade under control (the HACS path): control on under the old code (4378e02), then this code deployed — Home Assistant restarted | 1 | pass | at the stop the gateway's read-back 20.0, then released to the thermostat; after the start control resumed at once (override held, no hand-back owed, no blocker, latch, alarm or issue) |
+| D8 | a hot-water draw under control | 1 | pass | the SmartPI zone (valve open) paused during the draw and resumed after; no outside change, no alarm; the DHW-enable bit never written |
+| G2 | "monitoring only" in the "Control mode" item, on an entry made before the connection question | 1 | pass | saved (it failed before #127, F12); "this change stops control" confirmed; the switch refused (`blocked_control_mode_monitor`), nothing written; back to full control and the base |
+| V1 | every VT zone shows the plugin's water data (`smart_boiler`) | 2 | pass (reviewed) | the two keys; the water 33–34 °C against a flow of 33.3 °C; no heat during the draw; the water unknown with the flow failed; known again (37 °C) |
+| G1 | control refused without the CH-setpoint read-back | 2 | pass | refused where it is entered (`confirmed_entity_missing`) |
+| G3 | an on/off contact, or "I don't know", on the thermostat terminals | 2 | pass | "Save anyway", then the switch refused (`blocked_thermostat_on_off`, `blocked_thermostat_kind_dont_know`), nothing written, the thermostat's call on |
+| H1 | every VT zone unavailable | 3 | pass | held through recognition (`zones_recognition`), then `zones_unknown`, the alarm, the issue `no_zone_known`, the safe hand-back [20, CH on, 0]; back when the zones returned |
+| B1 | the plugin reloaded | 3 | pass | [20, CH on, 0] at the reload, then control resumed |
+| D1 | commands dropped at the gateway from the start | 3 | pass | no alarm for 4 min; "write ignored" by 12.7 min; never another controller; no hand-back; not sent again |
+| E3 | VT's activation delay of 120 s | 4 | pass (reviewed) | starts 95 and 130 s after the call, in each of two runs; a probe with the rooms quiet before the call: 127 s |
+| R1 | the relay follows VT's zones both ways | 6 | pass (second run) | on at once with the rooms calling, off 11 s after they were satisfied, on again 10 s after the call |
+| R7 | a planned restart (the entry reloaded) on the relay | 6 | pass | off at the stop, then on again |
+| R17 | every zone unknown on the relay, the own-room-controller tick | 6 | pass | rest "on": handed back, the relay on, `no_zone_known_handed_back`; rest "off": idle, the relay off, `no_zone_known_off`; the relay's forms walked and put back |
+| N1 | a held device restarting | 7 | pass | the setpoint and the heating switch sent again once back; no outside-change or write-ignored alarm |
+| E7 | a circuit run by other automation asks through its entity, no zone calling | 4 | pass (reviewed) | heating for the circuit alone (`circuit_asks`, `limit_circuit_need`), off once it stops asking; the water rose at the ramp's rate towards 55.0 °C (50 °C + 5 K) and stopped at 54.5 °C (F14); switched on while the circuit asks: 55.0 °C at once |
+| N2 | the device restarting at a hand-back | 7 | pass | "hand-back failed" while away; [20, CH on, 0] once back; the alarm cleared after the retry checks (`taken_by_other`, the K4 question as before) |
+
+Reviewed — each a fault of the runner, none of the plugin:
+
+- **E3.** Its first start was measured from the wrong call. E3's clean-up leaves the rooms at their
+  targets, so VT's TPI cycles open the valves up to the moment control is switched on; the plugin
+  sees that call at its first step and starts the delay from it, and E3 waits only 30 s after
+  heating is off before its own call. A call that drops and returns neither cancels nor restarts a
+  pending start (`core/controller.py` `_activation`, as VT's own rule), so heating came 120 s after
+  that first call — 95 s after E3's. Both runs' second cycles (130 s) and a probe on the same
+  instance with the rooms quiet for 150 s before the call (127 s) show the delay held. The runner
+  needs R18's pause of 150 s after the valves close before each call.
+- **V1.** With the flow failed, it compared the heat shown with the flame read around its reading,
+  but the plugin fills the attribute only when VT writes the climate's state
+  (`add_custom_attributes`), and VT wrote none from 06:11:30 to 06:13:20: the flame went out at
+  06:11:45, so the attribute still showed the "unknown" that was right at VT's last write. At every
+  VT write the heat shown was right ("no" with the flame out, "unknown" with it burning). The runner
+  should compare at the climate's `last_updated`.
+- **R1.** Its first run waited 120 s for the relay, but VT had not opened the valves by then: the
+  rooms were made colder while their setpoints already stood at their targets, which VT applies at
+  its next cycle. The valves opened only when the runner set the setpoints again, 121 s after
+  control was switched on, and the relay went on 7 s later. Run again: passed. The runner should
+  wait for the valves first, as E3 does.
+- **E7** (run afterwards, 07:16 UTC). It expected the circuit's floor, 55 °C, within 60 s, but
+  control was already on (idle at 37 °C) when the circuit asked, so the rise follows the ramp,
+  1 K/min (S-23: only a session's first setpoint is the target itself); the in-process test switches
+  control on while the circuit asks. A probe waited for the ramp: 0.5 K every 30 s, ending at
+  54.5 °C — F14. A second probe, switched on while the circuit asks: target and setpoint 55.0 °C.
+
 ## 5. The starts criterion
 
 Four runs side by side (instances 2 to 5, `devenv/config/starts.yaml`): the plugin's control
@@ -270,7 +332,17 @@ its 3 K limit with `curve_too_low` raised — F8.
 - Underfloor heating over six hours: 100 min each (U1, U2), enough for the cap and the alarm.
 - Home Assistant in °F on the entity path: on the gateway path only (T1).
 - The long-burn rule's classes (G11 E): not reached (Q2, F10).
-- `dev` after G11 (I7, I8): not tested; the next run is on `qas`.
+- `dev` after G11 (I7, I8): not tested on `dev`; tested on `qas` c488e90 (section 4.6).
+- On `qas` c488e90, outside the scope agreed for that run: every scenario not in section 4.6 —
+  among them the restarts (B3, B6), the starts criterion and the corrections' scenarios. Q4 is obsolete since #64:
+  it reads the plugin's window sensor, which is gone.
+- VT 10.5.1's valve zones (`over_valve`, `over_climate_valve`), whose "device active" changed: the
+  simulator has switch zones only; a real-VT test in-process (#130).
+- #110 and #112 (the guards during a draw): the simulator keeps the gateway's override through a
+  draw, so D8 cannot show them; #114 cannot change D1's result; #116 needs the comfort correction,
+  off in the base: in-process tests (`tests/core/test_guards.py`, `tests/core/test_controller.py`).
+- `vtherm_api` 0.6.0 in a test Home Assistant: the instances keep 0.5.0; 0.6.0 runs in CI's early
+  warning only.
 
 ## 7. Findings and known limits
 
@@ -288,13 +360,21 @@ Status on the morning of 2026-10-11: N2 passed again (code c); N8 running again 
 | L2 | "return by itself" counts its quiet hour from the other controller's last write, the wall thermostat's own program changes included | by design | said in the option's confirmation |
 | L3 | behind an OpenTherm Gateway a boiler that ignores the setpoint is not seen: the gateway echoes what it sends | the real path's limit | known (PB-91) |
 | F7 | a held device restarting during a hand-back never got the setpoint's hand-back value: a third value on the read-back after the outage was judged another controller's before the plugin wrote it, and the "hand-back failed" alarm cleared | high, entity path | fixed (#51, #58); J4 N2 passes: [20, CH on, 0] written once back |
-| F8 | the comfort correction on: at night ×1.30 (+8 °C) and ×4.42 (−5 °C) the boiler's own starts, for 0.00–0.07 K of comfort — the rooms stay about 1 K short through VT's TPI offset, which the correction cannot remove, and the water at the limit makes every TPI cycle stop the burner | medium | G11 made it on by default in full control: to decide at K4 (the simulation in the tests says ×1.39 and ×6.28) |
+| F8 | the comfort correction on: at night ×1.30 (+8 °C) and ×4.42 (−5 °C) the boiler's own starts, for 0.00–0.07 K of comfort — the rooms stay about 1 K short through VT's TPI offset, which the correction cannot remove, and the water at the limit makes every TPI cycle stop the burner | medium | decided at K4 (2026-11-17): off by default, as the literature advises with TPI zones (the simulation in the tests says ×1.39 and ×6.28) |
 | F9 | the starts criterion fails at −5 °C over a full day with the correction off (×1.72; ×0.93 at night) | medium | K4: heating follows VT at once by the user's rule |
 | F10 | the long-burn rule runs only after 3 h of flame without a break; a boiler cycling at its minimum while the rooms stay short never triggers it, so with the correction off nothing tells the user (Q2) | medium | to decide: count the burner's share of the time, not one unbroken burn |
 | F11 | 12 h at −2 °C with the default curve and the correction off left the rooms 1.1–1.7 K short, the flame on 100 % and the flow at its setpoint — the boiler had reserve, the water was too cool (the case behind G11) | none now | G11 B, D and E address it |
 | L4 | the simulator's outdoor sensor, set by hand, stays flat for over 12 h while its weather moves: the plugin rightly judges it stuck and uses the weather | test bed | none |
 | L5 | VT's TPI zones (coefficients 0.6 / 0.01) hold the simulated rooms about 1–1.5 K under their setpoints in every regime, with and without the plugin | test bed, VT | none here; it is what F8 meets |
 | L6 | a relay timer that is a whole multiple of the plugin's 5-min renewal lapses together with a renewal, hidden from Home Assistant (PB-25) | by design | the runner uses 11 min |
+| F12 | "Control mode" could not be saved on an entry made before the connection question: the form showed, its save failed (`apply_mode` read a connection such an entry does not store) and nothing was saved — found by reading, in the scope check of 2026-10-13 | low (control unchanged), entries made before I6 | fixed (#127); G2 passes on instance 1 (code d) |
+| F13 | VT 10.5.1 changed when a valve zone counts as "device active", which the plugin reads for a zone's demand; J4's zones are switches | medium, valve zones | a real-VT test (#130) and the user guide (#131) |
+| L7 | E3 measures its first start from a call made while a start from an earlier call is pending (section 4.6) | the runner | R18's pause of 150 s before each call |
+| L8 | V1 judges the heat shown by the flame around its reading; VT's attribute is as old as VT's last write of the climate's state | the runner | compare at the climate's `last_updated` |
+| L9 | R1 waits 120 s for the relay while VT may open the valves only at its next cycle | the runner | wait for the valves first |
+| F14 | after a ramp up to a circuit's floor (E7: towards 55.0 °C) the setpoint written stopped at 54.5 °C and stayed there, with no `ramp` reason, until the circuit stopped asking; the controller's target was 55.0 (switched on while asking: 55.0 at once) | low (0.5 K below the floor, 4.5 K above the circuit's need) | cause, read in the code and matching the run: `core/guards.py` `_plan` sends a change only when it differs from the value written by more than the read-back tolerance (`TOLERANCE_K`, 0.5 K), and a keep-alive resends the value written — so a target 0.5 K or less from it is never written (the end of any ramp, a small curve change). fixed in #135: a bound the water is held at is written exactly |
+| L11 | E7 expects the circuit's floor within 60 s while control, already on, ramps to it | the runner | wait for the ramp, or switch control on while the circuit asks |
+| L10 | after a scenario ends with control off and the rooms calling, the relay's information issue `relay_rests_off` stays (instance 6); the entity path's `hand_back_taken_by_other` stays after N2 (instance 7) | by design | none; left on the instances |
 
 The runner's own faults found and fixed during J4, none the plugin's: timings inside the relay
 rule's confirmation window; preconditions not met (rooms at target before a fault, a VT cycle that

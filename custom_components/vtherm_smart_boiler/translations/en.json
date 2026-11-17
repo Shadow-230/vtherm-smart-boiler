@@ -254,7 +254,7 @@
           "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the switch shows \"not enough data\".",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
-          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
+          "starts_per_hour_limit": "More burner starts than this in one hour raise the alarm. Default 12. Below it, more than 6 an hour over 3 hours raises a warning: gas boilers are designed for about 6 cycles an hour. Too high hides short-cycling.",
           "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem.",
           "verdict_window_days": "The verdict covers this many most recent days with data. Empty (default): every day kept, up to a year, filled from the recorder at start. Never shorter than the monitoring period."
         }
@@ -381,7 +381,7 @@
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
           "offset": "Shifts the whole curve up or down, in K. Default 0. Up wastes gas; down leaves rooms cold.",
           "fallback_setpoint": "Used when no outdoor temperature has been known for three hours (sensor and weather lost or suspect), in °C. Empty (default): the curve at its design point, the most heat it gives; the valves keep rooms from overheating.",
-          "comfort_correction": "On (default with full control): while a zone's valve is fully open and its room stays short of its setpoint (with SmartPI learning: of the setpoint + 0.5 K), the water rises above the curve — 1 K per 30 min, at most 3 K a day, up to its limit — and falls twice as fast; not while another zone is too warm or the starts rise. What it costs: more gas, and possibly more starts. With TPI zones it can sit at its limit: in the simulation 1.75 to 5 times the starts. Watch the starts.",
+          "comfort_correction": "Off by default. On: while a zone's valve is fully open and its room stays short of its setpoint (with SmartPI learning: of the setpoint + 0.5 K), the water rises above the curve — 1 K per 30 min, at most 3 K a day, up to its limit — and falls twice as fast; not while another zone is too warm or the starts rise. What it costs: more gas, and more starts. With VT's TPI zones it often sits at its limit: in the simulation 1.4 to 6 times the starts for under 0.1 K of comfort. Where a room stays cold, raise the curve first.",
           "room_mode": "Auto (default): the curve passes through the highest setpoint among the zones that heat now — at most 23 °C, following VT's presets. Manual: the value below. With Auto the warmest room sets the water for all; a room kept warm only now and then raises it too, unless left out below.",
           "room_excluded": "Zones whose setpoint Auto does not follow, e.g. a bathroom kept warmer. Such a room may stay short in mild weather; the comfort correction then raises the water for it.",
           "comfort_correction_max_k": "How far above the curve the correction may raise the water, in K. Default 3 K, 0.5 to 10; it rises at most 3 K a day. It is the only bound above the curve. Higher: more gas and warmer water for rooms that do not need it; a correction stuck at its limit means the curve is too low."
@@ -850,7 +850,7 @@
           "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the switch shows \"not enough data\".",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
-          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
+          "starts_per_hour_limit": "More burner starts than this in one hour raise the alarm. Default 12. Below it, more than 6 an hour over 3 hours raises a warning: gas boilers are designed for about 6 cycles an hour. Too high hides short-cycling.",
           "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem.",
           "verdict_window_days": "The verdict covers this many most recent days with data. Empty (default): every day kept, up to a year, filled from the recorder at start. Never shorter than the monitoring period."
         }
@@ -921,7 +921,7 @@
           "exponent": "How the curve bends. Empty picks it from the emitters: radiators 1.3, convectors 1.4, underfloor 1.1. The wrong bend under-heats in frost or overheats in mild weather.",
           "offset": "Shifts the whole curve up or down, in K. Default 0. Up wastes gas; down leaves rooms cold.",
           "fallback_setpoint": "Used when no outdoor temperature has been known for three hours (sensor and weather lost or suspect), in °C. Empty (default): the curve at its design point, the most heat it gives; the valves keep rooms from overheating.",
-          "comfort_correction": "On (default with full control): while a zone's valve is fully open and its room stays short of its setpoint (with SmartPI learning: of the setpoint + 0.5 K), the water rises above the curve — 1 K per 30 min, at most 3 K a day, up to its limit — and falls twice as fast; not while another zone is too warm or the starts rise. What it costs: more gas, and possibly more starts. With TPI zones it can sit at its limit: in the simulation 1.75 to 5 times the starts. Watch the starts.",
+          "comfort_correction": "Off by default. On: while a zone's valve is fully open and its room stays short of its setpoint (with SmartPI learning: of the setpoint + 0.5 K), the water rises above the curve — 1 K per 30 min, at most 3 K a day, up to its limit — and falls twice as fast; not while another zone is too warm or the starts rise. What it costs: more gas, and more starts. With VT's TPI zones it often sits at its limit: in the simulation 1.4 to 6 times the starts for under 0.1 K of comfort. Where a room stays cold, raise the curve first.",
           "room_mode": "Auto (default): the curve passes through the highest setpoint among the zones that heat now — at most 23 °C, following VT's presets. Manual: the value below. With Auto the warmest room sets the water for all; a room kept warm only now and then raises it too, unless left out below.",
           "room_excluded": "Zones whose setpoint Auto does not follow, e.g. a bathroom kept warmer. Such a room may stay short in mild weather; the comfort correction then raises the water for it.",
           "comfort_correction_max_k": "How far above the curve the correction may raise the water, in K. Default 3 K, 0.5 to 10; it rises at most 3 K a day. It is the only bound above the curve. Higher: more gas and warmer water for rooms that do not need it; a correction stuck at its limit means the curve is too low."
@@ -1394,12 +1394,12 @@
               "heating_burns": "Heating burns counted",
               "frequent_starts": "Frequent starts",
               "few_starts": "Few starts",
-              "short_burns": "Mostly short burns",
+              "short_burns": "Mostly short burns — most often a boiler too big for the house",
               "long_burns": "Burns long enough",
               "low_condensing": "Little condensing",
               "good_condensing": "Good condensing",
               "condensing_unknown": "Condensing not known: no return temperature or too little of it",
-              "load_often_below_min_power": "The building's load often below the boiler's minimum power",
+              "load_often_below_min_power": "The building's load often below the boiler's minimum power: the boiler is oversized — the main cause of short burns",
               "load_rarely_below_min_power": "The building's load rarely below the boiler's minimum power",
               "load_unknown": "The building's load not known",
               "criteria_judged": "Too few criteria could be judged to say control is not worth enabling",
@@ -1437,7 +1437,12 @@
         }
       },
       "change_report": {
-        "name": "Use against yesterday"
+        "name": "Use against yesterday",
+        "state_attributes": {
+          "other_within_normal": {
+            "name": "The rest within normal day-to-day variation"
+          }
+        }
       },
       "loss_coefficient": {
         "name": "Building loss coefficient",
@@ -1466,6 +1471,9 @@
           },
           "mismatch": {
             "name": "Entered and measured disagree"
+          },
+          "measured_range": {
+            "name": "Measured, likely range (±20 %)"
           }
         }
       },
@@ -2714,7 +2722,7 @@
             "name": "Why",
             "state": {
               "power_limit": "The boiler at its power limit: below its setpoint at high modulation",
-              "water_too_cool": "The water too cool for the rooms short: the comfort correction raises it",
+              "water_too_cool": "The water too cool for the rooms short: raise the curve (the comfort correction, where it is on, raises it)",
               "water_too_hot": "The water too hot: lower it (the curve, or the boiler's own setting)"
             }
           },
@@ -2725,7 +2733,7 @@
             "name": "Zones"
           },
           "burning_hours": {
-            "name": "Burning (h)"
+            "name": "Run (h), short flame gaps included"
           },
           "kept": {
             "name": "Kept for tuning"
@@ -3153,6 +3161,10 @@
       "title": "SmartPI's learning may still be off in some zones",
       "description": "The integration was removed while control had paused SmartPI's learning in these zones, and it could not be seen switched back on: {zones}. SmartPI keeps learning off until it is switched on — in SmartPI's own settings, or with its service \"set_smartpi_learning\". Switch it on there, and then ignore this issue."
     },
+    "zone_cycle_short": {
+      "title": "Short cycles in VT: more boiler starts",
+      "description": "{zones}: Versatile Thermostat switches these rooms' heating on and off in cycles shorter than 10 minutes. The plugin starts and stops the boiler with them, so short cycles mean many short burns, which waste gas and wear the boiler. For rooms that call a gas boiler, set the cycle in VT to 10–15 minutes: in the simulation it cut the boiler's starts by a third to a half in mild weather, with the rooms as warm."
+    },
     "learning_not_paused": {
       "title": "The plugin cannot pause learning in some zones",
       "description": "Control cannot pause learning in these zones during hot water and water swings: {zones}. Auto-TPI could only be paused by wiping what it learned; a SmartPI without a learning flag cannot be paused. They keep learning through those moments, which can skew what they learn."
@@ -3261,9 +3273,13 @@
       "title": "A room below the frost limit cannot get heat: a VT function keeps it off",
       "description": "{zones}: one of Versatile Thermostat's own functions (its safety mode, or auto start/stop) keeps the valve closed, so the plugin cannot heat it and does not start the boiler for it. The room stays unheated until VT opens it again: check that thermostat's room sensor and its auto start/stop settings."
     },
+    "frost_zone_closed_inhibition": {
+      "title": "A room below the frost limit cannot get heat: another plugin holds it",
+      "description": "{zones}: another plugin has taken this thermostat out of Versatile Thermostat's control, so VT keeps the valve closed and the plugin cannot heat it and does not start the boiler for it. The room stays unheated until that plugin gives the thermostat back to VT: check the plugin that holds it."
+    },
     "frost_zone_closed_mixed": {
       "title": "Rooms below the frost limit cannot get heat",
-      "description": "{zones}: VT keeps their valves closed for different reasons, so the plugin cannot heat them. For a thermostat that is off, use VT's frost preset instead; a room closed for a window, VT's \"Stopped\" or another VT function stays unheated until VT opens it."
+      "description": "{zones}: VT keeps their valves closed for different reasons, so the plugin cannot heat them. For a thermostat that is off, use VT's frost preset instead; a room closed for a window, VT's \"Stopped\" or another VT function stays unheated until VT opens it, and a room another plugin holds until that plugin gives it back."
     },
     "thermostat_kind_missing": {
       "title": "Say what is wired to the gateway's thermostat terminals",

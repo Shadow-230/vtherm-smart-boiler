@@ -27,6 +27,7 @@ from custom_components.vtherm_smart_boiler.core.installation import (
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits
 from custom_components.vtherm_smart_boiler.core.loop import LoopConfig, LoopState, loop_step
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
+from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from sim.simulator import (
     DAY,
@@ -266,7 +267,15 @@ def test_summer_heating_follows_vt_at_the_minimum_water_temperature() -> None:
 
 # --- S-15, T-24: starts under control against the boiler's own regulation --------------------
 
-STARTS_CRITERION = 1.10  # J4's criterion (Z3 rule 6; provisional, K4)
+STARTS_CRITERION = 1.10  # J4's criterion (Z3 rule 6), relative to the boiler's own regulation
+# K4 (the user's decision of 2026-11-17): the literature measures cycling in absolute terms — the
+# starts per hour (gas boilers' TPI convention: 6 an hour) and the share of burns under 10 min
+# (Bennett 2019, 221 boilers). J4 passes the ratio above, or at most this many starts per hour
+# with a median complete burn of at least this long; comfort parity holds either way.
+STARTS_PER_HOUR_LIMIT = 6.0
+MEDIAN_BURN_S = 10 * 60.0
+VT_DEFAULT_CYCLE_S = 300.0  # VT's default TPI cycle, 5 min
+ADVISED_CYCLE_S = 900.0  # the plugin's advice for zones that call a boiler: 10 to 15 min
 # J4's comfort parity (decision 8 of 0.2.3, SB-08): each room's mean temperature over the day at
 # most this far below its mean under the boiler's own regulation (provisional, K4), so a cooler
 # curve cannot meet the starts criterion by leaving the rooms colder.
@@ -317,6 +326,29 @@ def starts(result: SimResult, start: float, end: float) -> int:
     return len([burn for burn in find_burns(flame, start, end) if burn.start_seen])
 
 
+def median_burn_s(result: SimResult, start: float, end: float) -> float:
+    """The median of the complete burns within ``[start, end)``; 0 without one."""
+    flame = result.history.signal(Signal.FLAME)
+    burns = sorted(b.duration for b in find_burns(flame, start, end) if b.complete)
+    if not burns:
+        return 0.0
+    middle = len(burns) // 2
+    return burns[middle] if len(burns) % 2 else (burns[middle - 1] + burns[middle]) / 2.0
+
+
+def meets_starts_criterion(own: SimResult, controlled: SimResult) -> bool:
+    """J4's starts criterion on the compared day (K4, 2026-11-17): at most ``STARTS_CRITERION``
+    times the boiler's own regulation's starts, or at most ``STARTS_PER_HOUR_LIMIT`` starts an
+    hour with a median burn of at least ``MEDIAN_BURN_S``."""
+    own_starts, controlled_starts = starts(own, DAY, 2 * DAY), starts(controlled, DAY, 2 * DAY)
+    if controlled_starts <= STARTS_CRITERION * own_starts:
+        return True
+    return (
+        controlled_starts / 24.0 <= STARTS_PER_HOUR_LIMIT
+        and median_burn_s(controlled, DAY, 2 * DAY) >= MEDIAN_BURN_S
+    )
+
+
 def comfort_shortfall(own: SimResult, controlled: SimResult) -> dict[str, float]:
     """Per room, how far its mean temperature over the compared day (sampled every 10 min)
     lies below its mean under the boiler's own regulation; J4's comfort parity allows at most
@@ -341,19 +373,20 @@ def starts_both_ways(
     comfort_correction: bool | None,
     swing: float = 0.0,
     flow_shift: float = 0.0,
+    cycle_s: float = VT_DEFAULT_CYCLE_S,
 ) -> tuple[SimResult, SimResult]:
-    return _starts_both_ways(mean, comfort_correction, swing, flow_shift)
+    return _starts_both_ways(mean, comfort_correction, swing, flow_shift, cycle_s)
 
 
 @cache  # each pair runs once per session: the band test reads the xfail runs again (PB-94)
 def _starts_both_ways(
-    mean: float, comfort_correction: bool | None, swing: float, flow_shift: float
+    mean: float, comfort_correction: bool | None, swing: float, flow_shift: float, cycle_s: float
 ) -> tuple[SimResult, SimResult]:
     """24 h at an outdoor temperature around ``mean`` — steady, or with a daily swing of
     ±``swing`` K — after a day to settle, in the same simulated house: three radiator zones
     under TPI, the boiler on its own regulation — its own curve, heating whenever a zone valve
     is open, as VT's central boiler switches it — and under the plugin's control, stepped every
-    10 s as the control unit is."""
+    10 s as the control unit is. ``cycle_s``: the zones' TPI cycle, VT's 5 min by default."""
     boiler = BOILERS["condensing_large"]
     base = Scenario(
         boiler,
@@ -363,7 +396,7 @@ def _starts_both_ways(
         days=2,
         step_s=10.0,
         control_period_s=10.0,
-        tpi=TpiConfig(),
+        tpi=TpiConfig(cycle_s=cycle_s),
     )
     own = simulate(base)
     controlled = simulate(
@@ -392,14 +425,14 @@ def test_tpi_switch_zones_starts_per_hour_under_control(mean: float) -> None:
     assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
 
 
-def test_the_defaults_are_the_correction_on_run() -> None:
-    """The plugin's defaults — the comfort correction on in full control since the user's
-    decision of 2026-10-10 (G11 B, reversing K4.1): the defaults' loop is the one the
-    correction-on test runs, so that test is J4's criterion with the defaults (PB-94: no second
-    run of the same). Negative: the correction off is another loop."""
+def test_the_defaults_are_the_correction_off_run() -> None:
+    """The plugin's defaults — the comfort correction off since K4 (the user's decision of
+    2026-11-17, reversing G11 B): the defaults' loop is the one the correction-off tests run, so
+    those are J4's criterion with the defaults (PB-94: no second run of the same). Negative: the
+    correction on is another loop."""
     boiler = BOILERS["condensing_large"]
-    assert own_curve_loop(boiler, None) == own_curve_loop(boiler, True)
-    assert own_curve_loop(boiler, None) != own_curve_loop(boiler, False)
+    assert own_curve_loop(boiler, None) == own_curve_loop(boiler, False)
+    assert own_curve_loop(boiler, None) != own_curve_loop(boiler, True)
 
 
 @pytest.mark.parametrize("mean", [8.0, -5.0])
@@ -424,23 +457,61 @@ def test_comfort_parity_without_rooms_is_not_met() -> None:
     strict=True,
     raises=AssertionError,
     reason=(
-        "K4 (S-15, decision 8 of 0.2.3): with the ±3 K daily outdoor swing the defaults on the "
-        "boiler's own curve keep the rooms as warm (within 0.01 K) but start the burner x1.20 "
-        "as often at +8 °C and x2.16 at -5 °C as the boiler's own regulation (open #27 of "
-        "0.2.2; research/2026-10-06-p2-5b-report.md); the acceptable ratio is decided at K4"
+        "K4 (S-15, decision 8 of 0.2.3; the criterion of 2026-11-17): with VT's default 5-min "
+        "TPI cycle and the ±3 K daily outdoor swing, the rooms as warm (within 0.01 K), the "
+        "burner starts x1.20 as often at +8 °C (6.8 an hour) and x2.16 at -5 °C as the boiler's "
+        "own regulation, its median burn 2 min — every gap between the zones' pulses stops it. "
+        "The plugin advises a 10–15 min cycle (the zone_cycle_short issue); with 15 min the "
+        "criterion passes (the next test)"
     ),
 )
 @pytest.mark.parametrize("mean", [8.0, -5.0])
 def test_j4s_starts_criterion_with_the_daily_swing(mean: float) -> None:
-    """J4's starts criterion with its conditions (SB-08, decision 8): 24 h at +8 °C and at
+    """J4's starts criterion with its conditions (SB-08, decision 8; K4): 24 h at +8 °C and at
     −5 °C, each with a ±3 K daily outdoor swing, on the boiler's own curve with the comfort
-    correction off (the defaults until G11): at most 1.10 times the boiler's own regulation's
-    starts per hour, with every room as warm as under it (comfort parity)."""
+    correction off (the defaults), VT's default cycle: at most 1.10 times the boiler's own
+    regulation's starts, or at most 6 starts an hour with a median burn of 10 min, with every
+    room as warm as under it (comfort parity)."""
     own, controlled = starts_both_ways(mean, comfort_correction=False, swing=SWING_K)
     assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
     assert starts(own, DAY, 2 * DAY) > 0
     assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
-    assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
+    assert meets_starts_criterion(own, controlled)
+
+
+@pytest.mark.parametrize("mean", [8.0, -5.0])
+def test_j4s_starts_criterion_with_the_advised_vt_cycle(mean: float) -> None:
+    """K4 (2026-11-17): the same day with the zones' TPI cycle at 15 min, as the plugin advises
+    for zones that call a boiler — at +8 °C the ratio holds (x0.99), at −5 °C the absolute
+    measure (about 2 starts an hour, the median burn about 12 min); the rooms as warm."""
+    own, controlled = starts_both_ways(
+        mean, comfort_correction=False, swing=SWING_K, cycle_s=ADVISED_CYCLE_S
+    )
+    assert controlled.override_s > 0.95 * 2 * DAY
+    assert starts(own, DAY, 2 * DAY) > 0
+    assert comfort_parity(own, controlled), comfort_shortfall(own, controlled)
+    assert meets_starts_criterion(own, controlled)
+
+
+def test_the_starts_criterion_passes_on_either_measure() -> None:
+    """The criterion's two measures, each alone: the ratio (a boiler that cycles on its own)
+    and the absolute one (at most 6 starts an hour, the median burn 10 min) — and neither."""
+
+    def burns(minutes: list[float]) -> SimResult:
+        """Burns of these lengths one after the other on the compared day, a minute apart."""
+        flame: Series[bool] = Series()
+        at = DAY + 60.0
+        for length in minutes:
+            flame.append(at, True)
+            flame.append(at + length * 60.0, False)
+            at += (length + 1.0) * 60.0
+        return SimResult(History(signals={Signal.FLAME: flame}))
+
+    assert meets_starts_criterion(burns([3.0] * 200), burns([3.0] * 210))  # ratio x1.05
+    assert meets_starts_criterion(burns([30.0] * 24), burns([12.0] * 100))  # 4.2 an hour, 12 min
+    assert not meets_starts_criterion(burns([30.0] * 24), burns([5.0] * 100))  # short burns
+    many = [10.5, 0.5] * 99 + [10.5, 10.5]  # 200 starts, 8.3 an hour, the median 10.5 min
+    assert not meets_starts_criterion(burns([30.0] * 24), burns(many))
 
 
 @pytest.mark.xfail(
@@ -460,7 +531,7 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
     """The cost the option's text names: with the comfort correction switched on, the same
     house fails J4's criterion."""
     own, controlled = starts_both_ways(mean, comfort_correction=True)
-    assert starts(controlled, DAY, 2 * DAY) <= STARTS_CRITERION * starts(own, DAY, 2 * DAY)
+    assert meets_starts_criterion(own, controlled)
 
 
 @pytest.mark.parametrize(
@@ -470,9 +541,8 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
         (-5.0, False, SWING_K, 2.0, 2.3),
         (8.0, True, 0.0, 1.65, 1.85),
         (-5.0, True, 0.0, 4.7, 5.5),
-        # G11 B: the correction on by default — with the daily swing, x1.39 and x6.28 (the
-        # "up to 6.3" the option's text names); the default may be revisited after J4's starts
-        # comparison with it on (about 2026-10-12).
+        # The correction on — with the daily swing, x1.39 and x6.28 (the "1.4 to 6 times" the
+        # option's text names): why it is off by default since K4 (2026-11-17).
         (8.0, True, SWING_K, 1.3, 1.5),
         (-5.0, True, SWING_K, 5.9, 6.7),
     ],

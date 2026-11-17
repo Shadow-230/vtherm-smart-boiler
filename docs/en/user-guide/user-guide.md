@@ -41,11 +41,12 @@ the [technical documentation](../technical/technical.md).
 
 ## 1. Prerequisites
 
-- **Home Assistant 2026.9 or later** — the version the plugin is tested on.
+- **Home Assistant 2026.10.4 or later** — the newest Versatile Thermostat (10.6.5) needs it, and
+  the plugin is tested on it.
 - **Versatile Thermostat 10.2.0 or later**, with its thermostats (the plugin calls them zones)
   set up for the rooms this boiler heats. VT loads external feature managers from 10.2.0;
-  10.5.1 is the version tested. The minimum is provisional and is confirmed before the first
-  release.
+  10.5.1 and the newest, 10.6.5, are tested. The minimum is provisional and is confirmed before
+  the first release. VT 10.6.5 itself needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0.
 - The `vtherm_api` library, 0.5.0 or later. Home Assistant installs it with the plugin.
 - **A boiler that Home Assistant can read**, through any integration that shows its signals as
   entities: for example the OpenTherm Gateway (OTGW), EMS-ESP or an ESPHome OpenTherm controller.
@@ -161,6 +162,20 @@ Then the sensor **Control verdict** shows one of:
 The verdict is advice. You decide. Before it comes, and outside the heating season when the days
 pass without enough data, the control switch says that control starts without a verdict.
 
+What the verdict and the building values mean:
+
+- **Short burns** most often come from a boiler too big for the house: its lowest output is more
+  than the house needs, so it starts and stops. The verdict says so when the building's load is
+  often below the boiler's minimum power.
+- **The building's heat loss**, measured from the boiler's use and the weather, counts only after
+  about **3 weeks of heating** (21 heating days); before that it is shown, never used. It is
+  shown with a likely range of about ±20 % — the accuracy published methods reach. A measured
+  loss below the design load is common: it means the boiler is oversized, not that the
+  measurement is wrong.
+- **Use against yesterday** compares two days; a day's use moves a lot on its own (the building
+  still warm or cold from yesterday, sun, people). When the part no cause explains stays within
+  15 % of the day before, it is marked as normal variation.
+
 ### 4.2 Control is opt-in
 
 Control is **off by default**. It is the switch **Control (experimental)**. You can switch it on
@@ -206,6 +221,12 @@ same way VT's central boiler does. You choose one or more of these criteria:
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
   VT does not hand the boiler back; frost protection still watches.
 - There is no summer switch in the plugin. If VT's zones are off, the boiler does not heat.
+- **VT's cycle for rooms that call the boiler: 10 to 15 minutes.** VT switches a room's heating
+  on and off in cycles (5 minutes by default). The plugin follows the rooms at once, so each gap
+  between their pulses stops the burner. Gas boilers are usually given 6 cycles an hour at most;
+  in the simulation a 10–15 minute cycle cut the boiler's starts by a third to a half in mild
+  weather, with the rooms as warm. While control is set up, the plugin names the rooms VT
+  switches in cycles under 10 minutes ("Short cycles in VT").
 - **Valve zones whose valve may not close fully** (VT's **Max closing degree** below 100): use
   VT 10.5 or newer. From 10.5, a valve held at that floor does not count as heating, and the zone
   calls only once VT opens it further. VT 10.2–10.4 counted it as heating, so such a zone called
@@ -277,8 +298,8 @@ If the outdoor temperature is lost, the plugin uses the weather entity, then kee
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
 outdoor sensor never means zero heat.
 
-**Comfort correction** — **on by default with full control** (an entry set up before this
-version keeps what it ran with). When a room stays short of its setpoint with its valve fully
+**Comfort correction** — **off by default** (an entry keeps what it stored). Switched on: when a
+room stays short of its setpoint with its valve fully
 open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K, set
 in **Heating curve** beside the correction; never more than 3 K a day. For a room whose SmartPI
 is in its learning phase, "short" means below its setpoint + 0.5 K, where SmartPI stops heating
@@ -286,9 +307,9 @@ it. It does not rise while the boiler starts more often than before. One room sh
 any other — the water never goes higher for one room's sake. After three hours at its limit with
 a room still short, the correction holds there, and a repair issue names the room and the
 possible causes: the curve too low, the room's radiator too small, or the room losing heat. What
-it costs: more gas, and possibly more burner starts — with VT's TPI zones it can sit at its limit
-and raise the starts several times over. A "Reset comfort correction" button sets it back to
-zero.
+it costs: more gas, and more burner starts — with VT's TPI zones it often sits at its limit and
+raises the starts several times over for almost no warmth. That is why it is off: where a room
+stays cold, raise the curve first. A "Reset comfort correction" button sets it back to zero.
 
 ### 4.5 Frost protection
 
@@ -851,12 +872,12 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Water pressure falling | falling over days, water temperature allowed for | look for a leak |
 | Flue gas too hot | above the limit you set | book a boiler service |
 | Flue gas rising above return | flue gas hotter above the return than before | book a service |
-| Frequent starts | more starts in the last hour than the limit | check the curve and limits |
+| Frequent starts | the alarm: more starts in the last hour than the limit (12); a warning: more than 6 an hour over the last 3 hours | check VT's cycle (10–15 min), the curve and the limits |
 | Unstable ignition | many burns lost soon after ignition in a day | have it checked |
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
-| Long burn without warming | the flame on for 3 h without a break, the rooms not warming: its reason says the water too cool for the rooms short, the boiler at its power limit, or the water too hot | the correction raises cool water; if too hot, lower it — the curve, or on an on/off boiler its own water setting |
+| Long burn without warming | the burner on for 3 h — gaps of up to 30 min included, so a boiler that keeps stopping and starting counts too — and the rooms not warming: its reason says the water too cool for the rooms short (the flow at its setpoint), the boiler at its power limit (the flame on throughout, below its setpoint at high modulation), or the water too hot | water too cool: raise the curve (the correction, where on, raises it); too hot: lower it — the curve, or on an on/off boiler its own water setting |
 
 Repair issues:
 
@@ -931,10 +952,11 @@ not confirmed.
 |---|---|
 | Versatile Thermostat gives no answer (3 variants) | check that VT runs, thermostats on |
 | No demand criterion can be judged (3 variants) | set VT's device power, or another one |
-| A room below the frost limit cannot get heat (5 variants) | VT keeps it closed; see text |
+| A room below the frost limit cannot get heat (6 variants) | VT keeps it closed; see text |
 | A heating circuit has no rooms | add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Auto-TPI cannot learn in some zones | clear "used by the central boiler" in VT |
+| Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
 | The plugin cannot pause learning in some zones | information |
 | The plugin could not switch learning back on in some zones | switch SmartPI learning on |
 | VT's thermostats cannot show the plugin's zone value | update VT; nothing else depends on it |
@@ -1065,17 +1087,17 @@ disabled by default.
 | Condensing share | the share of heating burn time with the return below 55 °C |
 | Degree-days (7 days) *hidden* | the week's degree-days, from the heating threshold |
 | Gas per degree-day | gas per degree-day, measured with a gas meter you map, else estimated |
-| Use against yesterday *hidden* | the change in use against the day before, split into weather, hot water, settings and the rest |
+| Use against yesterday *hidden* | the change in use against the day before, split into weather, hot water, settings and the rest — the rest marked when it is normal day-to-day variation |
 | Control verdict | worth enabling, not worth enabling, or not enough data yet — with its reasons |
 | Signal problems | how many mapped signals have a problem; each one's health in the attributes |
 | Features | how many features are inactive now, and why |
-| Building loss coefficient, Building heating threshold *hidden* | the building values in use — yours, measured or the default — with their source |
+| Building loss coefficient, Building heating threshold *hidden* | the building values in use — yours, measured or the default — with their source; a measured loss with its likely range |
 | Suggested lowest water temperature | a suggestion only, never applied |
 | Forecast snapshots *disabled* | how many recorded forecasts are kept, for later releases |
 | Critical zone, circuit … | per circuit, the zone whose own controller works hardest now |
 | Signals | on while flame and flow (and a relay) are known and fresh |
 | Outdoor sensor problem | the boiler's outdoor sensor is stuck or disagrees with the weather entity |
-| Long burn without warming | the flame on for 3 h without the rooms warming, with the likely reason |
+| Long burn without warming | the burner on for 3 h (short gaps included) without the rooms warming, with the likely reason |
 | Alarms (binary sensors, on = problem) | one per check: water pressure, flue gas, starts, ignition, low flow, a circuit's water too hot and the others — the [alarm table](#7-alarms-and-repair-issues) |
 
 **Control**
@@ -1124,7 +1146,7 @@ risks. The main ones — described, not advised:
 | Lowest water temperature | 20 °C (provisional) | too low: in mild weather the boiler stops by itself again and again, and a non-condensing boiler condenses in its flue (its manual gives the value) |
 | A circuit's highest water temperature | 70 °C where empty | caps every setpoint on circuits fed straight from the boiler; the boiler may overshoot it by its own hysteresis |
 | Its too-hot alarm | the maximum + 5 K, for 10 min | information only; too high lets a real overshoot pass unreported |
-| Comfort correction | on, up to 3 K (at most 10 K), rising at most 3 K a day | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts |
+| Comfort correction | off; switched on, up to 3 K (at most 10 K), rising at most 3 K a day | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts |
 | Activation delay | 0 s | waits before heating starts, for slow valves; meanwhile the rooms get no heat |
 | Write type of a picked target | unknown — not written | expiring or held must be declared; a wrong declaration wears the boiler's memory or lets a value lapse |
 | Hand-back value | none — entered with its effect | the same number means "own control" on one device and "no heat" on another |

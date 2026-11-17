@@ -71,8 +71,8 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
 
 | Requirement | Version |
 |---|---|
-| Home Assistant | 2026.9 or later |
-| Versatile Thermostat | 10.2.0 or later (it loads external feature managers from 10.2.0); 10.5.1 is the version tested — provisional until the first release |
+| Home Assistant | 2026.10.4 or later — the newest VT (10.6.5) needs it |
+| Versatile Thermostat | 10.2.0 or later (it loads external feature managers from 10.2.0); 10.5.1 and the newest, 10.6.5, are tested — provisional until the first release. VT 10.6.5 needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0 |
 | `vtherm_api` | 0.5.0 or later, installed with the plugin |
 | SmartPI, Auto-TPI | optional; any VT zone algorithm works |
 

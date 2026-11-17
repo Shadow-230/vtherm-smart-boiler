@@ -227,7 +227,7 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         assert no_criterion["title"], kind
         assert set(PLACEHOLDER.findall(no_criterion["description"])) == {"criteria"}, kind
     # Decision 4 (X4); SB-27: the advice by VT's reason for closing the room.
-    for advice in ("", "_window", "_central_mode", "_vt_function", "_mixed"):
+    for advice in ("", "_window", "_central_mode", "_vt_function", "_inhibition", "_mixed"):
         frost = SOURCE["issues"][f"frost_zone_closed{advice}"]
         assert frost["title"], advice
         assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}, advice
@@ -1201,24 +1201,23 @@ def test_the_no_sign_the_boiler_heats_issue_is_translated() -> None:
     assert alarm == "Control: no sign the boiler heats"
 
 
-def test_the_comfort_correction_says_it_is_on_and_what_it_costs() -> None:
-    """G11 B: the comfort correction's description says it is on by default with full control,
-    what it costs — more gas, possibly more starts — and the risk with VT's TPI zones: the
-    water at its limit while a zone at full duty stays short by TPI's own offset, the burner
-    stopped by every zone's cycle, 1.75 to 5 times the starts in the simulation — in the
-    curve step — its one place at both levels (I8, decision H2) —, in every language; its limit
-    and the "curve too low" issue have their texts."""
+def test_the_comfort_correction_says_it_is_off_and_what_it_costs() -> None:
+    """K4 (2026-11-17): the comfort correction's description says it is off by default, what it
+    costs — more gas, more starts — and the risk with VT's TPI zones: in the simulation 1.4 to
+    6 times the starts for under 0.1 K of comfort, so a cold room's first step is the curve — in
+    the curve step — its one place at both levels (I8, decision H2) —, in every language; its
+    limit and the "curve too low" issue have their texts."""
     for step in ("control_curve",):
         text = SOURCE["options"]["step"][step]["data_description"]["comfort_correction"]
-        assert "On (default with full control)" in text, step
+        assert text.startswith("Off by default."), step
         assert "more gas" in text, step
         assert "TPI" in text, step
-        assert "1.75" in text, step
-        assert "5 times the starts" in text, step
+        assert "1.4 to 6 times the starts" in text, step
+        assert "raise the curve first" in text, step
         assert "0.5 K" in text, step  # SmartPI's learning band (G11 C)
         for language in LANGUAGES:
             translated = _texts(language)["options"]["step"][step]["data_description"]
-            assert "1,75" in translated["comfort_correction"], (language, step)
+            assert "1,4" in translated["comfort_correction"], (language, step)
     curve = SOURCE["options"]["step"]["control_curve"]["data_description"]
     assert "3 K a day" in curve["comfort_correction_max_k"]
     for key in ("curve_too_low", "room_short_at_limit"):  # additions 2 and 3: the causes

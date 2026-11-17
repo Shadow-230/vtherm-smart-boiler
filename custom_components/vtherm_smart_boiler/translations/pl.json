@@ -254,7 +254,7 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
           "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
           "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony z rejestratora przy starcie. Nigdy krótsze niż okres monitorowania."
         }
@@ -381,7 +381,7 @@
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
           "fallback_setpoint": "Używana, gdy od trzech godzin nie jest znana temperatura zewnętrzna (czujnik i pogoda utracone albo podejrzane), w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje; zawory chronią pokoje przed przegrzaniem.",
-          "comfort_correction": "Włączona (domyślnie przy pełnym sterowaniu): gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy (przy SmartPI w fazie nauki: do nastawy + 0,5 K), woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i możliwie więcej startów. Przy strefach TPI może stać na limicie: w symulacji od 1,75 do 5 razy więcej startów. Obserwuj starty.",
+          "comfort_correction": "Domyślnie wyłączona. Włączona: gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy (przy SmartPI w fazie nauki: do nastawy + 0,5 K), woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i więcej startów. Przy strefach TPI w VT często stoi na limicie: w symulacji od 1,4 do 6 razy więcej startów za mniej niż 0,1 K komfortu. Gdy pokój zostaje zimny, najpierw podnieś krzywą.",
           "room_mode": "Auto (domyślnie): krzywa przechodzi przez najwyższą nastawę spośród stref, które teraz grzeją — najwyżej 23 °C, za presetami VT. Ręcznie: wartość poniżej. Przy Auto najcieplejszy pokój ustala wodę dla wszystkich; pokój ogrzewany tylko czasem też ją podnosi, chyba że go pominiesz poniżej.",
           "room_excluded": "Strefy, których nastawy Auto nie bierze, np. łazienka trzymana cieplej. Taki pokój może nie dochodzić do nastawy przy łagodnej pogodzie; korekta komfortu podnosi wtedy dla niego wodę.",
           "comfort_correction_max_k": "O ile ponad krzywą korekta może podnieść wodę, w K. Domyślnie 3 K, od 0,5 do 10; rośnie najwyżej 3 K na dobę. To jedyne ograniczenie ponad krzywą. Wyżej: więcej gazu i cieplejsza woda dla pokoi, które jej nie potrzebują; korekta stojąca na limicie znaczy, że krzywa jest za niska."
@@ -850,7 +850,7 @@
           "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
-          "starts_per_hour_limit": "Więcej startów palnika w ciągu godziny niż ta wartość daje ostrzeżenie. Domyślnie 12. Za wysoka ukrywa taktowanie.",
+          "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
           "unstable_burns_limit": "Więcej paleń krótszych niż minuta w ciągu doby niż ta wartość daje ostrzeżenie. Domyślnie 10. Za wysoka ukrywa problem z zapłonem.",
           "verdict_window_days": "Werdykt obejmuje tyle ostatnich dni z danymi. Puste (domyślnie): każdy zachowany dzień, do roku, uzupełniony z rejestratora przy starcie. Nigdy krótsze niż okres monitorowania."
         }
@@ -921,7 +921,7 @@
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
           "fallback_setpoint": "Używana, gdy od trzech godzin nie jest znana temperatura zewnętrzna (czujnik i pogoda utracone albo podejrzane), w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje; zawory chronią pokoje przed przegrzaniem.",
-          "comfort_correction": "Włączona (domyślnie przy pełnym sterowaniu): gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy (przy SmartPI w fazie nauki: do nastawy + 0,5 K), woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i możliwie więcej startów. Przy strefach TPI może stać na limicie: w symulacji od 1,75 do 5 razy więcej startów. Obserwuj starty.",
+          "comfort_correction": "Domyślnie wyłączona. Włączona: gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy (przy SmartPI w fazie nauki: do nastawy + 0,5 K), woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i więcej startów. Przy strefach TPI w VT często stoi na limicie: w symulacji od 1,4 do 6 razy więcej startów za mniej niż 0,1 K komfortu. Gdy pokój zostaje zimny, najpierw podnieś krzywą.",
           "room_mode": "Auto (domyślnie): krzywa przechodzi przez najwyższą nastawę spośród stref, które teraz grzeją — najwyżej 23 °C, za presetami VT. Ręcznie: wartość poniżej. Przy Auto najcieplejszy pokój ustala wodę dla wszystkich; pokój ogrzewany tylko czasem też ją podnosi, chyba że go pominiesz poniżej.",
           "room_excluded": "Strefy, których nastawy Auto nie bierze, np. łazienka trzymana cieplej. Taki pokój może nie dochodzić do nastawy przy łagodnej pogodzie; korekta komfortu podnosi wtedy dla niego wodę.",
           "comfort_correction_max_k": "O ile ponad krzywą korekta może podnieść wodę, w K. Domyślnie 3 K, od 0,5 do 10; rośnie najwyżej 3 K na dobę. To jedyne ograniczenie ponad krzywą. Wyżej: więcej gazu i cieplejsza woda dla pokoi, które jej nie potrzebują; korekta stojąca na limicie znaczy, że krzywa jest za niska."
@@ -1394,12 +1394,12 @@
               "heating_burns": "Policzone palenia c.o.",
               "frequent_starts": "Częste starty",
               "few_starts": "Mało startów",
-              "short_burns": "Głównie krótkie palenia",
+              "short_burns": "Głównie krótkie palenia — najczęściej kocioł za duży dla domu",
               "long_burns": "Palenia dość długie",
               "low_condensing": "Mało kondensacji",
               "good_condensing": "Dobra kondensacja",
               "condensing_unknown": "Kondensacja nieznana: brak temperatury powrotu albo za mało jej danych",
-              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła",
+              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła: kocioł jest przewymiarowany — to główna przyczyna krótkich paleń",
               "load_rarely_below_min_power": "Obciążenie budynku rzadko poniżej mocy minimalnej kotła",
               "load_unknown": "Obciążenie budynku nieznane",
               "criteria_judged": "Za mało ocenionych kryteriów do uznania sterowania za niewarte włączenia",
@@ -1437,7 +1437,12 @@
         }
       },
       "change_report": {
-        "name": "Zużycie wobec wczoraj"
+        "name": "Zużycie wobec wczoraj",
+        "state_attributes": {
+          "other_within_normal": {
+            "name": "Reszta w normalnej zmienności z dnia na dzień"
+          }
+        }
       },
       "loss_coefficient": {
         "name": "Współczynnik strat budynku",
@@ -1466,6 +1471,9 @@
           },
           "mismatch": {
             "name": "Wpisana i zmierzona się różnią"
+          },
+          "measured_range": {
+            "name": "Zmierzona, prawdopodobny zakres (±20 %)"
           }
         }
       },
@@ -2714,7 +2722,7 @@
             "name": "Dlaczego",
             "state": {
               "power_limit": "Kocioł na granicy mocy: poniżej nastawy przy wysokiej modulacji",
-              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: korekta komfortu ją podnosi",
+              "water_too_cool": "Woda za chłodna dla niedogrzanych pomieszczeń: podnieś krzywą (korekta komfortu, gdy jest włączona, ją podnosi)",
               "water_too_hot": "Woda za ciepła: obniż ją (krzywą albo nastawę kotła)"
             }
           },
@@ -2725,7 +2733,7 @@
             "name": "Strefy"
           },
           "burning_hours": {
-            "name": "Palenie (h)"
+            "name": "Przebieg (h), z krótkimi przerwami płomienia"
           },
           "kept": {
             "name": "Zapisane do strojenia"
@@ -3153,6 +3161,10 @@
       "title": "Nauka SmartPI może być nadal wyłączona w części stref",
       "description": "Integrację usunięto, gdy sterowanie miało wstrzymaną naukę SmartPI w tych strefach, i nie widać, by nauka znów się włączyła: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Włącz ją tam, a potem zignoruj to zgłoszenie."
     },
+    "zone_cycle_short": {
+      "title": "Krótkie cykle w VT: więcej startów kotła",
+      "description": "{zones}: Versatile Thermostat włącza i wyłącza grzanie tych pokoi w cyklach krótszych niż 10 minut. Wtyczka włącza i wyłącza kocioł razem z nimi, więc krótkie cykle oznaczają wiele krótkich paleń, które marnują gaz i zużywają kocioł. Dla pokoi, które wołają kocioł gazowy, ustaw w VT cykl na 10–15 minut: w symulacji zmniejszyło to liczbę startów kotła o jedną trzecią do połowy w łagodną pogodę, przy równie ciepłych pokojach."
+    },
     "learning_not_paused": {
       "title": "Wtyczka nie może wstrzymać nauki w części stref",
       "description": "Sterowanie nie może wstrzymać nauki w tych strefach podczas ciepłej wody i wahań wody: {zones}. Auto-TPI dałoby się wstrzymać tylko kasując jego naukę; SmartPI bez flagi nauki nie da się wstrzymać. Uczą się więc i w tych chwilach, co może zniekształcić ich naukę."
@@ -3261,9 +3273,13 @@
       "title": "Pokój poniżej progu mrozu nie może dostać ciepła: wyłącza go funkcja VT",
       "description": "{zones}: jedna z funkcji samego Versatile Thermostat (tryb bezpieczeństwa albo automatyczny start/stop) trzyma zawór zamknięty, więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. Pokój zostaje nieogrzewany, dopóki VT go znów nie otworzy: sprawdź czujnik temperatury pokoju w tym termostacie i jego ustawienia automatycznego startu/stopu."
     },
+    "frost_zone_closed_inhibition": {
+      "title": "Pokój poniżej progu mrozu nie może dostać ciepła: trzyma go inna wtyczka",
+      "description": "{zones}: inna wtyczka wyłączyła ten termostat spod sterowania Versatile Thermostat, więc VT trzyma zawór zamknięty, a wtyczka nie może go ogrzać i nie włącza dla niego kotła. Pokój zostaje nieogrzewany, dopóki tamta wtyczka nie odda termostatu VT: sprawdź wtyczkę, która go trzyma."
+    },
     "frost_zone_closed_mixed": {
       "title": "Pokoje poniżej progu mrozu nie mogą dostać ciepła",
-      "description": "{zones}: VT trzyma ich zawory zamknięte z różnych powodów, więc wtyczka nie może ich ogrzać. Dla termostatu wyłączonego użyj presetu przeciwmrozowego VT zamiast wyłączenia; pokój zamknięty przez okno, „Zatrzymany” VT albo inną funkcję VT zostaje nieogrzany, dopóki VT go nie otworzy."
+      "description": "{zones}: VT trzyma ich zawory zamknięte z różnych powodów, więc wtyczka nie może ich ogrzać. Dla termostatu wyłączonego użyj presetu przeciwmrozowego VT zamiast wyłączenia; pokój zamknięty przez okno, „Zatrzymany” VT albo inną funkcję VT zostaje nieogrzany, dopóki VT go nie otworzy, a pokój trzymany przez inną wtyczkę — dopóki tamta wtyczka go nie odda."
     },
     "thermostat_kind_missing": {
       "title": "Podaj, co jest podłączone do zacisków termostatu bramki",

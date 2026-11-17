@@ -42,11 +42,13 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
 
 ## 1. Wymagania
 
-- **Home Assistant 2026.9 lub nowszy** — wersja, na której wtyczka jest testowana.
+- **Home Assistant 2026.10.4 lub nowszy** — wymaga go najnowszy Versatile Thermostat (10.6.5), a
+  wtyczka jest na nim testowana.
 - **Versatile Thermostat 10.2.0 lub nowszy**, z termostatami (wtyczka nazywa je strefami)
   ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł. VT wczytuje zewnętrzne moduły funkcji
-  (feature managers) od wersji 10.2.0; testowana jest wersja 10.5.1. To minimum jest tymczasowe
-  i zostanie potwierdzone przed pierwszym wydaniem.
+  (feature managers) od wersji 10.2.0; testowane są 10.5.1 i najnowsza, 10.6.5. To minimum jest
+  tymczasowe i zostanie potwierdzone przed pierwszym wydaniem. Sam VT 10.6.5 wymaga Home
+  Assistanta 2026.10.4 i `vtherm_api` 0.9.0.
 - Biblioteka `vtherm_api` w wersji 0.5.0 lub nowszej. Home Assistant instaluje ją razem z
   wtyczką.
 - **Kocioł, który Home Assistant potrafi odczytać**, przez dowolną integrację pokazującą jego
@@ -170,6 +172,20 @@ Werdykt jest radą. Decyzja należy do ciebie. Zanim się pojawi, a poza sezonem
 wtedy, gdy dni miną bez wystarczających danych, przełącznik sterowania mówi, że sterowanie ruszy
 bez werdyktu.
 
+Co znaczą werdykt i wartości budynku:
+
+- **Krótkie palenia** najczęściej biorą się z kotła za dużego dla domu: jego najmniejsza moc jest
+  większa, niż dom potrzebuje, więc kocioł startuje i gaśnie. Werdykt mówi to, gdy obciążenie
+  budynku często jest poniżej mocy minimalnej kotła.
+- **Straty ciepła budynku**, mierzone ze zużycia kotła i pogody, liczą się dopiero po około
+  **3 tygodniach grzania** (21 dni grzewczych); wcześniej są pokazywane, ale nieużywane. Są
+  pokazywane z prawdopodobnym zakresem około ±20 % — tyle osiągają opublikowane metody. Zmierzone
+  straty mniejsze od projektowych są częste: oznaczają przewymiarowany kocioł, a nie błąd pomiaru.
+- **Zużycie wobec wczoraj** porównuje dwa dni; zużycie z dnia na dzień zmienia się samo sporo
+  (budynek jeszcze ciepły albo zimny po wczoraj, słońce, ludzie). Gdy część, której żadna
+  przyczyna nie wyjaśnia, mieści się w 15 % zużycia z dnia poprzedniego, jest oznaczona jako
+  normalna zmienność.
+
 ### 4.2 Sterowanie włączasz sam
 
 Sterowanie jest **domyślnie wyłączone**. To przełącznik **Sterowanie (eksperymentalne)**.
@@ -218,6 +234,12 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła; ochrona przed mrozem dalej
   czuwa.
 - Wtyczka nie ma przełącznika lato/zima. Jeśli strefy VT są wyłączone, kocioł nie grzeje.
+- **Cykl w VT dla pokoi, które wołają kocioł: 10 do 15 minut.** VT włącza i wyłącza grzanie
+  pokoju w cyklach (domyślnie co 5 minut). Wtyczka idzie za pokojami od razu, więc każda przerwa
+  między ich impulsami zatrzymuje palnik. Dla kotłów gazowych przyjmuje się najwyżej 6 cykli na
+  godzinę; w symulacji cykl 10–15 minut zmniejszył liczbę startów kotła o jedną trzecią do połowy
+  w łagodną pogodę, przy równie ciepłych pokojach. Gdy sterowanie jest ustawione, wtyczka
+  wymienia pokoje, które VT przełącza w cyklach krótszych niż 10 minut („Krótkie cykle w VT”).
 - **Strefy z zaworem, który nie zamyka się do końca** (w VT **Maksymalny stopień zamknięcia**
   poniżej 100): używaj VT 10.5 lub nowszego. Od 10.5 zawór trzymany na tym minimum nie liczy się
   jako grzejący, a strefa prosi o ciepło dopiero, gdy VT otworzy go bardziej. VT 10.2–10.4 liczył
@@ -296,8 +318,8 @@ Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
 krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 
-**Korekta komfortu** — **domyślnie włączona przy pełnym sterowaniu** (wpis ustawiony przed tą
-wersją zachowuje to, z czym działał). Gdy pomieszczenie nie dochodzi do swojej nastawy mimo w
+**Korekta komfortu** — **domyślnie wyłączona** (wpis zachowuje to, co zapisał). Po włączeniu: gdy
+pomieszczenie nie dochodzi do swojej nastawy mimo w
 pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K,
 najwyżej 10 K, ustawianego w **Krzywej grzewczej** obok korekty; nigdy więcej niż 3 K na dobę.
 Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy +
@@ -305,9 +327,10 @@ Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znacz
 Jedno niedogrzane pomieszczenie liczy się jak każde inne — woda nigdy nie idzie wyżej dla jednego
 pokoju. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, korekta
 tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
-mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i możliwie więcej startów
-palnika — przy strefach TPI w VT może stać na limicie i kilkakrotnie zwiększyć liczbę startów.
-Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
+mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i więcej startów palnika — przy
+strefach TPI w VT często stoi na limicie i kilkakrotnie zwiększa liczbę startów, prawie nie dodając
+ciepła. Dlatego jest wyłączona: gdy pokój zostaje zimny, najpierw podnieś krzywą. Przycisk
+„Wyzeruj korektę komfortu” cofa ją do zera.
 
 ### 4.5 Ochrona przed mrozem
 
@@ -895,12 +918,12 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Spadające ciśnienie wody | spada przez kilka dni, z uwzględnieniem temperatury wody | szukaj wycieku |
 | Za gorące spaliny | powyżej ustawionego limitu | umów serwis kotła |
 | Spaliny coraz cieplejsze od powrotu | spaliny cieplejsze od powrotu bardziej niż wcześniej | umów serwis |
-| Częste starty | więcej startów w ostatniej godzinie niż limit | sprawdź krzywą i limity |
+| Częste starty | alarm: więcej startów w ostatniej godzinie niż limit (12); ostrzeżenie: ponad 6 na godzinę przez ostatnie 3 godziny | sprawdź cykl w VT (10–15 min), krzywą i limity |
 | Niestabilny zapłon | w ciągu doby wiele cykli pracy palnika gaśnie wkrótce po zapłonie | zleć sprawdzenie |
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu przez jego czas (obieg prosto z kotła: nie podczas grzania ciepłej wody) | sprawdź jego maksimum |
-| Długie palenie bez nagrzewania | płomień 3 h bez przerwy, a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń, kocioł na granicy mocy, czy woda za ciepła | korekta podnosi za chłodną wodę; przy za ciepłej obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
+| Długie palenie bez nagrzewania | palnik pracuje 3 h — razem z przerwami do 30 min, więc liczy się też kocioł, który ciągle gaśnie i startuje — a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń (woda dochodzi do nastawy), kocioł na granicy mocy (płomień cały czas, poniżej nastawy przy wysokiej modulacji), czy woda za ciepła | woda za chłodna: podnieś krzywą (korekta, gdy jest włączona, ją podnosi); za ciepła: obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
 
 Zgłoszenia w Naprawach:
 
@@ -976,10 +999,11 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 |---|---|
 | Versatile Thermostat nie odpowiada (3 warianty) | sprawdź, czy VT działa, a termostaty są włączone |
 | Żadnego kryterium zapotrzebowania nie da się ocenić (3 warianty) | ustaw moc urządzenia w VT albo inne kryterium |
-| Pokój poniżej progu mrozu nie może dostać ciepła (5 wariantów) | VT trzyma go zamkniętym; zobacz tekst |
+| Pokój poniżej progu mrozu nie może dostać ciepła (6 wariantów) | VT trzyma go zamkniętym; zobacz tekst |
 | Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Auto-TPI nie może się uczyć w części stref | odznacz w VT „używany przez kocioł centralny” |
+| Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
 | Wtyczka nie może wstrzymać nauki w części stref | informacja |
 | Wtyczka nie mogła ponownie włączyć nauki w części stref | włącz naukę SmartPI |
 | Termostaty VT nie mogą pokazać wartości strefy z wtyczki | zaktualizuj VT; nic innego od tego nie zależy |
@@ -1111,17 +1135,17 @@ domyślnie wyłączone.
 | Udział kondensacji | udział czasu palenia c.o. z powrotem poniżej 55 °C |
 | Stopniodni (7 dni) *ukryta* | stopniodni z tygodnia, liczone od progu grzania |
 | Gaz na stopniodzień | gaz na stopniodzień, mierzony wskazanym licznikiem gazu, inaczej szacowany |
-| Zużycie wobec wczoraj *ukryta* | zmiana zużycia wobec dnia poprzedniego, rozbita na pogodę, ciepłą wodę, ustawienia i resztę |
+| Zużycie wobec wczoraj *ukryta* | zmiana zużycia wobec dnia poprzedniego, rozbita na pogodę, ciepłą wodę, ustawienia i resztę — reszta oznaczona, gdy to normalna zmienność z dnia na dzień |
 | Werdykt sterowania | warto włączyć, nie warto włączać albo jeszcze za mało danych — z uzasadnieniem |
 | Problemy z sygnałami | ile wskazanych sygnałów ma problem; stan każdego w atrybutach |
 | Funkcje | ile funkcji jest teraz nieaktywnych i dlaczego |
-| Współczynnik strat budynku, Próg grzania budynku *ukryte* | używane wartości budynku — twoje, zmierzone albo domyślne — ze źródłem |
+| Współczynnik strat budynku, Próg grzania budynku *ukryte* | używane wartości budynku — twoje, zmierzone albo domyślne — ze źródłem; zmierzone straty z prawdopodobnym zakresem |
 | Proponowana najniższa temperatura wody | tylko propozycja, nigdy nie stosowana |
 | Migawki prognozy *wyłączona* | ile zapisanych prognoz jest przechowywanych, na przyszłe wydania |
 | Strefa krytyczna, obieg … | w każdym obiegu strefa, której własny regulator pracuje teraz najciężej |
 | Sygnały | włączony, gdy płomień i zasilanie (oraz przekaźnik) są znane i świeże |
 | Problem z czujnikiem zewnętrznym | czujnik zewnętrzny kotła stoi albo nie zgadza się z encją pogody |
-| Długie palenie bez nagrzewania | płomień 3 h bez nagrzewania pomieszczeń, z prawdopodobną przyczyną |
+| Długie palenie bez nagrzewania | palnik pracuje 3 h (z krótkimi przerwami) bez nagrzewania pomieszczeń, z prawdopodobną przyczyną |
 | Alarmy (czujniki binarne, włączony = problem) | po jednym na sprawdzenie: ciśnienie wody, spaliny, starty, zapłon, brak przepływu, za gorąca woda w obiegu i pozostałe — [tabela alarmów](#7-alarmy-i-zgłoszenia-w-naprawach) |
 
 **Sterowanie**
@@ -1170,7 +1194,7 @@ Najważniejsze — opisane, nie doradzane:
 | Najniższa temperatura wody | 20 °C (tymczasowo) | za niska: przy łagodnej pogodzie kocioł raz po raz sam staje, a kocioł niekondensacyjny skrapla się w kominie (wartość podaje jego instrukcja) |
 | Najwyższa temperatura wody obiegu | 70 °C, gdy pole puste | ogranicza każdą nastawę w obiegach zasilanych prosto z kotła; kocioł może ją przekroczyć o własną histerezę |
 | Jej alarm za gorącej wody | maksimum + 5 K przez 10 min | tylko informacja; za wysoki przepuszcza prawdziwe przekroczenie bez słowa |
-| Korekta komfortu | włączona, do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika |
+| Korekta komfortu | wyłączona; po włączeniu do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika |
 | Opóźnienie włączenia | 0 s | czeka przed włączeniem grzania, dla wolnych zaworów; w tym czasie pomieszczenia nie dostają ciepła |
 | Typ zapisu wybranego celu | nieznany — bez zapisu | trzeba zadeklarować „wygasa” albo „trzymany”; zła deklaracja zużywa pamięć kotła albo pozwala wartości wygasnąć |
 | Wartość przy oddaniu sterowania | brak — wpisywana razem ze skutkiem | ta sama liczba na jednym urządzeniu znaczy „własne sterowanie”, na innym „bez ciepła” |

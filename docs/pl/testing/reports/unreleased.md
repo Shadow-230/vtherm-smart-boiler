@@ -4,23 +4,31 @@
 
 Status: aktualny.
 
-Wersja tego raportu prostym językiem: [`2026-10-11-test-report.md`](../../../en/testing/reports/2026-10-11-test-report.md).
+Wersje tego raportu prostym językiem (po angielsku):
+[`2026-10-11-test-report.md`](../../../en/testing/reports/2026-10-11-test-report.md) (J4 na `dev`,
+od 2026-10-08 do 2026-10-11) i
+[`2026-10-14-test-report.md`](../../../en/testing/reports/2026-10-14-test-report.md) (J4 na `qas`
+c488e90, 2026-10-14).
 
-**Stan: J4 na `dev` zakończył się 2026-10-11 rano.** Następny przebieg będzie na `qas`, po
-poprawkach wynikających z przeglądu tego raportu (reguła użytkownika: od teraz J4 testuje to, co
-jest na `qas`). W dniach od 2026-10-08 do 2026-10-11 osiem testowych Home Assistantów wykonało
-około 120 przebiegów scenariuszy na trzech stanach kodu (sekcja 1). Znaleziono jeden błąd wtyczki:
-F7, naprawiony w #51 i potwierdzony. Do rozstrzygnięcia w przeglądzie: kryterium startów przy
-−5 °C (F9), koszt startów korekty komfortu (F8) oraz wyzwalanie reguły długiego palenia (F10).
-Jak powstają raporty: `docs/pl/testing/reports/README.md`.
+**Stan: J4 na `qas` c488e90 przeszedł 2026-10-14** (sekcja 4.6): poprawki od G11 na VT 10.5.1 —
+B1, D1, D8, E3, H1, V1, zapis „Trybu sterowania” (G2), G1, G3, aktualizacja w trakcie sterowania
+(P1), przekaźnik (R1, R7, R17), ścieżka encji (N1, N2) i obieg sterowany przez inną automatykę (E7).
+Każdy scenariusz przeszedł; cztery najpierw nie przeszły z winy runnera i zostały przejrzane (E3, V1,
+R1, E7). Błędy wtyczki znalezione przy tym przebiegu: dwa — F12 przy czytaniu kodu przed nim
+(zapis „Trybu sterowania” we wpisie sprzed pytania o połączenie; naprawiony w #127 i potwierdzony
+przez G2) oraz F14 przez E7 (po rampie nastawa zatrzymała się 0,5 K poniżej celu; naprawiony
+w #135). Przebieg na `dev` (od 2026-10-08 do 2026-10-11, około 120 przebiegów scenariuszy na trzech
+stanach kodu) znalazł jeden (F7, naprawiony w #51 i potwierdzony). Pytania z przeglądu (F8, F9,
+F10) rozstrzygnięto w K4 2026-11-17 (#149–#152); kod od `qas` c488e90 nie jest tu jeszcze
+przetestowany. Jak powstają raporty: `docs/pl/testing/reports/README.md`.
 
 ## 1. Wersja i kod
 
 | | |
 |---|---|
 | Wersja | 0.2.3b1 w manifeście (tymczasowa; o wersji decydują K4 i K5) |
-| Przetestowany kod wtyczki | (a) `dev` przy 9df2f06 — pierwszy przebieg instancji 1, 2026-10-08/09; (b) `dev` do I6 włącznie (737b2db … b832a0e) — instancje od 6 do 8 i drugi przebieg instancji 1, 2026-10-09/10; (c) `dev` do G11 włącznie (4378e02, z poprawką F7 z #51) — instancje 1, 2–5, 7 i 8 od 2026-10-10 16:45 UTC; instancja 6 działa na `dev` do I7 włącznie (663983d), żeby użytkownik mógł ją oglądać na żywo; nie była testowana. `dev` poszedł od tego czasu dalej (I8, do 1d6d724): nie jest tu testowany |
-| Narzędzia testowe | gałąź `claude/j4-results`: runner (`devenv/j4/run.py`, `paths.py`, `restart.py`, `corrections.py`), usługi symulatora dla przekaźnika, typów zapisu, kotła i jego blokady awaryjnej, oraz konfiguracje w `devenv/config/`. 2026-10-12, po tym przebiegu, runner został przeniesiony na `dev` (#93), a jego zapisywanie opcji dostosowano do menu z I8 (`devenv/j4/walk.py`, `options.py`): każda zmiana idzie teraz przez pozycję, która o nią pyta — odczyty zwrotne wśród sygnałów kotła, pytania bramki w interfejsie kotła, twarde maksimum jako maksimum obiegu (E1), tylko monitorowanie jako tryb sterowania (G2), strefy podłogowe w obiegu (U1, U2). Sprawdzone testem w procesie na prawdziwym przepływie opcji przez jego REST API (`tests/integration/test_j4_walk.py`); jeszcze nie uruchomione w testowym Home Assistancie |
+| Przetestowany kod wtyczki | (a) `dev` przy 9df2f06 — pierwszy przebieg instancji 1, 2026-10-08/09; (b) `dev` do I6 włącznie (737b2db … b832a0e) — instancje od 6 do 8 i drugi przebieg instancji 1, 2026-10-09/10; (c) `dev` do G11 włącznie (4378e02, z poprawką F7 z #51) — instancje 1, 2–5, 7 i 8 od 2026-10-10 16:45 UTC; instancja 6 działa na `dev` do I7 włącznie (663983d), do oglądania na żywo przez użytkownika, nietestowana; (d) `qas` przy c488e90 (#133, te same pliki co `dev` a614299: I8, I9, poprawki z testów mutacyjnych #110–#120, VT 10.5.1, #127–#132) — instancje 1, 2–4, 6 i 7 w dniu 2026-10-14 (sekcja 4.6), wgrane z odłączonej kopii tej wersji |
+| Narzędzia testowe | gałąź `claude/j4-results`: runner (`devenv/j4/run.py`, `paths.py`, `restart.py`, `corrections.py`), usługi symulatora dla przekaźnika, typów zapisu, kotła i jego blokady awaryjnej, oraz konfiguracje w `devenv/config/`. 2026-10-12, po tym przebiegu, runner został przeniesiony na `dev` (#93), a jego zapisywanie opcji dostosowano do menu z I8 (`devenv/j4/walk.py`, `options.py`): każda zmiana idzie teraz przez pozycję, która o nią pyta — odczyty zwrotne wśród sygnałów kotła, pytania bramki w interfejsie kotła, twarde maksimum jako maksimum obiegu (E1), tylko monitorowanie jako tryb sterowania (G2), strefy podłogowe w obiegu (U1, U2). Sprawdzone testem w procesie na prawdziwym przepływie opcji przez jego REST API (`tests/integration/test_j4_walk.py`); jeszcze nie uruchomione w testowym Home Assistancie; pierwszy przebieg w testowym Home Assistancie 2026-10-14 (kod d): każdy zapis i każde przywrócenie przeszło — E3, G1, G2, G3, R17 i stan bazowy instancji 2–4 |
 | Start J4 | 2026-10-08, przez użytkownika |
 
 ## 2. Środowisko
@@ -28,20 +36,20 @@ Jak powstają raporty: `docs/pl/testing/reports/README.md`.
 | | |
 |---|---|
 | Home Assistant | 2026.9.3 (testowe Home Assistanty i CI); 2026.9.0 w CI, najstarszy obsługiwany |
-| Versatile Thermostat | 10.4.0 |
+| Versatile Thermostat | 10.4.0 (kody od a do c); 10.5.1 (kod d, 2026-10-14) |
 | SmartPI | 0.4.0 |
-| `vtherm_api` | 0.5.0, tak jak zainstalował go Home Assistant w testowym Home Assistancie |
+| `vtherm_api` | 0.5.0, tak jak zainstalował go Home Assistant w testowym Home Assistancie; nadal 0.5.0 pod VT 10.5.1 w dniu 2026-10-14 (VT wymaga `>=0.5.0`, co zainstalowana wersja spełnia); 0.6.0 tylko we wczesnym ostrzeganiu w CI |
 | Python | 3.14 |
-| Testowy Home Assistant | osobny testowy LXC (Debian 13, Docker, zapora sieciowa na hoście Proxmox blokuje sieć domową: T-25 zaliczony), osiem instancji: 1 bramka z termostatem ściennym OpenTherm; 2–5 kryterium startów; 6 przekaźnik; 7 ścieżka przez encje (urządzenie trzymane); 8 samodzielna bramka |
+| Testowy Home Assistant | osobny testowy LXC (Debian 13, Docker, zapora sieciowa na hoście Proxmox blokuje sieć domową: T-25 zaliczony), osiem instancji: 1 bramka z termostatem ściennym OpenTherm; 2–5 kryterium startów; 6 przekaźnik; 7 ścieżka przez encje (urządzenie trzymane); 8 samodzielna bramka. W dniu 2026-10-14 instancje 2–4 ustawiono tak jak instancję 1 (`configuration`, przejście stanu bazowego; dom z kryterium startów trzeba ustawić ponownie przed jego następnym przebiegiem); LXC działał od 2026-10-08 14:34 UTC, a częściowa kontrola przeszła: router domowy poza zasięgiem z LXC i z kontenera Home Assistanta, adres publiczny w zasięgu |
 
 ## 3. Testy automatyczne
 
 | Zestaw | Wynik |
 |---|---|
-| Rdzeń, bez Home Assistanta (`tests/core`) | 1473 passed (`dev` do G11 włącznie) |
-| Pozostałe, z Home Assistantem | 2956 passed, 4 expected failures (`dev` do G11 włącznie) |
-| `ruff check`, `ruff format --check`, `mypy` (tryb ścisły) | czysto |
-| CI (obie wersje Home Assistanta, hassfest, HACS) | zielone przy każdym pull requeście scalonym do `dev` |
+| Rdzeń, bez Home Assistanta (`tests/core`) | 1473 passed (`dev` do G11 włącznie); 2036 passed (`qas` c488e90, CI, obie wersje Home Assistanta) |
+| Pozostałe, z Home Assistantem | 2956 passed, 4 expected failures (`dev` do G11 włącznie); 3116 passed, 4 expected failures (`qas` c488e90, CI, obie wersje) |
+| `ruff check`, `ruff format --check`, `mypy` (tryb ścisły) | czysto (na c488e90 także w CI) |
+| CI (obie wersje Home Assistanta, hassfest, HACS) | zielone przy każdym pull requeście scalonym do `dev`; PR #133 i wypchnięcie na `qas` c488e90 zielone, łącznie z wczesnym ostrzeganiem (najnowszy VT i SmartPI; najnowsze `vtherm_api`) |
 
 Cztery oczekiwane niepowodzenia to testy typu „strict”, które czekają na decyzje w K4: kryterium
 startów z J4 przy dobowych wahaniach temperatury zewnętrznej (×1.20 przy +8 °C i ×2.16 przy −5 °C
@@ -231,6 +239,63 @@ Auto podążała za najcieplejszym pokojem (22 → 23 °C), z górnym ograniczen
 przez chłodniejszy pokój, wykluczona łazienka pominięta (21 °C); Q4 pass — spadek o 1.5 K w jednym
 pokoju: „okno prawdopodobnie otwarte” 10 s później, bez korekty przez 30 min.
 
+### 4.6 `qas` c488e90 na VT 10.5.1 (kod d, 2026-10-14)
+
+Zakres: scenariusze wskazane w pull requestach od G11 (#125, #126, #133), luki z kontroli zakresu
+przed przebiegiem (`research/2026-10-13-j4-scope-check.md`) i wybór użytkownika. Sześć instancji
+obok siebie, po jednym runnerze, 05:45–06:45 UTC. Każdy wpis przeszedł migrację z wersji pomocniczej
+8 do 20 przy pierwszym starcie na tym kodzie, bez ostrzeżenia ani błędu wtyczki; VT 10.5.1 i
+`vtherm_api` 0.5.0 w każdym kontenerze. Przed każdym scenariuszem runner porównał zapisane opcje
+instancji z jej stanem bazowym (żadne się nie rozjechały). Dowody:
+`research/2026-10-14-j4-results-instance<N>.md`.
+
+| ID | Scenariusz | Instancja | Wynik | Dowody |
+|---|---|---|---|---|
+| P1 | aktualizacja w trakcie sterowania (droga HACS): sterowanie włączone na starym kodzie (4378e02), potem wgrany ten kod — restart Home Assistanta | 1 | zaliczony | przy zatrzymaniu odczyt zwrotny bramki 20.0, potem zwolnienie do termostatu; po starcie sterowanie wróciło od razu (nadpisanie utrzymane, brak zaległego oddania, blokady, zatrzasku, alarmu ani zgłoszenia) |
+| D8 | pobór ciepłej wody w trakcie sterowania | 1 | zaliczony | strefa SmartPI (zawór otwarty) wstrzymana na czas poboru i wznowiona po nim; brak zmiany z zewnątrz, brak alarmu; bit włączenia c.w.u. nigdy niezapisany |
+| G2 | „tylko monitorowanie” w pozycji „Tryb sterowania”, we wpisie sprzed pytania o połączenie | 1 | zaliczony | zapisane (przed #127 się nie udawało, F12); „ta zmiana zatrzymuje sterowanie” potwierdzone; przełącznik odmówił (`blocked_control_mode_monitor`), nic nie zapisano; powrót do pełnego sterowania i stanu bazowego |
+| V1 | każda strefa VT pokazuje dane wtyczki o wodzie (`smart_boiler`) | 2 | zaliczony (po przeglądzie) | oba klucze; woda 33–34 °C wobec zasilania 33,3 °C; brak ciepła w czasie poboru; woda nieznana przy uszkodzonym zasilaniu; znów znana (37 °C) |
+| G1 | sterowanie odrzucone bez odczytu zwrotnego nastawy c.o. | 2 | zaliczony | odrzucone tam, gdzie się go wpisuje (`confirmed_entity_missing`) |
+| G3 | styk wł./wył. albo „nie wiem” na zaciskach termostatu | 2 | zaliczony | „Zapisz mimo to”, potem przełącznik odmówił (`blocked_thermostat_on_off`, `blocked_thermostat_kind_dont_know`), nic nie zapisano, wezwanie termostatu włączone |
+| H1 | każda strefa VT niedostępna | 3 | zaliczony | utrzymane przez okres rozpoznania (`zones_recognition`), potem `zones_unknown`, alarm, zgłoszenie `no_zone_known`, bezpieczne oddanie [20, c.o. wł., 0]; powrót, gdy strefy wróciły |
+| B1 | przeładowanie wtyczki | 3 | zaliczony | [20, c.o. wł., 0] przy przeładowaniu, potem sterowanie wróciło |
+| D1 | polecenia gubione na bramce od początku | 3 | zaliczony | brak alarmu przez 4 min; „zapis zignorowany” po 12,7 min; nigdy „inny sterownik”; brak oddania; nie wysyłane ponownie |
+| E3 | opóźnienie włączenia VT 120 s | 4 | zaliczony (po przeglądzie) | starty 95 i 130 s po wezwaniu, w każdym z dwóch przebiegów; próba przy pokojach cichych przed wezwaniem: 127 s |
+| R1 | przekaźnik idzie za strefami VT w obie strony | 6 | zaliczony (drugi przebieg) | włączony od razu, gdy pokoje wołają, wyłączony 11 s po ich zaspokojeniu, znów włączony 10 s po wezwaniu |
+| R7 | planowany restart (przeładowanie wpisu) przy przekaźniku | 6 | zaliczony | wyłączony przy zatrzymaniu, potem znów włączony |
+| R17 | każda strefa nieznana przy przekaźniku, zaznaczony własny regulator pokojowy | 6 | zaliczony | spoczynek „wł.”: oddane, przekaźnik włączony, `no_zone_known_handed_back`; spoczynek „wył.”: bezczynny, przekaźnik wyłączony, `no_zone_known_off`; formularze przekaźnika przejrzane i przywrócone |
+| N1 | restart urządzenia trzymającego wartość | 7 | zaliczony | nastawa i przełącznik grzania wysłane ponownie po powrocie; brak alarmu zmiany z zewnątrz i zapisu zignorowanego |
+| E7 | obieg sterowany przez inną automatykę prosi przez swoją encję, żadna strefa nie woła | 4 | zaliczony (po przeglądzie) | grzanie tylko dla obiegu (`circuit_asks`, `limit_circuit_need`), wyłączone, gdy przestał prosić; woda rosła w tempie rampy do 55,0 °C (50 °C + 5 K) i zatrzymała się na 54,5 °C (F14); włączone, gdy obieg już prosi: od razu 55,0 °C |
+| N2 | restart urządzenia w trakcie oddania | 7 | zaliczony | „oddanie nieudane” w czasie nieobecności; [20, c.o. wł., 0] po powrocie; alarm zniknął po sprawdzeniach ponowienia (`taken_by_other`, pytanie K4 jak wcześniej) |
+
+Przejrzane — każdy to błąd runnera, żaden wtyczki:
+
+- **E3.** Pierwszy start zmierzono od niewłaściwego wezwania. Sprzątanie po E3 zostawia pokoje na
+  ich celach, więc cykle TPI w VT otwierają zawory aż do chwili włączenia sterowania; wtyczka widzi
+  to wezwanie w pierwszym kroku i od niego liczy opóźnienie, a E3 czeka tylko 30 s po wyłączeniu
+  grzania przed własnym wezwaniem. Wezwanie, które znika i wraca, nie anuluje ani nie zaczyna od nowa
+  oczekującego startu (`core/controller.py` `_activation`, tak jak reguła samego VT), więc grzanie
+  przyszło 120 s po tamtym pierwszym wezwaniu — 95 s po wezwaniu E3. Drugie cykle obu przebiegów
+  (130 s) i próba na tej samej instancji z pokojami cichymi przez 150 s przed wezwaniem (127 s)
+  pokazują, że opóźnienie działa. Runner potrzebuje pauzy 150 s z R18 po zamknięciu zaworów przed
+  każdym wezwaniem.
+- **V1.** Przy uszkodzonym zasilaniu porównywał pokazane ciepło z płomieniem odczytanym obok, ale
+  wtyczka wypełnia atrybut tylko wtedy, gdy VT zapisuje stan klimatu (`add_custom_attributes`), a VT
+  nie zapisał żadnego od 06:11:30 do 06:13:20: płomień zgasł o 06:11:45, więc atrybut nadal pokazywał
+  „nieznane”, poprawne przy ostatnim zapisie VT. Przy każdym zapisie VT pokazane ciepło było poprawne
+  („nie” przy zgaszonym płomieniu, „nieznane” przy palącym się). Runner powinien porównywać w chwili
+  `last_updated` klimatu.
+- **R1.** Pierwszy przebieg czekał 120 s na przekaźnik, ale VT do tego czasu nie otworzył zaworów:
+  pokoje ochłodzono, gdy ich nastawy już stały na celach, które VT stosuje w następnym cyklu. Zawory
+  otworzyły się dopiero, gdy runner ustawił nastawy ponownie, 121 s po włączeniu sterowania, a
+  przekaźnik włączył się 7 s później. Powtórzony: zaliczony. Runner powinien najpierw czekać na
+  zawory, tak jak E3.
+- **E7** (uruchomiony później, 07:16 UTC). Oczekiwał minimum obiegu, 55 °C, w ciągu 60 s, ale
+  sterowanie było już włączone (bezczynne przy 37 °C), gdy obieg poprosił, więc wzrost idzie za rampą,
+  1 K/min (S-23: tylko pierwsza nastawa sesji jest od razu celem); test w jednym procesie włącza
+  sterowanie, gdy obieg już prosi. Próba czekała na rampę: 0,5 K co 30 s, koniec na 54,5 °C — F14.
+  Druga próba, włączona, gdy obieg prosi: cel i nastawa 55,0 °C.
+
 ## 5. Kryterium startów
 
 Cztery przebiegi obok siebie (instancje od 2 do 5, `devenv/config/starts.yaml`): sterowanie
@@ -278,7 +343,17 @@ na granicy 3 K z podniesionym `curve_too_low` — F8.
 - Ogrzewanie podłogowe przez sześć godzin: po 100 min (U1, U2), wystarcza dla ograniczenia i alarmu.
 - Home Assistant w °F na ścieżce przez encje: tylko na ścieżce przez bramkę (T1).
 - Klasy reguły długiego palenia (G11 E): nie osiągnięte (Q2, F10).
-- `dev` po G11 (I7, I8): nietestowany; następny przebieg jest na `qas`.
+- `dev` po G11 (I7, I8): nietestowany na `dev`; przetestowany na `qas` c488e90 (sekcja 4.6).
+- Na `qas` c488e90, poza zakresem uzgodnionym dla tego przebiegu: każdy scenariusz spoza sekcji 4.6
+  — wśród nich restarty (B3, B6), kryterium startów i scenariusze korekt. Q4 jest nieaktualny od
+  #64: czyta czujnik okna wtyczki, którego już nie ma.
+- Strefy zaworowe VT 10.5.1 (`over_valve`, `over_climate_valve`), w których zmieniło się „urządzenie
+  aktywne”: symulator ma tylko strefy przełącznikowe; test z prawdziwym VT w jednym procesie (#130).
+- #110 i #112 (strażnicy w czasie poboru): symulator utrzymuje nadpisanie bramki przez pobór, więc D8
+  nie może ich pokazać; #114 nie może zmienić wyniku D1; #116 wymaga korekty komfortu, wyłączonej w
+  stanie bazowym: testy w jednym procesie (`tests/core/test_guards.py`, `tests/core/test_controller.py`).
+- `vtherm_api` 0.6.0 w testowym Home Assistancie: instancje zostają przy 0.5.0; 0.6.0 działa tylko we
+  wczesnym ostrzeganiu w CI.
 
 ## 7. Ustalenia i znane ograniczenia
 
@@ -297,13 +372,21 @@ sprawdzić jego przywrócenie po zaległym oddaniu sterowania.
 | L2 | „powrót samoczynny” liczy swoją godzinę ciszy od ostatniego zapisu innego sterownika, wraz ze zmianami własnego programu termostatu ściennego | zgodnie z założeniem | napisane w potwierdzeniu opcji |
 | L3 | za bramką OpenTherm Gateway kocioł, który ignoruje nastawę, nie jest widoczny: bramka odsyła to, co wysyła | ograniczenie prawdziwej ścieżki | znane (PB-91) |
 | F7 | trzymane urządzenie restartujące się podczas oddawania sterowania nigdy nie dostało wartości oddania sterowania dla nastawy: trzecia wartość na odczycie zwrotnym po przerwie została uznana za wartość innego sterownika, zanim wtyczka ją zapisała, a alarm „oddanie sterowania nie powiodło się” wygasł | wysoka, ścieżka przez encje | naprawione (#51, #58); J4 N2 przechodzi: po powrocie zapisane raz [20, c.o. włączone, 0] |
-| F8 | przy włączonej korekcie komfortu: w nocy ×1.30 (+8 °C) i ×4.42 (−5 °C) własnych startów kotła, za 0.00–0.07 K komfortu — pokoje nadal mają o około 1 K za mało z powodu odchylenia TPI w VT, którego korekta nie usunie, a woda na granicy sprawia, że każdy cykl TPI zatrzymuje palnik | średnia | G11 włączył ją domyślnie w pełnym sterowaniu: do decyzji w K4 (symulacja w testach mówi ×1.39 i ×6.28) |
+| F8 | przy włączonej korekcie komfortu: w nocy ×1.30 (+8 °C) i ×4.42 (−5 °C) własnych startów kotła, za 0.00–0.07 K komfortu — pokoje nadal mają o około 1 K za mało z powodu odchylenia TPI w VT, którego korekta nie usunie, a woda na granicy sprawia, że każdy cykl TPI zatrzymuje palnik | średnia | rozstrzygnięte w K4 (2026-11-17): domyślnie wyłączona, jak zalecają badania przy strefach TPI (symulacja w testach mówi ×1.39 i ×6.28) |
 | F9 | kryterium startów nie jest spełnione przy −5 °C w ciągu całej doby przy wyłączonej korekcie (×1.72; ×0.93 w nocy) | średnia | K4: grzanie od razu podąża za VT zgodnie z regułą użytkownika |
 | F10 | reguła długiego palenia działa dopiero po 3 h płomienia bez przerwy; kocioł pracujący cyklami na swoim minimum, gdy pokoje są niedogrzane, nigdy jej nie wyzwala, więc przy wyłączonej korekcie nic nie informuje użytkownika (Q2) | średnia | do decyzji: liczyć udział czasu pracy palnika, a nie jedno nieprzerwane palenie |
 | F11 | 12 h przy −2 °C z domyślną krzywą i wyłączoną korektą zostawiło pokoje o 1.1–1.7 K za zimne, płomień na 100 % i temperaturę zasilania na nastawie — kocioł miał zapas, woda była zbyt chłodna (przypadek stojący za G11) | obecnie brak | zajmują się tym G11 B, D i E |
 | L4 | czujnik zewnętrzny symulatora, ustawiony ręcznie, nie zmienia się przez ponad 12 h, podczas gdy jego pogoda się zmienia: wtyczka słusznie uznaje go za zawieszony i używa pogody | stanowisko testowe | brak |
 | L5 | strefy TPI w VT (współczynniki 0.6 / 0.01) trzymają symulowane pokoje o około 1–1.5 K poniżej ich nastaw w każdych warunkach, z wtyczką i bez niej | stanowisko testowe, VT | nic tutaj; na to natrafia F8 |
 | L6 | timer przekaźnika będący całkowitą wielokrotnością 5-minutowego odnowienia wtyczki wygasa razem z odnowieniem, niewidoczny dla Home Assistanta (PB-25) | zgodnie z założeniem | runner używa 11 min |
+| F12 | „Trybu sterowania” nie dało się zapisać we wpisie sprzed pytania o połączenie: formularz się pokazywał, zapis się nie udawał (`apply_mode` czytał połączenie, którego taki wpis nie zapisuje) i nic nie zapisano — znalezione przy czytaniu kodu, w kontroli zakresu z 2026-10-13 | niska (sterowanie bez zmian), wpisy sprzed I6 | naprawione (#127); G2 przechodzi na instancji 1 (kod d) |
+| F13 | VT 10.5.1 zmienił, kiedy strefa zaworowa liczy się jako „urządzenie aktywne”, co wtyczka czyta dla zapotrzebowania strefy; strefy J4 to przełączniki | średnia, strefy zaworowe | test z prawdziwym VT (#130) i instrukcja (#131) |
+| L7 | E3 mierzy pierwszy start od wezwania wykonanego, gdy oczekuje start z wcześniejszego wezwania (sekcja 4.6) | runner | pauza 150 s z R18 przed każdym wezwaniem |
+| L8 | V1 ocenia pokazane ciepło po płomieniu w chwili odczytu; atrybut VT jest tak stary jak ostatni zapis stanu klimatu przez VT | runner | porównywać w chwili `last_updated` klimatu |
+| L9 | R1 czeka 120 s na przekaźnik, a VT może otworzyć zawory dopiero w następnym cyklu | runner | najpierw czekać na zawory |
+| F14 | po rampie w górę do minimum obiegu (E7: do 55,0 °C) zapisana nastawa zatrzymała się na 54,5 °C i tak została, bez powodu `ramp`, aż obieg przestał prosić; cel regulatora wynosił 55,0 (włączone, gdy obieg prosi: od razu 55,0) | niska (0,5 K poniżej minimum, 4,5 K ponad potrzebę obiegu) | przyczyna, odczytana w kodzie i zgodna z przebiegiem: `core/guards.py` `_plan` wysyła zmianę tylko wtedy, gdy różni się od zapisanej wartości o więcej niż tolerancja odczytu zwrotnego (`TOLERANCE_K`, 0,5 K), a podtrzymanie wysyła ponownie zapisaną wartość — więc cel o 0,5 K lub mniej od niej nigdy nie jest zapisany; naprawione w #135: granica, na której trzymana jest woda, jest zapisywana dokładnie |
+| L11 | E7 oczekuje minimum obiegu w ciągu 60 s, gdy sterowanie, już włączone, dochodzi do niego rampą | runner | czekać na rampę albo włączyć sterowanie, gdy obieg już prosi |
+| L10 | po scenariuszu zakończonym z wyłączonym sterowaniem i wołającymi pokojami zostaje informacyjne zgłoszenie przekaźnika `relay_rests_off` (instancja 6); `hand_back_taken_by_other` ścieżki encji zostaje po N2 (instancja 7) | z założenia | brak; zostawione na instancjach |
 
 Błędy samego runnera znalezione i naprawione podczas J4, żaden nie dotyczył wtyczki: czasy w
 obrębie okna potwierdzenia reguły przekaźnika; niespełnione warunki wstępne (pokoje na zadanej

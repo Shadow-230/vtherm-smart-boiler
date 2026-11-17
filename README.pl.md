@@ -74,8 +74,8 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
 
 | Wymaganie | Wersja |
 |---|---|
-| Home Assistant | 2026.9 lub nowszy |
-| Versatile Thermostat | 10.2.0 lub nowszy (od 10.2.0 ładuje zewnętrzne menedżery funkcji); testowana wersja to 10.5.1 — tymczasowo, do pierwszego wydania |
+| Home Assistant | 2026.10.4 lub nowszy — wymaga go najnowszy VT (10.6.5) |
+| Versatile Thermostat | 10.2.0 lub nowszy (od 10.2.0 ładuje zewnętrzne menedżery funkcji); testowane są 10.5.1 i najnowsza, 10.6.5 — tymczasowo, do pierwszego wydania. VT 10.6.5 wymaga Home Assistanta 2026.10.4 i `vtherm_api` 0.9.0 |
 | `vtherm_api` | 0.5.0 lub nowsza, instalowana z wtyczką |
 | SmartPI, Auto-TPI | opcjonalne; działa każdy algorytm stref VT |
 

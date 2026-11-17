@@ -154,7 +154,7 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
 | Sterowanie | domyślnie wyłączone; po włączeniu sterowanie działa automatycznie w wybranym trybie; zmiany krzywej: podpowiedzi (domyślnie) albo automatycznie w ustawionym paśmie (Niskie / Średnie / Wysokie) | pasmo własne, nadpisania pojedynczych parametrów, ręczna edycja wyuczonych wartości, reset do profilu |
 | Alarmy | rozsądne reakcje domyślne | progi dla każdego alarmu; reakcja tylko tam, gdzie pozwala na nią decyzja 7 (§7) |
 | Diagnostyka | ukryta | parametry modelu, pewność, powody odrzucenia próbek |
-| Nauka | korekta komfortu, dotąd jedyna nauka przy sterowaniu, jest domyślnie włączona przy pełnym sterowaniu i pokazana na obu poziomach (użytkownik, 2026-10-10, odwracając K4.1 — wpis po aktualizacji zachowuje to, z czym działał; `docs/en/development/plans/plan-0.2-g11.md`); jej limit ustawia użytkownik, na poziomie zaawansowanym; późniejsza nauka włączana w bezpiecznych granicach | wstrzymanie i wznowienie, korekta komfortu, pasmo strojenia (zasada 13), okna nauki, ustawienia ochrony algorytmów stref |
+| Nauka | korekta komfortu, dotąd jedyna nauka przy sterowaniu, jest domyślnie wyłączona i pokazana na obu poziomach (K4, decyzja użytkownika z 2026-11-17, odwracająca decyzję z 2026-10-10 — wpis zachowuje to, co zapisał; `docs/en/development/plans/plan-0.2-g11.md`); jej limit ustawia użytkownik, na poziomie zaawansowanym; późniejsza nauka włączana w bezpiecznych granicach | wstrzymanie i wznowienie, korekta komfortu, pasmo strojenia (zasada 13), okna nauki, ustawienia ochrony algorytmów stref |
 
 Przejście z zaawansowanego na proste oferuje „przywróć ustawienia zaawansowane do wartości domyślnych” (domyślnie
 niezaznaczone). Nigdy nie rusza wyuczonych wartości; mają one własny przycisk „przywróć domyślne
@@ -769,10 +769,12 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   mówi, dlaczego wtyczka nie może go ogrzać i co zrobić, w słowach dobranych do powodu zamknięcia
   podanego przez VT (`hvac_off_reason`) — dla „off” zamiast tego preset ochrony przed mrozem VT; dla
   otwartego okna albo trybu centralnego VT „Stopped” — że pokój zostaje nieogrzewany, dopóki VT go
-  nie otworzy; centralny tryb ochrony przed mrozem VT wymaga temperatury ochrony przed mrozem
-  w każdym termostacie. Wtyczka nigdy nie zmienia trybu VT. Grzanie przeciwmrozowe, które trwa bez
-  ocieplania się strefy, podnosi alarm; nie jest zatrzymywane. Grzanie przeciwmrozowe czeka na
-  opóźnienie włączenia. To zmienia decyzję z 2026-09-25 („siatka bezpieczeństwa obejmuje cały dom”).
+  nie otworzy; dla innej wtyczki, która wyłączyła termostat spod sterowania VT (wstrzymanie
+  z VT 10.6.1) — dopóki tamta wtyczka go nie odda; centralny tryb ochrony przed mrozem VT wymaga
+  temperatury ochrony przed mrozem w każdym termostacie. Wtyczka nigdy nie zmienia trybu VT.
+  Grzanie przeciwmrozowe, które trwa bez ocieplania się strefy, podnosi alarm; nie jest
+  zatrzymywane. Grzanie przeciwmrozowe czeka na opóźnienie włączenia. To zmienia decyzję
+  z 2026-09-25 („siatka bezpieczeństwa obejmuje cały dom”).
 - **Opóźnienie włączenia VT** (decyzja 5), przeniesione tak jak w VT 10.4.0: 0–600 s co 10 s,
   domyślnie 0, także na ścieżce przekaźnika. Opóźnia tylko włączanie. Czekanie zaczyna się przy
   pierwszym prawdziwym wezwaniu do grzania, po okresie rozpoznania; wezwanie, które znika i wraca
@@ -815,9 +817,10 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   widziała, że czujnik pokazuje cieplej (decyzja 12). Gdy nie ma żadnego z nich, ostatnia
   efektywna temperatura zewnętrzna obowiązuje przez 3 h, potem zastępuje ją stała wartość awaryjna
   użytkownika albo projektowa temperatura zasilania (decyzja 9).
-- **Korekta komfortu** (zasada 13; domyślnie włączona przy pełnym sterowaniu — decyzja użytkownika
-  z 2026-10-10, odwracająca decyzję z 2026-10-03; wpis po aktualizacji zachowuje to, z czym działał,
-  „wyłączona” tam, gdzie nigdy nie zapisał odpowiedzi; nie przy sterowaniu włącz/wyłącz;
+- **Korekta komfortu** (zasada 13; domyślnie wyłączona — K4, decyzja użytkownika z 2026-11-17,
+  odwracająca decyzję z 2026-10-10 po F8 z J4 i przeglądzie literatury,
+  `docs/pl/development/plan.md`; wpis zachowuje to, co zapisał, „wyłączona” tam, gdzie nigdy nie
+  zapisał odpowiedzi; nie przy sterowaniu włącz/wyłącz;
   `docs/en/development/plans/plan-0.2-g11.md` B): gdy zawór strefy jest w pełni otwarty, a pokój
   wciąż nie dochodzi do nastawy, woda rośnie ponad krzywą — najwyżej o limit użytkownika (domyślnie
   3 K, do 10 K; jedyna granica ponad krzywą, odkąd zniknął „zakres korekty”, I8 B6), nigdy więcej
@@ -1269,14 +1272,14 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Ochrona przed mrozem | każda strefa, ogrzewana tylko tam, gdzie jej odbiornik ciepła może przyjąć ciepło | ciepło dla strefy, którą VT trzyma zamkniętą, nie dotrze; zgłoszenie naprawy mówi, co zrobić zamiast tego (decyzja 4) |
 | Próg zapotrzebowania | jedna wołająca strefa | każda wołająca strefa grzeje, jak w centralnym kotle VT |
 | Co liczy licznik | urządzenia VT, jak centralny kocioł VT (decyzja użytkownika z 2026-10-14; wpis sprzed tej daty zostaje przy strefach) | to samo co strefa przy domyślnej liczbie 1; użytkownik przechodzący z VT zachowuje liczbę z VT |
-| Korekta komfortu | włączona w pełnym sterowaniu (decyzja użytkownika z 2026-10-10, odwracająca tę z 2026-10-03; wpis po aktualizacji zostaje przy tym, z czym działał); do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie; porównanie startów z nią włączoną (około 2026-10-12) może zmienić wartość domyślną | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: od 1.75 do 5 razy więcej startów w symulacji, do 6.3 przy dobowym wahaniu temperatury zewnętrznej; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
+| Korekta komfortu | wyłączona (K4, decyzja użytkownika z 2026-11-17, odwracająca tę z 2026-10-10 po F8 z J4 i przeglądzie literatury; wpis zostaje przy tym, co zapisał); po włączeniu do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: od 1.4 do 6.3 razy więcej startów w symulacji przy dobowym wahaniu temperatury zewnętrznej, za mniej niż 0.1 K komfortu; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
 | Wstrzymania nauki | włączone | chronią model SmartPI przed wahaniami, które wywołuje wtyczka |
 | Reakcja alarmu | informacja; oddania sterowania z decyzji 7 zawsze | inny sterownik zapisuje wartości — nigdy z nim nie walczymy; wtyczka zatrzymuje grzanie tylko tam, gdzie sam kocioł się zatrzymuje |
 | Alarm maksimum obiegu | maksimum obiegu + 5 K, przez 10 min (informacja); na obiegu zasilanym prosto z kotła c.w.u. z priorytetem nie jest liczona | kocioł może przekroczyć maksimum; użytkownik to widzi (decyzja 10); c.w.u. nie dociera do tego obiegu (2026-10-12) |
 | Próg „dolej wody” | brak | wartość pochodzi z instrukcji kotła; zła wartość domyślna niczego nie zatrzyma, ale wprowadzi w błąd |
 | Ostrzeżenie / alarm wysokiego ciśnienia | brak — wpisywane poniżej wartości znamionowej zaworu bezpieczeństwa, odczytanej z zaworu | wartości się różnią (często 3 bar w Europie, około 2.1 bar w Ameryce Północnej): domyślne 2.8 bar nigdy nie zadziałałoby poniżej zaworu 2.1 bar (decyzja 13 z `docs/en/development/plans/plan-0.2.3.md`) |
 | Ostrzeżenie / alarm spalin | 85 / 100 °C przy kotle kondensacyjnym; brak przy niekondensacyjnym | cieplejsze spaliny znaczą, że kocioł nie kondensuje; zbyt wysoka wartość ostrzega za późno dla plastikowych rur spalinowych; kocioł niekondensacyjny ma znacznie gorętsze spaliny (powód do potwierdzenia w K4) |
-| Częste starty | więcej niż 12 startów na godzinę | jeden start na 5-minutowy cykl, domyślny w VT; zbyt wysoka wartość ukrywa krótkie cykle (powód do potwierdzenia w K4) |
+| Częste starty | alarm: więcej niż 12 startów na godzinę; ostrzeżenie: ponad 6 na godzinę przez 3 h | alarm: jeden start na 5-minutowy cykl, domyślny w VT; ostrzeżenie (K4, decyzja użytkownika z 2026-11-17): wartość projektowa TPI dla kotłów gazowych, 6 na godzinę (Bennett 2019: 70 % startów grzania krótszych niż 10 min); zbyt wysoka wartość ukrywa krótkie cykle |
 | Niestabilny zapłon | więcej niż 10 paleń krótszych niż minuta w ciągu doby | kilka może pochodzić z krótkich poborów c.w.u.; zbyt wiele ukryje problem z zapłonem (powód do potwierdzenia w K4) |
 | Sygnały usterki kotła | brak | użytkownik mapuje własną usterkę kotła tam, gdzie pokazuje ją integracja |
 | Zaciski termostatu (bramka) | brak — wymagane; „nie wiem” blokuje sterowanie | styk włącz/wyłącz nie mógłby ogrzać domu po awarii, gdy jest w stanie „wyłączone” (decyzja 1) |
@@ -1311,6 +1314,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Zawieszony czujnik: jedna wartość trzymana 12 h, gdy pogoda zmienia się o 3 K lub więcej; odchylenie 6 K na przestrzeni co najmniej 2 h nakładających się danych | `core/signal_check.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Korekta komfortu +3 K (domyślna wartość jej limitu, opcja od 0.5 do 10 K od G11), 30 min na K, 3 h na krawędzi, 1 K powyżej zatrzymuje wzrost; zaspokojona poniżej 70 %, brakuje 0.3 K | `core/controller.py` | postanowione 2026-09-25 |
 | Ochrona przed mrozem nie ogrzewa: 2 h, 0.5 K | `core/controller.py` | tymczasowe, K4 (powód do potwierdzenia) |
+| Długie palenie bez nagrzewania: przebieg 3 h, przerwy płomienia do 30 min zachowane; pokój, który rośnie o mniej niż 0.2 K, się nie nagrzewa; woda w granicach 1 K od nastawy ją trzyma (kocioł taktujący: do niej doszła); 90 % to wysoka modulacja, przy granicy mocy z płomieniem przez cały czas; każdy pokój o 0.3 K ponad nastawą przez 1 h to woda za ciepła; średnie z 30 min | `core/long_run.py` | przerwy postanowione w K4 (użytkownik, 2026-11-17, F10 z J4: kocioł taktujący na minimum przy niedogrzanych pokojach to ten sam przypadek); reszta tymczasowa (G11 E) |
 | Strefa pobiera ciepło przy otwarciu powyżej 5 %, nasycona przy 95 % — dla nauki, alarmów i historii; to, czy strefa woła, wynika zamiast tego z reguły VT (powyżej 0, 2026-10-14) | `core/readings.py` | istniejące |
 | Ciepło dostępne: zasilanie 2 K powyżej powrotu albo 3 K powyżej temperatury pokoju, gdy nie ma powrotu; histereza 1 K | `core/heat.py` | tymczasowe, K4 (I8, decyzja C1) |
 | Wiarygodny odczyt pokoju od −30 do 45 °C, jedna reguła dla każdego odczytu pokoju | `core/limits.py` | węższy zakres ukryłby zimny pokój przed ochroną przed mrozem (S-06; tymczasowe, K4) |
@@ -1342,7 +1346,8 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | „Nie warto” tylko przy ocenie co najmniej 3 z 4 kryteriów (2 z 3 dla kotła niekondensacyjnego) | werdykt | tymczasowe, K4 (S-32) |
 | „Oddane w mrozie” poniżej progu mrozu, kasowane przy zwolnieniu | alarmy | tymczasowe, K4 (S-57) |
 | Sugestia najniższej temperatury wody: odniesienie + 2 K, zaokrąglone w górę do 0.5 °C, poniżej górnych limitów | monitor | tymczasowe, K4 |
-| Kryterium startów J4: w ciągu 24 h przy +8 °C i przy −5 °C, każde z dobowym wahaniem temperatury zewnętrznej ±3 K, co najwyżej tyle startów na godzinę, ile daje własna regulacja kotła, × 1.10, przy czym średnia temperatura każdego pokoju jest co najwyżej o 0.3 K niższa od jego średniej przy tej regulacji (równy komfort); test z wahaniem to ścisły xfail do K4 | akceptacja | tymczasowe, K4: dopuszczalny stosunek jest tam postanowiony (S-15; decyzja 8 z `docs/en/development/plans/plan-0.2.3.md`) |
+| Kryterium startów J4: w ciągu 24 h przy +8 °C i przy −5 °C, każde z dobowym wahaniem temperatury zewnętrznej ±3 K, co najwyżej tyle startów na godzinę, ile daje własna regulacja kotła, × 1.10, albo co najwyżej 6 startów na godzinę przy medianie palenia co najmniej 10 min, przy czym średnia temperatura każdego pokoju jest co najwyżej o 0.3 K niższa od jego średniej przy tej regulacji (równy komfort); przy domyślnym 5-minutowym cyklu TPI w VT test z wahaniem zostaje ścisłym xfail, przy cyklu 15 min przechodzi | akceptacja | postanowione w K4 (użytkownik, 2026-11-17): badania mierzą taktowanie wprost — 6 cykli na godzinę dla kotłów gazowych, palenia krótsze niż 10 min (S-15; decyzja 8 z `docs/en/development/plans/plan-0.2.3.md`) |
+| Strefy VT włączane i wyłączane (over_switch) w cyklach krótszych niż 10 min, wymieniane w ostrzeżeniu, gdy sterowanie jest skonfigurowane (`zone_cycle_short`) | `coordinator.py` | postanowione w K4 (użytkownik, 2026-11-17): każda przerwa między ich impulsami zatrzymuje palnik; dla kotłów gazowych przyjmuje się 6 cykli na godzinę |
 | Czekanie na spóźniony raport: 60 s przy starcie; przy zatrzymaniu całe oddanie sterowania w 15 s, każdy zapis ograniczony do 3 s, czekanie na odczyt zwrotny min(5 s, pozostały czas) | oddanie sterowania | Home Assistant daje wszystkim zadaniom zamknięcia razem 20 s (Q3.3); urządzenie ESPHome raportuje w około 60 s od startu, do około 74 s bez mDNS — 90 s to alternatywa (Q3.5); tymczasowe, K4 |
 | Ostatnie polecenie zapisane od razu przy zmianie o 1.0 K | stan sterowania (V3) | tymczasowe, K4 (powód do potwierdzenia) |
 | Okno zwolnienia OTGW 60 s | oddanie sterowania (V4) | tymczasowe, K4 (powód do potwierdzenia) |
@@ -1360,6 +1365,8 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Utrzymanie alarmów 5 min; nieznane wejście trzymane 1 h; 50 % znanego płomienia; limit − 2; 2 K; rozpiętość nachylenia 10 K; 0.05 bar/K; 40 °C; 0.1 bar; próbka ciśnienia co 10 min, pobierana po 10 min bez płomienia | `core/alarms.py` (Y1) | tymczasowe, K4 (powód do potwierdzenia) |
 | Wnioskowanie o c.w.u. 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | tymczasowe, K4 (powód do potwierdzenia) |
 | Model budynku: 8 K; 12 K; 2 K; 3 z 4; 2 z 3; odczyty temperatury zewnętrznej w granicach −30…+30 °C | monitor (Y3) | tymczasowe, K4 (powód do potwierdzenia) |
+| Zmierzone straty używane dopiero od 21 dni grzewczych, pokazywane z zakresem ±20 % | `core/building.py` | postanowione w K4 (użytkownik, 2026-11-17): opublikowane metody potrzebują około 3 tygodni danych z sezonu grzewczego i osiągają w najlepszym razie około ±15 % (IEA EBC Annex 71; SMETER), a sam wybór danych przesuwa je do 27 % |
+| „Reszta” zmiany z dnia na dzień w granicach 15 % dnia poprzedniego pokazywana jako normalna zmienność | `core/report.py` | K4 (użytkownik, 2026-11-17): dzienne liczby to głównie szum i bezwładność cieplna; 15 % tymczasowe — brak opublikowanej liczby, regresja z 0.4 da rozrzut własny domu |
 | Limit czasu wywołania prognozy 30 s | prognozy (Y4) | tymczasowe, K4 (powód do potwierdzenia) |
 | Alarmy startów i zapłonu nieznane, gdy ostatnia analiza jest starsza niż 15 min; zapis ostatniego przebiegu co 10 min | monitor (Y2) | tymczasowe, K4 (powód do potwierdzenia) |
 | Zgłoszenie „zamknięta strefa” z ochrony przed mrozem aktualizowane przy zmianie o 1 K; czekanie 60 s na odtworzenie stanu włącznika sterowania | sterowanie (X4, V3) | tymczasowe, K4 (powód do potwierdzenia) |
@@ -1489,8 +1496,8 @@ dostają dane, na których się opiera. Sterowanie można włączyć od pierwsze
 użytkownika z 2026-10-08). Dopóki użytkownik go nie włączy, kocioł pracuje jak dotąd — pod
 centralnym kotłem VT, termostatem ściennym albo własną regulacją — a wtyczka tylko patrzy. Po
 włączeniu nic nie rusza samo poza twardymi granicami: woda idzie za krzywą użytkownika, w granicach
-najniższej i najwyższej temperatury wody, a jedyna nauka przy sterowaniu, korekta komfortu, jest w
-pełnym sterowaniu domyślnie włączona i dodaje najwyżej swój limit (domyślnie 3 K), rosnąc najwyżej o
+najniższej i najwyższej temperatury wody, a jedyna nauka przy sterowaniu, korekta komfortu, jest
+domyślnie wyłączona, a włączona dodaje najwyżej swój limit (domyślnie 3 K), rosnąc najwyżej o
 3 K na dobę (zasady 8 i 13; pasmo dostrajania przyjdzie później). Dlatego tydzień czekania niczego
 nie chroni. Werdykt potrzebuje określonej liczby dni danych: domyślnie 7, co najmniej 7, najwyżej
 60, liczonych w dniach kalendarzowych od utworzenia wpisu, więc utrata magazynu danych nie zaczyna
@@ -1709,6 +1716,6 @@ sterowanie jest domyślnie wyłączone — jako wersja wstępna 0.2.2b1, a potem
 wersja zostanie opublikowana pierwsza, rozstrzyga się po niezależnym sprawdzeniu 0.2.2 i przy K4;
 czy repozytorium zawiera `CLAUDE.md`, plany i przeglądy, a więc czy startuje z czystą historią, przy
 K5. HACS instaluje tylko z publicznych repozytoriów, więc repozytorium jest publiczne od pierwszej
-wersji wstępnej. Wtyczka wymaga Home Assistanta 2026.9 lub nowszego, czyli wersji, na której jest
-testowana. Zgłoszenie do domyślnej listy HACS i do listy wtyczek VT później (przegląd HACS trwa
+wersji wstępnej. Wtyczka wymaga Home Assistanta 2026.10.4 lub nowszego: wymaga go najnowszy VT
+(10.6.5), a wtyczka jest na nim testowana (użytkownik, 2026-11-17). Zgłoszenie do domyślnej listy HACS i do listy wtyczek VT później (przegląd HACS trwa
 miesiące). Utworzenie repozytorium i każda publikacja wymagają zgody autora.

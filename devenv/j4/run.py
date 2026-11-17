@@ -1366,8 +1366,12 @@ async def E5(r: Run):
         f"no heat against closed valves: {st['state']}, {ch[-1:] if ch else []}",
     )
     r.check(0 not in [v for k, v in r.cmds(t, "setpoint")], "no hand-back")
-    issues = [i["issue_id"] for i in await r.ha.issues()]
-    r.check(any("frost_zone_closed" in i for i in issues), f"repair issue: {issues}")
+    issues = await r.ha.issues()
+    frost = [i for i in issues if i["issue_id"].startswith("frost_zone_closed")]
+    r.check(bool(frost), f"repair issue: {[i['issue_id'] for i in issues]}")
+    # SB-27: the advice by VT's reason, which VT publishes in ``specific_states``.
+    keys = [i.get("translation_key") for i in frost]
+    r.check("frost_zone_closed_central_mode" in keys, f"advice by VT's central mode: {keys}")
 
 
 async def E6(r: Run):

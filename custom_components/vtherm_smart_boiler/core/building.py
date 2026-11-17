@@ -136,6 +136,17 @@ MAX_FIT_CONFIDENCE = 0.95
 SINGLE_PARAMETER_PENALTY = 0.7
 FULL_COVERAGE_DAYS = 30  # this many heating days give the fit its full weight
 CLAMPED_CONFIDENCE = 0.3  # a fit held at a bound, or too uncertain: shown, never used
+# K4 (the user's decision of 2026-11-17): a fit from fewer heating days is shown, never used —
+# published methods need about 3 weeks of heating-season data (IEA EBC Annex 71; the UK SMETER
+# trials), and reach about ±15 % at best, data choices alone moving them up to 27 % (Senave):
+# a measured loss is shown with a ±``MEASURED_RANGE_SHARE`` range.
+MIN_KNOWN_DAYS = 21
+MEASURED_RANGE_SHARE = 0.2
+
+
+def measured_range(value: float) -> tuple[float, float]:
+    """The likely range of a measured loss: ±``MEASURED_RANGE_SHARE`` (K4)."""
+    return value * (1.0 - MEASURED_RANGE_SHARE), value * (1.0 + MEASURED_RANGE_SHARE)
 
 
 def fit_daily_load(
@@ -177,7 +188,7 @@ def fit_daily_load(
         fitted, threshold_clamped = _clamped(ParameterKey.HEATING_THRESHOLD, crossing)
         confidence = min(MAX_FIT_CONFIDENCE, coverage * r_squared)
         own = min(MAX_FIT_CONFIDENCE, coverage * r_squared * min(1.0, spread / FULL_SPREAD_K))
-        if loss_clamped or threshold_clamped:
+        if loss_clamped or threshold_clamped or n < MIN_KNOWN_DAYS:
             confidence = min(confidence, CLAMPED_CONFIDENCE)
             own = min(own, CLAMPED_CONFIDENCE)
         if threshold_error(xs, ys, predicted, slope, crossing) > MAX_THRESHOLD_ERROR_K:
@@ -199,7 +210,7 @@ def fit_daily_load(
         return None
     confidence = min(MAX_FIT_CONFIDENCE, coverage * quality * SINGLE_PARAMETER_PENALTY)
     loss, clamped = _clamped(ParameterKey.LOSS_COEFFICIENT, loss_per_day / HOURS_PER_DAY)
-    if clamped:
+    if clamped or n < MIN_KNOWN_DAYS:
         confidence = min(confidence, CLAMPED_CONFIDENCE)
     return LoadFit(Estimate(loss, Source.MEASURED, confidence, at), None, n, quality)
 

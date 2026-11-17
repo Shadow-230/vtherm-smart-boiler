@@ -50,22 +50,6 @@ async def set_targets(r: Run, targets: dict[str, float]) -> None:
         )
 
 
-async def flame_on_for(r: Run, seconds: float, within: float) -> float | None:
-    """Seconds until the flame has been on without a break for ``seconds``; ``None`` if that
-    never happened within ``within``."""
-    start = time.time()
-    since: float | None = None
-    while time.time() - start < within:
-        if await r.s(FLAME) == "on":
-            since = since or time.time()
-            if time.time() - since >= seconds:
-                return time.time() - start
-        else:
-            since = None
-        await r.ha.wait(30)
-    return None
-
-
 CORRECTION_ON = {"comfort_correction": True}
 
 
@@ -112,17 +96,17 @@ async def Q1(r: Run):
 
 
 async def Q2(r: Run):
-    """a curve too low with the correction off: the water stays on the curve; after 3 h of the
-    flame on with the rooms not warming, the long-burn sensor says the water is too cool — not
-    the boiler's power limit (the flow holds its setpoint)"""
+    """a curve too low with the correction off: the water stays on the curve; after 3 h of
+    burning — the flame's gaps of up to 30 min kept, so a boiler cycling at its minimum counts
+    (K4, F10) — with the rooms not warming, the long-burn sensor says the water is too cool —
+    not the boiler's power limit (the flow holds or reaches its setpoint)"""
     try:
         await r.options(curve=LOW_CURVE)
         r.ent.update(await r.ha.entities())
         await r.sim("set_outdoor", temperature=0.0)
         await r.switch(True)
-        burned = await flame_on_for(r, 3 * 3600, 5 * 3600)
-        r.check(burned is not None, f"the flame on for 3 h ({burned and round(burned / 60)} min)")
-        told = await r.ha.until(lambda: _long_burn(r), 1800, 30)
+        told = await r.ha.until(lambda: _long_burn(r), 5 * 3600, 30)
+        r.check(told is not None, "the long-burn sensor on within 5 h")
         st = await r.st("long_burn")
         r.note(f"long burn: {st['state']} {st['attributes']}")
         r.check(not await correction_on(r), "no correction: off")

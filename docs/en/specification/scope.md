@@ -154,7 +154,7 @@ a heat pump controller (excluded), or anything that sends data outside.
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
 | Diagnostics | hidden | model parameters, confidence, sample rejection reasons |
-| Learning | the comfort correction, so far the only learning under control, is on by default in full control and shown at both levels (the user, 2026-10-10, reversing K4.1 — an upgraded entry keeps what it ran with; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
+| Learning | the comfort correction, so far the only learning under control, is off by default and shown at both levels (K4, the user's decision of 2026-11-17, reversing that of 2026-10-10 — an entry keeps what it stored; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
 
 Switching advanced → simple offers "restore advanced settings to defaults" (unchecked by
 default). It never touches learned values; those have their own "restore profile defaults"
@@ -729,10 +729,12 @@ How control decides (principle 12):
   and on; provisional, K4) and does not start the boiler: it names the room and its temperature,
   says why the plugin cannot heat it, and what to do, worded by VT's reason for closing it
   (`hvac_off_reason`) — for "off", VT's frost preset instead; for an open window or VT's central
-  mode "Stopped", that the room stays unheated until VT opens it; VT's central frost mode needs a
-  frost temperature in every thermostat. The plugin never switches VT's mode. Frost heating that goes on without the zone
-  warming raises an alarm; it is not stopped. Frost heating waits for the activation delay. This
-  changes the decision of 2026-09-25 ("the safety net covers the whole house").
+  mode "Stopped", that the room stays unheated until VT opens it; for a plugin that took the
+  thermostat out of VT's control (VT 10.6.1's inhibition), until that plugin gives it back; VT's
+  central frost mode needs a frost temperature in every thermostat. The plugin never switches VT's
+  mode. Frost heating that goes on without the zone warming raises an alarm; it is not stopped.
+  Frost heating waits for the activation delay. This changes the decision of 2026-09-25 ("the
+  safety net covers the whole house").
 - **VT's activation delay** (decision 5), carried over as in VT 10.4.0: 0–600 s in steps of 10,
   default 0, on the relay path too. It delays switching on only. The wait starts at the first
   real call for heat, after the recognition period; a call that drops and returns during the wait
@@ -773,9 +775,10 @@ How control decides (principle 12):
   asks for more heat, which the valves throttle — and, without a weather reading, where the
   check saw it read warmer (decision 12). Without either, the last effective outdoor temperature
   holds for 3 h, then the user's fixed fallback, or the design flow, replaces it (decision 9).
-- **Comfort correction** (principle 13; on by default in full control — the user's decision of
-  2026-10-10, reversing that of 2026-10-03; an upgraded entry keeps what it ran with, "off" where it
-  never stored an answer; not with on/off control; `docs/en/development/plans/plan-0.2-g11.md` B): while a
+- **Comfort correction** (principle 13; off by default — K4, the user's decision of 2026-11-17,
+  reversing that of 2026-10-10 after J4's F8 and the literature, `docs/en/development/plan.md`; an
+  entry keeps what it stored, "off" where it never stored an answer; not with on/off control;
+  `docs/en/development/plans/plan-0.2-g11.md` B): while a
   zone's valve is fully open and its room is still short of its setpoint, the water rises above the
   curve — at most the user's limit (default 3 K, up to 10 K; the only bound above the curve
   since the "correction range" went, I8 B6), never more than 3 K a day, by 1 K per 30 min and only while heat flows: the flame when it is known,
@@ -1150,7 +1153,7 @@ in K):
   stops in steady weather).
 - Frost protection: its limit and release temperature, and whether it watches every zone
   (default) or one zone.
-- Comfort correction on (default in full control) or off; its limit (default 3 K, up to 10 K);
+- Comfort correction on or off (default off, K4); its limit (default 3 K, up to 10 K);
   the rise at most 3 K a day, fixed (principle 13).
 - The curve's room temperature: Auto (default) or Manual, and the zones Auto leaves out.
 - Learning pauses on (default) or off.
@@ -1189,14 +1192,14 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Frost protection | every zone, heated only where its emitter can take heat | heat for a zone VT keeps closed cannot arrive; a repair issue says what to do instead (decision 4) |
 | Demand threshold | one zone calling | any zone calling heats, as with VT's central boiler |
 | What the count counts | VT's devices, as VT's central boiler (decided by the user 2026-10-14; an entry from before keeps zones) | the same as a zone at the default count of 1; a user moving over from VT keeps VT's number |
-| Comfort correction | on in full control (decided by the user 2026-10-10, reversing 2026-10-03; an upgraded entry keeps what it ran with); up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day; the starts comparison with it on (about 2026-10-12) may revisit the default | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: 1.75 to 5 times the starts in the simulation, up to 6.3 with a daily outdoor swing; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
+| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: 1.4 to 6.3 times the starts in the simulation with a daily outdoor swing, for under 0.1 K of comfort; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Learning pauses | on | keep swings the plugin causes out of SmartPI's model |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
 | Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information); on a circuit fed straight from the boiler, hot water with priority not counted | the boiler may overshoot the maximum; the user sees it (decision 10); the hot water does not reach that circuit (2026-10-12) |
 | "Add water" threshold | none | the value comes from the boiler's manual; a wrong default stops nothing but misleads |
 | High-pressure warning / alarm | none — entered below the safety valve's rating, read on the valve | ratings differ (often 3 bar in Europe, about 2.1 bar in North America): a default of 2.8 bar would never fire below a 2.1-bar valve (decision 13 of `docs/en/development/plans/plan-0.2.3.md`) |
 | Flue gas warning / alarm | 85 / 100 °C on a condensing boiler; none on a non-condensing one | hotter flue gas means the boiler is not condensing; too high warns too late for plastic flue pipes; a non-condensing boiler runs far hotter (reason to confirm at K4) |
-| Frequent starts | more than 12 starts in an hour | one start per 5-min cycle, VT's default; too high hides short-cycling (reason to confirm at K4) |
+| Frequent starts | the alarm: more than 12 starts in an hour; a warning: more than 6 an hour over 3 h | the alarm: one start per 5-min cycle, VT's default; the warning (K4, the user's decision of 2026-11-17): gas boilers' TPI design value, 6 an hour (Bennett 2019: 70 % of heating starts under 10 min); too high hides short-cycling |
 | Unstable ignition | more than 10 burns under a minute in a day | a few can come from short hot-water draws; too many hides an ignition problem (reason to confirm at K4) |
 | Boiler-fault signals | none | the user maps the boiler's own fault where the integration shows it |
 | Thermostat terminals (gateway) | none — required; "I don't know" blocks control | an on/off contact could not heat the house after a crash while "off" (decision 1) |
@@ -1231,6 +1234,7 @@ reviews every provisional value at K4.
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
 | Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
 | Frost not warming: 2 h, 0.5 K | `core/controller.py` | provisional, K4 (reason to confirm) |
+| Long burn without warming: a run of 3 h, the flame's gaps up to 30 min kept; a room rising under 0.2 K is not warming; the flow within 1 K of its setpoint holds it (a cycling boiler: reached it); 90 % is high modulation, with the flame on throughout for the power limit; every room 0.3 K over for 1 h is too hot; 30-min averages | `core/long_run.py` | the gaps decided at K4 (the user, 2026-11-17, J4's F10: a boiler cycling at its minimum with the rooms short is the same case); the rest provisional (G11 E) |
 | A zone takes heat above 5 % open, saturated at 95 % — for the learning, the alarms and the history; whether a zone calls follows VT's rule instead (above 0, 2026-10-14) | `core/readings.py` | existing |
 | Heat available: the flow 2 K above the return, or 3 K above the room without a return; 1 K hysteresis | `core/heat.py` | provisional, K4 (I8, decision C1) |
 | Plausible room reading −30 to 45 °C, one rule for every room reading | `core/limits.py` | a narrower range would hide a cold room from frost protection (S-06; provisional, K4) |
@@ -1262,7 +1266,8 @@ reviews every provisional value at K4.
 | "Not worth it" only with at least 3 of 4 criteria judged (2 of 3 for a non-condensing boiler) | verdict | provisional, K4 (S-32) |
 | "Handed back in frost" below the frost limit, cleared at the release | alarms | provisional, K4 (S-57) |
 | The lowest-water-temperature suggestion: the reference + 2 K, rounded up to 0.5 °C, below the caps | monitor | provisional, K4 |
-| J4's starts criterion: over 24 h at +8 °C and at −5 °C, each with a ±3 K daily outdoor swing, at most the boiler's own regulation's starts per hour × 1.10, with each room's mean temperature at most 0.3 K below its mean under that regulation (comfort parity); the test carrying the swing is a strict xfail until K4 | acceptance | provisional, K4: the acceptable ratio is decided there (S-15; decision 8 of `docs/en/development/plans/plan-0.2.3.md`) |
+| J4's starts criterion: over 24 h at +8 °C and at −5 °C, each with a ±3 K daily outdoor swing, at most the boiler's own regulation's starts per hour × 1.10, or at most 6 starts an hour with a median burn of at least 10 min, with each room's mean temperature at most 0.3 K below its mean under that regulation (comfort parity); with VT's default 5-min TPI cycle the test carrying the swing stays a strict xfail, with a 15-min cycle it passes | acceptance | decided at K4 (the user, 2026-11-17): the literature measures cycling in absolute terms — 6 cycles an hour for gas boilers, burns under 10 min (S-15; decision 8 of `docs/en/development/plans/plan-0.2.3.md`) |
+| VT zones switched on and off (over_switch) in cycles under 10 min, named in a warning while control is configured (`zone_cycle_short`) | `coordinator.py` | decided at K4 (the user, 2026-11-17): each gap between their pulses stops the burner; gas boilers' convention is 6 cycles an hour |
 | The wait for a late report: 60 s at the start; at the stop the whole hand-back within 15 s, each write capped at 3 s, the read-back wait min(5 s, the time left) | hand-back | Home Assistant gives all shutdown jobs 20 s together (Q3.3); an ESPHome device reports within about 60 s of a start, up to about 74 s without mDNS — 90 s the alternative (Q3.5); provisional, K4 |
 | The last command saved at once on a move of 1.0 K | control state (V3) | provisional, K4 (reason to confirm) |
 | An OTGW release window of 60 s | hand-back (V4) | provisional, K4 (reason to confirm) |
@@ -1280,6 +1285,8 @@ reviews every provisional value at K4.
 | Alarm holds 5 min; an unknown input held 1 h; 50 % known flame; the limit − 2; 2 K; a 10-K slope span; 0.05 bar/K; 40 °C; 0.1 bar; a pressure sample every 10 min, taken after 10 min without a flame | `core/alarms.py` (Y1) | provisional, K4 (reason to confirm) |
 | Hot-water inference 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | provisional, K4 (reason to confirm) |
 | Building model: 8 K; 12 K; 2 K; 3 of 4; 2 of 3; outdoor readings within −30…+30 °C | monitor (Y3) | provisional, K4 (reason to confirm) |
+| A measured loss used only from 21 heating days, shown with a ±20 % range | `core/building.py` | decided at K4 (the user, 2026-11-17): published methods need about 3 weeks of heating-season data and reach about ±15 % at best (IEA EBC Annex 71; SMETER), data choices moving them up to 27 % |
+| "The rest" of the day-to-day change within 15 % of the day before shown as normal variation | `core/report.py` | K4 (the user, 2026-11-17): daily figures are mostly noise and thermal lag; the 15 % provisional — no published number, 0.4's regression gives the house's own scatter |
 | Forecast call timeout 30 s | forecasts (Y4) | provisional, K4 (reason to confirm) |
 | Starts and ignition alarms unknown when the last analysis is older than 15 min; the last-run record written every 10 min | monitor (Y2) | provisional, K4 (reason to confirm) |
 | The frost "closed zone" issue updated on a 1 K move; the control switch's restore waited for 60 s | control (X4, V3) | provisional, K4 (reason to confirm) |
@@ -1409,8 +1416,8 @@ metrics. Control may be switched on from the first day (the user's decision, 202
 the user switches it on, the boiler runs as before — under VT's central boiler, a wall thermostat
 or its own regulation — and the plugin only watches; once on, nothing moves on its own beyond
 firm bounds — the water follows the user's own curve within the lowest and highest water
-temperature, and the only learning under control, the comfort correction, is on by default in full
-control and adds at most its limit, 3 K by default, rising at most 3 K a day (principles 8 and 13;
+temperature, and the only learning under control, the comfort correction, is off by default and,
+switched on, adds at most its limit, 3 K by default, rising at most 3 K a day (principles 8 and 13;
 the tuning band comes later) — so a week's wait protects
 nothing. The verdict needs a number of days of data: default 7, at least 7, up to 60, counted in
 calendar days from the entry's creation, so a lost store does not restart them (answer K). Until
@@ -1615,6 +1622,7 @@ control is off by default — as pre-release 0.2.2b1, then as a release. Which v
 first is decided after the independent check of 0.2.2 and at K4; whether the repository carries
 `CLAUDE.md`, the plans and the reviews, and so whether it starts from a clean history, at K5. HACS installs only from public
 repositories, so the repository is public from the first pre-release. The plugin needs Home
-Assistant 2026.9 or later, the version it is tested on. Submission to the HACS default list and
+Assistant 2026.10.4 or later: the newest VT (10.6.5) needs it, and the plugin is tested on it (the
+user, 2026-11-17). Submission to the HACS default list and
 the VT plugin list later (HACS review takes months). Creating the repository and every
 publication need the author's consent.

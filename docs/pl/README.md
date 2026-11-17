@@ -33,6 +33,7 @@ samym miejscu pod `docs/pl/`.
 | [Plany wydań](../en/development/plans/) | historia | tylko po angielsku |
 | [Przeglądy kodu](../en/development/reviews/) | historia | tylko po angielsku |
 | [Raport z testów z 2026-10-11](../en/testing/reports/2026-10-11-test-report.md) | historia | tylko po angielsku |
+| [Raport z testów z 2026-10-14](../en/testing/reports/2026-10-14-test-report.md) | historia | tylko po angielsku |
 
 Dokumenty **aktualne** zmieniają się razem z kodem, w obu językach w tym samym pull requeście.
 **Historia** to zapis tego, jak powstawała wtyczka. Zostaje tylko po angielsku i nie jest

@@ -33,7 +33,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from enum import StrEnum
 from typing import Any
 
-import voluptuous as vol
+import probatio as vol  # voluptuous's successor in Home Assistant (2026.9; typed from 2026.10)
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryState,
@@ -3930,7 +3930,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # temperature keeps 25 °C; 4: the "add water" threshold replaces the low-pressure limits, and
     # alarm reactions no longer offered go; 5: the high-pressure limits have no default, and an
     # entry from before keeps those it ran with; 6: the design outdoor temperature is one value,
-    # the building's, the curve's moved there; 7: the comfort correction, now on by default, stays
+    # the building's, the curve's moved there; 7: the comfort correction, then on by default, stays
     # off in a control section that never stored it; 8: the curve's room temperature, now Auto
     # by default, stays Manual where a curve stored no mode; 9: the reference room is gone, its
     # settings with it; 10: foreign heat is gone, the zones' sources and the hold time with it;

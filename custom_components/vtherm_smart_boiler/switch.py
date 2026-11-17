@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import STATE_ON
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -146,6 +146,13 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
             last = await self.async_get_last_state()
             wish = last is not None and last.state == STATE_ON
         await self.control.async_restore_enabled(wish)
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """A rename of the switch's ID, made in place (Home Assistant 2026.11 onward): the wish
+        and control stay as they are — restoring them runs only when the switch is added, and
+        Home Assistant moves the restore data itself."""
+        super().async_entity_id_changed(old_entity_id)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         passing = TRANSIENT_BLOCKERS | CLEARED_BY_SWITCHING
