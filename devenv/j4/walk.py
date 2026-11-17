@@ -126,3 +126,39 @@ async def save_options(
     if d.get("errors") or d.get("type") != "create_entry":
         return await refused(f"save: {d.get('errors') or str(d)[:200]}", d)
     return {**d, "seen": seen}
+
+
+# VT's cycle in minutes, asked in its options' "main" form (VT 10.5.1 and 10.6.5,
+# ``config_schema.py`` ``STEP_MAIN_DATA_SCHEMA``); its central configuration's asks none.
+VT_CYCLE = "cycle_min"
+
+
+async def set_vt_cycle(rest: Rest, entry_id: str, minutes: int) -> bool:
+    """A VT thermostat's cycle set to ``minutes`` through VT's own options flow, as a user changes
+    it (K4, #150: the starts criterion's runs with VT's default 5 min and with 15 min): the
+    menu's "main" form answered with what it shows but the cycle — and a form VT shows after it
+    (``spec_main`` for a thermostat without VT's central configuration) with what it shows —
+    then "finalize". ``False``, the flow closed and nothing saved, for an entry whose "main"
+    form asks no cycle. Raises ``OptionsNotSaved`` where VT refuses an answer or does not
+    save."""
+    _status, d = await rest("POST", FLOW, {"handler": entry_id, "show_advanced_options": True})
+    path = f"{FLOW}/{d['flow_id']}"
+    if d.get("type") == "menu":
+        _status, d = await rest("POST", path, {"next_step_id": "main"})
+    if d.get("type") != "form" or d.get("step_id") != "main" or VT_CYCLE not in fields(d):
+        await rest("DELETE", path, None)
+        return False
+    _status, d = await rest("POST", path, shown(d) | {VT_CYCLE: minutes})
+    showings = 0
+    while d.get("type") == "form" and not d.get("errors") and showings < MAX_SHOWINGS:
+        showings += 1
+        _status, d = await rest("POST", path, shown(d))
+    if d.get("type") == "form":
+        await rest("DELETE", path, None)
+        raise OptionsNotSaved(f"VT refused the cycle: {d.get('errors') or d.get('step_id')}", d)
+    if d.get("type") == "menu":
+        _status, d = await rest("POST", path, {"next_step_id": "finalize"})
+    if d.get("type") != "create_entry":
+        await rest("DELETE", path, None)
+        raise OptionsNotSaved(f"VT did not save the cycle: {d.get('type')}", d)
+    return True

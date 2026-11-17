@@ -254,7 +254,9 @@ the next 24 h are compared: burner starts per hour (`binary_sensor.boiler_sim_fl
 heating switchings, and each room's mean temperature (comfort parity: at most 0.3 K below the
 boiler's own regulation's); the criterion is at most 1.10 times its starts per hour, or at most 6
 starts an hour with a median burn of at least 10 min (K4, 2026-11-17). The runs are made with VT's
-default 5-min cycle and with a 15-min one.
+default 5-min cycle and with a 15-min one; every VT thermostat of an instance gets its cycle
+through VT's own options: `HA_INSTANCE=N scripts/env.sh python devenv/j4/vt_cycle.py 15` (or `5`),
+which reads each climate's published cycle back.
 
 An instance that served the other scenarios meanwhile (`--config configuration`) goes back with
 its deploy, then its options walked to the starts base — control off and its hand-back finished

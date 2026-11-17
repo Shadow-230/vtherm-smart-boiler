@@ -973,3 +973,83 @@ async def test_a_vt_central_entry_update_reloads_every_zone_without_a_hand_back(
     assert writes == []  # no hand-back value, heating neither off nor on
     assert hass.states.get(CH_SWITCH).state == ch_before
     assert hass.states.get(FLOW_NUMBER).state == number_before
+
+
+def _j4_walk() -> Any:
+    """The J4 runner's pure form walker, by its file (its ``lib`` reads the test instances'
+    access data, so only this module is loaded)."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "devenv" / "j4" / "walk.py"
+    spec = importlib.util.spec_from_file_location("j4_walk_vt", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+async def _vt_rest(hass: HomeAssistant, hass_client: Any) -> Any:
+    """The runner's ``rest``, on Home Assistant's own HTTP API."""
+    assert await async_setup_component(hass, "config", {})
+    client = await hass_client()
+
+    async def rest(method: str, path: str, body: dict[str, Any] | None) -> tuple[int, Any]:
+        response = await client.request(method, path, json=body)
+        try:
+            return response.status, await response.json()
+        except ValueError:
+            return response.status, await response.text()
+
+    return rest
+
+
+async def test_j4_sets_a_real_vts_cycle_through_vts_own_options(
+    hass: HomeAssistant, hass_client: Any
+) -> None:
+    """J4's tool for the starts criterion's VT cycle (K4, #150; `devenv/j4/vt_cycle.py`): a real
+    VT thermostat's cycle set to 15 min through VT's own options flow over Home Assistant's REST
+    API, as a user changes it — its "main" form answered with what it shows but the cycle, then
+    saved; VT reloads the thermostat, which publishes the new cycle; nothing else changes."""
+    from custom_components.versatile_thermostat import const as vt
+
+    await room_and_boiler(hass)
+    zone = vt_thermostat(current=True)
+    await setup(hass, zone)
+    before = {**zone.data, **zone.options}
+    rest = await _vt_rest(hass, hass_client)
+    assert await _j4_walk().set_vt_cycle(rest, zone.entry_id, 15)
+    await hass.async_block_till_done()
+    after = {**zone.data, **zone.options}
+    assert after[vt.CONF_CYCLE_MIN] == 15
+    unchanged = {
+        key for key in before if key != vt.CONF_CYCLE_MIN and before[key] == after.get(key)
+    }
+    assert unchanged == set(before) - {vt.CONF_CYCLE_MIN}, set(before) - unchanged
+    state = hass.states.get(LIVING)
+    assert state is not None
+    assert state.attributes["configuration"]["cycle_min"] == 15
+
+
+async def test_j4_leaves_a_vt_entry_whose_main_form_asks_no_cycle() -> None:
+    """Negative: an entry whose "main" form asks no cycle (VT's central configuration) is left
+    — its flow closed, nothing saved, ``False``."""
+    calls: list[tuple[str, str, Any]] = []
+
+    async def rest(method: str, path: str, body: dict[str, Any] | None) -> tuple[int, Any]:
+        calls.append((method, path, body))
+        if method == "POST" and body and "handler" in body:
+            return 200, {"type": "menu", "flow_id": "f1", "menu_options": ["main", "finalize"]}
+        if method == "POST":
+            return 200, {
+                "type": "form",
+                "flow_id": "f1",
+                "step_id": "main",
+                "data_schema": [{"name": "name", "default": "Central"}],
+            }
+        return 200, {}
+
+    assert not await _j4_walk().set_vt_cycle(rest, "central", 15)
+    assert calls[-1][0] == "DELETE"
+    assert not any(body and "cycle_min" in body for _m, _p, body in calls)

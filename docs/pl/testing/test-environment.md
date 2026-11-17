@@ -253,7 +253,9 @@ porównuje się kolejne 24 h: starty palnika na godzinę (`binary_sensor.boiler_
 przełączenia grzania i średnią temperaturę każdego pokoju (równy komfort: co najwyżej 0.3 K poniżej wartości
 przy własnej regulacji kotła); kryterium to co najwyżej 1.10 razy starty na godzinę przy tej regulacji
 albo co najwyżej 6 startów na godzinę przy medianie palenia co najmniej 10 min (K4, 2026-11-17). Przebiegi
-robi się z domyślnym 5-minutowym cyklem VT i z cyklem 15-minutowym.
+robi się z domyślnym 5-minutowym cyklem VT i z cyklem 15-minutowym; każdy termostat VT instancji dostaje
+swój cykl przez opcje samego VT: `HA_INSTANCE=N scripts/env.sh python devenv/j4/vt_cycle.py 15` (albo `5`),
+które na koniec odczytuje cykl publikowany przez każdy klimat.
 
 Instancję, która w międzyczasie obsługiwała inne scenariusze (`--config configuration`), przywraca się
 jej wdrożeniem, a potem jej opcje przeprowadza się do bazy dla startów — najpierw sterowanie wyłączone
