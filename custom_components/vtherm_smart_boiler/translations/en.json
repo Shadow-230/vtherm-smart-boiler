@@ -254,7 +254,7 @@
           "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the switch shows \"not enough data\".",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
-          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
+          "starts_per_hour_limit": "More burner starts than this in one hour raise the alarm. Default 12. Below it, more than 6 an hour over 3 hours raises a warning: gas boilers are designed for about 6 cycles an hour. Too high hides short-cycling.",
           "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem.",
           "verdict_window_days": "The verdict covers this many most recent days with data. Empty (default): every day kept, up to a year, filled from the recorder at start. Never shorter than the monitoring period."
         }
@@ -850,7 +850,7 @@
           "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the switch shows \"not enough data\".",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
-          "starts_per_hour_limit": "More burner starts than this in an hour raise a warning. Default 12. Too high hides short-cycling.",
+          "starts_per_hour_limit": "More burner starts than this in one hour raise the alarm. Default 12. Below it, more than 6 an hour over 3 hours raises a warning: gas boilers are designed for about 6 cycles an hour. Too high hides short-cycling.",
           "unstable_burns_limit": "More than this many burns under a minute in a day raise a warning. Default 10. Too high hides an ignition problem.",
           "verdict_window_days": "The verdict covers this many most recent days with data. Empty (default): every day kept, up to a year, filled from the recorder at start. Never shorter than the monitoring period."
         }

@@ -857,7 +857,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Water pressure falling | falling over days, water temperature allowed for | look for a leak |
 | Flue gas too hot | above the limit you set | book a boiler service |
 | Flue gas rising above return | flue gas hotter above the return than before | book a service |
-| Frequent starts | more starts in the last hour than the limit | check the curve and limits |
+| Frequent starts | the alarm: more starts in the last hour than the limit (12); a warning: more than 6 an hour over the last 3 hours | check VT's cycle (10–15 min), the curve and the limits |
 | Unstable ignition | many burns lost soon after ignition in a day | have it checked |
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |

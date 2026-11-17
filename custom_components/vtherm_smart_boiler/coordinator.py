@@ -103,6 +103,7 @@ from .control_config import Connection, Topology, WritePath, wall_thermostat_app
 from .core.alarms import (
     CIRCUIT_NOT_MEASURED,
     HELD,
+    SUSTAINED_S,
     UNKNOWN_HOLD_S,
     UNKNOWN_INPUT,
     Alarm,
@@ -1598,6 +1599,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             limits.starts_per_hour,
             previous.get(kind),
             known_s=known_duration(flame, now - HOUR, now) if analysed is not None else 0.0,
+            sustained_known_s=(
+                known_duration(flame, now - SUSTAINED_S, now) if analysed is not None else 0.0
+            ),
         )
         kind = AlarmKind.UNSTABLE_IGNITION
         alarms[kind] = unstable_ignition(

@@ -902,7 +902,7 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Spadające ciśnienie wody | spada przez kilka dni, z uwzględnieniem temperatury wody | szukaj wycieku |
 | Za gorące spaliny | powyżej ustawionego limitu | umów serwis kotła |
 | Spaliny coraz cieplejsze od powrotu | spaliny cieplejsze od powrotu bardziej niż wcześniej | umów serwis |
-| Częste starty | więcej startów w ostatniej godzinie niż limit | sprawdź krzywą i limity |
+| Częste starty | alarm: więcej startów w ostatniej godzinie niż limit (12); ostrzeżenie: ponad 6 na godzinę przez ostatnie 3 godziny | sprawdź cykl w VT (10–15 min), krzywą i limity |
 | Niestabilny zapłon | w ciągu doby wiele cykli pracy palnika gaśnie wkrótce po zapłonie | zleć sprawdzenie |
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |

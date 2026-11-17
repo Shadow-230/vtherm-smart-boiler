@@ -1199,7 +1199,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | "Add water" threshold | none | the value comes from the boiler's manual; a wrong default stops nothing but misleads |
 | High-pressure warning / alarm | none — entered below the safety valve's rating, read on the valve | ratings differ (often 3 bar in Europe, about 2.1 bar in North America): a default of 2.8 bar would never fire below a 2.1-bar valve (decision 13 of `docs/en/development/plans/plan-0.2.3.md`) |
 | Flue gas warning / alarm | 85 / 100 °C on a condensing boiler; none on a non-condensing one | hotter flue gas means the boiler is not condensing; too high warns too late for plastic flue pipes; a non-condensing boiler runs far hotter (reason to confirm at K4) |
-| Frequent starts | more than 12 starts in an hour | one start per 5-min cycle, VT's default; too high hides short-cycling (reason to confirm at K4) |
+| Frequent starts | the alarm: more than 12 starts in an hour; a warning: more than 6 an hour over 3 h | the alarm: one start per 5-min cycle, VT's default; the warning (K4, the user's decision of 2026-11-17): gas boilers' TPI design value, 6 an hour (Bennett 2019: 70 % of heating starts under 10 min); too high hides short-cycling |
 | Unstable ignition | more than 10 burns under a minute in a day | a few can come from short hot-water draws; too many hides an ignition problem (reason to confirm at K4) |
 | Boiler-fault signals | none | the user maps the boiler's own fault where the integration shows it |
 | Thermostat terminals (gateway) | none — required; "I don't know" blocks control | an on/off contact could not heat the house after a crash while "off" (decision 1) |

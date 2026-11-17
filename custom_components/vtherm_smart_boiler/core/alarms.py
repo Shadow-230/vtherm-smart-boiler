@@ -208,7 +208,12 @@ def pressure_alarms(
     return alarms
 
 
-DEFAULT_FREQUENT_STARTS_PER_HOUR = 12
+DEFAULT_FREQUENT_STARTS_PER_HOUR = 12  # within one hour: the alarm (K4: its level ``alarm``)
+# K4 (the user's decision of 2026-11-17): more starts than gas boilers' TPI design value, 6 an
+# hour (UK room-thermostat manuals; Bennett 2019: 70 % of heating starts under 10 min), over the
+# last 3 h, is a warning — cycling the literature counts, below the alarm's hour.
+SUSTAINED_STARTS_PER_HOUR = 6
+SUSTAINED_S = 3 * HOUR
 DEFAULT_UNSTABLE_BURN_S = 60.0
 DEFAULT_UNSTABLE_BURNS_PER_DAY = 10
 # P-82: a count alarm clears only at its limit minus this (provisional, K4).
@@ -243,20 +248,41 @@ def _flame_unknown(known_s: float | None, window_s: float) -> bool:
     return known_s is not None and known_s < KNOWN_SHARE * window_s
 
 
+def _seen_starts(burns: Sequence[ClassifiedBurn], now: float, window_s: float) -> int:
+    return sum(1 for b in burns if b.burn.start_seen and now - window_s <= b.burn.start < now)
+
+
 def frequent_starts(
     burns: Iterable[ClassifiedBurn],
     now: float,
     limit: int = DEFAULT_FREQUENT_STARTS_PER_HOUR,
     previous: Alarm | None = None,
     known_s: float | None = None,
+    sustained_known_s: float | None = None,
 ) -> Alarm:
-    """Seen starts in the last hour above ``limit``; ``known_s``: the seconds of that hour the
-    flame was known — under half, it cannot be judged."""
+    """Seen starts in the last hour above ``limit``: the alarm, showing the count against the
+    limit; else more than ``SUSTAINED_STARTS_PER_HOUR`` an hour over the last ``SUSTAINED_S``: a
+    warning, showing the hourly mean against it (K4). Each clears ``COUNT_CLEAR_MARGIN`` starts
+    below its bar (P-82). ``known_s`` / ``sustained_known_s``: the seconds of the hour / of the
+    3 h the flame was known — under half of the hour, nothing is judged; under half of the 3 h,
+    only the hour is."""
     kind = AlarmKind.FREQUENT_STARTS
     if _flame_unknown(known_s, HOUR):
         return settle(Alarm(kind, None, limit=float(limit), reason=UNKNOWN_INPUT), previous, now)
-    starts = sum(1 for b in burns if b.burn.start_seen and now - HOUR <= b.burn.start < now)
-    return _count_alarm(kind, starts, limit, previous, now)
+    seen = list(burns)
+    hour = _seen_starts(seen, now, HOUR)
+    was = previous is not None and previous.active is True
+    was_alarm = was and previous is not None and previous.level is Level.ALARM
+    if hour > limit or (was_alarm and hour > max(0, limit - COUNT_CLEAR_MARGIN)):
+        return settle(Alarm(kind, True, Level.ALARM, float(hour), float(limit)), previous, now)
+    if not _flame_unknown(sustained_known_s, SUSTAINED_S):
+        sustained = _seen_starts(seen, now, SUSTAINED_S)
+        bar = round(SUSTAINED_STARTS_PER_HOUR * SUSTAINED_S / HOUR)
+        if sustained > bar or (was and sustained > max(0, bar - COUNT_CLEAR_MARGIN)):
+            mean = sustained * HOUR / SUSTAINED_S
+            per_hour = float(SUSTAINED_STARTS_PER_HOUR)
+            return settle(Alarm(kind, True, Level.WARNING, mean, per_hour), previous, now)
+    return settle(Alarm(kind, False, None, float(hour), float(limit)), previous, now)
 
 
 def unstable_ignition(
