@@ -127,7 +127,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+import probatio as vol  # voluptuous's successor in Home Assistant (2026.9; typed from 2026.10)
 from homeassistant.core import (
     CALLBACK_TYPE,
     CoreState,

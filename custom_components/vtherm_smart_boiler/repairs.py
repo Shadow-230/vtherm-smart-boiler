@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import voluptuous as vol
-from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
+# Home Assistant validates with probatio, voluptuous's successor, and types its flows with it
+# (2026.10; the developer blog of 2026-09-30): imported by its own name, as core does.
+import probatio as vol
+from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow, RepairsFlowResult
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import issue_registry as ir
 
 from .const import CONTROL_STORE_MARKER, CONTROL_STORE_VERSION, DOMAIN, UNREADABLE_ISSUE
@@ -25,10 +26,12 @@ class ReturnedByHandFlow(RepairsFlow):
     def __init__(self, entry_id: str) -> None:
         self._entry_id = entry_id
 
-    async def async_step_init(self, user_input: dict[str, str] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
         return await self.async_step_confirm()
 
-    async def async_step_confirm(self, user_input: dict[str, str] | None = None) -> FlowResult:
+    async def async_step_confirm(
+        self, user_input: dict[str, str] | None = None
+    ) -> RepairsFlowResult:
         if user_input is not None:
             if entry_busy(self.hass, self._entry_id):
                 # PB-56: the stores written now would be overwritten by the unload's or the
