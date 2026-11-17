@@ -16,6 +16,8 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     NO_FLOW_READING,
     NO_ZONE_DATA,
     PRESSURE_HIGH_HYSTERESIS_BAR,
+    SUSTAINED_S,
+    SUSTAINED_STARTS_PER_HOUR,
     UNKNOWN_HOLD_S,
     UNKNOWN_INPUT,
     Alarm,
@@ -209,6 +211,68 @@ def test_frequent_starts_in_the_last_hour() -> None:
     assert alarm.value == 15
     assert alarm.known_at == HOUR
     assert not frequent_starts(burns[:5], now=HOUR).active
+
+
+def spread_starts(count: int, hours: float = 3.0) -> list[ClassifiedBurn]:
+    """``count`` complete heating burns spread evenly over the ``hours`` before ``SUSTAINED_END``,
+    each a minute long."""
+    step = hours * 60.0 / count
+    return [
+        ClassifiedBurn(Burn(start, start + MIN, True, True), BurnKind.CH, 1.0)
+        for i in range(count)
+        for start in (SUSTAINED_END - hours * HOUR + i * step * MIN + 1.0,)
+    ]
+
+
+SUSTAINED_END = 4 * HOUR
+
+
+def test_starts_above_six_an_hour_for_three_hours_are_a_warning() -> None:
+    """K4 (the user's decision of 2026-11-17): more than 6 starts an hour over the last 3 h —
+    gas boilers' TPI design value (UK room-thermostat manuals; Bennett 2019) — is a warning,
+    showing the hourly mean against 6, while no single hour passes the user's limit; 18 in
+    3 h is not."""
+    alarm = frequent_starts(spread_starts(20), SUSTAINED_END, 12)
+    assert alarm.active is True
+    assert alarm.level is Level.WARNING
+    assert alarm.value == pytest.approx(20 / 3)
+    assert alarm.limit == SUSTAINED_STARTS_PER_HOUR == 6
+    assert SUSTAINED_S == 3 * HOUR
+    calm = frequent_starts(spread_starts(18), SUSTAINED_END, 12)
+    assert (calm.active, calm.level, calm.value, calm.limit) == (False, None, 6.0, 12.0)
+
+
+def test_the_hour_above_the_limit_is_the_alarm_over_a_sustained_warning() -> None:
+    """The user's limit within one hour stays the alarm (K4: the level ``alarm``), whatever the
+    3 hours show: 13 more starts in the last hour on top of a sustained 20."""
+    burst = [
+        ClassifiedBurn(Burn(start, start + 30.0, True, True), BurnKind.CH, 1.0)
+        for i in range(13)
+        for start in (SUSTAINED_END - (i + 1) * 4 * MIN,)
+    ]
+    alarm = frequent_starts([*spread_starts(20), *burst], SUSTAINED_END, 12)
+    assert (alarm.active, alarm.level, alarm.limit) == (True, Level.ALARM, 12.0)
+    assert alarm.value is not None
+    assert alarm.value > 12
+
+
+def test_the_sustained_warning_clears_two_starts_below_its_bar() -> None:
+    """P-82, as the count alarms: on above 18 in 3 h, held at 17, gone at 16."""
+    shown = []
+    alarm: Alarm | None = None
+    for count in (19, 17, 16):
+        alarm = frequent_starts(spread_starts(count), SUSTAINED_END, 12, alarm)
+        shown.append(alarm.active)
+    assert shown == [True, True, False]
+
+
+def test_the_sustained_warning_needs_the_flame_known_for_half_of_its_three_hours() -> None:
+    """Y1: with the flame known for under half of the 3 h, the warning is not judged — the hour
+    still is."""
+    blind = frequent_starts(spread_starts(20), SUSTAINED_END, 12, sustained_known_s=1.4 * HOUR)
+    assert (blind.active, blind.level) == (False, None)
+    seen = frequent_starts(spread_starts(20), SUSTAINED_END, 12, sustained_known_s=1.5 * HOUR)
+    assert seen.level is Level.WARNING
 
 
 def test_frequent_starts_clears_two_below_its_limit() -> None:
@@ -965,7 +1029,7 @@ def test_every_count_alarm_state_carries_its_kind_count_and_limit() -> None:
     held through it with the moment it was last known."""
     starts_kind = AlarmKind.FREQUENT_STARTS
     on = frequent_starts(starts(13), HOUR, 12)
-    assert on == Alarm(starts_kind, True, Level.WARNING, 13.0, 12.0, known_at=HOUR)
+    assert on == Alarm(starts_kind, True, Level.ALARM, 13.0, 12.0, known_at=HOUR)  # K4
     off = frequent_starts(starts(5), HOUR, 12)
     assert off == Alarm(starts_kind, False, None, 5.0, 12.0, known_at=HOUR)
     unknown = frequent_starts([], HOUR, 12, known_s=0.0)
