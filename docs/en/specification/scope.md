@@ -154,7 +154,7 @@ a heat pump controller (excluded), or anything that sends data outside.
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
 | Diagnostics | hidden | model parameters, confidence, sample rejection reasons |
-| Learning | the comfort correction, so far the only learning under control, is on by default in full control and shown at both levels (the user, 2026-10-10, reversing K4.1 — an upgraded entry keeps what it ran with; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
+| Learning | the comfort correction, so far the only learning under control, is off by default and shown at both levels (K4, the user's decision of 2026-11-17, reversing that of 2026-10-10 — an entry keeps what it stored; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
 
 Switching advanced → simple offers "restore advanced settings to defaults" (unchecked by
 default). It never touches learned values; those have their own "restore profile defaults"
@@ -775,9 +775,10 @@ How control decides (principle 12):
   asks for more heat, which the valves throttle — and, without a weather reading, where the
   check saw it read warmer (decision 12). Without either, the last effective outdoor temperature
   holds for 3 h, then the user's fixed fallback, or the design flow, replaces it (decision 9).
-- **Comfort correction** (principle 13; on by default in full control — the user's decision of
-  2026-10-10, reversing that of 2026-10-03; an upgraded entry keeps what it ran with, "off" where it
-  never stored an answer; not with on/off control; `docs/en/development/plans/plan-0.2-g11.md` B): while a
+- **Comfort correction** (principle 13; off by default — K4, the user's decision of 2026-11-17,
+  reversing that of 2026-10-10 after J4's F8 and the literature, `docs/en/development/plan.md`; an
+  entry keeps what it stored, "off" where it never stored an answer; not with on/off control;
+  `docs/en/development/plans/plan-0.2-g11.md` B): while a
   zone's valve is fully open and its room is still short of its setpoint, the water rises above the
   curve — at most the user's limit (default 3 K, up to 10 K; the only bound above the curve
   since the "correction range" went, I8 B6), never more than 3 K a day, by 1 K per 30 min and only while heat flows: the flame when it is known,
@@ -1152,7 +1153,7 @@ in K):
   stops in steady weather).
 - Frost protection: its limit and release temperature, and whether it watches every zone
   (default) or one zone.
-- Comfort correction on (default in full control) or off; its limit (default 3 K, up to 10 K);
+- Comfort correction on or off (default off, K4); its limit (default 3 K, up to 10 K);
   the rise at most 3 K a day, fixed (principle 13).
 - The curve's room temperature: Auto (default) or Manual, and the zones Auto leaves out.
 - Learning pauses on (default) or off.
@@ -1191,7 +1192,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Frost protection | every zone, heated only where its emitter can take heat | heat for a zone VT keeps closed cannot arrive; a repair issue says what to do instead (decision 4) |
 | Demand threshold | one zone calling | any zone calling heats, as with VT's central boiler |
 | What the count counts | VT's devices, as VT's central boiler (decided by the user 2026-10-14; an entry from before keeps zones) | the same as a zone at the default count of 1; a user moving over from VT keeps VT's number |
-| Comfort correction | on in full control (decided by the user 2026-10-10, reversing 2026-10-03; an upgraded entry keeps what it ran with); up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day; the starts comparison with it on (about 2026-10-12) may revisit the default | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: 1.75 to 5 times the starts in the simulation, up to 6.3 with a daily outdoor swing; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
+| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: 1.4 to 6.3 times the starts in the simulation with a daily outdoor swing, for under 0.1 K of comfort; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Learning pauses | on | keep swings the plugin causes out of SmartPI's model |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
 | Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information); on a circuit fed straight from the boiler, hot water with priority not counted | the boiler may overshoot the maximum; the user sees it (decision 10); the hot water does not reach that circuit (2026-10-12) |
@@ -1411,8 +1412,8 @@ metrics. Control may be switched on from the first day (the user's decision, 202
 the user switches it on, the boiler runs as before — under VT's central boiler, a wall thermostat
 or its own regulation — and the plugin only watches; once on, nothing moves on its own beyond
 firm bounds — the water follows the user's own curve within the lowest and highest water
-temperature, and the only learning under control, the comfort correction, is on by default in full
-control and adds at most its limit, 3 K by default, rising at most 3 K a day (principles 8 and 13;
+temperature, and the only learning under control, the comfort correction, is off by default and,
+switched on, adds at most its limit, 3 K by default, rising at most 3 K a day (principles 8 and 13;
 the tuning band comes later) — so a week's wait protects
 nothing. The verdict needs a number of days of data: default 7, at least 7, up to 60, counted in
 calendar days from the entry's creation, so a lost store does not restart them (answer K). Until

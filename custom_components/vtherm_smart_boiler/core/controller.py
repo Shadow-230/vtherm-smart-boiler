@@ -251,8 +251,8 @@ class ControlConfig:
     # sensor last changed, which a steady room does not do for hours; a zone is unknown by its
     # state (unavailable, not started), and a room sensor gone quiet is VT's own safety mode's.
     zone_max_age_s: float | None = None
-    # On by default in full control (the user, 2026-10-10, G11 B): the option's default lives in
-    # the options; the core's own, off, serves tests and the bare config.
+    # Off by default (K4, the user's decision of 2026-11-17, reversing G11 B); the option's
+    # default lives in the options, the core's own serves tests and the bare config.
     comfort_correction: bool = False
     correction_max_k: float = CORRECTION_MAX_K  # its limit, the user's (G11 B)
     # The curve's room temperature (G11 D): Auto follows the warmest setpoint among the zones

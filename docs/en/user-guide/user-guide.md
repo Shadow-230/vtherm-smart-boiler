@@ -277,8 +277,8 @@ If the outdoor temperature is lost, the plugin uses the weather entity, then kee
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
 outdoor sensor never means zero heat.
 
-**Comfort correction** — **on by default with full control** (an entry set up before this
-version keeps what it ran with). When a room stays short of its setpoint with its valve fully
+**Comfort correction** — **off by default** (an entry keeps what it stored). Switched on: when a
+room stays short of its setpoint with its valve fully
 open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K, set
 in **Heating curve** beside the correction; never more than 3 K a day. For a room whose SmartPI
 is in its learning phase, "short" means below its setpoint + 0.5 K, where SmartPI stops heating
@@ -286,9 +286,9 @@ it. It does not rise while the boiler starts more often than before. One room sh
 any other — the water never goes higher for one room's sake. After three hours at its limit with
 a room still short, the correction holds there, and a repair issue names the room and the
 possible causes: the curve too low, the room's radiator too small, or the room losing heat. What
-it costs: more gas, and possibly more burner starts — with VT's TPI zones it can sit at its limit
-and raise the starts several times over. A "Reset comfort correction" button sets it back to
-zero.
+it costs: more gas, and more burner starts — with VT's TPI zones it often sits at its limit and
+raises the starts several times over for almost no warmth. That is why it is off: where a room
+stays cold, raise the curve first. A "Reset comfort correction" button sets it back to zero.
 
 ### 4.5 Frost protection
 
@@ -1124,7 +1124,7 @@ risks. The main ones — described, not advised:
 | Lowest water temperature | 20 °C (provisional) | too low: in mild weather the boiler stops by itself again and again, and a non-condensing boiler condenses in its flue (its manual gives the value) |
 | A circuit's highest water temperature | 70 °C where empty | caps every setpoint on circuits fed straight from the boiler; the boiler may overshoot it by its own hysteresis |
 | Its too-hot alarm | the maximum + 5 K, for 10 min | information only; too high lets a real overshoot pass unreported |
-| Comfort correction | on, up to 3 K (at most 10 K), rising at most 3 K a day | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts |
+| Comfort correction | off; switched on, up to 3 K (at most 10 K), rising at most 3 K a day | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts |
 | Activation delay | 0 s | waits before heating starts, for slow valves; meanwhile the rooms get no heat |
 | Write type of a picked target | unknown — not written | expiring or held must be declared; a wrong declaration wears the boiler's memory or lets a value lapse |
 | Hand-back value | none — entered with its effect | the same number means "own control" on one device and "no heat" on another |

@@ -1224,7 +1224,7 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
 async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     hass: HomeAssistant, control: dict[str, Any] | None, expected: dict[str, Any] | None
 ) -> None:
-    """G11 B (minor version 7): the comfort correction is on by default in full control now. A
+    """G11 B (minor version 7): the comfort correction was on by default in full control then. A
     control section that never stored an answer ran with it off — the default since K4.1 — and
     keeps that, stored; a stored answer stays; an entry without control gets nothing written,
     and the new default once control is set up."""
