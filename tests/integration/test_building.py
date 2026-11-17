@@ -318,7 +318,9 @@ async def test_an_entered_design_load_always_wins(
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
-    coordinator.daily = house_days(NOW.timestamp() - 25 * DAY, 0.35, 16.0, coordinator.settings_key)
+    # 21 heating days: a measured loss counts from 3 weeks of heating on (K4, 2026-11-17).
+    days = house_days(NOW.timestamp() - 25 * DAY, 0.35, 16.0, coordinator.settings_key, count=21)
+    coordinator.daily = days
     await analyse_now(coordinator)
     assert measured_value(entry, ParameterKey.LOSS_COEFFICIENT) == pytest.approx(0.35)
     state = hass.states.get(entity_id(hass, entry, "sensor", "loss_coefficient"))
@@ -327,6 +329,7 @@ async def test_an_entered_design_load_always_wins(
     assert state.attributes["source"] == "entered"
     assert (state.attributes["entered"], state.attributes["measured"]) == (0.2, 0.35)
     assert state.attributes["mismatch"] is True
+    assert state.attributes["measured_range"] == [0.28, 0.42]  # ±20 % (K4)
     for source in (SOURCE_EN, SOURCE_PL):
         for flow in ("config", "options"):
             texts = source[flow]["step"]["building"]

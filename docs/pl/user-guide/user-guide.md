@@ -170,6 +170,20 @@ Werdykt jest radą. Decyzja należy do ciebie. Zanim się pojawi, a poza sezonem
 wtedy, gdy dni miną bez wystarczających danych, przełącznik sterowania mówi, że sterowanie ruszy
 bez werdyktu.
 
+Co znaczą werdykt i wartości budynku:
+
+- **Krótkie palenia** najczęściej biorą się z kotła za dużego dla domu: jego najmniejsza moc jest
+  większa, niż dom potrzebuje, więc kocioł startuje i gaśnie. Werdykt mówi to, gdy obciążenie
+  budynku często jest poniżej mocy minimalnej kotła.
+- **Straty ciepła budynku**, mierzone ze zużycia kotła i pogody, liczą się dopiero po około
+  **3 tygodniach grzania** (21 dni grzewczych); wcześniej są pokazywane, ale nieużywane. Są
+  pokazywane z prawdopodobnym zakresem około ±20 % — tyle osiągają opublikowane metody. Zmierzone
+  straty mniejsze od projektowych są częste: oznaczają przewymiarowany kocioł, a nie błąd pomiaru.
+- **Zużycie wobec wczoraj** porównuje dwa dni; zużycie z dnia na dzień zmienia się samo sporo
+  (budynek jeszcze ciepły albo zimny po wczoraj, słońce, ludzie). Gdy część, której żadna
+  przyczyna nie wyjaśnia, mieści się w 15 % zużycia z dnia poprzedniego, jest oznaczona jako
+  normalna zmienność.
+
 ### 4.2 Sterowanie włączasz sam
 
 Sterowanie jest **domyślnie wyłączone**. To przełącznik **Sterowanie (eksperymentalne)**.
@@ -1112,11 +1126,11 @@ domyślnie wyłączone.
 | Udział kondensacji | udział czasu palenia c.o. z powrotem poniżej 55 °C |
 | Stopniodni (7 dni) *ukryta* | stopniodni z tygodnia, liczone od progu grzania |
 | Gaz na stopniodzień | gaz na stopniodzień, mierzony wskazanym licznikiem gazu, inaczej szacowany |
-| Zużycie wobec wczoraj *ukryta* | zmiana zużycia wobec dnia poprzedniego, rozbita na pogodę, ciepłą wodę, ustawienia i resztę |
+| Zużycie wobec wczoraj *ukryta* | zmiana zużycia wobec dnia poprzedniego, rozbita na pogodę, ciepłą wodę, ustawienia i resztę — reszta oznaczona, gdy to normalna zmienność z dnia na dzień |
 | Werdykt sterowania | warto włączyć, nie warto włączać albo jeszcze za mało danych — z uzasadnieniem |
 | Problemy z sygnałami | ile wskazanych sygnałów ma problem; stan każdego w atrybutach |
 | Funkcje | ile funkcji jest teraz nieaktywnych i dlaczego |
-| Współczynnik strat budynku, Próg grzania budynku *ukryte* | używane wartości budynku — twoje, zmierzone albo domyślne — ze źródłem |
+| Współczynnik strat budynku, Próg grzania budynku *ukryte* | używane wartości budynku — twoje, zmierzone albo domyślne — ze źródłem; zmierzone straty z prawdopodobnym zakresem |
 | Proponowana najniższa temperatura wody | tylko propozycja, nigdy nie stosowana |
 | Migawki prognozy *wyłączona* | ile zapisanych prognoz jest przechowywanych, na przyszłe wydania |
 | Strefa krytyczna, obieg … | w każdym obiegu strefa, której własny regulator pracuje teraz najciężej |

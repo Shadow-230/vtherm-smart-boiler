@@ -11,7 +11,9 @@ from custom_components.vtherm_smart_boiler.core.building import (
     ANNUAL_ENERGY_CONFIDENCE,
     CLAMPED_CONFIDENCE,
     MAX_THRESHOLD_ERROR_K,
+    MEASURED_RANGE_SHARE,
     MIN_FIT_DAYS,
+    MIN_KNOWN_DAYS,
     MIN_QUALITY,
     SINGLE_PARAMETER_PENALTY,
     DayPoint,
@@ -414,7 +416,7 @@ def test_exactly_the_minimum_number_of_days_gives_a_fit() -> None:
     assert fit.days == MIN_FIT_DAYS
 
 
-@pytest.mark.parametrize("count", [15, 60])
+@pytest.mark.parametrize("count", [21, 60])
 def test_the_loss_fitted_alone_weighs_coverage_quality_and_the_penalty(count: int) -> None:
     """Fitted alone, the loss's confidence is coverage (full from 30 days on, never more) times
     quality times the single-parameter penalty; the fit keeps its days, quality and time."""
@@ -475,16 +477,42 @@ def test_a_loss_fitted_alone_of_exactly_the_minimum_quality_is_kept() -> None:
 
 
 def test_both_confidences_weigh_coverage_and_r_squared_the_threshold_its_spread_to_full() -> None:
-    """P-31: with 15 noisy days over an 18 K spread, both the loss and the threshold weigh half
-    coverage times R² — the spread beyond ``FULL_SPREAD_K`` adds nothing."""
-    days = _noisy(0.2, 16.0, _band(-5.0, 13.0, 15), 0.05, seed=3)
+    """P-31: with 24 noisy days over an 18 K spread, both the loss and the threshold weigh
+    coverage (24 of 30 days) times R² — the spread beyond ``FULL_SPREAD_K`` adds nothing."""
+    days = _noisy(0.2, 16.0, _band(-5.0, 13.0, 24), 0.05, seed=3)
     fit = fit_daily_load(days, DEFAULT_15)
     assert fit is not None
     assert fit.quality < 1.0
     assert fit.loss is not None
     assert fit.threshold is not None
-    assert fit.loss.confidence == pytest.approx(0.5 * fit.quality)
-    assert fit.threshold.confidence == pytest.approx(0.5 * fit.quality)
+    assert fit.loss.confidence == pytest.approx(0.8 * fit.quality)
+    assert fit.threshold.confidence == pytest.approx(0.8 * fit.quality)
+
+
+@pytest.mark.parametrize(("count", "used"), [(20, False), (21, True)])
+def test_a_fit_from_under_three_weeks_of_heating_is_shown_never_used(
+    count: int, used: bool
+) -> None:
+    """K4 (the user's decision of 2026-11-17): published methods need about 3 weeks of
+    heating-season data — a fit from fewer than ``MIN_KNOWN_DAYS`` heating days is shown at
+    ``CLAMPED_CONFIDENCE``, never used, both values and either kind of fit; from 21 its
+    confidence is weighed as before (the loss alone, with its penalty, a little later). A
+    measured loss is shown with a ±20 % range."""
+    assert (MIN_KNOWN_DAYS, MEASURED_RANGE_SHARE) == (21, 0.2)
+    wide = fit_daily_load(_days(0.2, 16.0, _band(-5.0, 13.0, count)), DEFAULT_15)
+    alone = fit_daily_load(_days(0.2, 15.0, _band(8.0, 11.5, count)), ENTERED_15)
+    assert wide is not None
+    assert wide.loss is not None
+    assert wide.threshold is not None
+    assert trusted(wide.loss) is used
+    assert trusted(wide.threshold) is used
+    assert alone is not None
+    assert alone.loss is not None
+    clamped = alone.loss.confidence == CLAMPED_CONFIDENCE
+    assert clamped is not used
+    assert alone.loss.confidence == pytest.approx(
+        CLAMPED_CONFIDENCE if not used else count / 30 * alone.quality * SINGLE_PARAMETER_PENALTY
+    )
 
 
 @pytest.mark.parametrize(

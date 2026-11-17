@@ -11,6 +11,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 MIN_DEGREE_DAYS = 0.5
+# K4 (the user's decision of 2026-11-17): a day's use moves with no cause the report can name —
+# the building's mass carrying yesterday's weather, people, sun — so day-to-day figures are mostly
+# noise (degreedays.net; the literature review of 2026-11-16). "The rest" within this share of the
+# previous day's use is shown as normal variation (provisional, K4: no published number; 0.4's
+# regression gives the house's own scatter).
+NOISE_SHARE = 0.15
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +68,14 @@ class ChangeReport:
 
     def amount(self, cause: Cause) -> float:
         return sum(c.amount for c in self.contributions if c.cause is cause)
+
+    @property
+    def other_within_normal(self) -> bool | None:
+        """Whether "the rest" is within normal day-to-day variation (``NOISE_SHARE`` of the
+        previous total); ``None`` without a previous use to compare with."""
+        if self.previous_total <= 0:
+            return None
+        return abs(self.amount(Cause.OTHER)) <= NOISE_SHARE * self.previous_total
 
 
 def _use_per_degree_day(previous: PeriodSummary, current: PeriodSummary) -> float | None:

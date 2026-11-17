@@ -1394,12 +1394,12 @@
               "heating_burns": "Policzone palenia c.o.",
               "frequent_starts": "Częste starty",
               "few_starts": "Mało startów",
-              "short_burns": "Głównie krótkie palenia",
+              "short_burns": "Głównie krótkie palenia — najczęściej kocioł za duży dla domu",
               "long_burns": "Palenia dość długie",
               "low_condensing": "Mało kondensacji",
               "good_condensing": "Dobra kondensacja",
               "condensing_unknown": "Kondensacja nieznana: brak temperatury powrotu albo za mało jej danych",
-              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła",
+              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła: kocioł jest przewymiarowany — to główna przyczyna krótkich paleń",
               "load_rarely_below_min_power": "Obciążenie budynku rzadko poniżej mocy minimalnej kotła",
               "load_unknown": "Obciążenie budynku nieznane",
               "criteria_judged": "Za mało ocenionych kryteriów do uznania sterowania za niewarte włączenia",
@@ -1437,7 +1437,12 @@
         }
       },
       "change_report": {
-        "name": "Zużycie wobec wczoraj"
+        "name": "Zużycie wobec wczoraj",
+        "state_attributes": {
+          "other_within_normal": {
+            "name": "Reszta w normalnej zmienności z dnia na dzień"
+          }
+        }
       },
       "loss_coefficient": {
         "name": "Współczynnik strat budynku",
@@ -1466,6 +1471,9 @@
           },
           "mismatch": {
             "name": "Wpisana i zmierzona się różnią"
+          },
+          "measured_range": {
+            "name": "Zmierzona, prawdopodobny zakres (±20 %)"
           }
         }
       },

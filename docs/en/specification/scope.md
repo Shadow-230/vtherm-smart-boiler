@@ -1283,6 +1283,8 @@ reviews every provisional value at K4.
 | Alarm holds 5 min; an unknown input held 1 h; 50 % known flame; the limit − 2; 2 K; a 10-K slope span; 0.05 bar/K; 40 °C; 0.1 bar; a pressure sample every 10 min, taken after 10 min without a flame | `core/alarms.py` (Y1) | provisional, K4 (reason to confirm) |
 | Hot-water inference 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | provisional, K4 (reason to confirm) |
 | Building model: 8 K; 12 K; 2 K; 3 of 4; 2 of 3; outdoor readings within −30…+30 °C | monitor (Y3) | provisional, K4 (reason to confirm) |
+| A measured loss used only from 21 heating days, shown with a ±20 % range | `core/building.py` | decided at K4 (the user, 2026-11-17): published methods need about 3 weeks of heating-season data and reach about ±15 % at best (IEA EBC Annex 71; SMETER), data choices moving them up to 27 % |
+| "The rest" of the day-to-day change within 15 % of the day before shown as normal variation | `core/report.py` | K4 (the user, 2026-11-17): daily figures are mostly noise and thermal lag; the 15 % provisional — no published number, 0.4's regression gives the house's own scatter |
 | Forecast call timeout 30 s | forecasts (Y4) | provisional, K4 (reason to confirm) |
 | Starts and ignition alarms unknown when the last analysis is older than 15 min; the last-run record written every 10 min | monitor (Y2) | provisional, K4 (reason to confirm) |
 | The frost "closed zone" issue updated on a 1 K move; the control switch's restore waited for 60 s | control (X4, V3) | provisional, K4 (reason to confirm) |
