@@ -218,6 +218,12 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła; ochrona przed mrozem dalej
   czuwa.
 - Wtyczka nie ma przełącznika lato/zima. Jeśli strefy VT są wyłączone, kocioł nie grzeje.
+- **Cykl w VT dla pokoi, które wołają kocioł: 10 do 15 minut.** VT włącza i wyłącza grzanie
+  pokoju w cyklach (domyślnie co 5 minut). Wtyczka idzie za pokojami od razu, więc każda przerwa
+  między ich impulsami zatrzymuje palnik. Dla kotłów gazowych przyjmuje się najwyżej 6 cykli na
+  godzinę; w symulacji cykl 10–15 minut zmniejszył liczbę startów kotła o jedną trzecią do połowy
+  w łagodną pogodę, przy równie ciepłych pokojach. Gdy sterowanie jest ustawione, wtyczka
+  wymienia pokoje, które VT przełącza w cyklach krótszych niż 10 minut („Krótkie cykle w VT”).
 - **Strefy z zaworem, który nie zamyka się do końca** (w VT **Maksymalny stopień zamknięcia**
   poniżej 100): używaj VT 10.5 lub nowszego. Od 10.5 zawór trzymany na tym minimum nie liczy się
   jako grzejący, a strefa prosi o ciepło dopiero, gdy VT otworzy go bardziej. VT 10.2–10.4 liczył
@@ -981,6 +987,7 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Auto-TPI nie może się uczyć w części stref | odznacz w VT „używany przez kocioł centralny” |
+| Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
 | Wtyczka nie może wstrzymać nauki w części stref | informacja |
 | Wtyczka nie mogła ponownie włączyć nauki w części stref | włącz naukę SmartPI |
 | Termostaty VT nie mogą pokazać wartości strefy z wtyczki | zaktualizuj VT; nic innego od tego nie zależy |
