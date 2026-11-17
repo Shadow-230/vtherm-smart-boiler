@@ -4,9 +4,12 @@
 
 Status: current.
 
-A Home Assistant 2026.9.3 in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile
-Thermostat 10.5.1 (10.4.0 until 2026-10-13) and SmartPI 0.4.0 as vendored, and the test-only
-boiler simulator (`sim/custom_components/boiler_sim`). The acceptance scenarios run here
+Home Assistant in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile Thermostat,
+SmartPI and the test-only boiler simulator (`sim/custom_components/boiler_sim`). The test
+instances keep themselves on the current releases of Home Assistant, VT and SmartPI (the user,
+2026-11-17; Home Assistant 2026.9.3, VT 10.5.1 and SmartPI 0.4.0 as vendored until then), so each
+test report records the versions its run found. The plugin needs Home Assistant 2026.10.4 or
+later. The acceptance scenarios run here
 (`docs/en/development/plans/plan-0.2.md`, J4) before anything reaches a real boiler.
 
 Claude connects to this instance only after you say to start, only at the address in
@@ -76,7 +79,7 @@ user, Claude — can change it (the user's decision, 2026-10-08).
   (it pulls the image), for each address and port:
 
   ```
-  docker run --rm --entrypoint python3 ghcr.io/home-assistant/home-assistant:2026.9.3 -c "
+  docker run --rm --entrypoint python3 ghcr.io/home-assistant/home-assistant:stable -c "
   import errno, socket, sys
   host = sys.argv[1]
   try:
