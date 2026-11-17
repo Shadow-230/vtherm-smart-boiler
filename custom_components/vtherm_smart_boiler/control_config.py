@@ -102,10 +102,11 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "decision_interval_min": 5.0,
         "off_setpoint": DEFAULT_OFF_SETPOINT,
         "learning_pauses": True,
-        # On in full control (the user, 2026-10-10, G11 B, reversing K4.1): a room its emitter
-        # cannot heat on the curve gets warmer water, within the limit below. An entry from
-        # before keeps what it ran with — the migration writes "off" where it stored no answer.
-        "comfort_correction": True,
+        # Off (K4, the user's decision of 2026-11-17, reversing G11 B): with VT's TPI zones it
+        # sat at its limit for little comfort and multiplied the starts (J4's F8), and the
+        # literature's room influence is a proportional shift from a reference room without a
+        # radiator valve. An entry keeps what it stored.
+        "comfort_correction": False,
         # The correction's limit, the user's (G11 B): the only bound above the curve since the
         # "correction range" went (I8, decision B6).
         "comfort_correction_max_k": 3.0,

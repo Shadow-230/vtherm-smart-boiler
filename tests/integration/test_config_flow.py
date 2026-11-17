@@ -689,9 +689,9 @@ async def test_control_through_the_gateway_at_the_simple_level(
         "curve": {"design_flow": 52},
         "hard_min": 25,  # I8 (F2): the highest water temperature is the circuit's
         "activation_delay_s": 0,  # VT's delay, confirmed by saving (decision 5)
-        # G11 B: on by default, shown in the simple level's curve step and stored — with its
-        # limit, in one place at both levels (I8, decision H2).
-        "comfort_correction": True,
+        # Off by default (K4, 2026-11-17), shown in the simple level's curve step and stored —
+        # with its limit, in one place at both levels (I8, decision H2).
+        "comfort_correction": False,
         "comfort_correction_max_k": 3.0,
         "alarm_reactions": {"write_ignored": "hand_back"},
     }
