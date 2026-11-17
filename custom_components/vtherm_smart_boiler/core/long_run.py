@@ -2,16 +2,21 @@
 
 The case behind it: about 12 h of heat demand with the flame on throughout, the flow holding its
 setpoint within about a kelvin, a low flue temperature, and rooms never reaching their setpoints
-— the boiler had reserve; the water was simply too cool and nobody raised it. The rule looks once
-the flame has been on without a break for ``LONG_RUN_S`` (the flame known throughout: unknown
-ends the run), at the rooms the caller counts — heating, known, not warmed by foreign heat — and,
-first that fits:
+— the boiler had reserve; the water was simply too cool and nobody raised it. A run is the flame
+burning, its gaps of up to ``GAP_S`` included (K4, the user's decision of 2026-11-17, J4's F10:
+a boiler cycling at its minimum while the rooms stay short is the same case — Salford's test house
+cycled and lost comfort at a low flow; Bennett: cycling from the minimum output against the
+demand); the flame unknown ends it. The rule looks once a run has lasted ``LONG_RUN_S``, at the
+rooms the caller counts — heating, known, not warmed by foreign heat — and, first that fits:
 
-1. rooms short and not warming, the flow below its setpoint by more than ``HOLDING_K`` at a
-   modulation of at least ``HIGH_MODULATION`` → the boiler at its power limit (a warning);
-2. rooms short and not warming — one counts like any other (addition 2) — the flow holding its
-   setpoint within ``HOLDING_K`` → the water too cool for them (information; the comfort
-   correction raises it, and at its limit names the room and the causes);
+1. rooms short and not warming, the flame on without a break for ``LONG_RUN_S``, the flow below
+   its setpoint by more than ``HOLDING_K`` at a modulation of at least ``HIGH_MODULATION`` → the
+   boiler at its power limit (a warning);
+2. rooms short and not warming — one counts like any other (addition 2) — and the water at its
+   setpoint: with the flame on throughout the last ``AVERAGE_S``, the flow holding it within
+   ``HOLDING_K``; with the burner stopping in that time, the flow having reached it within
+   ``HOLDING_K`` → the water too cool for them (information: the curve too low; the comfort
+   correction, where it is on, raises it, and at its limit names the room and the causes);
 3. every room over its setpoint by at least ``TOO_HOT_K`` for ``TOO_HOT_S`` → the water too hot,
    lower the curve (information);
 4. otherwise nothing — rooms at their setpoints is the ideal state: few starts, condensing.
@@ -31,7 +36,8 @@ from enum import StrEnum
 from statistics import fmean
 
 HOUR = 3600.0
-LONG_RUN_S = 3 * HOUR  # the flame on this long without a break
+LONG_RUN_S = 3 * HOUR  # a run this long is judged
+GAP_S = 30 * 60.0  # the flame off longer ends a run: a boiler cycling keeps it (K4, F10)
 NOT_RISING_K = 0.2  # a room rising less over the run's last 3 h is not warming: above sensor noise
 HOLDING_K = 1.0  # the flow this close to its setpoint holds it: the boiler's own regulation band
 HIGH_MODULATION = 90.0  # percent: the burner near its top
@@ -60,20 +66,24 @@ class RoomLook:
 
 @dataclass(frozen=True, slots=True)
 class LongRun:
-    """A run of the flame: since when, each room's temperatures every ``SAMPLE_S`` over its last
-    ``LONG_RUN_S``, the water's last ``AVERAGE_S`` — (time, flow, setpoint, modulation) — since
-    when every room has been too warm, and the class found now with the rooms it names."""
+    """A run of burning: since when, since when the flame has been on without a break (``None``
+    while it is off), when it was last seen on, each room's temperatures every ``SAMPLE_S`` over
+    its last ``LONG_RUN_S``, the water's last ``AVERAGE_S`` — (time, flow, setpoint, modulation,
+    flame) — since when every room has been too warm, and the class found now with the rooms it
+    names."""
 
     burning_since: float | None = None
+    flame_since: float | None = None
+    flame_seen: float | None = None
     rooms: tuple[tuple[str, tuple[tuple[float, float], ...]], ...] = ()
-    water: tuple[tuple[float, float | None, float | None, float | None], ...] = ()
+    water: tuple[tuple[float, float | None, float | None, float | None, bool], ...] = ()
     hot_since: float | None = None
     found: LongRunClass | None = None
     rooms_named: tuple[str, ...] = ()
 
     @property
     def burning_s(self) -> float | None:
-        """How long the flame has burnt in this run, at its last look."""
+        """How long this run has lasted, its gaps included, at its last look."""
         if self.burning_since is None or not self.water:
             return None
         return self.water[-1][0] - self.burning_since
@@ -88,16 +98,25 @@ def follow_long_run(
     modulation: float | None,
     rooms: Sequence[RoomLook],
 ) -> LongRun:
-    """One look. The flame off or unknown ends the run; a moment before the last look (the wall
-    clock set back) starts it again."""
-    if flame is not True:
+    """One look. The flame unknown ends the run, and the flame off for more than ``GAP_S``
+    since it was last seen on; a moment before the last look (the wall clock set back) starts it
+    again."""
+    if flame is None:
         return LongRun()
     if state.water and now < state.water[-1][0]:
         state = LongRun()
+    if not flame and (state.flame_seen is None or now - state.flame_seen > GAP_S):
+        return LongRun()
     since = now if state.burning_since is None else state.burning_since
+    seen: float | None
+    if flame:
+        flame_since = now if state.flame_since is None else state.flame_since
+        seen = now
+    else:
+        flame_since, seen = None, state.flame_seen
     water = (
         *(w for w in state.water if now - w[0] <= AVERAGE_S),
-        (now, flow, setpoint, modulation),
+        (now, flow, setpoint, modulation, flame),
     )
     kept = dict(state.rooms)
     samples = {
@@ -108,8 +127,11 @@ def follow_long_run(
     found: LongRunClass | None = None
     named: tuple[str, ...] = ()
     if now - since >= LONG_RUN_S:
-        found, named = _classify(now, water, hot_since, rooms, samples)
-    return LongRun(since, tuple(sorted(samples.items())), water, hot_since, found, named)
+        unbroken = flame_since is not None and now - flame_since >= LONG_RUN_S
+        found, named = _classify(now, water, hot_since, rooms, samples, unbroken)
+    return LongRun(
+        since, flame_since, seen, tuple(sorted(samples.items())), water, hot_since, found, named
+    )
 
 
 def _sampled(
@@ -139,11 +161,13 @@ def _not_rising(samples: tuple[tuple[float, float], ...], now: float, room: Room
 
 def _classify(
     now: float,
-    water: Sequence[tuple[float, float | None, float | None, float | None]],
+    water: Sequence[tuple[float, float | None, float | None, float | None, bool]],
     hot_since: float | None,
     rooms: Sequence[RoomLook],
     samples: Mapping[str, tuple[tuple[float, float], ...]],
+    unbroken: bool,
 ) -> tuple[LongRunClass | None, tuple[str, ...]]:
+    """``unbroken``: the flame on without a break for ``LONG_RUN_S``."""
     short = tuple(
         sorted(
             room.zone_id
@@ -151,15 +175,21 @@ def _classify(
             if room.short and _not_rising(samples.get(room.zone_id, ()), now, room)
         )
     )
-    gaps = [sp - flow for _t, flow, sp, _m in water if flow is not None and sp is not None]
-    levels = [m for _t, _f, _s, m in water if m is not None]
-    gap = fmean(gaps) if gaps else None
-    level = fmean(levels) if levels else None
-    if short and gap is not None:
-        if gap > HOLDING_K and level is not None and level >= HIGH_MODULATION:
-            return LongRunClass.POWER_LIMIT, short
-        if abs(gap) <= HOLDING_K:
-            return LongRunClass.WATER_TOO_COOL, short
+    burning = [w for w in water if w[4]]
+    gaps = [sp - flow for _t, flow, sp, _m, _on in burning if flow is not None and sp is not None]
+    levels = [m for _t, _f, _s, m, _on in burning if m is not None]
+    if short and gaps:
+        if len(burning) < len(water):  # the burner stopped within the window: it cycles
+            if min(gaps) <= HOLDING_K:  # having reached its setpoint
+                return LongRunClass.WATER_TOO_COOL, short
+        else:
+            gap = fmean(gaps)
+            level = fmean(levels) if levels else None
+            high = level is not None and level >= HIGH_MODULATION
+            if unbroken and gap > HOLDING_K and high:
+                return LongRunClass.POWER_LIMIT, short
+            if abs(gap) <= HOLDING_K:
+                return LongRunClass.WATER_TOO_COOL, short
     if hot_since is not None and now - hot_since >= TOO_HOT_S:
         return LongRunClass.WATER_TOO_HOT, tuple(sorted(room.zone_id for room in rooms))
     return None, ()
