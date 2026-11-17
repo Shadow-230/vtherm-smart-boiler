@@ -1365,6 +1365,8 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Utrzymanie alarmów 5 min; nieznane wejście trzymane 1 h; 50 % znanego płomienia; limit − 2; 2 K; rozpiętość nachylenia 10 K; 0.05 bar/K; 40 °C; 0.1 bar; próbka ciśnienia co 10 min, pobierana po 10 min bez płomienia | `core/alarms.py` (Y1) | tymczasowe, K4 (powód do potwierdzenia) |
 | Wnioskowanie o c.w.u. 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | tymczasowe, K4 (powód do potwierdzenia) |
 | Model budynku: 8 K; 12 K; 2 K; 3 z 4; 2 z 3; odczyty temperatury zewnętrznej w granicach −30…+30 °C | monitor (Y3) | tymczasowe, K4 (powód do potwierdzenia) |
+| Zmierzone straty używane dopiero od 21 dni grzewczych, pokazywane z zakresem ±20 % | `core/building.py` | postanowione w K4 (użytkownik, 2026-11-17): opublikowane metody potrzebują około 3 tygodni danych z sezonu grzewczego i osiągają w najlepszym razie około ±15 % (IEA EBC Annex 71; SMETER), a sam wybór danych przesuwa je do 27 % |
+| „Reszta” zmiany z dnia na dzień w granicach 15 % dnia poprzedniego pokazywana jako normalna zmienność | `core/report.py` | K4 (użytkownik, 2026-11-17): dzienne liczby to głównie szum i bezwładność cieplna; 15 % tymczasowe — brak opublikowanej liczby, regresja z 0.4 da rozrzut własny domu |
 | Limit czasu wywołania prognozy 30 s | prognozy (Y4) | tymczasowe, K4 (powód do potwierdzenia) |
 | Alarmy startów i zapłonu nieznane, gdy ostatnia analiza jest starsza niż 15 min; zapis ostatniego przebiegu co 10 min | monitor (Y2) | tymczasowe, K4 (powód do potwierdzenia) |
 | Zgłoszenie „zamknięta strefa” z ochrony przed mrozem aktualizowane przy zmianie o 1 K; czekanie 60 s na odtworzenie stanu włącznika sterowania | sterowanie (X4, V3) | tymczasowe, K4 (powód do potwierdzenia) |

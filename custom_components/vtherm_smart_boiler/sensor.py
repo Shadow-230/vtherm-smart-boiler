@@ -31,6 +31,7 @@ from homeassistant.util import dt as dt_util
 
 from .control_config import WritePath
 from .coordinator import MonitorData, SmartBoilerConfigEntry, SmartBoilerCoordinator
+from .core.building import measured_range
 from .core.controller import ControlMode
 from .core.lowest_water import SuggestionState
 from .core.monitor import MonitorSummary
@@ -196,6 +197,7 @@ def _report_attributes(data: MonitorData) -> dict[str, Any]:
         "current": round(report.current_total, 2),
         "contributions": {c.cause.value: round(c.amount, 2) for c in report.contributions},
         "not_judged": [cause.value for cause in report.unexplained],
+        "other_within_normal": report.other_within_normal,
     }
 
 
@@ -224,7 +226,7 @@ def _parameter_attributes(
             return {}
         entered = parameter.estimate(Source.ENTERED)
         measured = parameter.estimate(Source.MEASURED)
-        return {
+        result: dict[str, Any] = {
             "source": effective.source.value,
             "confidence": round(effective.confidence, 2),
             "entered": None if entered is None else round(entered.value, digits),
@@ -232,6 +234,12 @@ def _parameter_attributes(
             "measured_confidence": None if measured is None else round(measured.confidence, 2),
             "mismatch": parameter.mismatch() is not None,
         }
+        if key is ParameterKey.LOSS_COEFFICIENT:  # K4: a measured loss with its likely range
+            low, high = (None, None) if measured is None else measured_range(measured.value)
+            result["measured_range"] = (
+                None if low is None or high is None else [round(low, digits), round(high, digits)]
+            )
+        return result
 
     return attributes
 

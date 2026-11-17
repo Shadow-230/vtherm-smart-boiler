@@ -1394,12 +1394,12 @@
               "heating_burns": "Heating burns counted",
               "frequent_starts": "Frequent starts",
               "few_starts": "Few starts",
-              "short_burns": "Mostly short burns",
+              "short_burns": "Mostly short burns — most often a boiler too big for the house",
               "long_burns": "Burns long enough",
               "low_condensing": "Little condensing",
               "good_condensing": "Good condensing",
               "condensing_unknown": "Condensing not known: no return temperature or too little of it",
-              "load_often_below_min_power": "The building's load often below the boiler's minimum power",
+              "load_often_below_min_power": "The building's load often below the boiler's minimum power: the boiler is oversized — the main cause of short burns",
               "load_rarely_below_min_power": "The building's load rarely below the boiler's minimum power",
               "load_unknown": "The building's load not known",
               "criteria_judged": "Too few criteria could be judged to say control is not worth enabling",
@@ -1437,7 +1437,12 @@
         }
       },
       "change_report": {
-        "name": "Use against yesterday"
+        "name": "Use against yesterday",
+        "state_attributes": {
+          "other_within_normal": {
+            "name": "The rest within normal day-to-day variation"
+          }
+        }
       },
       "loss_coefficient": {
         "name": "Building loss coefficient",
@@ -1466,6 +1471,9 @@
           },
           "mismatch": {
             "name": "Entered and measured disagree"
+          },
+          "measured_range": {
+            "name": "Measured, likely range (±20 %)"
           }
         }
       },

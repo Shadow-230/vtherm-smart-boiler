@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.report import (
+    NOISE_SHARE,
     Cause,
     PeriodSummary,
     explain_change,
@@ -111,3 +112,22 @@ def test_settings_need_a_rate_even_with_both_mean_setpoints() -> None:
     report = explain_change(previous, current)
     assert report.amount(Cause.SETTINGS) == 0.0
     assert set(report.unexplained) == {Cause.WEATHER, Cause.SETTINGS}
+
+
+@pytest.mark.parametrize(
+    ("rest", "within"),
+    [(10.0, True), (18.0, True), (18.5, False), (-18.5, False)],
+    ids=["small_rest", "exactly_the_band", "above", "below"],
+)
+def test_the_rest_within_fifteen_percent_is_normal_variation(rest: float, within: bool) -> None:
+    """K4 (the user's decision of 2026-11-17): day-to-day figures are mostly noise, so "the rest"
+    within ``NOISE_SHARE`` (15 %) of the previous day's use, either way, is normal variation;
+    without a previous use there is nothing to compare with."""
+    assert NOISE_SHARE == 0.15
+    previous = PeriodSummary(100.0, 20.0, 50.0, 7.0, mean_target=20.0)  # 120 in all: 18 is 15 %
+    current = PeriodSummary(100.0 + rest, 20.0, 50.0, 7.0, mean_target=20.0)
+    report = explain_change(previous, current)
+    assert report.amount(Cause.OTHER) == pytest.approx(rest)
+    assert report.other_within_normal is within
+    empty = explain_change(PeriodSummary(0.0, 0.0, 0.0, 0.0), PeriodSummary(5.0, 0.0, 0.0, 0.0))
+    assert empty.other_within_normal is None
