@@ -4,9 +4,11 @@
 
 Status: aktualny.
 
-Home Assistant 2026.9.3 w Dockerze, w dedykowanym kontenerze LXC na Proxmox, z wtyczką, Versatile
-Thermostat 10.5.1 (do 2026-10-13: 10.4.0) i SmartPI 0.4.0 w wersji dołączonej do projektu (vendored) oraz
-symulatorem kotła tylko do testów (`sim/custom_components/boiler_sim`). Scenariusze akceptacyjne działają tu
+Home Assistant w Dockerze, w dedykowanym kontenerze LXC na Proxmox, z wtyczką, Versatile Thermostat,
+SmartPI i symulatorem kotła tylko do testów (`sim/custom_components/boiler_sim`). Instancje testowe same
+utrzymują aktualne wydania Home Assistanta, VT i SmartPI (użytkownik, 2026-11-17; do tego czasu Home
+Assistant 2026.9.3, VT 10.5.1 i SmartPI 0.4.0 w wersji dołączonej do projektu), więc każdy raport z testów
+zapisuje wersje, które zastał jego przebieg. Wtyczka wymaga Home Assistanta 2026.10.4 lub nowszego. Scenariusze akceptacyjne działają tu
 (`docs/en/development/plans/plan-0.2.md`, J4), zanim cokolwiek trafi do prawdziwego kotła.
 
 Claude łączy się z tą instancją dopiero po tym, jak powiesz, że zaczynamy, tylko pod adresem z
@@ -76,7 +78,7 @@ ani Claude — nie może jej zmienić (decyzja użytkownika z 2026-10-08).
   działa Home Assistant (polecenie pobiera obraz), dla każdego adresu i portu:
 
   ```
-  docker run --rm --entrypoint python3 ghcr.io/home-assistant/home-assistant:2026.9.3 -c "
+  docker run --rm --entrypoint python3 ghcr.io/home-assistant/home-assistant:stable -c "
   import errno, socket, sys
   host = sys.argv[1]
   try:
