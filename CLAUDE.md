@@ -11,7 +11,10 @@ opens with "Start here"), then in [`plan-0.2.3.md`][plan-0.2.3] (corrections aft
 then in [`plan-0.2.md`][plan-0.2], whose status line says where the build stands — its steps I6,
 G11, I7, I8 and I9 are planned step by step in [`plan-0.2-i6.md`][plan-0.2-i6],
 [`plan-0.2-g11.md`][plan-0.2-g11], [`plan-0.2-i7.md`][plan-0.2-i7], [`plan-0.2-i8.md`][plan-0.2-i8]
-and [`plan-0.2-i9.md`][plan-0.2-i9]; phases run in order. A 🔒 step whose plan says it holds nothing
+and [`plan-0.2-i9.md`][plan-0.2-i9]; step I10, the Boiler page in the sidebar and its cards (the
+user's decisions of 2026-11-18, before the first release), is planned in
+[`plan-0.2-i10.md`][plan-0.2-i10] and listed in the development plan, since `plan-0.2.md` is
+history; phases run in order. A 🔒 step whose plan says it holds nothing
 up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
 go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decision 16; provisionally
 0.2.3b1).
@@ -24,6 +27,7 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2-i7]: docs/en/development/plans/plan-0.2-i7.md
 [plan-0.2-i8]: docs/en/development/plans/plan-0.2-i8.md
 [plan-0.2-i9]: docs/en/development/plans/plan-0.2-i9.md
+[plan-0.2-i10]: docs/en/development/plans/plan-0.2-i10.md
 [plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
 [plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
 [plan-0.2.2-details]: docs/en/development/plans/plan-0.2.2-details.md
@@ -75,7 +79,10 @@ Each topic lives only in its file; do not copy it here.
   consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/en/development/plans/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
   and SmartPI 0.4.0 sources in `vendor/` (A5; VT 10.5.1 there since 2026-10-13, put in by the
-  user). Sources and documents of typical DIY boiler
+  user). Consented 2026-11-18 for the Boiler page (`plan-0.2-i10.md`): Node.js (LTS) from
+  nodejs.org into `.tools/node/`, checked against its published SHA-256, and the npm packages
+  `lit`, `typescript`, `vite`, `vitest` with what they depend on into `frontend/node_modules/`;
+  any other package needs the user's consent first. Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
