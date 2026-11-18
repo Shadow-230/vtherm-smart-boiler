@@ -130,3 +130,49 @@ async def test_kept_in_its_own_store_and_removed_with_the_entry(
     assert await rig.hass.config_entries.async_remove(entry.entry_id)
     await rig.hass.async_block_till_done()
     assert key not in rig.storage
+
+
+async def test_a_store_that_cannot_be_read_starts_an_empty_journal(
+    rig: Rig, hass_ws_client: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from homeassistant.helpers.storage import Store
+
+    from custom_components.vtherm_smart_boiler.journal import Journal
+
+    async def broken(_store: Store[Any]) -> None:
+        raise ValueError("not JSON")
+
+    monkeypatch.setattr(Store, "async_load", broken)
+    kept = Journal(rig.hass, "x")
+    await kept.async_load()
+    assert kept.entries == ()
+    assert "The journal could not be read" in caplog.text
+
+
+async def test_a_failure_to_follow_is_logged_once_and_changes_nothing(
+    rig: Rig, hass_ws_client: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from custom_components.vtherm_smart_boiler import journal as module
+
+    real = module.follow
+    monkeypatch.setattr(module, "follow", lambda *_args: 1 / 0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert caplog.text.count("The journal could not follow a change") == 1
+    assert rig.state("sensor", "control_state").state == "heating"  # control went on as ever
+    monkeypatch.setattr(module, "follow", real)
+    await rig.switch(False)
+    client = await connect(rig.hass, hass_ws_client)
+    # Followed again: the baseline is set by the first look that works.
+    assert kinds(await journal(client))[0] == "started"
+
+
+def test_a_look_without_the_monitors_data_or_control_sees_nothing() -> None:
+    from types import SimpleNamespace
+
+    from custom_components.vtherm_smart_boiler.core.journal import Observed
+    from custom_components.vtherm_smart_boiler.journal import observed
+
+    look = observed(SimpleNamespace(data=None, control=None))  # type: ignore[arg-type]
+    assert look == Observed(False, None, None, None, (), {})
