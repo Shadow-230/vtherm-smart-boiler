@@ -1,7 +1,10 @@
-"""The Boiler page in Home Assistant's sidebar (``docs/en/development/plans/plan-0.2-i10.md``).
+"""The Boiler page in Home Assistant's sidebar, and its parts as cards
+(``docs/en/development/plans/plan-0.2-i10.md``).
 
 The plugin serves its built page from ``frontend/`` and puts it in the sidebar for every user;
-the switch "Boiler page in the sidebar" takes it away and puts it back. The sidebar's title is a
+the switch "Boiler page in the sidebar" takes it away and puts it back. While the entry runs, the
+same module is loaded on every page of Home Assistant, so its cards are in the card picker
+(I10.8); it goes when the entry unloads. The sidebar's title is a
 plain string, so it is read here from the page's own translations, in Home Assistant's language.
 Without Home Assistant's frontend running — a minimal setup, the tests — nothing is registered,
 and nothing else depends on it: the page only shows what the plugin already exposes.
@@ -61,14 +64,9 @@ def module_version() -> str:
         return "missing"
 
 
-async def async_show_panel(hass: HomeAssistant, entry_id: str) -> bool:
-    """Put the page in the sidebar, for every user; ``False`` where the frontend is not running.
-    Serving the files is registered once per run of Home Assistant — it cannot be undone."""
-    if not frontend_running(hass):
-        _LOGGER.debug("Home Assistant's frontend is not running: no Boiler page")
-        return False
-    from homeassistant.components import frontend, panel_custom
-
+async def _async_serve(hass: HomeAssistant) -> str:
+    """Serve the built files, once per run of Home Assistant — it cannot be undone — and return
+    the module's address, which changes with its content."""
     # Defined there; Home Assistant 2026.10 does not re-export it from the package yet.
     from homeassistant.components.http.server import StaticPathConfig
 
@@ -78,8 +76,19 @@ async def async_show_panel(hass: HomeAssistant, entry_id: str) -> bool:
             [StaticPathConfig(STATIC_URL, str(FRONTEND_DIR), cache_headers=True)]
         )
         data["served"] = True
-    title = await hass.async_add_executor_job(sidebar_title, hass.config.language)
     version = await hass.async_add_executor_job(module_version)
+    return f"{STATIC_URL}/{PANEL_MODULE}?v={version}"
+
+
+async def async_show_panel(hass: HomeAssistant, entry_id: str) -> bool:
+    """Put the page in the sidebar, for every user; ``False`` where the frontend is not running."""
+    if not frontend_running(hass):
+        _LOGGER.debug("Home Assistant's frontend is not running: no Boiler page")
+        return False
+    from homeassistant.components import frontend, panel_custom
+
+    module_url = await _async_serve(hass)
+    title = await hass.async_add_executor_job(sidebar_title, hass.config.language)
     frontend.async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
     await panel_custom.async_register_panel(
         hass,
@@ -87,7 +96,7 @@ async def async_show_panel(hass: HomeAssistant, entry_id: str) -> bool:
         webcomponent_name=PANEL_ELEMENT,
         sidebar_title=title,
         sidebar_icon=PANEL_ICON,
-        module_url=f"{STATIC_URL}/{PANEL_MODULE}?v={version}",
+        module_url=module_url,
         require_admin=False,  # everyone sees it; changes in it are an administrator's
         config={"entry_id": entry_id},
     )
@@ -102,3 +111,34 @@ def async_hide_panel(hass: HomeAssistant) -> None:
     from homeassistant.components import frontend
 
     frontend.async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
+
+
+async def async_add_cards(hass: HomeAssistant) -> bool:
+    """Load the module on every page of Home Assistant, so the cards are in the card picker
+    (I10.8); ``False`` where the frontend is not running. Its address follows its content: an
+    older one, from before an update, is taken away first."""
+    if not frontend_running(hass):
+        return False
+    from homeassistant.components import frontend
+
+    url = await _async_serve(hass)
+    data: dict[str, Any] = hass.data.setdefault(_DATA, {})
+    old = data.get("cards")
+    if old == url:
+        return True
+    if old is not None:
+        frontend.remove_extra_js_url(hass, old)
+    frontend.add_extra_js_url(hass, url)
+    data["cards"] = url
+    return True
+
+
+@callback
+def async_remove_cards(hass: HomeAssistant) -> None:
+    """The entry unloads: the cards' module is no longer loaded on new pages."""
+    url = hass.data.get(_DATA, {}).pop("cards", None)
+    if url is None or not frontend_running(hass):
+        return
+    from homeassistant.components import frontend
+
+    frontend.remove_extra_js_url(hass, url)

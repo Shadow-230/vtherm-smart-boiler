@@ -134,6 +134,7 @@
   "timeline": {
     "title": "The last 24 h",
     "hint": "Scroll or play the day back: the tiles, the schematic, the rooms and the curve show that moment.",
+    "hint_alone": "Scroll or play the day back: the chart, the burns and the legend show that moment.",
     "play": "Play the day",
     "pause": "Stop",
     "now": "Now",
@@ -329,5 +330,15 @@
     "hour_not_kept": "{date}: its hours were not kept",
     "mean": "Mean",
     "error": "The analyses could not be read: {message}"
+  },
+  "cards": {
+    "status": "Boiler: status",
+    "status_detail": "Smart Boiler's status with its reasons, the Control switch and the tiles.",
+    "schematic": "Boiler: schematic",
+    "schematic_detail": "The heating installation drawn from Smart Boiler's settings, with each circuit's rooms and whether they take heat.",
+    "curve": "Boiler: heating curve",
+    "curve_detail": "The heating curve with where Smart Boiler is now and its last 7 days; an administrator can preview and save a change.",
+    "timeline": "Boiler: last 24 h",
+    "timeline_detail": "The last 24 hours from the recorder — the water, flow, return and burns — with a scrubber and play."
   }
 }

@@ -35,6 +35,7 @@ export class SmartBoilerTimeline extends LitElement {
     to: { type: Number },
     at: { attribute: false },
     status: { attribute: false },
+    alone: { attribute: false },
     playing: { state: true },
     speed: { state: true },
   };
@@ -47,6 +48,8 @@ export class SmartBoilerTimeline extends LitElement {
   declare at: number | null;
   /** "loading", "ready", or an error's text. */
   declare status: string;
+  /** Shown on its own, as a card: the moment picked shows here only. */
+  declare alone: boolean;
   declare playing: boolean;
   declare speed: number;
   private timer: number | undefined;
@@ -58,6 +61,7 @@ export class SmartBoilerTimeline extends LitElement {
     this.to = 0;
     this.at = null;
     this.status = "loading";
+    this.alone = false;
     this.playing = false;
     this.speed = 1;
   }
@@ -126,7 +130,7 @@ export class SmartBoilerTimeline extends LitElement {
       <div class="head">
         <div>
           <h3>${this.t("timeline.title")}</h3>
-          <div class="muted small">${this.t("timeline.hint")}</div>
+          <div class="muted small">${this.t(this.alone ? "timeline.hint_alone" : "timeline.hint")}</div>
         </div>
         <div class="controls">
           <span class="time">${this.at == null ? "" : clock(this.at, lang)}</span>

@@ -27,6 +27,8 @@ const VIEWS = [
   { name: "phone-en-burner-dark", width: 390, height: 844, query: "?lang=en&dark=1#burner", scale: 1 },
   { name: "desktop-pl-use", width: 1280, height: 720, query: "#use", scale: 1 },
   { name: "phone-pl-use-dark", width: 390, height: 844, query: "?dark=1#use", scale: 1 },
+  { name: "desktop-pl-cards", width: 1280, height: 900, query: "?cards=1", scale: 1, cards: true },
+  { name: "phone-en-cards-dark", width: 390, height: 844, query: "?lang=en&dark=1&cards=1", scale: 1, cards: true },
   { name: "desktop-pl-analyses", width: 1280, height: 900, query: "#analyses", scale: 1 },
   { name: "phone-en-analyses-dark", width: 390, height: 844, query: "?lang=en&dark=1#analyses", scale: 1 },
   { name: "desktop-en-analyses-user", width: 1280, height: 900, query: "?lang=en&user=1#analyses", scale: 1 },
@@ -80,7 +82,9 @@ for (const view of VIEWS) {
               ? "vtherm-smart-boiler-journal .tracks"
               : view.query.includes("#analyses")
                 ? "vtherm-smart-boiler-analyses .calendar"
-                : "vtherm-smart-boiler-overview .hero",
+                : view.cards
+                  ? "vtherm-smart-boiler-day-card vtherm-smart-boiler-timeline"
+                  : "vtherm-smart-boiler-overview .hero",
     )
     .waitFor();
   await page.waitForTimeout(300);
@@ -92,6 +96,10 @@ for (const view of VIEWS) {
     await page.locator("vtherm-smart-boiler-overview dialog button.primary").click();
     const call = await page.evaluate(() => window.lastCall);
     console.log(`${view.name}: confirmed, the switch was called with`, JSON.stringify(call));
+  }
+  if (view.cards) {
+    const listed = await page.evaluate(() => window.customCards.map((card) => `${card.type}: ${card.name}`));
+    console.log(`${view.name}: in the card picker`, JSON.stringify(listed));
   }
   if (view.week) {
     await page.locator("vtherm-smart-boiler-journal button.window").nth(2).click();

@@ -5,6 +5,7 @@ import { LitElement, css, html, nothing } from "lit";
 import { localize } from "./localize";
 import "./analyses-view";
 import "./burner-view";
+import "./cards";
 import "./overview";
 import "./journal-view";
 import { DOMAIN, type Localize } from "./status";

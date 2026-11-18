@@ -88,7 +88,12 @@ docs/                                     dokumentacja, osobny katalog na każdy
   w języku użytkownika (`hass.loadBackendTranslation("entity", …)`), więc każde jest zapisane
   raz. `panel.py`
   udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
-  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Gdy frontend Home Assistanta nie
+  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Póki wpis działa, `panel.py` każe
+  też Home Assistantowi wczytywać ten sam moduł na każdej stronie (`frontend.add_extra_js_url`,
+  zabierane przy wyładowaniu, starszy adres zastępowany po aktualizacji), więc części przeglądu
+  są w wyborze kart jako cztery karty — stan i kafelki, schemat i pokoje, krzywa, ostatnie 24 h —
+  każda to własna część strony (`frontend/src/cards.ts`), bez ustawień: każda sama znajduje
+  działający wpis przez `vtherm_smart_boiler/installation`. Gdy frontend Home Assistanta nie
   działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
   `.tools/node/`. `websocket_api.py` to to, co strona czyta: pięć poleceń WebSocket tylko do
   odczytu, dla każdego zalogowanego użytkownika, każde odpowiada z działającego wpisu (inaczej
