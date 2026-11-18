@@ -67,4 +67,6 @@ export interface Installation {
   weather: string | null;
   entities: Record<string, string>;
   curve: CurveSettings | null;
+  /** The monitor's short-burn length, minutes. */
+  short_burn_min: number;
 }

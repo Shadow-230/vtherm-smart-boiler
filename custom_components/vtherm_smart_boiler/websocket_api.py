@@ -50,7 +50,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
     """Register the page's commands, once per run of Home Assistant."""
     if hass.data.get(_DATA):
         return
-    for handler in (ws_installation, ws_curve, ws_days, ws_curve_save):
+    for handler in (ws_installation, ws_curve, ws_days, ws_burns, ws_curve_save):
         async_register_command(hass, handler)
     hass.data[_DATA] = True
 
@@ -111,6 +111,8 @@ def installation_view(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) 
         "weather": config.weather,
         "entities": dict(sorted(entities.items())),
         "curve": _curve_settings(coordinator),
+        # The monitor's own short-burn length, so the page marks short burns as the monitor does.
+        "short_burn_min": config.monitor.monitor.short_burn_s / 60.0,
     }
 
 
@@ -225,6 +227,38 @@ def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
     connection.send_result(
         msg["id"],
         {"days": [day.to_dict() for day in days if since is None or day.start >= since]},
+    )
+
+
+@websocket_command({vol.Required("type"): f"{DOMAIN}/burns"})
+@callback
+def ws_burns(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
+    """The burns of the monitor's last analysis, as it classified them — heating, hot water or
+    unknown — with when that analysis ran: the page draws the monitor's own burns and judges
+    none itself. None before the first analysis."""
+    coordinator = _coordinator(hass)
+    if coordinator is None:
+        _not_running(connection, msg)
+        return
+    analysed = coordinator.analysis
+    if analysed is None:
+        connection.send_result(msg["id"], {"at": None, "burns": []})
+        return
+    connection.send_result(
+        msg["id"],
+        {
+            "at": analysed.at,
+            "burns": [
+                {
+                    "start": classified.burn.start,
+                    "end": classified.burn.end,
+                    "kind": classified.kind.value,
+                    "start_seen": classified.burn.start_seen,
+                    "end_seen": classified.burn.end_seen,
+                }
+                for classified in analysed.day.burns
+            ],
+        },
     )
 
 

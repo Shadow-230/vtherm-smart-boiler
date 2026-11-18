@@ -21,6 +21,8 @@ const FILES = {
 const VIEWS = [
   { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, dialog: true, preview: true },
   { name: "desktop-pl-day", width: 1280, height: 720, query: "", scale: 1, replay: 120 },
+  { name: "desktop-pl-burner", width: 1280, height: 720, query: "#burner", scale: 1 },
+  { name: "phone-en-burner-dark", width: 390, height: 844, query: "?lang=en&dark=1#burner", scale: 1 },
   { name: "phone-pl-dark", width: 390, height: 844, query: "?dark=1", scale: 1 },
   { name: "desktop-en-user", width: 1280, height: 600, query: "?lang=en&user=1", scale: 1 },
   { name: "desktop-pl-hot-water", width: 1280, height: 600, query: "?dhw=1", scale: 1 },
@@ -49,7 +51,10 @@ for (const view of VIEWS) {
     return route.fulfill({ path: file, contentType });
   });
   await page.goto(`http://preview.local/index.html${view.query}`);
-  await page.locator("vtherm-smart-boiler-overview .hero").waitFor();
+  await page
+    .locator(view.query.includes("#burner") ? "vtherm-smart-boiler-burner .tiles" : "vtherm-smart-boiler-overview .hero")
+    .waitFor();
+  await page.waitForTimeout(300);
   await page.screenshot({ path: join(out, `${view.name}.png`), fullPage: true });
   if (view.dialog) {
     await page.locator("vtherm-smart-boiler-overview button.switch").click();

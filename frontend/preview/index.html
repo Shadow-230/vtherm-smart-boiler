@@ -59,6 +59,11 @@
     entity("sensor.modulation", "34"),
     entity("binary_sensor.dhw", query.get("dhw") ? "on" : "off"),
     entity("sensor.calling", "2", { calling_zones: [zones[0], zones[1]] }),
+    entity("sensor.starts_per_hour", "1.6", { unit_of_measurement: "/h" }),
+    entity("sensor.median_burn", "17", { unit_of_measurement: "min" }),
+    entity("sensor.short_burn_share", "9", { unit_of_measurement: "%" }),
+    entity("sensor.burner_hours", "8.7", { unit_of_measurement: "h" }),
+    entity("sensor.condensing_share", "96", { unit_of_measurement: "%" }),
     ...zones.map((z, i) => entity(z, "heat", {
       friendly_name: names[i], current_temperature: rooms[i][0], temperature: rooms[i][1], on_percent: rooms[i][2],
     })),
@@ -88,7 +93,11 @@
       control: "switch.control", control_state: "sensor.control_state",
       control_setpoint: "sensor.control_setpoint", demand_count: "sensor.calling",
       boiler_called: "binary_sensor.boiler_called",
+      starts_per_hour: "sensor.starts_per_hour", median_burn: "sensor.median_burn",
+      short_burn_share: "sensor.short_burn_share", burner_hours: "sensor.burner_hours",
+      condensing_share: "sensor.condensing_share",
     },
+    short_burn_min: 10,
     curve: {
       entered: true, design_outdoor: -15, design_flow: 55, room: 20, exponent: 1.3, offset: 0,
       hard_min: 20, hard_max: 70, circuit_max: null, boiler_max: null, room_auto: true,
@@ -155,11 +164,29 @@
     }
     return out;
   };
+  // The monitor's burns of a sample day: heating every 40 minutes by day, hot water twice.
+  const sampleBurns = () => {
+    const now = Date.now() / 1000;
+    const burns = [];
+    let t = now - 86400 + 600;
+    let k = 0;
+    while (t < now) {
+      const c = new Date(t * 1000).getHours();
+      const night = c >= 22 || c < 6;
+      const minutes = night ? 0 : [22, 18, 7, 25, 14, 9, 31, 16][k % 8];
+      if (minutes) burns.push({ start: t, end: t + minutes * 60, kind: "ch", start_seen: true, end_seen: true });
+      if (c === 7 && k % 3 === 0) burns.push({ start: t + 1500, end: t + 1500 + 600, kind: "dhw", start_seen: true, end_seen: true });
+      t += 2400;
+      k += 1;
+    }
+    return { at: now - 120, burns };
+  };
   const stateText = { heating: { pl: "Grzanie", en: "Heating" }, idle: { pl: "Postój", en: "Idle" } };
   const hass = {
     language: lang, locale: { language: lang }, user: { is_admin: query.get("user") !== "1" }, states,
     callWS: async (m) =>
-      m.type === "vtherm_smart_boiler/curve/save" ? ((window.lastSave = m), { saved: true, errors: {} })
+      m.type === "vtherm_smart_boiler/burns" ? sampleBurns()
+      : m.type === "vtherm_smart_boiler/curve/save" ? ((window.lastSave = m), { saved: true, errors: {} })
       : m.type === "vtherm_smart_boiler/curve" ? sampleCurve(m)
       : m.type === "history/history_during_period"
         ? (m.entity_ids.length > 1 ? sampleDay(m) : sampleHistory())

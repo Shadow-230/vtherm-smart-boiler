@@ -94,7 +94,9 @@ docs/                                     dokumentacja, osobny katalog na każdy
   roboczych, bez zapisu, z `core/curve_view.py` (krzywa przy temperaturze pokojowej w użyciu,
   potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze
   sprawdzeniami z ustawień według ich kluczy tłumaczeń; `vtherm_smart_boiler/days` — podsumowania
-  dni w zapisanej postaci; oraz jeden zapis, tylko dla administratora:
+  dni w zapisanej postaci; `vtherm_smart_boiler/burns` — palenia z ostatniej analizy monitora tak,
+  jak je sklasyfikował (ogrzewanie, ciepła woda, nieznane), więc strona rysuje palenia samego
+  monitora; oraz jeden zapis, tylko dla administratora:
   `vtherm_smart_boiler/curve/save` zapisuje punkt krzywej przy największym mrozie i, na poziomie
   zaawansowanym, jej przesunięcie **przez własne ustawienia wtyczki** — ich formularz „Krzywa
   grzewcza” wypełniony zapisanymi wartościami i zmianami, potem „Zapisz i zakończ” — więc każde

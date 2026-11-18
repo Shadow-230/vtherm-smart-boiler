@@ -26,6 +26,7 @@ const INSTALLATION: Installation = {
   weather: "weather.home",
   entities: { control_state: "sensor.state", control: "switch.control", features: "sensor.features" },
   curve: null,
+  short_burn_min: 10,
 };
 
 describe("the entities followed", () => {
