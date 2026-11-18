@@ -150,7 +150,8 @@
   "tabs": {
     "overview": "Overview",
     "burner": "Burner",
-    "label": "Views of the page"
+    "label": "Views of the page",
+    "use": "Use"
   },
   "burner": {
     "starts_per_hour": "Starts per hour",
@@ -178,5 +179,29 @@
     "none": "No burns in the last 24 h.",
     "no_analysis": "The monitor has not analysed the burns yet.",
     "error": "The burns could not be read: {message}"
+  },
+  "use": {
+    "gas_per_degree_day": "Gas per degree-day",
+    "gas_per_degree_day_detail": "the last 7 days — measured with a gas meter, else estimated",
+    "degree_days": "Degree-days",
+    "degree_days_detail": "the last 7 days, from the heating threshold",
+    "weeks": "Gas per degree-day — 12 weeks",
+    "weeks_hint": "How much gas the house needs for each degree of cold. The weather evens out, so the weeks compare. Lower is better.",
+    "week": "Week of {date}: {value}",
+    "week_none": "Week of {date}: not known — gas missing on a day, or too mild",
+    "weeks_none": "No week yet: the daily summaries are filled day by day.",
+    "change": "Use against yesterday",
+    "change_hint": "Where the difference came from.",
+    "total": "{sign}{value} {unit} ({percent})",
+    "less": "less",
+    "more": "more",
+    "weather": "Weather",
+    "dhw": "Hot water",
+    "settings": "Settings",
+    "other": "The rest",
+    "normal": "within normal day-to-day variation",
+    "not_judged": "not judged",
+    "no_report": "No report yet: it needs two days of data.",
+    "error": "The use could not be read: {message}"
   }
 }

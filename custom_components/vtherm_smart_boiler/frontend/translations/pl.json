@@ -150,7 +150,8 @@
   "tabs": {
     "overview": "Przegląd",
     "burner": "Palnik",
-    "label": "Widoki strony"
+    "label": "Widoki strony",
+    "use": "Zużycie"
   },
   "burner": {
     "starts_per_hour": "Starty na godzinę",
@@ -178,5 +179,29 @@
     "none": "Brak paleń w ostatnich 24 h.",
     "no_analysis": "Monitor nie przeanalizował jeszcze paleń.",
     "error": "Nie udało się odczytać paleń: {message}"
+  },
+  "use": {
+    "gas_per_degree_day": "Gaz na stopniodzień",
+    "gas_per_degree_day_detail": "ostatnie 7 dni — z licznika gazu albo oszacowane",
+    "degree_days": "Stopniodni",
+    "degree_days_detail": "ostatnie 7 dni, od progu grzania",
+    "weeks": "Gaz na stopniodzień — 12 tygodni",
+    "weeks_hint": "Ile gazu dom potrzebuje na każdy stopień chłodu. Pogoda się wyrównuje, więc tygodnie da się porównać. Niżej = lepiej.",
+    "week": "Tydzień od {date}: {value}",
+    "week_none": "Tydzień od {date}: nieznany — brak gazu w któryś dzień albo za ciepło",
+    "weeks_none": "Jeszcze żadnego tygodnia: podsumowania dni przybywają dzień po dniu.",
+    "change": "Wczoraj wobec przedwczoraj",
+    "change_hint": "Skąd wzięła się różnica.",
+    "total": "{sign}{value} {unit} ({percent})",
+    "less": "mniej",
+    "more": "więcej",
+    "weather": "Pogoda",
+    "dhw": "Ciepła woda",
+    "settings": "Ustawienia",
+    "other": "Reszta",
+    "normal": "w granicach zwykłej zmienności dzień do dnia",
+    "not_judged": "nie oceniono",
+    "no_report": "Jeszcze bez raportu: potrzebuje dwóch dni danych.",
+    "error": "Nie udało się odczytać zużycia: {message}"
   }
 }

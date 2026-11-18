@@ -13,7 +13,7 @@ Home Assistant — one cannot be taken back.
 from __future__ import annotations
 
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 import probatio as vol  # Home Assistant's schemas for WebSocket commands since 2026.10
@@ -32,11 +32,13 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN, LEVEL, LEVEL_ADVANCED
 from .control_config import curve_problems, lowest_above_max
 from .core.curve_view import curve_points
+from .core.weekly import weekly_use
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
 
 NOT_RUNNING = "not_running"
+WEEKS_SHOWN = 12
 NO_CURVE = "no_curve"
 INVALID_RANGE = "invalid_range"
 INVALID_CURVE = "invalid_curve"  # the values cannot make a curve at all
@@ -217,7 +219,8 @@ def ws_curve(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, A
 @callback
 def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
     """The daily summaries kept (a year at most), oldest first, in their stored form; ``since``:
-    only the days that start at or after it (a Unix time)."""
+    only the days that start at or after it (a Unix time). With them, the last 12 weeks' gas per
+    degree-day as ``core.weekly`` reckons it, over every day kept."""
     coordinator = _coordinator(hass)
     if coordinator is None:
         _not_running(connection, msg)
@@ -226,7 +229,10 @@ def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
     days = sorted(coordinator.daily.values(), key=lambda day: day.start)
     connection.send_result(
         msg["id"],
-        {"days": [day.to_dict() for day in days if since is None or day.start >= since]},
+        {
+            "days": [day.to_dict() for day in days if since is None or day.start >= since],
+            "weeks": [asdict(week) for week in weekly_use(days, WEEKS_SHOWN)],
+        },
     )
 
 

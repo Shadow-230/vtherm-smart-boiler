@@ -117,6 +117,10 @@ async def test_the_days_oldest_first_and_from_a_moment(
     reply = await client.ask("days")
     assert [day["start"] for day in reply["result"]["days"]] == [DAY, 2 * DAY, 3 * DAY]
     assert reply["result"]["days"][0] == DaySummary.empty(DAY, 2 * DAY).to_dict()
+    # The weeks, as core.weekly reckons them over every day kept: one block of three days here.
+    (week,) = reply["result"]["weeks"]
+    assert (week["start"], week["end"], week["days"]) == (-3 * DAY, 4 * DAY, 3)
+    assert week["per_degree_day"] is None
     reply = await client.ask("days", since=2 * DAY)
     assert [day["start"] for day in reply["result"]["days"]] == [2 * DAY, 3 * DAY]
 
