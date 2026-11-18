@@ -6,10 +6,10 @@ Status: current.
 
 Home Assistant in Docker, in a dedicated Proxmox LXC, running the plugin, Versatile Thermostat,
 SmartPI and the test-only boiler simulator (`sim/custom_components/boiler_sim`). The test
-instances keep themselves on the current releases of Home Assistant, VT and SmartPI (the user,
-2026-11-17; Home Assistant 2026.9.3, VT 10.5.1 and SmartPI 0.4.0 as vendored until then), so each
-test report records the versions its run found. The plugin needs Home Assistant 2026.10.4 or
-later. The acceptance scenarios run here
+instances' versions change only on the user's word (the user, 2026-11-17): Home Assistant with
+`--ha VERSION` at a deploy, VT and SmartPI either as vendored or the instance's own
+(`--own-vt`, §3); each test report records the versions its run found. The plugin needs Home
+Assistant 2026.10.4 or later. The acceptance scenarios run here
 (`docs/en/development/plans/plan-0.2.md`, J4) before anything reaches a real boiler.
 
 Claude connects to this instance only after you say to start, only at the address in
@@ -135,6 +135,12 @@ Proxmox host, so the firewall there is out of its reach.
   carries its physics) and `configuration.yaml` as files — links into `vendor/` followed — in one
   tar stream over SSH, so only `tar` and `ssh` are needed on either side; each integration
   replaces its old copy whole. Then it starts or restarts the container.
+- Versions change only on the user's word. `--ha VERSION` sets the Home Assistant image's tag;
+  without it the instance keeps the one it runs (its `.env`, else the image its `compose.yaml`
+  named; with neither the deploy stops). `--own-vt` sends neither VT nor SmartPI and leaves
+  `devenv/compose.vendored.yaml` out of `COMPOSE_FILE`, so the instance runs those installed in
+  its own `config/custom_components`; without them there, the deploy stops before anything
+  changes. Without `--own-vt`, the vendored ones are mounted read-only over them, as before.
 - First start: open the URL, create the owner account, set the location and metric units.
 
 `configuration.yaml` has no `default_config`, so nothing scans the local network. Only

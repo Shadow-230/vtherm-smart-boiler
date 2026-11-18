@@ -41,6 +41,7 @@ def test_the_dry_run_lists_files_and_connects_nowhere(tmp_path: Path) -> None:
     names = {line.split()[-1] for line in entries}
     for expected in (
         "compose.yaml",
+        "compose.vendored.yaml",
         "config/configuration.yaml",
         "custom_components/vtherm_smart_boiler/manifest.json",
         "custom_components/versatile_thermostat/manifest.json",
@@ -67,6 +68,7 @@ def test_the_dry_run_reads_no_private_file(tmp_path: Path) -> None:
     script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
     (root / "devenv/config").mkdir(parents=True)
     (root / "devenv/compose.yaml").symlink_to(ROOT / "devenv/compose.yaml")
+    (root / "devenv/compose.vendored.yaml").symlink_to(ROOT / "devenv/compose.vendored.yaml")
     (root / "devenv/config/configuration.yaml").symlink_to(
         ROOT / "devenv/config/configuration.yaml"
     )
@@ -384,3 +386,174 @@ def test_the_fault_injector_is_never_part_of_the_release() -> None:
     for name in ("relay", "entity", "standalone"):
         text = (ROOT / f"devenv/config/{name}.yaml").read_text(encoding="utf-8")
         assert "\nj4_faults:\n" in text, name
+
+
+# --- Versions only on the user's word (2026-11-17): --own-vt and --ha, the remote part run here --
+
+
+def _deploy_root(tmp_path: Path, *, vendor: bool = True) -> tuple[Path, Path, Path]:
+    """A copy of the deploy's root — the script, devenv/ (compose files, the configuration, a
+    local.env naming an instance directory here, a dummy key), the plugin, the simulator's
+    integrations and, with ``vendor``, stub vendored VT and SmartPI — and fake ``ssh`` and
+    ``docker``: ssh runs the remote part here with the stream on its input, docker writes what
+    it was asked into a log. Nothing connects anywhere. Returns the script, the instance's
+    directory and the docker log."""
+    root = tmp_path / "root"
+    (root / "scripts").mkdir(parents=True)
+    script = root / "scripts/deploy_test.sh"
+    script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    (root / "devenv/config").mkdir(parents=True)
+    for name in ("compose.yaml", "compose.vendored.yaml"):
+        (root / "devenv" / name).write_text(
+            (ROOT / "devenv" / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    (root / "devenv/config/configuration.yaml").write_text("{}\n", encoding="utf-8")
+    components = [root / "custom_components/vtherm_smart_boiler"] + [
+        root / "sim/custom_components" / name
+        for name in ("boiler_sim", "opentherm_gw", "j4_faults")
+    ]
+    if vendor:
+        components += [
+            root / "vendor/custom_components" / name
+            for name in ("versatile_thermostat", "vtherm_smartpi")
+        ]
+    for component in components:
+        component.mkdir(parents=True)
+        (component / "manifest.json").write_text('{"version": "vendored"}', encoding="utf-8")
+    instance = tmp_path / "instance"
+    instance.mkdir()
+    (instance / ".vtherm-smart-boiler-test-ha").write_text("", encoding="utf-8")
+    (root / "devenv/local.env").write_text(
+        f"TEST_HA_HOST=host.invalid\nTEST_HA_SSH_USER=nobody\nTEST_HA_DIR='{instance}'\n",
+        encoding="utf-8",
+    )
+    (root / "devenv/ssh").mkdir()
+    (root / "devenv/ssh/id_ed25519").write_text("not a key\n", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "ssh").write_text('#!/bin/sh\nfor last; do :; done\nexec sh -c "$last"\n')
+    log = tmp_path / "docker.log"
+    (bin_dir / "docker").write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
+    for tool in ("ssh", "docker"):
+        (bin_dir / tool).chmod(0o755)
+    return script, instance, log
+
+
+def _run(script: Path, tmp_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    return subprocess.run(
+        ["bash", str(script), *arguments],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+
+
+def _env(instance: Path) -> dict[str, str]:
+    lines = (instance / ".env").read_text(encoding="utf-8").splitlines()
+    return dict(line.split("=", 1) for line in lines)
+
+
+OLD_COMPOSE = (
+    "services:\n  homeassistant:\n"
+    "    image: ghcr.io/home-assistant/home-assistant:2026.9.3"
+    "  # the version the plugin is built on\n"
+)
+
+
+def test_a_deploy_keeps_the_home_assistant_version_the_instance_runs(tmp_path: Path) -> None:
+    """Versions change only on the user's word: without --ha, an instance deployed before keeps
+    the image its compose.yaml named, then the one its .env keeps; VT and SmartPI as vendored,
+    their compose file in COMPOSE_FILE."""
+    script, instance, log = _deploy_root(tmp_path)
+    (instance / "compose.yaml").write_text(OLD_COMPOSE, encoding="utf-8")
+    result = _run(script, tmp_path)
+    assert result.returncode == 0, result.stderr
+    env = _env(instance)
+    assert env["HA_VERSION"] == "2026.9.3"
+    assert env["COMPOSE_FILE"] == "compose.yaml:compose.vendored.yaml"
+    assert (instance / "custom_components/versatile_thermostat/manifest.json").is_file()
+    assert "${HA_VERSION:?" in (instance / "compose.yaml").read_text(encoding="utf-8")
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        "compose up -d",
+        "compose restart homeassistant",
+    ]
+    again = _run(script, tmp_path)
+    assert again.returncode == 0, again.stderr
+    assert _env(instance)["HA_VERSION"] == "2026.9.3"  # from its .env now
+
+
+def test_ha_sets_the_version_on_the_users_word(tmp_path: Path) -> None:
+    script, instance, _log = _deploy_root(tmp_path)
+    (instance / "compose.yaml").write_text(OLD_COMPOSE, encoding="utf-8")
+    result = _run(script, tmp_path, "--ha", "2026.11.1")
+    assert result.returncode == 0, result.stderr
+    assert _env(instance)["HA_VERSION"] == "2026.11.1"
+    kept = _run(script, tmp_path)
+    assert kept.returncode == 0, kept.stderr
+    assert _env(instance)["HA_VERSION"] == "2026.11.1"
+
+
+def test_an_unknown_version_stops_the_deploy_before_anything_changes(tmp_path: Path) -> None:
+    """A new instance without --ha: neither a .env nor a compose.yaml to keep a version from —
+    the deploy stops, nothing unpacked, written or started."""
+    script, instance, log = _deploy_root(tmp_path)
+    result = _run(script, tmp_path)
+    assert result.returncode == 4
+    assert "--ha VERSION" in result.stderr
+    assert sorted(path.name for path in instance.iterdir()) == [".vtherm-smart-boiler-test-ha"]
+    assert not log.exists()
+
+
+def test_own_vt_sends_neither_vt_nor_smartpi_and_mounts_the_instances_own(
+    tmp_path: Path,
+) -> None:
+    """--own-vt (the user, 2026-11-17): VT and SmartPI are neither sent nor mounted — vendor/
+    is not even needed — and COMPOSE_FILE leaves compose.vendored.yaml out, so the instance runs
+    those installed in its own config/custom_components; the plugin and the simulator go as
+    always."""
+    script, instance, log = _deploy_root(tmp_path, vendor=False)
+    (instance / "compose.yaml").write_text(OLD_COMPOSE, encoding="utf-8")
+    for name in ("versatile_thermostat", "vtherm_smartpi"):
+        own = instance / "config/custom_components" / name
+        own.mkdir(parents=True)
+        (own / "manifest.json").write_text('{"version": "own"}', encoding="utf-8")
+    dry = _run(script, tmp_path, "--dry-run", "--own-vt")
+    assert dry.returncode == 0, dry.stderr
+    assert "versatile_thermostat" not in dry.stdout
+    assert "vtherm_smartpi" not in dry.stdout
+    assert "the instance's own" in dry.stdout
+    result = _run(script, tmp_path, "--own-vt")
+    assert result.returncode == 0, result.stderr
+    assert _env(instance)["COMPOSE_FILE"] == "compose.yaml"
+    assert not (instance / "custom_components/versatile_thermostat").exists()
+    assert (instance / "custom_components/vtherm_smart_boiler/manifest.json").is_file()
+    for name in ("versatile_thermostat", "vtherm_smartpi"):
+        manifest = instance / "config/custom_components" / name / "manifest.json"
+        assert manifest.read_text(encoding="utf-8") == '{"version": "own"}'
+    assert "compose up -d" in log.read_text(encoding="utf-8")
+
+
+def test_own_vt_without_vt_in_the_instance_stops_before_anything_changes(tmp_path: Path) -> None:
+    script, instance, log = _deploy_root(tmp_path, vendor=False)
+    (instance / "compose.yaml").write_text(OLD_COMPOSE, encoding="utf-8")
+    result = _run(script, tmp_path, "--own-vt")
+    assert result.returncode == 5
+    assert "versatile_thermostat of its own" in result.stderr
+    assert (instance / "compose.yaml").read_text(encoding="utf-8") == OLD_COMPOSE
+    assert not (instance / ".env").exists()
+    assert not (instance / ".incoming").exists()
+    assert not log.exists()
+
+
+@pytest.mark.parametrize(
+    "arguments", [["--ha"], ["--ha", "--own-vt"], ["--ha", "2026.11;rm"], ["--ha", "a b"]]
+)
+def test_a_bad_home_assistant_version_is_refused(tmp_path: Path, arguments: list[str]) -> None:
+    script, _instance, log = _deploy_root(tmp_path)
+    result = _run(script, tmp_path, *arguments)
+    assert result.returncode == 2
+    assert "usage" in result.stderr
+    assert not log.exists()
