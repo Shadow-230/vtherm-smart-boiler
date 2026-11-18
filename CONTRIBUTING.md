@@ -35,10 +35,12 @@ Every pull request runs these checks on GitHub Actions:
 | Early warning – newest vtherm_api | weekly, on demand, pull requests into `qas` and `main` | no |
 | Early warning – newest Versatile Thermostat and SmartPI | same | no |
 
-- The two test checks run lint (`ruff`), formatting, types (`mypy`), the core tests without
-  Home Assistant, the other tests, and the coverage floor: every module at least 95 % with
-  branches, the config and options flows 100 %. The Home Assistant version tested is in each
-  run's summary.
+- The two test checks gather four parts run side by side for their Home Assistant version — lint
+  (`ruff`), formatting, types (`mypy`) and the core tests without Home Assistant;
+  `test_acceptance.py`; `test_control.py`; the other tests — and pass only when all four did.
+  Then they check the coverage floor over the four: every module at least 95 % with branches,
+  the config and options flows 100 %. The Home Assistant version tested is in each part's
+  summary.
 - A pull request that changes documentation only (Markdown files, `docs/`, `LICENSE`; not `CLAUDE.md`, nothing under `.github/`) passes the two test checks without running
   the tests, as no test reads those files; anything else runs them in full.
 - An early warning tests this integration against the newest releases of the projects it works
