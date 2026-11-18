@@ -35,7 +35,14 @@ NOT_HEATED_ISSUE = "setup_failed_not_heated"
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
 # loop would read them from disk there.
-_RUNTIME_MODULES = ("config", "coordinator", "control", "feature_manager", "entity")
+_RUNTIME_MODULES = (
+    "config",
+    "coordinator",
+    "control",
+    "feature_manager",
+    "entity",
+    "websocket_api",
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) -> bool:
@@ -52,7 +59,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
     from .control import ControlUnit
     from .coordinator import SmartBoilerCoordinator
     from .vtherm_link import vt_run
+    from .websocket_api import async_setup_websocket
 
+    async_setup_websocket(hass)  # the Boiler page's commands (I10.2), once per run
     vt_run(hass)  # this run's record for VT's restart latch, begun at the first setup (decision 9)
     try:
         # A control section that cannot be used leaves control out, not the whole entry: the

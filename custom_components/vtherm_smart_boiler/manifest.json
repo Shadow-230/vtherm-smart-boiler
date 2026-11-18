@@ -11,7 +11,8 @@
     "repairs",
     "versatile_thermostat",
     "vtherm_smartpi",
-    "weather"
+    "weather",
+    "websocket_api"
   ],
   "codeowners": [
     "@Shadow-230"
