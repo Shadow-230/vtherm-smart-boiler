@@ -86,7 +86,16 @@ docs/                                     dokumentacja, osobny katalog na każdy
   udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
   przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Gdy frontend Home Assistanta nie
   działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
-  `.tools/node/`.
+  `.tools/node/`. `websocket_api.py` to to, co strona czyta: trzy polecenia WebSocket tylko do
+  odczytu, dla każdego zalogowanego użytkownika, każde odpowiada z działającego wpisu (inaczej
+  błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich strefami i
+  grzejnikami, encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
+  krzywej; `vtherm_smart_boiler/curve` — punkty krzywej dla ustawień w użyciu albo dla wartości
+  roboczych, bez zapisu, z `core/curve_view.py` (krzywa przy temperaturze pokojowej w użyciu,
+  potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze
+  sprawdzeniami z ustawień według ich kluczy tłumaczeń; `vtherm_smart_boiler/days` — podsumowania
+  dni w zapisanej postaci. Ich schematy używają `probatio`, jak własne polecenia Home Assistanta od
+  2026.10.
 
 ## 3. Zadania komponentów
 

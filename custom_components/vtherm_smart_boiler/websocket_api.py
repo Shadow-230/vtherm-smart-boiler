@@ -1,0 +1,217 @@
+"""What the Boiler page reads (``docs/en/development/plans/plan-0.2-i10.md``, I10.2).
+
+Three WebSocket commands, read-only, for any signed-in user: the installation as the settings
+describe it, the curve's points with the settings' own checks, and the daily summaries. Each
+answers from the running entry; with none running, the error ``not_running``. The page computes
+no law of its own: the curve comes from ``core.curve_view``, the checks from ``control_config``.
+The commands are registered once per run of Home Assistant — one cannot be taken back.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
+
+import probatio as vol  # Home Assistant's schemas for WebSocket commands since 2026.10
+from homeassistant.components.websocket_api import async_register_command
+from homeassistant.components.websocket_api.connection import ActiveConnection
+from homeassistant.components.websocket_api.decorators import websocket_command
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
+
+from .const import DOMAIN
+from .control_config import curve_problems, lowest_above_max
+from .core.curve_view import curve_points
+
+if TYPE_CHECKING:
+    from .coordinator import SmartBoilerCoordinator
+
+NOT_RUNNING = "not_running"
+NO_CURVE = "no_curve"
+INVALID_RANGE = "invalid_range"
+INVALID_CURVE = "invalid_curve"  # the values cannot make a curve at all
+CURVE_KEYS = ("design_outdoor", "design_flow", "room", "exponent", "offset")
+LIMIT_KEYS = ("hard_min", "hard_max")
+_DATA = f"{DOMAIN}_websocket"
+
+
+@callback
+def async_setup_websocket(hass: HomeAssistant) -> None:
+    """Register the page's commands, once per run of Home Assistant."""
+    if hass.data.get(_DATA):
+        return
+    for handler in (ws_installation, ws_curve, ws_days):
+        async_register_command(hass, handler)
+    hass.data[_DATA] = True
+
+
+def _coordinator(hass: HomeAssistant) -> SmartBoilerCoordinator | None:
+    """The running entry's coordinator; there is at most one entry."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.state is ConfigEntryState.LOADED:
+            coordinator: SmartBoilerCoordinator | None = getattr(entry, "runtime_data", None)
+            if coordinator is not None:
+                return coordinator
+    return None
+
+
+def _not_running(connection: ActiveConnection, msg: dict[str, Any]) -> None:
+    connection.send_error(msg["id"], NOT_RUNNING, "Smart Boiler is not running")
+
+
+def installation_view(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> dict[str, Any]:
+    """The installation as the settings describe it, with the plugin's own entities by key and
+    the curve's settings — what the page needs to draw the schematic and the curve."""
+    config = coordinator.config
+    entry = coordinator.config_entry
+    installation = config.installation
+    registry = er.async_get(hass)
+    prefix = f"{entry.entry_id}_"
+    entities = {
+        found.unique_id.removeprefix(prefix): found.entity_id
+        for found in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if found.unique_id.startswith(prefix)
+    }
+    boiler = installation.boiler
+    return {
+        "entry_id": entry.entry_id,
+        "title": entry.title,
+        "boiler": {
+            "type": None if config.panel.boiler_type is None else config.panel.boiler_type.value,
+            "dhw": boiler.dhw.value,
+            "condensing": boiler.condensing,
+        },
+        "circuits": [
+            {
+                "id": circuit.circuit_id,
+                "name": config.circuit_names.get(circuit.circuit_id, circuit.circuit_id),
+                "control": circuit.control.value,
+                "fixed_temperature": circuit.fixed_temperature,
+                "max_flow": circuit.max_flow,
+                "needed": circuit.needed,
+                "zones": [
+                    {"entity_id": zone.zone_id, "emitter": zone.emitter.value}
+                    for zone in installation.zones
+                    if zone.circuit_id == circuit.circuit_id
+                ],
+            }
+            for circuit in installation.circuits
+        ],
+        "signals": {signal.value: entity_id for signal, entity_id in config.signals.items()},
+        "weather": config.weather,
+        "entities": dict(sorted(entities.items())),
+        "curve": _curve_settings(coordinator),
+    }
+
+
+def _curve_settings(coordinator: SmartBoilerCoordinator) -> dict[str, Any] | None:
+    """The curve's settings where control sets the water; ``None`` otherwise (monitoring only,
+    or a relay that switches heating on and off)."""
+    control = coordinator.config.control
+    loop = control.loop.control
+    if not control.configured or loop.on_off:
+        return None
+    curve, limits = loop.curve, loop.limits
+    return {
+        "entered": control.curve_entered,
+        "design_outdoor": curve.design_outdoor,
+        "design_flow": curve.design_flow,
+        "room": curve.room,
+        "exponent": curve.exponent,
+        "offset": curve.offset,
+        "hard_min": limits.hard_min,
+        "hard_max": limits.hard_max,
+        "circuit_max": loop.circuit_max,
+        "boiler_max": loop.boiler_max,
+        "room_auto": loop.room_auto,
+        "comfort_correction": loop.comfort_correction,
+        "correction_max_k": loop.correction_max_k,
+    }
+
+
+@websocket_command({vol.Required("type"): f"{DOMAIN}/installation"})
+@callback
+def ws_installation(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
+    coordinator = _coordinator(hass)
+    if coordinator is None:
+        _not_running(connection, msg)
+        return
+    connection.send_result(msg["id"], installation_view(hass, coordinator))
+
+
+_OUTDOOR = vol.All(vol.Coerce(float), vol.Range(min=-40.0, max=40.0))
+
+
+@websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/curve",
+        **{vol.Optional(key): vol.Coerce(float) for key in (*CURVE_KEYS, *LIMIT_KEYS)},
+        vol.Optional("outdoor_from", default=-25.0): _OUTDOOR,
+        vol.Optional("outdoor_to", default=20.0): _OUTDOOR,
+        vol.Optional("step", default=0.5): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10)),
+    }
+)
+@callback
+def ws_curve(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
+    """The curve's points for the settings in use, or for draft values given in the message —
+    a preview only: nothing is saved. The problems are the settings' own checks, by their
+    translation keys; ``invalid_curve`` where the values cannot make a curve at all."""
+    coordinator = _coordinator(hass)
+    if coordinator is None:
+        _not_running(connection, msg)
+        return
+    control = coordinator.config.control
+    loop = control.loop.control
+    if not control.configured or loop.on_off:
+        connection.send_error(msg["id"], NO_CURVE, "control does not set the water")
+        return
+    try:
+        curve = replace(loop.curve, **{key: msg[key] for key in CURVE_KEYS if key in msg})
+        limits = replace(loop.limits, **{key: msg[key] for key in LIMIT_KEYS if key in msg})
+    except ValueError:
+        connection.send_result(msg["id"], {"points": [], "problems": [INVALID_CURVE]})
+        return
+    problems = [
+        key
+        for _field, key in curve_problems(
+            curve.design_flow, curve.design_outdoor, curve.room, limits.hard_min, limits.hard_max
+        )
+    ]
+    if lowest_above_max(replace(loop, curve=curve, limits=limits)):
+        problems.append("hard_min_above_max")
+    try:
+        points = curve_points(
+            curve,
+            limits,
+            loop.circuit_max,
+            loop.boiler_max,
+            msg["outdoor_from"],
+            msg["outdoor_to"],
+            step=msg["step"],
+        )
+    except ValueError as err:
+        connection.send_error(msg["id"], INVALID_RANGE, str(err))
+        return
+    connection.send_result(
+        msg["id"], {"points": [list(point) for point in points], "problems": problems}
+    )
+
+
+@websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/days", vol.Optional("since"): vol.Coerce(float)}
+)
+@callback
+def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
+    """The daily summaries kept (a year at most), oldest first, in their stored form; ``since``:
+    only the days that start at or after it (a Unix time)."""
+    coordinator = _coordinator(hass)
+    if coordinator is None:
+        _not_running(connection, msg)
+        return
+    since = msg.get("since")
+    days = sorted(coordinator.daily.values(), key=lambda day: day.start)
+    connection.send_result(
+        msg["id"],
+        {"days": [day.to_dict() for day in days if since is None or day.start >= since]},
+    )

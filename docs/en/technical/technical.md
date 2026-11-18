@@ -86,6 +86,16 @@ docs/                                     the documentation, one folder per lang
   files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
   "Page in the sidebar" takes it away and puts it back. Without Home Assistant's frontend running
   nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
+  `websocket_api.py` holds what the page reads, three read-only WebSocket commands for any
+  signed-in user, each answering from the running entry (else the error `not_running`):
+  `vtherm_smart_boiler/installation` — the boiler, the circuits with their zones and emitters,
+  the picked entity of every signal, the plugin's entities by key and the curve's settings;
+  `vtherm_smart_boiler/curve` — the curve's points for the settings in use or for draft values,
+  nothing saved, from `core/curve_view.py` (the curve at the room temperature in use, then the
+  limits, as control decides it before the comfort correction, a circuit's need and the ramp),
+  with the settings' own checks by their translation keys; `vtherm_smart_boiler/days` — the
+  daily summaries in their stored form. Their schemas use `probatio`, as Home Assistant's own
+  commands do since 2026.10.
 
 ## 3. Component responsibilities
 
