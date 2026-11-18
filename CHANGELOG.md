@@ -63,6 +63,12 @@ version is decided then.
 - Removing the integration hands the boiler back, and a repair issue stays if it cannot confirm
   it.
 
+**The Boiler page (being built)**
+
+- A page "Boiler" in Home Assistant's sidebar, for every user, in Home Assistant's language; the
+  switch **Page in the sidebar** (on by default) takes it away and puts it back. For now it shows
+  its frame; the overview, the schematic and the curve come next.
+
 ### Requirements
 
 - Home Assistant 2026.9 or later; Versatile Thermostat 10.2.0 or later (10.5.1 tested; 10.5 or

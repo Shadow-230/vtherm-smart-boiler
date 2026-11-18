@@ -2742,6 +2742,9 @@
       }
     },
     "switch": {
+      "sidebar_page": {
+        "name": "Strona w menu bocznym"
+      },
       "control": {
         "name": "Sterowanie (eksperymentalne)",
         "state_attributes": {

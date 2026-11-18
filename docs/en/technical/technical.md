@@ -54,7 +54,9 @@ Details: [`docs/en/specification/scope.md`, §2](../specification/scope.md#2-why
 custom_components/vtherm_smart_boiler/   the integration (HA side)
 ├── core/                                 pure logic, no HA imports
 ├── transport/                            reading the boiler's entities, and the writers
-└── translations/                         en.json (the source) and other languages
+├── translations/                         en.json (the source) and other languages
+└── frontend/                             the Boiler page as built, its licenses, its texts
+frontend/                                 the Boiler page's source (TypeScript, Lit, Vite)
 tests/                                    tests: core/, integration/, sim/, tools/, and the rest
 sim/                                      the physics simulator and its test-only HA components
 tools/                                    recorder history importer for offline analysis
@@ -75,6 +77,15 @@ docs/                                     the documentation, one folder per lang
   stand-in `opentherm_gw`, both for tests only.
 - `tools/import_history.py` turns a copy of an HA recorder database into the core's history,
   so the monitor's analysis can be checked on recorded data.
+- The Boiler page (being built, [`plan-0.2-i10.md`](../development/plans/plan-0.2-i10.md)):
+  `frontend/` is its source; `npm run build` there writes the module the plugin serves into
+  `custom_components/vtherm_smart_boiler/frontend/`, with the licenses of the packages bundled
+  into it. Those files are committed, so HACS installs them; CI builds them again and fails where
+  they differ. The page's texts live there too (`frontend/translations/`, English the source):
+  the page reads them, and `panel.py` takes the sidebar title from them. `panel.py` serves the
+  files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
+  "Page in the sidebar" takes it away and puts it back. Without Home Assistant's frontend running
+  nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
 
 ## 3. Component responsibilities
 
@@ -270,6 +281,9 @@ scripts/env.sh ruff check .
 scripts/env.sh ruff format --check .
 scripts/env.sh mypy
 ```
+
+The Boiler page, in `frontend/`: `../scripts/env.sh npm test` and `../scripts/env.sh npm run build`
+(types checked first); commit the built files.
 
 ## 8. Water data for zone algorithms
 

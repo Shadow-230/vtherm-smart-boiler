@@ -54,7 +54,9 @@ Szczegóły: [`docs/pl/specification/scope.md`, §2](../specification/scope.md#2
 custom_components/vtherm_smart_boiler/   integracja (strona HA)
 ├── core/                                 czysta logika, bez importów HA
 ├── transport/                            odczyt encji kotła i moduły zapisu
-└── translations/                         en.json (źródło) i inne języki
+├── translations/                         en.json (źródło) i inne języki
+└── frontend/                             zbudowana strona „Kocioł”, jej licencje, jej teksty
+frontend/                                 źródło strony „Kocioł” (TypeScript, Lit, Vite)
 tests/                                    testy: core/, integration/, sim/, tools/ i reszta
 sim/                                      symulator fizyki i jego komponenty HA tylko do testów
 tools/                                    import historii z recordera do analizy offline
@@ -75,6 +77,16 @@ docs/                                     dokumentacja, osobny katalog na każdy
   zastępczy `opentherm_gw`, oba tylko do testów.
 - `tools/import_history.py` zamienia kopię bazy recordera HA na historię rdzenia, żeby analizę
   monitora można było sprawdzić na zapisanych danych.
+- Strona „Kocioł” (w budowie, [`plan-0.2-i10.md`](../../en/development/plans/plan-0.2-i10.md)):
+  `frontend/` to jej źródło; `npm run build` w tym katalogu zapisuje moduł, który wtyczka
+  udostępnia, do `custom_components/vtherm_smart_boiler/frontend/`, razem z licencjami pakietów w
+  nim zawartych. Te pliki są w repozytorium, więc HACS je instaluje; CI buduje je ponownie i
+  zgłasza błąd, gdy się różnią. Są tam też teksty strony (`frontend/translations/`, angielski to
+  źródło): czyta je strona, a `panel.py` bierze z nich nazwę w menu bocznym. `panel.py`
+  udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
+  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Gdy frontend Home Assistanta nie
+  działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
+  `.tools/node/`.
 
 ## 3. Zadania komponentów
 
@@ -286,6 +298,9 @@ scripts/env.sh ruff check .
 scripts/env.sh ruff format --check .
 scripts/env.sh mypy
 ```
+
+Strona „Kocioł”, w `frontend/`: `../scripts/env.sh npm test` i `../scripts/env.sh npm run build`
+(najpierw sprawdzenie typów); zbudowane pliki trafiają do repozytorium.
 
 ## 8. Dane o wodzie dla algorytmów stref
 
