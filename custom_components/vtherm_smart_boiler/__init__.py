@@ -41,6 +41,7 @@ _RUNTIME_MODULES = (
     "control",
     "feature_manager",
     "entity",
+    "journal",
     "websocket_api",
 )
 
@@ -58,6 +59,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
     from .config import ConfigError, EntryConfig
     from .control import ControlUnit
     from .coordinator import SmartBoilerCoordinator
+    from .journal import Journal
     from .vtherm_link import vt_run
     from .websocket_api import async_setup_websocket
 
@@ -97,6 +99,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         # What the last run left, first: a hand-back it owed is made before anything else can
         # fail, and the unit that makes it is the one that runs (P-05, C14).
         await coordinator.async_load()
+        coordinator.journal = Journal(hass, entry.entry_id)
+        await coordinator.journal.async_load()
         if config.control.configured:
             raw = control_as_run(entry.options)
             control = ControlUnit(hass, coordinator, config.control, raw=raw)
@@ -122,6 +126,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         feature_manager.async_attach(hass, coordinator)
         entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+        # The journal (I10.6) follows from here: the start, then each change.
+        entry.async_on_unload(coordinator.journal.async_follow(coordinator))
         coordinator.async_start_background()
         # Renames and removals are followed only for an entry that runs (P-19).
         entry.async_on_unload(_follow_entities(hass, entry, coordinator, registered))
@@ -762,6 +768,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry)
     coordinator = entry.runtime_data
     for unit in _units(coordinator):
         await unit.async_stop()  # hand back before anything else goes
+    if coordinator.journal is not None:
+        await coordinator.journal.async_stop()  # after the hand-back, which it journals
     feature_manager.async_detach(hass, coordinator)
     try:
         unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -782,6 +790,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from homeassistant.helpers.importlib import async_import_module
 
     await async_import_module(hass, f"{__package__}.coordinator")
+    await async_import_module(hass, f"{__package__}.journal")
     from .coordinator import (
         INSTALLATION_ISSUE,
         INSTALLATION_WARNINGS,
@@ -791,6 +800,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         main_store,
     )
     from .forecasts import remove_partition_files
+    from .journal import journal_store
 
     _delete_removed_issues(hass, entry.entry_id)
     for key in (
@@ -866,6 +876,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # forecast weeks.
     await control.async_remove()
     await alive_store(hass, entry.entry_id).async_remove()
+    await journal_store(hass, entry.entry_id).async_remove()
     await store.async_remove()
     await hass.async_add_executor_job(
         remove_partition_files, Path(hass.config.path(".storage")), entry.entry_id
@@ -1063,6 +1074,11 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
     coordinator = getattr(entry, "runtime_data", None)
     if coordinator is None or meaningful(entry.options) != meaningful(coordinator.options):
+        if coordinator is not None and coordinator.journal is not None:
+            # The journal names the sections saved changed (I10.6), before the reload.
+            old, new = meaningful(coordinator.options), meaningful(entry.options)
+            changed = sorted(key for key in old.keys() | new.keys() if old.get(key) != new.get(key))
+            coordinator.journal.settings_saved(changed)
         # Not running (its setup failed): whatever changed, it is set up again.
         await hass.config_entries.async_reload(entry.entry_id)
 

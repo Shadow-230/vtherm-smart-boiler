@@ -85,7 +85,12 @@ version is decided then.
   against yesterday cause by cause — weather, hot water, settings and the rest. A tab **Status
   and alarms**: the control verdict with its reasons, every alarm with the active ones first, the
   signals' health, the building values with their source — an administrator forgets a measured
-  one there, after confirming — and the suggested lowest water temperature with its evidence.
+  one there, after confirming — and the suggested lowest water temperature with its evidence. A
+  tab **Journal**: what the plugin decided and why over the last 14 days — its starts and stops,
+  control taking the boiler and handing it back, the heat call, the water setpoint written, a
+  circuit's need, the alarms and each settings save, from the page or the settings — as lanes
+  that zoom by dragging and as a filtered list. The plugin keeps the journal in a store of its
+  own, 14 days and 2,000 entries at most; it only watches and changes nothing.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
   water was decided with, as the curve reads it.
 

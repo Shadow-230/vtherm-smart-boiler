@@ -1,8 +1,9 @@
 """What the Boiler page reads, and the one change it can make
-(``docs/en/development/plans/plan-0.2-i10.md``, I10.2 and I10.4).
+(``docs/en/development/plans/plan-0.2-i10.md``, I10.2, I10.4 and I10.6).
 
 Read-only, for any signed-in user: the installation as the settings describe it, the curve's
-points with the settings' own checks, and the daily summaries. One write, for an administrator
+points with the settings' own checks, the daily summaries, the monitor's burns and the journal.
+One write, for an administrator
 only: the curve saved — through the plugin's own settings, so every check and the save itself
 are theirs (I10.4). Each answers from the running entry; with none running, the error
 ``not_running``. The page computes no law of its own: the curve comes from ``core.curve_view``,
@@ -32,6 +33,7 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN, LEVEL, LEVEL_ADVANCED
 from .control_config import curve_problems, lowest_above_max
 from .core.curve_view import curve_points
+from .core.journal import JOURNAL_DAYS, JOURNAL_MAX, entry_to_stored
 from .core.weekly import weekly_use
 
 if TYPE_CHECKING:
@@ -52,7 +54,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
     """Register the page's commands, once per run of Home Assistant."""
     if hass.data.get(_DATA):
         return
-    for handler in (ws_installation, ws_curve, ws_days, ws_burns, ws_curve_save):
+    for handler in (ws_installation, ws_curve, ws_days, ws_burns, ws_journal, ws_curve_save):
         async_register_command(hass, handler)
     hass.data[_DATA] = True
 
@@ -268,6 +270,31 @@ def ws_burns(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, A
     )
 
 
+@websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/journal", vol.Optional("since"): vol.Coerce(float)}
+)
+@callback
+def ws_journal(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
+    """The journal, oldest first — from ``since`` on where it is given — with how long and how
+    many entries it keeps (I10.6)."""
+    coordinator = _coordinator(hass)
+    if coordinator is None or coordinator.journal is None:
+        _not_running(connection, msg)
+        return
+    since = msg.get("since")
+    entries = coordinator.journal.entries
+    connection.send_result(
+        msg["id"],
+        {
+            "entries": [
+                entry_to_stored(entry) for entry in entries if since is None or entry.at >= since
+            ],
+            "days": JOURNAL_DAYS,
+            "max": JOURNAL_MAX,
+        },
+    )
+
+
 # What the page may change of the curve, as the settings' "Heating curve" form names it; the
 # offset only where the entry's level shows it.
 SAVE_KEYS = ("design_outdoor", "design_flow", "offset")
@@ -339,10 +366,15 @@ async def ws_curve_save(
             errors = dict(answer.get("errors") or {})
             connection.send_result(msg["id"], {"saved": False, "errors": errors})
             return
+        journal = coordinator.journal
+        if journal is not None:  # the save the settings report next is the page's (I10.6)
+            journal.note_page_save(["curve"])
         saved = await options.async_configure(flow_id, {"next_step_id": "save"})
         if saved.get("type") is FlowResultType.CREATE_ENTRY:
             connection.send_result(msg["id"], {"saved": True, "errors": {}})
             return
+        if journal is not None:
+            journal.forget_page_save()
         connection.send_result(
             msg["id"],
             {"saved": False, "errors": {"base": "needs_settings"}, "step": saved.get("step_id")},

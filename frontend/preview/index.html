@@ -247,12 +247,59 @@
       })),
     };
   };
+  // A sample journal of 14 days: heat calls by day, the water following the outdoor temperature,
+  // a restart, a warning raised and cleared, the curve saved from the page — sample arithmetic.
+  const sampleJournal = () => {
+    const now = Date.now() / 1000;
+    const entries = [];
+    const add = (at, kind, extra = {}) => at <= now && entries.push({ at, kind, ...extra });
+    const start = now - 14 * 86400;
+    add(start, "started");
+    add(start + 60, "took_over", { reasons: ["no_demand"] });
+    let water = null;
+    for (let t = start + 3600; t < now; t += 1800) {
+      const h = new Date(t * 1000).getHours();
+      const day = Math.floor((t - start) / 86400);
+      if (day === 9 && h === 3 && t % 3600 < 1800) {
+        add(t, "stopped"); add(t + 120, "started"); add(t + 180, "took_over", { reasons: ["no_demand"] });
+        water = null;
+        continue;
+      }
+      const calling = h >= 6 && h < 22 && (h % 3 !== 2);
+      const wasCalling = entries.findLast((e) => e.kind === "call_on" || e.kind === "call_off")?.kind === "call_on";
+      if (calling && !wasCalling) {
+        add(t, "call_on", { reasons: ["demand", "outdoor_sensor"] });
+      } else if (!calling && wasCalling) {
+        add(t, "call_off", { reasons: [h >= 22 || h < 6 ? "no_demand" : "below_threshold"] });
+      }
+      if (calling) {
+        const outdoor = 2 + 4 * Math.cos((2 * Math.PI * (h - 15)) / 24) - day * 0.2;
+        const value = Math.round(sampleCurve({ room: 21, outdoor_from: outdoor, outdoor_to: outdoor, step: 1 }).points[0][1] * 10) / 10;
+        if (water == null || Math.abs(value - water) >= 1) {
+          add(t + 30, "water", water == null ? { value, reasons: ["demand", "outdoor_sensor"] } : { value, previous: water, reasons: ["demand", "outdoor_sensor"] });
+          water = value;
+        }
+      }
+    }
+    add(now - 5.2 * 86400, "alarm_on", { subject: "alarm_frequent_starts", level: "warning" });
+    add(now - 4.9 * 86400, "alarm_off", { subject: "alarm_frequent_starts" });
+    add(now - 2.1 * 86400, "settings", { subject: "page", reasons: ["curve"] });
+    add(now - 2.1 * 86400 + 5, "stopped"); add(now - 2.1 * 86400 + 20, "started");
+    add(now - 2.1 * 86400 + 25, "took_over", { reasons: ["no_demand"] });
+    add(now - 6.5 * 86400, "settings", { subject: "settings", reasons: ["signals", "monitor"] });
+    add(now - 3 * 3600, "alarm_on", { subject: "alarm_frequent_starts", level: "warning" });
+    add(now - 9 * 3600, "circuit_need", { value: 52, reasons: ["circuit_asks", "limit_circuit_need"] });
+    add(now - 8 * 3600, "circuit_need_end", { value: 44, reasons: ["demand"] });
+    entries.sort((a, b) => a.at - b.at);
+    return { entries, days: 14, max: 2000 };
+  };
   const stateText = { heating: { pl: "Grzanie", en: "Heating" }, idle: { pl: "Postój", en: "Idle" } };
   const hass = {
     language: lang, locale: { language: lang }, user: { is_admin: query.get("user") !== "1" }, states,
     themes: { darkMode: Boolean(query.get("dark")) },
     callWS: async (m) =>
       m.type === "vtherm_smart_boiler/burns" ? sampleBurns()
+      : m.type === "vtherm_smart_boiler/journal" ? sampleJournal()
       : m.type === "vtherm_smart_boiler/days" ? sampleWeeks()
       : m.type === "vtherm_smart_boiler/curve/save" ? ((window.lastSave = m), { saved: true, errors: {} })
       : m.type === "vtherm_smart_boiler/curve" ? sampleCurve(m)

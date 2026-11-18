@@ -27,6 +27,9 @@ const VIEWS = [
   { name: "phone-en-burner-dark", width: 390, height: 844, query: "?lang=en&dark=1#burner", scale: 1 },
   { name: "desktop-pl-use", width: 1280, height: 720, query: "#use", scale: 1 },
   { name: "phone-pl-use-dark", width: 390, height: 844, query: "?dark=1#use", scale: 1 },
+  { name: "desktop-pl-journal", width: 1280, height: 900, query: "#journal", scale: 1, zoom: true },
+  { name: "desktop-en-journal-week", width: 1280, height: 900, query: "?lang=en#journal", scale: 1, week: true },
+  { name: "phone-pl-journal-dark", width: 390, height: 844, query: "?dark=1#journal", scale: 1 },
   { name: "desktop-pl-status", width: 1280, height: 720, query: "#status", scale: 1, reset: true },
   { name: "phone-en-status-dark", width: 390, height: 844, query: "?lang=en&dark=1#status", scale: 1 },
   { name: "desktop-en-status-user", width: 1280, height: 720, query: "?lang=en&user=1#status", scale: 1 },
@@ -70,7 +73,9 @@ for (const view of VIEWS) {
           ? "vtherm-smart-boiler-use .tiles"
           : view.query.includes("#status")
             ? "vtherm-smart-boiler-status .verdict"
-            : "vtherm-smart-boiler-overview .hero",
+            : view.query.includes("#journal")
+              ? "vtherm-smart-boiler-journal .tracks"
+              : "vtherm-smart-boiler-overview .hero",
     )
     .waitFor();
   await page.waitForTimeout(300);
@@ -82,6 +87,22 @@ for (const view of VIEWS) {
     await page.locator("vtherm-smart-boiler-overview dialog button.primary").click();
     const call = await page.evaluate(() => window.lastCall);
     console.log(`${view.name}: confirmed, the switch was called with`, JSON.stringify(call));
+  }
+  if (view.week) {
+    await page.locator("vtherm-smart-boiler-journal button.window").nth(2).click();
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: join(out, `${view.name}.png`), fullPage: true });
+    await page.locator("vtherm-smart-boiler-journal section.card").first().screenshot({ path: join(out, `${view.name}-lanes.png`) });
+  }
+  if (view.zoom) {
+    const tracks = page.locator("vtherm-smart-boiler-journal .tracks");
+    const box = await tracks.boundingBox();
+    await page.mouse.move(box.x + box.width * 0.3, box.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + 40, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    await page.locator("vtherm-smart-boiler-journal section.card").first().screenshot({ path: join(out, `${view.name}-zoom.png`) });
   }
   if (view.reset) {
     await page.locator("vtherm-smart-boiler-status button.outline").first().click();

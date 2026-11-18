@@ -5,13 +5,15 @@ import { LitElement, css, html, nothing } from "lit";
 import { localize } from "./localize";
 import "./burner-view";
 import "./overview";
+import "./journal-view";
+import { DOMAIN, type Localize } from "./status";
 import "./status-view";
 import "./use-view";
 import type { HomeAssistant, Installation, PanelInfo } from "./types";
 
 export const PANEL_TAG = "vtherm-smart-boiler-panel";
 
-const TABS = ["overview", "burner", "use", "status"] as const;
+const TABS = ["overview", "burner", "use", "journal", "status"] as const;
 type Tab = (typeof TABS)[number];
 
 /** The tab a link names (#burner), else the overview. */
@@ -33,6 +35,7 @@ export class SmartBoilerPanel extends LitElement {
     panel: { attribute: false },
     load: { state: true },
     tab: { state: true },
+    texts: { state: true },
   };
 
   declare hass?: HomeAssistant;
@@ -40,13 +43,18 @@ export class SmartBoilerPanel extends LitElement {
   declare panel?: PanelInfo;
   declare load: Load;
   declare tab: Tab;
+  /** The plugin's own texts — its entities' names and states — in the user's language, as Home
+   * Assistant hands them out; the tabs that tell what the entities say read them. */
+  declare texts: Localize | null;
   private requested = false;
+  private textsFor = "";
 
   constructor() {
     super();
     this.narrow = false;
     this.load = { kind: "loading" };
     this.tab = tabOf(location.hash);
+    this.texts = null;
   }
 
   private choose(tab: Tab): void {
@@ -62,6 +70,14 @@ export class SmartBoilerPanel extends LitElement {
     if (this.hass && !this.requested) {
       this.requested = true;
       void this.fetchInstallation();
+    }
+    const hass = this.hass;
+    if (hass?.loadBackendTranslation && this.textsFor !== hass.language) {
+      this.textsFor = hass.language;
+      hass.loadBackendTranslation("entity", DOMAIN).then(
+        (texts) => (this.texts = texts),
+        () => (this.texts = null),
+      );
     }
   }
 
@@ -117,10 +133,17 @@ export class SmartBoilerPanel extends LitElement {
             .hass=${this.hass}
             .installation=${this.load.installation}
           ></vtherm-smart-boiler-use>
+          <vtherm-smart-boiler-journal
+            ?hidden=${this.tab !== "journal"}
+            .hass=${this.hass}
+            .installation=${this.load.installation}
+            .texts=${this.texts}
+          ></vtherm-smart-boiler-journal>
           <vtherm-smart-boiler-status
             ?hidden=${this.tab !== "status"}
             .hass=${this.hass}
             .installation=${this.load.installation}
+            .texts=${this.texts}
           ></vtherm-smart-boiler-status>`;
     }
   }
