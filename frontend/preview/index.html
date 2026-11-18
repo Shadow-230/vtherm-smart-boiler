@@ -118,12 +118,50 @@
     }
     return { "sensor.control_state": out };
   };
-  const stateText = { heating: { pl: "Grzanie", en: "Heating" } };
+  // A sample day for the last 24 h, every 10 minutes — stand-in arithmetic, not a real house.
+  const sampleDay = (m) => {
+    const end = Date.parse(m.end_time) / 1000;
+    const out = Object.fromEntries(m.entity_ids.map((id) => [id, []]));
+    const push = (id, s, a, lu) => out[id] && out[id].push(a ? { s, a, lu } : { s, lu });
+    for (let k = 144; k >= 0; k--) {
+      const lu = end - k * 600;
+      const c = new Date(lu * 1000).getHours() + new Date(lu * 1000).getMinutes() / 60;
+      const o = 1.5 + 3.5 * Math.cos((2 * Math.PI * (c - 15)) / 24);
+      const night = c >= 22 || c < 6;
+      const room = night ? 19 : 21;
+      const calls = night ? [] : (c >= 6 && c < 9) || (c >= 17 && c < 22) ? [zones[0], zones[1]] : [zones[0]];
+      const dhw = (c >= 6.8 && c < 7.0) || (c >= 19.5 && c < 19.7);
+      const on = dhw || (calls.length > 0 && k % 4 < 2);
+      const sp = sampleCurve({ room, outdoor_from: o, outdoor_to: o, step: 1 }).points[0][1];
+      const flow = dhw ? 60 : on ? sp + 1 : room + 6;
+      const ret = flow - (on ? 6.5 : 2);
+      push("sensor.flow", flow.toFixed(1), null, lu);
+      push("sensor.return", ret.toFixed(1), null, lu);
+      push("sensor.outdoor", o.toFixed(1), null, lu);
+      push("binary_sensor.flame", on ? "on" : "off", null, lu);
+      push("binary_sensor.dhw", dhw ? "on" : "off", null, lu);
+      push("sensor.modulation", on ? "34" : "0", null, lu);
+      push("binary_sensor.boiler_called", calls.length ? "on" : "off", null, lu);
+      push("sensor.calling", String(calls.length), { calling_zones: calls }, lu);
+      push("sensor.control_setpoint", calls.length ? sp.toFixed(1) : "unknown", { requested: calls.length ? sp : null, read_back: calls.length ? sp : null }, lu);
+      push("sensor.control_state", calls.length ? "heating" : "idle", {
+        reasons_text: calls.length ? (lang === "pl" ? "pokoje wołają o ciepło" : "rooms call for heat") : (lang === "pl" ? "żaden pokój nie woła" : "no room calls"),
+        target: calls.length ? sp : null, curve_outdoor: o, curve_room: room,
+      }, lu);
+      zones.forEach((z, i) => push(z, "heat", {
+        friendly_name: names[i], current_temperature: rooms[i][1] - (calls.includes(z) ? 0.6 : 0.1),
+        temperature: night ? rooms[i][1] - 2 : rooms[i][1], on_percent: calls.includes(z) ? 0.6 : 0,
+      }, lu));
+    }
+    return out;
+  };
+  const stateText = { heating: { pl: "Grzanie", en: "Heating" }, idle: { pl: "Postój", en: "Idle" } };
   const hass = {
     language: lang, locale: { language: lang }, user: { is_admin: query.get("user") !== "1" }, states,
     callWS: async (m) =>
       m.type === "vtherm_smart_boiler/curve" ? sampleCurve(m)
-      : m.type === "history/history_during_period" ? sampleHistory()
+      : m.type === "history/history_during_period"
+        ? (m.entity_ids.length > 1 ? sampleDay(m) : sampleHistory())
       : installation,
     callService: async (domain, service, data) => { window.lastCall = [domain, service, data]; },
     formatEntityState: (e) => stateText[e.state]?.[lang] ?? e.state,

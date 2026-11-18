@@ -25,7 +25,9 @@
     "confirm_on_body": "Control is experimental. The plugin starts setting the boiler's water temperature from the heating curve. You can switch it off at any time, and the boiler returns to its own settings.",
     "confirm_on": "Switch on",
     "cancel": "Cancel",
-    "failed": "The switch did not change: {message}"
+    "failed": "The switch did not change: {message}",
+    "replay": "replay · {time}",
+    "replay_hint": "A past moment: nothing can be changed."
   },
   "tiles": {
     "water": "Water — the plugin asks",
@@ -115,5 +117,21 @@
       "hard_min_above_max": "The lowest water is above a circuit's or the boiler's highest.",
       "invalid_curve": "These values make no curve."
     }
+  },
+  "timeline": {
+    "title": "The last 24 h",
+    "hint": "Scroll or play the day back: the tiles, the schematic, the rooms and the curve show that moment.",
+    "play": "Play the day",
+    "pause": "Stop",
+    "now": "Now",
+    "slider": "Moment of the day",
+    "legend_requested": "the plugin asks",
+    "legend_flow": "flow",
+    "legend_return": "return",
+    "legend_heat": "burning: heating",
+    "legend_hot_water": "burning: hot water",
+    "loading": "Loading the history…",
+    "no_history": "No history: the recorder keeps none for these entities.",
+    "error": "The history could not be read: {message}"
   }
 }

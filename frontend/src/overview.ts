@@ -1,11 +1,23 @@
 // The overview (docs/en/development/plans/plan-0.2-i10.md, I10.3): the status with its reasons
-// and the Control switch, the tiles, then the schematic with the rooms beside the curve. Only an administrator can switch control,
-// and only after confirming; the switch's own checks still apply — a refusal is shown as given.
+// and the Control switch, the tiles, the schematic with the rooms beside the curve, and the last
+// 24 h, whose scrubber shows any moment of the day in every part above. Only an administrator can
+// switch control, only now and only after confirming; the switch's own checks still apply — a
+// refusal is shown as given.
 import { LitElement, css, html, nothing } from "lit";
 import { liveView, type LiveView } from "./live";
 import { localize } from "./localize";
 import "./curve-card";
 import "./schematic-card";
+import "./timeline-card";
+import {
+  WINDOW_MS,
+  clock,
+  parseHistory,
+  statesAt,
+  watchedEntities,
+  type History,
+  type RecordedState,
+} from "./timeline";
 import type { HomeAssistant, Installation } from "./types";
 
 export const OVERVIEW_TAG = "vtherm-smart-boiler-overview";
@@ -19,17 +31,73 @@ export class SmartBoilerOverview extends LitElement {
     installation: { attribute: false },
     confirming: { state: true },
     error: { state: true },
+    history: { state: true },
+    historyStatus: { state: true },
+    at: { state: true },
   };
 
   declare hass?: HomeAssistant;
   declare installation?: Installation;
   declare confirming: boolean;
   declare error: string;
+  declare history: History | null;
+  declare historyStatus: string;
+  /** The moment shown: `null` for now. */
+  declare at: number | null;
+  private window: [number, number] = [0, 0];
+  private historyAsked = false;
 
   constructor() {
     super();
     this.confirming = false;
     this.error = "";
+    this.history = null;
+    this.historyStatus = "loading";
+    this.at = null;
+  }
+
+  protected willUpdate(): void {
+    if (this.hass && this.installation && !this.historyAsked) {
+      this.historyAsked = true;
+      void this.askHistory();
+    }
+  }
+
+  /** The last 24 h of every entity the overview reads, from Home Assistant's recorder. */
+  private async askHistory(): Promise<void> {
+    const hass = this.hass as HomeAssistant;
+    const end = Date.now();
+    const start = end - WINDOW_MS;
+    this.window = [start, end];
+    try {
+      const answer = await hass.callWS<Record<string, RecordedState[]>>({
+        type: "history/history_during_period",
+        start_time: new Date(start).toISOString(),
+        end_time: new Date(end).toISOString(),
+        entity_ids: watchedEntities(this.installation as Installation),
+        include_start_time_state: true,
+        significant_changes_only: false,
+        minimal_response: false,
+        no_attributes: false,
+      });
+      this.history = parseHistory(answer);
+      this.historyStatus = "ready";
+    } catch (err) {
+      const message = (err as { message?: unknown })?.message;
+      this.historyStatus = typeof message === "string" ? message : String(err);
+    }
+  }
+
+  /** Home Assistant as the overview shows it: now, or at the moment picked on the last 24 h. */
+  private shown(): HomeAssistant | undefined {
+    const hass = this.hass;
+    if (!hass || this.at == null || !this.history) return hass;
+    return { ...hass, states: statesAt(this.history, this.at, hass.states) };
+  }
+
+  private moveTo(at: number | null): void {
+    this.at = at;
+    if (at == null && Date.now() - this.window[1] > 5 * 60000) void this.askHistory();
   }
 
   private t(key: string, values?: Record<string, string>): string {
@@ -37,7 +105,7 @@ export class SmartBoilerOverview extends LitElement {
   }
 
   private view(): LiveView | null {
-    const hass = this.hass;
+    const hass = this.shown();
     if (!hass || !this.installation) return null;
     return liveView({
       installation: this.installation,
@@ -82,10 +150,14 @@ export class SmartBoilerOverview extends LitElement {
     const view = this.view();
     if (!view) return nothing;
     const { status, control, tiles } = view;
-    const canSwitch = control !== null && control.available && this.isAdmin;
+    const replay = this.at != null;
+    const canSwitch = control !== null && control.available && this.isAdmin && !replay;
+    const shown = this.shown();
     const hint = !control
       ? ""
-      : !control.available
+      : replay
+        ? this.t("control.replay_hint")
+        : !control.available
         ? this.t("control.unavailable")
         : !this.isAdmin
           ? this.t("control.admin_only")
@@ -99,7 +171,10 @@ export class SmartBoilerOverview extends LitElement {
             <svg viewBox="0 0 24 24"><path d=${FLAME_PATH}></path></svg>
           </div>
           <div class="words">
-            <h2>${status.title}</h2>
+            <div class="title-row">
+              <h2>${status.title}</h2>
+              ${replay ? html`<span class="chip">${this.t("control.replay", { time: clock(this.at as number, this.hass?.locale?.language ?? this.hass?.language ?? "en") })}</span>` : nothing}
+            </div>
             ${status.detail ? html`<p>${status.detail}</p>` : nothing}
           </div>
         </div>
@@ -139,15 +214,26 @@ export class SmartBoilerOverview extends LitElement {
       <div class="row">
         <vtherm-smart-boiler-schematic
           class="wide"
-          .hass=${this.hass}
+          .hass=${shown}
           .installation=${this.installation}
         ></vtherm-smart-boiler-schematic>
         <vtherm-smart-boiler-curve
           class="side"
-          .hass=${this.hass}
+          .hass=${shown}
           .installation=${this.installation}
         ></vtherm-smart-boiler-curve>
       </div>
+
+      <vtherm-smart-boiler-timeline
+        .hass=${this.hass}
+        .installation=${this.installation}
+        .history=${this.history}
+        .from=${this.window[0]}
+        .to=${this.window[1]}
+        .at=${this.at}
+        .status=${this.historyStatus}
+        @at-change=${(e: CustomEvent<number | null>) => this.moveTo(e.detail)}
+      ></vtherm-smart-boiler-timeline>
 
       ${control
         ? html`<dialog aria-labelledby="confirm-title" @cancel=${() => (this.confirming = false)}>
@@ -221,6 +307,20 @@ export class SmartBoilerOverview extends LitElement {
       margin: 0;
       font-size: 24px;
       font-weight: 600;
+    }
+    .title-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
     }
     .words p {
       margin: 4px 0 0;

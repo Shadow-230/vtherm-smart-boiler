@@ -20,6 +20,7 @@ const FILES = {
 };
 const VIEWS = [
   { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, dialog: true, preview: true },
+  { name: "desktop-pl-day", width: 1280, height: 720, query: "", scale: 1, replay: 120 },
   { name: "phone-pl-dark", width: 390, height: 844, query: "?dark=1", scale: 1 },
   { name: "desktop-en-user", width: 1280, height: 600, query: "?lang=en&user=1", scale: 1 },
   { name: "desktop-pl-hot-water", width: 1280, height: 600, query: "?dhw=1", scale: 1 },
@@ -57,6 +58,11 @@ for (const view of VIEWS) {
     await page.locator("vtherm-smart-boiler-overview dialog button.primary").click();
     const call = await page.evaluate(() => window.lastCall);
     console.log(`${view.name}: confirmed, the switch was called with`, JSON.stringify(call));
+  }
+  if (view.replay) {
+    await page.locator("vtherm-smart-boiler-timeline input.scrub").fill(String(view.replay));
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: join(out, `${view.name}-replay.png`), fullPage: true });
   }
   if (view.preview) {
     await page.locator("vtherm-smart-boiler-curve button.outline").click();
