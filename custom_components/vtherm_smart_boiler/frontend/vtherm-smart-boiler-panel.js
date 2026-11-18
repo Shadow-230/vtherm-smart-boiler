@@ -626,8 +626,21 @@ var I = {
 				design_outdoor_too_warm: "The hardest frost must be at least 10 °C below the curve's room temperature.",
 				hard_min_not_below_design_flow: "The lowest water must be below the water at the hardest frost.",
 				hard_min_above_max: "The lowest water is above a circuit's or the boiler's highest.",
-				invalid_curve: "These values make no curve."
-			}
+				invalid_curve: "These values make no curve.",
+				out_of_range: "a value is outside what the settings accept.",
+				offset_advanced: "the offset is set at the advanced level of the plugin's settings.",
+				needs_settings: "the settings need you for this save — open them to finish.",
+				other: "the settings refused it ({key})."
+			},
+			save: "Save",
+			save_title: "Save the curve?",
+			save_body: "The plugin's settings save it with their own checks and reload once; control goes on with the new curve.",
+			save_point: "Point at the hardest frost",
+			saving: "Saving…",
+			saved: "Saved: the plugin reloads its settings.",
+			refused: "Not saved: {reason}",
+			open_settings: "Open the plugin's settings",
+			admin_only: "Only an administrator can save the curve."
 		},
 		timeline: {
 			title: "The last 24 h",
@@ -763,8 +776,21 @@ var I = {
 				design_outdoor_too_warm: "Największy mróz musi być co najmniej 10 °C poniżej temperatury pokoju krzywej.",
 				hard_min_not_below_design_flow: "Najniższa woda musi być poniżej wody przy największym mrozie.",
 				hard_min_above_max: "Najniższa woda jest powyżej najwyższej wody obiegu albo kotła.",
-				invalid_curve: "Z tych wartości nie da się zrobić krzywej."
-			}
+				invalid_curve: "Z tych wartości nie da się zrobić krzywej.",
+				out_of_range: "wartość jest poza tym, co przyjmują ustawienia.",
+				offset_advanced: "przesunięcie ustawia się na poziomie zaawansowanym ustawień wtyczki.",
+				needs_settings: "ustawienia potrzebują przy tym zapisie Ciebie — otwórz je, żeby dokończyć.",
+				other: "ustawienia odmówiły ({key})."
+			},
+			save: "Zapisz",
+			save_title: "Zapisać krzywą?",
+			save_body: "Ustawienia wtyczki zapiszą ją z własnymi sprawdzeniami i przeładują się raz; sterowanie pójdzie dalej z nową krzywą.",
+			save_point: "Punkt przy największym mrozie",
+			saving: "Zapisywanie…",
+			saved: "Zapisano: wtyczka przeładowuje ustawienia.",
+			refused: "Nie zapisano: {reason}",
+			open_settings: "Otwórz ustawienia wtyczki",
+			admin_only: "Krzywą może zapisać tylko administrator."
 		},
 		timeline: {
 			title: "Ostatnie 24 h",
@@ -1011,11 +1037,14 @@ var Ye = "vtherm-smart-boiler-curve", q = 1e3, J = 280, Xe = 864e5, Ze = class e
 			draft: { state: !0 },
 			draftAnswer: { state: !0 },
 			past: { state: !0 },
-			error: { state: !0 }
+			error: { state: !0 },
+			confirmSave: { state: !0 },
+			saving: { state: !0 },
+			saveNote: { state: !0 }
 		};
 	}
 	constructor() {
-		super(), this.savedRoom = void 0, this.historyAsked = !1, this.asking = !1, this.askAgain = !1, this.saved = null, this.draft = null, this.draftAnswer = null, this.past = [], this.error = "";
+		super(), this.savedRoom = void 0, this.historyAsked = !1, this.asking = !1, this.askAgain = !1, this.saved = null, this.draft = null, this.draftAnswer = null, this.past = [], this.error = "", this.confirmSave = !1, this.saving = !1, this.saveNote = "";
 	}
 	t(e, t) {
 		return L(this.hass?.language, e, t);
@@ -1136,6 +1165,44 @@ var Ye = "vtherm-smart-boiler-curve", q = 1e3, J = 280, Xe = 864e5, Ze = class e
 			design_flow: Math.min(80, Math.max(25, t.design_flow + n[1]))
 		}));
 	}
+	get isAdmin() {
+		return this.hass?.user?.is_admin === !0;
+	}
+	canSave(e) {
+		let t = this.draft;
+		return !t || !this.isAdmin || this.saving || this.asking || this.draftAnswer == null || this.draftAnswer.problems.length ? !1 : t.design_outdoor !== e.design_outdoor || t.design_flow !== e.design_flow || e.advanced && t.offset !== e.offset;
+	}
+	reason(e) {
+		let t = Object.values(e)[0] ?? "", n = this.t(`curve.problem.${t}`);
+		return n === `curve.problem.${t}` ? this.t("curve.problem.other", { key: t }) : n;
+	}
+	async save(e) {
+		this.confirmSave = !1;
+		let t = this.settings, n = this.draft;
+		if (e && t && n && this.hass) {
+			this.saving = !0, this.saveNote = "";
+			try {
+				let e = await this.hass.callWS({
+					type: "vtherm_smart_boiler/curve/save",
+					design_outdoor: n.design_outdoor,
+					design_flow: n.design_flow,
+					...t.advanced ? { offset: n.offset } : {}
+				});
+				e.saved ? (this.saveNote = this.t("curve.saved"), this.draft = null, this.draftAnswer = null, this.dispatchEvent(new CustomEvent("installation-changed", {
+					bubbles: !0,
+					composed: !0
+				}))) : this.saveNote = this.t("curve.refused", { reason: this.reason(e.errors) });
+			} catch (e) {
+				this.saveNote = this.t("curve.refused", { reason: Qe(e) });
+			} finally {
+				this.saving = !1;
+			}
+		}
+	}
+	updated() {
+		let e = this.renderRoot.querySelector("dialog");
+		e && (this.confirmSave && !e.open && e.showModal(), !this.confirmSave && e.open && e.close());
+	}
 	render() {
 		let e = this.settings;
 		if (!this.hass || !this.installation) return j;
@@ -1209,7 +1276,7 @@ var Ye = "vtherm-smart-boiler-curve", q = 1e3, J = 280, Xe = 864e5, Ze = class e
       </div>
       ${a ? k`<div class="preview">
             <p class="muted small">${this.t("curve.preview_hint")}</p>
-            <label class="field">
+            ${e.advanced ? k`<label class="field">
               <span>${this.t("curve.offset")} <b>${z(a.offset, r, 1)} K</b></span>
               <input
                 type="range"
@@ -1219,21 +1286,47 @@ var Ye = "vtherm-smart-boiler-curve", q = 1e3, J = 280, Xe = 864e5, Ze = class e
                 .value=${String(a.offset)}
                 @input=${(e) => this.setDraft({ offset: Number(e.target.value) })}
               />
-            </label>
+            </label>` : j}
             ${m != null && h != null ? k`<p>${this.t("curve.preview_effect", {
 			outdoor: i(p),
 			saved: i(m),
 			draft: i(h)
 		})}</p>` : j}
             ${(this.draftAnswer?.problems ?? []).map((e) => k`<p class="problem" role="alert">${this.t(`curve.problem.${e}`)}</p>`)}
-            <button class="text" @click=${() => this.setDraft({
+            <div class="actions">
+              <button
+                class="primary"
+                ?disabled=${!this.canSave(e)}
+                @click=${() => {
+			this.saveNote = "", this.confirmSave = !0;
+		}}
+              >
+                ${this.saving ? this.t("curve.saving") : this.t("curve.save")}
+              </button>
+              <button class="text" @click=${() => this.setDraft({
 			design_outdoor: e.design_outdoor,
 			design_flow: e.design_flow,
 			offset: e.offset
 		})}>
-              ${this.t("curve.reset")}
-            </button>
+                ${this.t("curve.reset")}
+              </button>
+            </div>
+            ${this.isAdmin ? j : k`<p class="muted small">${this.t("curve.admin_only")}</p>`}
             <p class="muted small">${this.t("curve.preview_note")}</p>
+            <dialog aria-labelledby="save-title" @cancel=${() => this.confirmSave = !1}>
+              <h2 id="save-title">${this.t("curve.save_title")}</h2>
+              <dl>
+                <dt>${this.t("curve.save_point")}</dt>
+                <dd>${i(e.design_outdoor)} → ${i(e.design_flow)}<br />${i(a.design_outdoor)} → ${i(a.design_flow)}</dd>
+                ${e.advanced ? k`<dt>${this.t("curve.offset")}</dt>
+                      <dd>${z(e.offset, r, 1)} K → ${z(a.offset, r, 1)} K</dd>` : j}
+              </dl>
+              <p class="muted">${this.t("curve.save_body")}</p>
+              <div class="actions end">
+                <button class="text" @click=${() => this.save(!1)}>${this.t("control.cancel")}</button>
+                <button class="primary" @click=${() => this.save(!0)}>${this.t("curve.save")}</button>
+              </div>
+            </dialog>
           </div>` : k`<dl>
             <dt>${this.t("curve.design_point")}</dt>
             <dd>${i(e.design_outdoor)} → ${i(e.design_flow)}</dd>
@@ -1250,7 +1343,9 @@ var Ye = "vtherm-smart-boiler-curve", q = 1e3, J = 280, Xe = 864e5, Ze = class e
               ${e.comfort_correction ? this.t("curve.correction_on", { value: z(e.correction_max_k, r, 0) }) : this.t("curve.correction_off")}
             </dd>
           </dl>`}
+      ${this.saveNote ? k`<p class="note" role="status">${this.saveNote}</p>` : j}
       ${this.error ? k`<p class="problem" role="alert">${this.error}</p>` : j}
+      <a class="settings" href="/config/integrations/integration/vtherm_smart_boiler">${this.t("curve.open_settings")}</a>
     `);
 	}
 	frame(e) {
@@ -1524,6 +1619,62 @@ var Ye = "vtherm-smart-boiler-curve", q = 1e3, J = 280, Xe = 864e5, Ze = class e
     button.text {
       border: 0;
       align-self: flex-start;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .actions.end {
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+    button.primary {
+      appearance: none;
+      border: 0;
+      border-radius: 10px;
+      min-height: 40px;
+      padding: 0 16px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
+    }
+    button.primary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .note {
+      font-size: 13px;
+      margin: 10px 0 0;
+    }
+    .settings {
+      display: inline-block;
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--primary-color);
+    }
+    dialog {
+      border: 0;
+      border-radius: var(--ha-dialog-border-radius, 16px);
+      padding: 24px;
+      max-width: 440px;
+      width: calc(100% - 32px);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      font-size: 14px;
+    }
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.45);
+    }
+    dialog h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+    dialog p {
+      margin: 12px 0 0;
     }
   `;
 	}
@@ -3101,9 +3252,9 @@ var It = "vtherm-smart-boiler-panel", Lt = class extends F {
 	willUpdate() {
 		this.hass && !this.requested && (this.requested = !0, this.fetchInstallation());
 	}
-	async fetchInstallation() {
+	async fetchInstallation(e = !0) {
 		if (this.hass) {
-			this.load = { kind: "loading" };
+			e && (this.load = { kind: "loading" });
 			try {
 				let e = await this.hass.callWS({ type: "vtherm_smart_boiler/installation" });
 				this.load = {
@@ -3119,6 +3270,9 @@ var It = "vtherm-smart-boiler-panel", Lt = class extends F {
 			}
 		}
 	}
+	refetchSoon() {
+		window.setTimeout(() => void this.fetchInstallation(!1), 3e3);
+	}
 	body() {
 		switch (this.load.kind) {
 			case "loading": return k`<p class="note">${this.t("panel.loading")}</p>`;
@@ -3129,6 +3283,7 @@ var It = "vtherm-smart-boiler-panel", Lt = class extends F {
 			case "ready": return k`<vtherm-smart-boiler-overview
           .hass=${this.hass}
           .installation=${this.load.installation}
+          @installation-changed=${() => this.refetchSoon()}
         ></vtherm-smart-boiler-overview>`;
 		}
 	}

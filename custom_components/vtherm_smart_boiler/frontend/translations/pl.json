@@ -115,8 +115,21 @@
       "design_outdoor_too_warm": "Największy mróz musi być co najmniej 10 °C poniżej temperatury pokoju krzywej.",
       "hard_min_not_below_design_flow": "Najniższa woda musi być poniżej wody przy największym mrozie.",
       "hard_min_above_max": "Najniższa woda jest powyżej najwyższej wody obiegu albo kotła.",
-      "invalid_curve": "Z tych wartości nie da się zrobić krzywej."
-    }
+      "invalid_curve": "Z tych wartości nie da się zrobić krzywej.",
+      "out_of_range": "wartość jest poza tym, co przyjmują ustawienia.",
+      "offset_advanced": "przesunięcie ustawia się na poziomie zaawansowanym ustawień wtyczki.",
+      "needs_settings": "ustawienia potrzebują przy tym zapisie Ciebie — otwórz je, żeby dokończyć.",
+      "other": "ustawienia odmówiły ({key})."
+    },
+    "save": "Zapisz",
+    "save_title": "Zapisać krzywą?",
+    "save_body": "Ustawienia wtyczki zapiszą ją z własnymi sprawdzeniami i przeładują się raz; sterowanie pójdzie dalej z nową krzywą.",
+    "save_point": "Punkt przy największym mrozie",
+    "saving": "Zapisywanie…",
+    "saved": "Zapisano: wtyczka przeładowuje ustawienia.",
+    "refused": "Nie zapisano: {reason}",
+    "open_settings": "Otwórz ustawienia wtyczki",
+    "admin_only": "Krzywą może zapisać tylko administrator."
   },
   "timeline": {
     "title": "Ostatnie 24 h",

@@ -45,9 +45,9 @@ export class SmartBoilerPanel extends LitElement {
     }
   }
 
-  private async fetchInstallation(): Promise<void> {
+  private async fetchInstallation(showLoading = true): Promise<void> {
     if (!this.hass) return;
-    this.load = { kind: "loading" };
+    if (showLoading) this.load = { kind: "loading" };
     try {
       const installation = await this.hass.callWS<Installation>({
         type: "vtherm_smart_boiler/installation",
@@ -61,6 +61,12 @@ export class SmartBoilerPanel extends LitElement {
           ? { kind: "not_running" }
           : { kind: "error", message: typeof message === "string" ? message : String(err) };
     }
+  }
+
+  /** After a save from the page the plugin reloads its settings: read the installation again
+   * once it has (a few seconds), keeping the page as it is meanwhile. */
+  private refetchSoon(): void {
+    window.setTimeout(() => void this.fetchInstallation(false), 3000);
   }
 
   private body() {
@@ -77,6 +83,7 @@ export class SmartBoilerPanel extends LitElement {
         return html`<vtherm-smart-boiler-overview
           .hass=${this.hass}
           .installation=${this.load.installation}
+          @installation-changed=${() => this.refetchSoon()}
         ></vtherm-smart-boiler-overview>`;
     }
   }

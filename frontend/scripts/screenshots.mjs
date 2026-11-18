@@ -75,6 +75,12 @@ for (const view of VIEWS) {
     await page.mouse.up();
     await page.waitForTimeout(200);
     await page.locator("vtherm-smart-boiler-curve").screenshot({ path: join(out, `${view.name}-curve-preview.png`) });
+    await page.locator("vtherm-smart-boiler-curve button.primary").first().click();
+    await page.locator("vtherm-smart-boiler-curve dialog[open]").waitFor();
+    await page.screenshot({ path: join(out, `${view.name}-curve-save.png`) });
+    await page.locator("vtherm-smart-boiler-curve dialog button.primary").click();
+    await page.waitForTimeout(200);
+    console.log(`${view.name}: the curve was saved with`, JSON.stringify(await page.evaluate(() => window.lastSave)));
   }
   if (errors.length) {
     failed = true;

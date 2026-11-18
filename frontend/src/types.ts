@@ -54,6 +54,8 @@ export interface CurveSettings {
   room_auto: boolean;
   comfort_correction: boolean;
   correction_max_k: number;
+  /** The settings' advanced level: the offset can be saved. */
+  advanced: boolean;
 }
 
 export interface Installation {

@@ -69,7 +69,7 @@ async def test_nothing_running_answers_not_running(
     async_setup_websocket(hass)
     async_setup_websocket(hass)  # once per run: a second call changes nothing
     client = await connect(hass, hass_ws_client)
-    for command in ("installation", "curve", "days"):
+    for command in ("installation", "curve", "days", "curve/save"):
         reply = await client.ask(command)
         assert reply["success"] is False, command
         assert reply["error"]["code"] == "not_running"
@@ -132,6 +132,7 @@ async def test_the_curve_as_control_decides_it(rig: Rig, hass_ws_client: Any) ->
     assert curve["entered"] is True
     assert (curve["hard_min"], curve["hard_max"]) == (loop.limits.hard_min, loop.limits.hard_max)
     assert curve["room_auto"] is loop.room_auto
+    assert curve["advanced"] is (rig.entry.options.get("level") == "advanced")
 
     reply = await client.ask("curve", outdoor_from=-20, outdoor_to=20, step=1)
     assert reply["success"] is True
@@ -209,3 +210,128 @@ def test_flow_limits_refuse_what_the_command_names_invalid() -> None:
         FlowLimits(hard_min=60, hard_max=50)
     with pytest.raises(ValueError, match="exponent"):
         HeatingCurve(exponent=0)
+
+
+# I10.4: the curve saved from the page — an administrator only — through the plugin's own
+# settings, so every check and the save are theirs.
+
+
+def curve_of(entry: Any) -> tuple[float | None, float | None, float | None]:
+    options = entry.options
+    curve = options.get("control", {}).get("curve", {})
+    return (
+        options.get("parameters", {}).get("design_outdoor"),
+        curve.get("design_flow"),
+        curve.get("offset"),
+    )
+
+
+async def test_a_curve_saved_from_the_page_is_saved_as_the_settings_save_it(
+    rig: Rig, hass_ws_client: Any
+) -> None:
+    await start(rig)
+    client = await connect(rig.hass, hass_ws_client)
+    entry = rig.entry
+    before = dict(entry.options)
+
+    reply = await client.ask("curve/save", design_outdoor=-12, design_flow=58)
+    assert reply["success"] is True
+    assert reply["result"] == {"saved": True, "errors": {}}
+    await rig.hass.async_block_till_done(wait_background_tasks=True)  # the settings' one reload
+    assert curve_of(entry)[:2] == (-12, 58)
+    # Nothing else of the options changed but what the curve's form writes.
+    changed = {k for k in set(before) | set(entry.options) if before.get(k) != entry.options.get(k)}
+    assert changed <= {"control", "parameters"}
+    assert rig.hass.config_entries.options.async_progress() == []
+    view = (await client.ask("installation"))["result"]
+    assert (view["curve"]["design_outdoor"], view["curve"]["design_flow"]) == (-12, 58)
+
+
+async def test_a_curve_the_settings_refuse_is_named_and_nothing_changes(
+    rig: Rig, hass_ws_client: Any
+) -> None:
+    await start(rig)
+    client = await connect(rig.hass, hass_ws_client)
+    before = dict(rig.entry.options)
+    # The settings' own first refusal, by its field and translation key: here the lowest water
+    # is not below the water at the hardest frost.
+    reply = await client.ask("curve/save", design_flow=25)
+    assert reply["result"] == {
+        "saved": False, "errors": {"hard_min": "hard_min_not_below_design_flow"},
+    }  # fmt: skip
+    reply = await client.ask("curve/save", design_flow=24)  # outside the field's own bounds
+    assert reply["result"] == {"saved": False, "errors": {"design_flow": "out_of_range"}}
+    assert dict(rig.entry.options) == before
+    assert rig.hass.config_entries.options.async_progress() == []  # no settings left open
+
+
+async def test_the_offset_is_saved_only_where_the_settings_show_it(
+    rig: Rig, hass_ws_client: Any
+) -> None:
+    await start(rig)
+    client = await connect(rig.hass, hass_ws_client)
+    entry = rig.entry
+    if entry.options.get("level") == "advanced":  # the rig's entry: make it the simple level
+        rig.hass.config_entries.async_update_entry(
+            entry, options={**entry.options, "level": "simple"}
+        )
+        await rig.hass.async_block_till_done(wait_background_tasks=True)
+    before = dict(entry.options)
+    reply = await client.ask("curve/save", offset=2)
+    assert reply["result"] == {"saved": False, "errors": {"offset": "offset_advanced"}}
+    assert dict(entry.options) == before
+
+    rig.hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "level": "advanced"}
+    )
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    reply = await client.ask("curve/save", offset=2)
+    assert reply["result"]["saved"] is True
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert curve_of(entry)[2] == 2
+
+
+async def test_a_save_the_settings_would_take_the_user_through_is_not_made(
+    rig: Rig, hass_ws_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A save the settings would stop for — here a confirmation — is not made from the page:
+    the answer names the step, for the user to finish in the settings."""
+    from custom_components.vtherm_smart_boiler import config_flow
+
+    await start(rig)
+    client = await connect(rig.hass, hass_ws_client)
+    before = dict(rig.entry.options)
+
+    async def confirm(self: Any, user_input: Any = None) -> Any:
+        return self.async_show_form(step_id="confirm_blocking")
+
+    monkeypatch.setattr(config_flow.SmartBoilerOptionsFlow, "async_step_save", confirm)
+    reply = await client.ask("curve/save", design_flow=58)
+    assert reply["result"] == {
+        "saved": False, "errors": {"base": "needs_settings"}, "step": "confirm_blocking",
+    }  # fmt: skip
+    assert dict(rig.entry.options) == before
+    assert rig.hass.config_entries.options.async_progress() == []
+
+
+async def test_only_an_administrator_saves_the_curve(
+    rig: Rig, hass_ws_client: Any, hass_read_only_access_token: str
+) -> None:
+    await start(rig)
+    assert await async_setup_component(rig.hass, "websocket_api", {})
+    client = Client(await hass_ws_client(rig.hass, hass_read_only_access_token))
+    before = dict(rig.entry.options)
+    reply = await client.ask("curve/save", design_flow=58)
+    assert reply["success"] is False
+    assert reply["error"]["code"] == "unauthorized"
+    assert dict(rig.entry.options) == before
+    assert (await client.ask("installation"))["success"] is True  # reading stays open
+
+
+async def test_no_curve_to_save_without_control(hass: HomeAssistant, hass_ws_client: Any) -> None:
+    await monitoring(hass)
+    client = await connect(hass, hass_ws_client)
+    reply = await client.ask("curve/save", design_flow=58)
+    assert reply["success"] is False
+    assert reply["error"]["code"] == "not_available"
+    assert hass.config_entries.options.async_progress() == []

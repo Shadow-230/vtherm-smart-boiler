@@ -75,7 +75,8 @@ version is decided then.
   each circuit's rooms: how hard each one's controller heats and whether it calls for heat; and
   the heating curve as control decides the water, with "where we are" on it, the last 7 days'
   decisions and a preview of changes — drag the point at the hardest frost, shift the curve — that
-  the plugin checks as the settings do and that saves nothing; and the last 24 h from the
+  the plugin checks as the settings do, and that an administrator can save after confirming —
+  through the plugin's own settings, their checks and their save; and the last 24 h from the
   recorder — the water the plugin asked, flow, return and the burns — whose scrubber and play show
   any moment of the day in every part of the page, the Control switch then out of reach.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the

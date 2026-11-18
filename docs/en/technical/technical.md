@@ -94,8 +94,13 @@ docs/                                     the documentation, one folder per lang
   nothing saved, from `core/curve_view.py` (the curve at the room temperature in use, then the
   limits, as control decides it before the comfort correction, a circuit's need and the ramp),
   with the settings' own checks by their translation keys; `vtherm_smart_boiler/days` — the
-  daily summaries in their stored form. Their schemas use `probatio`, as Home Assistant's own
-  commands do since 2026.10.
+  daily summaries in their stored form; and one write, for an administrator only:
+  `vtherm_smart_boiler/curve/save` saves the curve's design point and, at the advanced level, its
+  offset **through the plugin's own options flow** — its "Heating curve" form filled with the
+  stored values and the changes, then "Save and finish" — so every check and the save with its
+  reload are the settings' own; a refusal comes back by its field and translation key, and a save
+  the settings would stop for (a confirmation, another section) is not made. Their schemas use
+  `probatio`, as Home Assistant's own commands do since 2026.10.
 
 ## 3. Component responsibilities
 
