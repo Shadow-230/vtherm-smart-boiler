@@ -1117,7 +1117,7 @@ disabled by default.
 
 | Entity | What it does |
 |---|---|
-| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. The page is being built: for now it shows the status with its reasons, the Control switch (an administrator, with confirmation) and the tiles |
+| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. The page is being built: for now it shows the status with its reasons, the Control switch (an administrator, with confirmation), the tiles, and the schematic of the installation drawn from the settings, with each circuit's rooms and whether they take heat |
 
 Problems that need you also show as repair issues under Settings → Repairs.
 

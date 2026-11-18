@@ -48,5 +48,32 @@
     "rooms": "Rooms",
     "rooms_value": "{calling} of {total}",
     "rooms_detail": "calling for heat"
+  },
+  "schematic": {
+    "title": "Installation and rooms",
+    "boiler": "Boiler",
+    "burning_heating": "burning · heating",
+    "burning_hot_water": "burning · hot water",
+    "pause": "pause between burns",
+    "idle": "idle",
+    "tank": "Tank",
+    "hot_water": "hot water",
+    "cold_water": "cold",
+    "direct": "straight from the boiler",
+    "fixed_valve": "thermostatic valve {value} °C",
+    "other": "other automation",
+    "other_need": "other automation · needs {value} °C",
+    "boiler_mixed": "mixed by the boiler",
+    "rooms": "Who takes heat",
+    "rooms_hint": "The bar: how hard the room's own controller heats. Outlined: the room calls for heat.",
+    "takes_heat": "takes heat",
+    "no_heat": "not calling",
+    "legend_hot": "hot water",
+    "legend_mixed": "mixed",
+    "legend_return": "return",
+    "legend_idle": "still",
+    "legend_moving": "white dashes — the water flows · green — a pump or valve at work",
+    "aria": "Installation: {status}. Rooms taking heat: {rooms}.",
+    "nobody": "none"
   }
 }

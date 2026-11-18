@@ -2,7 +2,8 @@
 <!--
   The Boiler page on sample data, for screenshots (frontend/scripts/screenshots.mjs): a stand-in
   for Home Assistant's `hass` object and theme. Sample values only — no real installation.
-  ?lang=en|pl, ?dark=1, ?user=1 (a user who is not an administrator).
+  ?lang=en|pl, ?dark=1, ?user=1 (a user who is not an administrator), ?dhw=1 (hot water),
+  ?combi=1 (a combi boiler).
 -->
 <html lang="en">
 <head>
@@ -37,35 +38,55 @@
   const entity = (id, state, attributes = {}) =>
     [id, { entity_id: id, state, attributes, last_changed: "", last_updated: "" }];
   const zones = ["climate.living_room", "climate.bedroom", "climate.kids_room", "climate.kitchen", "climate.bathroom"];
+  const names = {
+    pl: ["Salon", "Sypialnia", "Pokój dziecka", "Kuchnia", "Łazienka"],
+    en: ["Living room", "Bedroom", "Kids' room", "Kitchen", "Bathroom"],
+  }[lang];
+  const rooms = [[20.6, 21, 0.64], [18.7, 19, 0.38], [20.8, 21, 0.12], [21.2, 21, 0], [22.1, 22, 0]];
   const states = Object.fromEntries([
     entity("sensor.control_state", "heating", {
       reasons_text: lang === "pl" ? "pokoje wołają o ciepło, woda według krzywej" : "rooms call for heat, water from the curve",
     }),
     entity("switch.control", "on"),
     entity("sensor.control_setpoint", "41.0", { requested: 41.0, read_back: 41.0 }),
+    entity("binary_sensor.boiler_called", "on"),
     entity("sensor.flow", "40.6"),
     entity("sensor.return", "34.2"),
     entity("sensor.outdoor", "3.8"),
+    entity("sensor.pressure", "1.6"),
     entity("binary_sensor.flame", "on"),
     entity("sensor.modulation", "34"),
-    entity("binary_sensor.dhw", "off"),
-    entity("sensor.calling", "2", { calling_zones: zones.slice(0, 2) }),
+    entity("binary_sensor.dhw", query.get("dhw") ? "on" : "off"),
+    entity("sensor.calling", "2", { calling_zones: [zones[0], zones[1]] }),
+    ...zones.map((z, i) => entity(z, "heat", {
+      friendly_name: names[i], current_temperature: rooms[i][0], temperature: rooms[i][1], on_percent: rooms[i][2],
+    })),
   ]);
+  const combi = query.get("combi");
   const installation = {
     entry_id: "sample", title: "Boiler",
-    boiler: { type: "single_tank", dhw: "storage", condensing: true },
-    circuits: [{
-      id: "c1", name: "Radiators", control: "unmixed_shared", fixed_temperature: null, max_flow: null,
-      needed: null, zones: zones.map((z) => ({ entity_id: z, emitter: "radiator" })),
-    }],
+    boiler: combi ? { type: "combi", dhw: "combi", condensing: true } : { type: "single_tank", dhw: "storage", condensing: true },
+    circuits: [
+      {
+        id: "radiators", name: lang === "pl" ? "Grzejniki" : "Radiators", control: "unmixed_shared",
+        fixed_temperature: null, max_flow: null, needed: null,
+        zones: [zones[1], zones[2], zones[4]].map((z) => ({ entity_id: z, emitter: "radiator" })),
+      },
+      {
+        id: "floor", name: lang === "pl" ? "Podłogówka" : "Underfloor", control: "passive_fixed",
+        fixed_temperature: 35, max_flow: 45, needed: null,
+        zones: [zones[0], zones[3]].map((z) => ({ entity_id: z, emitter: "underfloor" })),
+      },
+    ],
     signals: {
       flame: "binary_sensor.flame", flow: "sensor.flow", return: "sensor.return", outdoor: "sensor.outdoor",
-      modulation: "sensor.modulation", dhw_active: "binary_sensor.dhw",
+      modulation: "sensor.modulation", dhw_active: "binary_sensor.dhw", pressure: "sensor.pressure",
     },
     weather: null,
     entities: {
       control: "switch.control", control_state: "sensor.control_state",
       control_setpoint: "sensor.control_setpoint", demand_count: "sensor.calling",
+      boiler_called: "binary_sensor.boiler_called",
     },
     curve: null,
   };
