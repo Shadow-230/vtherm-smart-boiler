@@ -190,6 +190,7 @@ from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm
 
 if TYPE_CHECKING:
     from .control import ControlUnit
+    from .journal import Journal
 
 _LOGGER = logging.getLogger(__name__)
 HOUR = 3600.0
@@ -448,6 +449,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # The platforms that set themselves up for this run: only they say what is stale (PB-07).
         self.platforms_set_up: set[str] = set()
         self.control: ControlUnit | None = None
+        # What the plugin decided and why, for the Boiler page (I10.6); set at setup.
+        self.journal: Journal | None = None
         # Control left the options while a hand-back was still owed: this unit only hands back.
         self.hand_back_unit: ControlUnit | None = None
         self.stored_control: dict[str, Any] = {}

@@ -69,7 +69,7 @@ async def test_nothing_running_answers_not_running(
     async_setup_websocket(hass)
     async_setup_websocket(hass)  # once per run: a second call changes nothing
     client = await connect(hass, hass_ws_client)
-    for command in ("installation", "curve", "days", "burns", "curve/save"):
+    for command in ("installation", "curve", "days", "burns", "journal", "curve/save"):
         reply = await client.ask(command)
         assert reply["success"] is False, command
         assert reply["error"]["code"] == "not_running"

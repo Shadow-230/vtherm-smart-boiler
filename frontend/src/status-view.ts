@@ -7,7 +7,6 @@ import { LitElement, css, html, nothing, type TemplateResult } from "lit";
 import { formatNumber, numberOf } from "./format";
 import { localize } from "./localize";
 import {
-  DOMAIN,
   REASON_UNITS,
   alarmList,
   buildingValue,
@@ -49,19 +48,18 @@ export class SmartBoilerStatus extends LitElement {
   static properties = {
     hass: { attribute: false },
     installation: { attribute: false },
-    texts: { state: true },
+    texts: { attribute: false },
     confirming: { state: true },
     error: { state: true },
   };
 
   declare hass?: HomeAssistant;
   declare installation?: Installation;
-  /** The plugin's own texts, once Home Assistant has loaded them. */
+  /** The plugin's own texts, once Home Assistant has loaded them (the panel asks). */
   declare texts: Localize | null;
   /** The building value whose reset waits for confirmation. */
   declare confirming: string;
   declare error: string;
-  private textsFor = "";
 
   constructor() {
     super();
@@ -73,13 +71,6 @@ export class SmartBoilerStatus extends LitElement {
   protected willUpdate(): void {
     // Home Assistant's dark theme: the status colours have their own steps there.
     this.toggleAttribute("dark", this.hass?.themes?.darkMode === true);
-    const hass = this.hass;
-    if (!hass?.loadBackendTranslation || this.textsFor === hass.language) return;
-    this.textsFor = hass.language;
-    hass.loadBackendTranslation("entity", DOMAIN).then(
-      (texts) => (this.texts = texts),
-      () => (this.texts = null),
-    );
   }
 
   updated(): void {

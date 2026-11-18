@@ -90,7 +90,7 @@ docs/                                     the documentation, one folder per lang
   files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
   "Page in the sidebar" takes it away and puts it back. Without Home Assistant's frontend running
   nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
-  `websocket_api.py` holds what the page reads, four read-only WebSocket commands for any
+  `websocket_api.py` holds what the page reads, five read-only WebSocket commands for any
   signed-in user, each answering from the running entry (else the error `not_running`):
   `vtherm_smart_boiler/installation` — the boiler, the circuits with their zones and emitters,
   the picked entity of every signal, the plugin's entities by key and the curve's settings;
@@ -102,7 +102,9 @@ docs/                                     the documentation, one folder per lang
   `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule);
   `vtherm_smart_boiler/burns` — the burns of the monitor's
   last analysis as it classified them (heating, hot water, unknown), so the page draws the
-  monitor's own; and one write, for an administrator only:
+  monitor's own; `vtherm_smart_boiler/journal` — the journal (see
+  [Persistent state](#6-persistent-state)), from a moment on where one is given; and one write,
+  for an administrator only:
   `vtherm_smart_boiler/curve/save` saves the curve's design point and, at the advanced level, its
   offset **through the plugin's own options flow** — its "Heating curve" form filled with the
   stored values and the changes, then "Save and finish" — so every check and the save with its
@@ -278,6 +280,21 @@ store, which holds the monitor's history and day summaries.
 - **Read cautiously** (`async_read_control_state`): when the store cannot be read (missing,
   damaged or of another shape) and the options hold a control section, a hand-back counts as
   owed and the boiler as held, so the plugin hands back to be safe.
+
+**The journal** (`journal.py`, its rules in `core/journal.py`) has a store of its own too,
+`<domain>.<entry_id>.journal`, so the entry's main store and its version stay as they are. It
+keeps what the plugin decided and why, for the Boiler page: the plugin's starts and stops,
+control taking the boiler and handing it back, the heat call on and off, the water setpoint
+written — its first value, then each change of at least 1 K from the value last journaled — a
+circuit's need holding the water, an alarm raised (or its level raised) and cleared, and each
+settings save, from the page (naming what it changed) or from the settings (naming the sections
+that changed); each with the reasons control gave. It only watches — it listens to control's
+state and the monitor's updates and changes nothing; a failure in it is logged once. The first
+look after a start sets the baseline: the start is journaled, not what was already so; an alarm
+that cannot be judged stays as it was. Kept 14 days and 2,000 entries at most, the oldest dropped
+first (provisional, K4); written a minute after a change, at once when the entry unloads, and by
+Home Assistant at its stop; a store that cannot be read starts an empty journal. It goes with
+the entry's other stores when the entry is removed.
 
 ## 7. Testing
 

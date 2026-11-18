@@ -90,7 +90,7 @@ docs/                                     dokumentacja, osobny katalog na każdy
   udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
   przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Gdy frontend Home Assistanta nie
   działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
-  `.tools/node/`. `websocket_api.py` to to, co strona czyta: cztery polecenia WebSocket tylko do
+  `.tools/node/`. `websocket_api.py` to to, co strona czyta: pięć poleceń WebSocket tylko do
   odczytu, dla każdego zalogowanego użytkownika, każde odpowiada z działającego wpisu (inaczej
   błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich strefami i
   grzejnikami, encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
@@ -102,7 +102,8 @@ docs/                                     dokumentacja, osobny katalog na każdy
   `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora);
   `vtherm_smart_boiler/burns` — palenia z ostatniej analizy monitora tak,
   jak je sklasyfikował (ogrzewanie, ciepła woda, nieznane), więc strona rysuje palenia samego
-  monitora; oraz jeden zapis, tylko dla administratora:
+  monitora; `vtherm_smart_boiler/journal` — dziennik (zob. [Stan trwały](#6-stan-trwały)), od
+  podanej chwili, jeśli ją podano; oraz jeden zapis, tylko dla administratora:
   `vtherm_smart_boiler/curve/save` zapisuje punkt krzywej przy największym mrozie i, na poziomie
   zaawansowanym, jej przesunięcie **przez własne ustawienia wtyczki** — ich formularz „Krzywa
   grzewcza” wypełniony zapisanymi wartościami i zmianami, potem „Zapisz i zakończ” — więc każde
@@ -294,6 +295,22 @@ wpisu, który trzyma historię monitora i podsumowania dni.
 - **Czytane ostrożnie** (`async_read_control_state`): gdy magazynu nie da się odczytać (brak go,
   jest uszkodzony albo ma inny kształt), a opcje zawierają część sterowania, oddanie kotła liczy
   się jako zaległe, a kocioł jako trzymany, więc wtyczka dla bezpieczeństwa oddaje kocioł.
+
+**Dziennik** (`journal.py`, jego zasady w `core/journal.py`) też ma własny magazyn,
+`<domain>.<entry_id>.journal`, więc główny magazyn wpisu i jego wersja zostają bez zmian. Trzyma
+to, co wtyczka zdecydowała i dlaczego, dla strony „Kocioł”: starty i zatrzymania wtyczki,
+przejęcie kotła przez sterowanie i jego oddanie, włączenie i wyłączenie wezwania ciepła,
+zapisaną nastawę wody — jej pierwszą wartość, potem każdą zmianę o co najmniej 1 K od wartości
+ostatnio zapisanej w dzienniku — potrzebę obiegu, która trzyma wodę, alarm podniesiony (albo z
+podniesionym poziomem) i ustąpiony oraz każdy zapis ustawień, ze strony (z tym, co zmienił) albo
+z ustawień (z sekcjami, które się zmieniły); każde z powodami, które podało sterowanie. Tylko
+obserwuje — słucha stanu sterowania i odświeżeń monitora i niczego nie zmienia; jego błąd jest
+logowany raz. Pierwsze spojrzenie po starcie ustala punkt wyjścia: zapisany jest sam start, a
+nie to, co już było; alarm, którego nie da się teraz ocenić, zostaje taki, jaki był. Trzyma 14
+dni i najwyżej 2000 wpisów, najstarsze wypadają pierwsze (tymczasowo, K4); zapisywany minutę po
+zmianie, od razu przy wyładowaniu wpisu i przez Home Assistanta przy jego zatrzymaniu; magazyn,
+którego nie da się odczytać, zaczyna pusty dziennik. Znika razem z innymi magazynami wpisu, gdy
+wpis jest usuwany.
 
 ## 7. Testowanie
 
