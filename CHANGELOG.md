@@ -82,7 +82,10 @@ version is decided then.
   **Burner**: the burner's metrics, the monitor's own burns of the last 24 h, and how long the
   heating burns lasted, the short ones marked by the monitor's short-burn length. A tab **Use**:
   gas per degree-day and the degree-days, the last 12 weeks' gas per degree-day, and the change
-  against yesterday cause by cause — weather, hot water, settings and the rest.
+  against yesterday cause by cause — weather, hot water, settings and the rest. A tab **Status
+  and alarms**: the control verdict with its reasons, every alarm with the active ones first, the
+  signals' health, the building values with their source — an administrator forgets a measured
+  one there, after confirming — and the suggested lowest water temperature with its evidence.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
   water was decided with, as the curve reads it.
 

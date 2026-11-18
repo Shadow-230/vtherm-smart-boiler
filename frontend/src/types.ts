@@ -19,6 +19,9 @@ export interface HomeAssistant {
   callWS<T>(message: Record<string, unknown>): Promise<T>;
   callService(domain: string, service: string, data?: Record<string, unknown>): Promise<unknown>;
   formatEntityState?(entity: HassEntity, state?: string): string;
+  /** An integration's own texts in the user's language ("entity": its entities' names, states
+   * and attribute states), as `component.<domain>.entity.…` keys. */
+  loadBackendTranslation?(category: string, integration?: string): Promise<(key: string) => string>;
 }
 
 export interface PanelInfo {

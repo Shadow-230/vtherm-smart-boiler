@@ -82,11 +82,15 @@ docs/                                     the documentation, one folder per lang
   `custom_components/vtherm_smart_boiler/frontend/`, with the licenses of the packages bundled
   into it. Those files are committed, so HACS installs them; CI builds them again and fails where
   they differ. The page's texts live there too (`frontend/translations/`, English the source):
-  the page reads them, and `panel.py` takes the sidebar title from them. `panel.py` serves the
+  the page reads them, and `panel.py` takes the sidebar title from them. What the plugin's
+  entities already say — the alarms' and the signals' names, the verdict's reasons, where a
+  building value comes from — the page takes from the plugin's own translations
+  (`translations/`), which Home Assistant hands it in the user's language
+  (`hass.loadBackendTranslation("entity", …)`), so each is written once. `panel.py` serves the
   files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
   "Page in the sidebar" takes it away and puts it back. Without Home Assistant's frontend running
   nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
-  `websocket_api.py` holds what the page reads, three read-only WebSocket commands for any
+  `websocket_api.py` holds what the page reads, four read-only WebSocket commands for any
   signed-in user, each answering from the running entry (else the error `not_running`):
   `vtherm_smart_boiler/installation` — the boiler, the circuits with their zones and emitters,
   the picked entity of every signal, the plugin's entities by key and the curve's settings;
@@ -104,7 +108,9 @@ docs/                                     the documentation, one folder per lang
   stored values and the changes, then "Save and finish" — so every check and the save with its
   reload are the settings' own; a refusal comes back by its field and translation key, and a save
   the settings would stop for (a confirmation, another section) is not made. Their schemas use
-  `probatio`, as Home Assistant's own commands do since 2026.10.
+  `probatio`, as Home Assistant's own commands do since 2026.10. The tab "Status and alarms"
+  forgets a measured building value with the plugin's own buttons (`button.press`), offered to an
+  administrator only, after confirming.
 
 ## 3. Component responsibilities
 

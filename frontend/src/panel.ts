@@ -5,12 +5,13 @@ import { LitElement, css, html, nothing } from "lit";
 import { localize } from "./localize";
 import "./burner-view";
 import "./overview";
+import "./status-view";
 import "./use-view";
 import type { HomeAssistant, Installation, PanelInfo } from "./types";
 
 export const PANEL_TAG = "vtherm-smart-boiler-panel";
 
-const TABS = ["overview", "burner", "use"] as const;
+const TABS = ["overview", "burner", "use", "status"] as const;
 type Tab = (typeof TABS)[number];
 
 /** The tab a link names (#burner), else the overview. */
@@ -99,7 +100,7 @@ export class SmartBoilerPanel extends LitElement {
           ${this.t("panel.error", { message: this.load.message })}
         </p>`;
       case "ready":
-        // Both views stay mounted, so each keeps what it read when the other is shown.
+        // The views stay mounted, so each keeps what it read while another is shown.
         return html`<vtherm-smart-boiler-overview
             ?hidden=${this.tab !== "overview"}
             .hass=${this.hass}
@@ -115,7 +116,12 @@ export class SmartBoilerPanel extends LitElement {
             ?hidden=${this.tab !== "use"}
             .hass=${this.hass}
             .installation=${this.load.installation}
-          ></vtherm-smart-boiler-use>`;
+          ></vtherm-smart-boiler-use>
+          <vtherm-smart-boiler-status
+            ?hidden=${this.tab !== "status"}
+            .hass=${this.hass}
+            .installation=${this.load.installation}
+          ></vtherm-smart-boiler-status>`;
     }
   }
 
@@ -178,7 +184,7 @@ export class SmartBoilerPanel extends LitElement {
       background: none;
       font: inherit;
       font-weight: 500;
-      padding: 0 16px;
+      padding: 0 clamp(8px, 2.5vw, 16px);
       height: 44px;
       color: var(--app-header-text-color, var(--text-primary-color));
       opacity: 0.75;

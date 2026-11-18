@@ -82,11 +82,15 @@ docs/                                     dokumentacja, osobny katalog na każdy
   udostępnia, do `custom_components/vtherm_smart_boiler/frontend/`, razem z licencjami pakietów w
   nim zawartych. Te pliki są w repozytorium, więc HACS je instaluje; CI buduje je ponownie i
   zgłasza błąd, gdy się różnią. Są tam też teksty strony (`frontend/translations/`, angielski to
-  źródło): czyta je strona, a `panel.py` bierze z nich nazwę w menu bocznym. `panel.py`
+  źródło): czyta je strona, a `panel.py` bierze z nich nazwę w menu bocznym. To, co mówią już
+  encje wtyczki — nazwy alarmów i sygnałów, powody werdyktu, skąd pochodzi wartość budynku —
+  strona bierze z własnych tłumaczeń wtyczki (`translations/`), które Home Assistant podaje jej
+  w języku użytkownika (`hass.loadBackendTranslation("entity", …)`), więc każde jest zapisane
+  raz. `panel.py`
   udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
   przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Gdy frontend Home Assistanta nie
   działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
-  `.tools/node/`. `websocket_api.py` to to, co strona czyta: trzy polecenia WebSocket tylko do
+  `.tools/node/`. `websocket_api.py` to to, co strona czyta: cztery polecenia WebSocket tylko do
   odczytu, dla każdego zalogowanego użytkownika, każde odpowiada z działającego wpisu (inaczej
   błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich strefami i
   grzejnikami, encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
@@ -105,6 +109,8 @@ docs/                                     dokumentacja, osobny katalog na każdy
   sprawdzenie i sam zapis z przeładowaniem są tych ustawień; odmowa wraca z polem i kluczem
   tłumaczenia, a zapisu, przy którym ustawienia by się zatrzymały (potwierdzenie, inna sekcja),
   się nie robi. Ich schematy używają `probatio`, jak własne polecenia Home Assistanta od 2026.10.
+  Zakładka „Stan i alarmy” zapomina zmierzoną wartość budynku własnymi przyciskami wtyczki
+  (`button.press`), dostępnymi tylko dla administratora, po potwierdzeniu.
 
 ## 3. Zadania komponentów
 
