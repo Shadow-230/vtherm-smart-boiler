@@ -22,8 +22,9 @@ from custom_components.vtherm_smart_boiler.panel import (
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
-# The user's consent of 2026-11-18: these packages and what they depend on, nothing else.
-CONSENTED = {"lit", "typescript", "vite", "vitest"}
+# The user's consents of 2026-11-18: these packages and what they depend on, nothing else —
+# Playwright for the page's screenshots only.
+CONSENTED = {"lit", "typescript", "vite", "vitest", "playwright"}
 
 
 def flatten(texts: dict, prefix: str = "") -> dict[str, str]:

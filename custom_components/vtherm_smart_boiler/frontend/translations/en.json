@@ -1,6 +1,52 @@
 {
   "panel": {
     "title": "Boiler",
-    "building": "The Boiler page is being built: the overview, the schematic and the curve come next."
+    "loading": "Loading…",
+    "not_running": "Smart Boiler is not running. Check its entry under Settings → Devices & services.",
+    "error": "The page could not read Smart Boiler's data: {message}"
+  },
+  "status": {
+    "monitoring": "Monitoring",
+    "monitoring_detail": "Control is not set up: the plugin watches the boiler and counts.",
+    "burner_on": "The burner is on.",
+    "burner_off": "The burner is off."
+  },
+  "control": {
+    "label": "Control",
+    "experimental": "(experimental)",
+    "hint_on": "Switching off hands the boiler back to its own settings.",
+    "hint_off": "Switching on asks for confirmation.",
+    "admin_only": "Only an administrator can change this.",
+    "unavailable": "Not available now.",
+    "confirm_off_title": "Switch control off?",
+    "confirm_off_body": "The plugin stops setting the water temperature and hands the boiler back to its own settings. It keeps watching and counting.",
+    "confirm_off": "Switch off",
+    "confirm_on_title": "Switch control on?",
+    "confirm_on_body": "Control is experimental. The plugin starts setting the boiler's water temperature from the heating curve. You can switch it off at any time, and the boiler returns to its own settings.",
+    "confirm_on": "Switch on",
+    "cancel": "Cancel",
+    "failed": "The switch did not change: {message}"
+  },
+  "tiles": {
+    "water": "Water — the plugin asks",
+    "water_confirmed": "confirmed by the boiler",
+    "water_waiting": "waiting for the boiler to confirm",
+    "water_none": "nothing asked now",
+    "flow": "Flow",
+    "flow_detail": "water leaving the boiler",
+    "return": "Return",
+    "return_detail": "water coming back",
+    "return_condensing": "below 55 °C — the boiler condenses",
+    "outdoor": "Outdoor",
+    "outdoor_sensor": "the boiler's sensor",
+    "outdoor_weather": "from the weather",
+    "flame": "Flame",
+    "flame_on": "On",
+    "flame_off": "Off",
+    "flame_hot_water": "hot water",
+    "flame_modulation": "modulation {value} %",
+    "rooms": "Rooms",
+    "rooms_value": "{calling} of {total}",
+    "rooms_detail": "calling for heat"
   }
 }

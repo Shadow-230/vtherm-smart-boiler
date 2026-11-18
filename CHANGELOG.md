@@ -67,7 +67,9 @@ version is decided then.
 
 - A page "Boiler" in Home Assistant's sidebar, for every user, in Home Assistant's language; the
   switch **Page in the sidebar** (on by default) takes it away and puts it back. For now it shows
-  its frame; the overview, the schematic and the curve come next.
+  the status with its reasons, the **Control** switch — an administrator only, after a
+  confirmation — and tiles for the water asked and confirmed, flow, return, outdoor, flame and the
+  rooms calling for heat; the schematic, the curve and the last 24 h come next.
 
 ### Requirements
 

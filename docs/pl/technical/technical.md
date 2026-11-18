@@ -310,6 +310,11 @@ scripts/env.sh mypy
 
 Strona „Kocioł”, w `frontend/`: `../scripts/env.sh npm test` i `../scripts/env.sh npm run build`
 (najpierw sprawdzenie typów); zbudowane pliki trafiają do repozytorium.
+`../scripts/env.sh npm run screenshots` rysuje zbudowaną stronę na przykładowych danych
+(`frontend/preview/index.html`) w Chromium bez okna — jasny i ciemny motyw, komputer i telefon,
+administrator i zwykły użytkownik — do `.tmp/screenshots/` i zgłasza błąd przy każdym błędzie na
+stronie; `scripts/bootstrap_browser.sh` umieszcza to Chromium i potrzebne mu biblioteki systemowe
+w `.tools/`.
 
 ## 8. Dane o wodzie dla algorytmów stref
 

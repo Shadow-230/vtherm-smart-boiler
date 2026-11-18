@@ -41,6 +41,8 @@ export npm_config_cache="$TOOLS/cache/npm"
 export npm_config_prefix="$TOOLS/npm-global"
 export npm_config_update_notifier=false
 export npm_config_fund=false
+# Playwright's browser for the page's screenshots (the user's consent of 2026-11-18): in .tools/.
+export PLAYWRIGHT_BROWSERS_PATH="$TOOLS/ms-playwright"
 
 mkdir -p "$TMPDIR"
 

@@ -26,9 +26,15 @@ function lookup(texts: Texts, key: string): string | undefined {
   return typeof node === "string" ? node : undefined;
 }
 
-/** The text of `key` ("panel.title") in `language`, else in English, else the key itself. */
-export function localize(language: string | undefined, key: string): string {
-  return lookup(textsFor(language), key) ?? lookup(LANGUAGES.en, key) ?? key;
+/** The text of `key` ("panel.title") in `language`, else in English, else the key itself;
+ * each `{name}` in it replaced by `values[name]`. */
+export function localize(
+  language: string | undefined,
+  key: string,
+  values?: Record<string, string>,
+): string {
+  const text = lookup(textsFor(language), key) ?? lookup(LANGUAGES.en, key) ?? key;
+  return values ? text.replace(/\{(\w+)\}/g, (all, name: string) => values[name] ?? all) : text;
 }
 
 /** Every key of a text tree, dotted ("panel.title"). */

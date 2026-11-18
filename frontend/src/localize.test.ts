@@ -37,3 +37,12 @@ describe("localize", () => {
     }
   });
 });
+
+describe("localize with values", () => {
+  it("puts the values in", () => {
+    expect(localize("pl", "tiles.rooms_value", { calling: "2", total: "5" })).toBe("2 z 5");
+  });
+  it("leaves a placeholder it has no value for", () => {
+    expect(localize("en", "tiles.rooms_value", { calling: "2" })).toBe("2 of {total}");
+  });
+});
