@@ -241,25 +241,51 @@ def test_hacs_manifest() -> None:
     AwesomeVersion(hacs["homeassistant"], ensure_strategy=[AwesomeVersionStrategy.CALVER])
 
 
-def test_ci_runs_the_core_tests_on_their_own_then_the_rest() -> None:
+def test_ci_runs_the_core_tests_on_their_own_then_the_rest_in_parts() -> None:
     """P-120: CI runs the core tests without Home Assistant's pytest plugin — layer 1, "no Home
-    Assistant" — then every other test with it, coverage with branches over both, its floor
-    judged once at the end; no step runs them all in one go."""
-    import yaml
+    Assistant", sockets closed — and every other test with it. Since 2026-11-18 side by side in
+    parts, for each Home Assistant version: the core tests, test_acceptance.py, test_control.py
+    and the rest, which leaves out exactly those three — every test once; coverage with branches
+    in each part, no floor there, and the floor judged once, in the job the rulesets require,
+    over the four parts combined, which it checks all passed."""
+    workflow = _workflow("tests.yml")
+    parts = workflow["jobs"]["parts"]
+    assert parts["strategy"]["matrix"]["group"] == ["ha", "ha-minimum"]
+    assert parts["strategy"]["matrix"]["part"] == ["core", "acceptance", "control", "rest"]
+    run = next(step["run"] for step in parts["steps"] if "pytest" in step.get("run", ""))
+    assert "coverage=(--cov --cov-branch --cov-report= --cov-fail-under=0)" in run
 
-    workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8"))
-    runs = [step.get("run", "") for step in workflow["jobs"]["tests"]["steps"]]
-    tests = [run for run in runs if "pytest" in run]
-    assert len(tests) == 2
-    core, rest = tests
+    def part(name: str) -> str:
+        begin = run.index(f"{name})")
+        return run[begin : run.index(";;", begin)]
+
+    core = part("core")
     assert "-p no:homeassistant" in core
+    assert "--disable-socket" in core
     assert core.rstrip().endswith("tests/core")
-    assert "--disable-socket" in core  # no network, as Home Assistant's plugin ensures
-    assert "--cov-fail-under=0" in core  # a partial run: the floor is judged after both
-    assert "--ignore=tests/core" in rest
-    assert "--cov-append" in rest
-    assert "--cov-fail-under" not in rest  # pyproject's floor applies
-    assert all("--cov --cov-branch" in run for run in tests)
+    assert part("acceptance").rstrip().endswith("tests/integration/test_acceptance.py")
+    assert part("control").rstrip().endswith("tests/integration/test_control.py")
+    rest = part("rest")
+    for left_out in (
+        "tests/core",
+        "tests/integration/test_acceptance.py",
+        "tests/integration/test_control.py",
+    ):
+        assert f"--ignore={left_out}" in rest
+    for name in ("core", "acceptance", "control", "rest"):
+        assert '"${coverage[@]}"' in part(name), name
+        assert "-p no:homeassistant" not in part(name) or name == "core"
+    required = workflow["jobs"]["tests"]
+    assert required["needs"] == ["changes", "parts"]
+    labels = [entry["label"] for entry in required["strategy"]["matrix"]["include"]]
+    assert labels == [
+        "Tests – supported Home Assistant version",
+        "Tests – oldest supported Home Assistant version",
+    ]
+    checks = "\n".join(step.get("run", "") for step in required["steps"])
+    assert "for part in core acceptance control rest" in checks
+    assert "coverage combine" in checks
+    assert "floors = {" in checks
 
 
 def _workflow(name: str) -> dict[Any, Any]:
@@ -290,21 +316,39 @@ def test_ci_canaries_run_weekly_on_demand_and_check_types() -> None:
 
 
 def test_ci_fetches_upstream_by_full_commit_and_pins_actions() -> None:
-    """PB-86: VT and SmartPI are fetched by the full commit, not by a tag that can move, and
-    every action runs from a full commit, not from a branch or tag."""
+    """PB-86: VT and SmartPI are fetched by the full commit, not by a tag that can move — in the
+    shared test environment (`.github/actions/test-env`), which the parts and the newest-
+    vtherm_api canary use as it is — and every action runs from a full commit, not from a branch
+    or tag; only the repository's own action is used by its path."""
+    import yaml
+
     commit = re.compile(r"[0-9a-f]{40}")
+    action = yaml.safe_load(
+        (ROOT / ".github/actions/test-env/action.yml").read_text(encoding="utf-8")
+    )
+    fetch = "\n".join(step.get("run", "") for step in action["runs"]["steps"])
+    assert "archive/$commit.tar.gz" in fetch
+    assert "refs/tags" not in fetch
+    assert re.search(r"versatile_thermostat [0-9a-f]{40}", fetch)
+    assert re.search(r"vtherm_smartpi [0-9a-f]{40}", fetch)
     tests = _workflow("tests.yml")
-    for job in ("tests", "latest-vtherm-api"):
-        fetch = "\n".join(step.get("run", "") for step in tests["jobs"][job]["steps"])
-        assert "archive/$commit.tar.gz" in fetch
-        assert "refs/tags" not in fetch
-        assert re.search(r"versatile_thermostat [0-9a-f]{40}", fetch)
-        assert re.search(r"vtherm_smartpi [0-9a-f]{40}", fetch)
-    for name in ("tests.yml", "validate.yml"):
-        for job in _workflow(name)["jobs"].values():
-            for step in job["steps"]:
-                if "uses" in step:
-                    assert commit.fullmatch(step["uses"].rpartition("@")[2]), step["uses"]
+    for job in ("parts", "latest-vtherm-api"):
+        local = [
+            s for s in tests["jobs"][job]["steps"] if s.get("uses") == "./.github/actions/test-env"
+        ]
+        assert local, job
+        assert all((s.get("with") or {}).get("vendor", "pinned") == "pinned" for s in local), job
+    steps = [
+        step
+        for name in ("tests.yml", "validate.yml")
+        for job in _workflow(name)["jobs"].values()
+        for step in job["steps"]
+    ]
+    for step in steps + action["runs"]["steps"]:
+        uses = step.get("uses")
+        if uses is None or uses == "./.github/actions/test-env":
+            continue
+        assert commit.fullmatch(uses.rpartition("@")[2]), uses
 
 
 def test_hacs_checks_the_brand() -> None:

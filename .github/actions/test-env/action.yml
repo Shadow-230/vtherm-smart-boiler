@@ -1,0 +1,61 @@
+# The test environment every test job starts from: Python 3.14, uv with its cache, the pinned test
+# environment under Home Assistant's own constraints (docs/en/development/plans/plan-0.1.md, A3),
+# and — unless a job brings its own — VT 10.5.1 and SmartPI 0.4.0 by the full commits their
+# release tags pointed at (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86). uv
+# installs the same pins pip did, in seconds instead of a minute (2026-11-18).
+name: Test environment
+description: Python, uv, the pinned test environment and the vendored VT and SmartPI
+inputs:
+  group:
+    description: The dependency group with Home Assistant's test harness (pyproject.toml)
+    required: true
+  vendor:
+    description: "pinned: VT 10.5.1 and SmartPI 0.4.0; none: the job fetches its own"
+    required: false
+    default: pinned
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.14"
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        enable-cache: true
+        cache-dependency-glob: pyproject.toml
+        cache-suffix: ${{ inputs.group }}
+    - name: Install the pinned test environment under Home Assistant's constraints
+      shell: bash
+      env:
+        GROUP: ${{ inputs.group }}
+      run: |
+        set -euo pipefail
+        uv pip install --system --group "$GROUP"
+        constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+        uv pip install --system --group test --group "$GROUP" -c "$constraints"
+        echo "HA_CONSTRAINTS=$constraints" >> "$GITHUB_ENV"
+        mkdir -p .tmp
+    - name: VT 10.5.1 and SmartPI 0.4.0 by their release commits
+      if: inputs.vendor == 'pinned'
+      shell: bash
+      run: |
+        set -euo pipefail
+        fetch() {  # repository, the full commit, the folder under vendor/
+          local repo="$1" commit="$2" folder="$3"
+          mkdir -p "vendor/$folder"
+          curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
+            | tar -xz -C "vendor/$folder" --strip-components=1
+        }
+        mkdir -p vendor/custom_components
+        fetch jmcollin78/versatile_thermostat 17ea26e0406057b395a27e3bb1a4ec7c39bb3a3c \
+          versatile_thermostat-10.5.1
+        fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
+        ln -s ../versatile_thermostat-10.5.1/custom_components/versatile_thermostat \
+          vendor/custom_components/versatile_thermostat
+        ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
+          vendor/custom_components/vtherm_smartpi
+        test -f vendor/custom_components/versatile_thermostat/manifest.json
+        test -f vendor/custom_components/vtherm_smartpi/manifest.json
+    - name: The Home Assistant version tested
+      shell: bash
+      run: python -c 'from homeassistant.const import __version__; print(f"Home Assistant {__version__}")' | tee -a "$GITHUB_STEP_SUMMARY"

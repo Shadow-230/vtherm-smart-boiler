@@ -14,6 +14,10 @@
 # is not checked again; pushes to qas and main are, as the last word before tests on a real
 # Home Assistant and before a release. The tests run on every CPU
 # (pytest-xdist). Actions are pinned to full commits (PB-86); the comment names the version.
+# The tests are CPU-bound, so a run is split across jobs side by side (2026-11-18): for each
+# Home Assistant version, four parts — the lint, types and core tests; test_acceptance.py;
+# test_control.py; the rest, about a third of the Home Assistant tests' time each — then the
+# job the rulesets require gathers the parts' coverage and checks every module's floor.
 name: Tests
 
 on:
@@ -28,29 +32,21 @@ permissions:
   contents: read
 
 jobs:
-  tests:
-    name: ${{ matrix.label }}
+  # A pull request that changes documentation only (Markdown, docs/, LICENSE — not CLAUDE.md, not
+  # the water interface's specification, which its contract test reads, nothing under .github/)
+  # passes without the tests: no test reads those files. Anything else, and every push,
+  # schedule and manual run, runs everything.
+  changes:
+    name: Documentation only?
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        # Dependency groups in pyproject.toml; the labels are the names the rulesets require.
-        include:
-          - group: ha
-            label: "Tests – supported Home Assistant version"
-          - group: ha-minimum
-            label: "Tests – oldest supported Home Assistant version"
+    timeout-minutes: 5
+    outputs:
+      only: ${{ steps.docs.outputs.only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # A pull request that changes documentation only (Markdown, docs/, LICENSE — not CLAUDE.md,
-      # not the water interface's specification, which its contract test reads, nothing under
-      # .github/) passes without the tests: no test reads those files. Anything else, and every
-      # push, schedule and manual run, runs everything.
-      - name: Documentation only?
-        id: docs
+      - id: docs
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -67,21 +63,33 @@ jobs:
             fi
           fi
           echo "only=$only" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: steps.docs.outputs.only != 'true'
+
+  # One Home Assistant version and one part of the tests; each part's coverage goes to the job
+  # that checks the floor (P-120: the core tests without Home Assistant's pytest plugin, sockets
+  # closed, as that plugin keeps them; every other test with it).
+  parts:
+    name: ${{ matrix.label }} – ${{ matrix.part }}
+    needs: changes
+    if: needs.changes.outputs.only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [ha, ha-minimum]
+        part: [core, acceptance, control, rest]
+        include:
+          - group: ha
+            label: Supported Home Assistant
+          - group: ha-minimum
+            label: Oldest supported Home Assistant
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/test-env
         with:
-          python-version: "3.14"
-      - name: Install the pinned test environment under Home Assistant's constraints
-        if: steps.docs.outputs.only != 'true'
-        env:
-          GROUP: ${{ matrix.group }}
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --group "$GROUP"
-          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
-          python -m pip install --group test --group "$GROUP" -c "$constraints"
+          group: ${{ matrix.group }}
       - name: The minimum is the version hacs.json declares
-        if: steps.docs.outputs.only != 'true' && matrix.group == 'ha-minimum'
+        if: matrix.group == 'ha-minimum' && matrix.part == 'core'
         run: |
           python - <<'PY'
           import json
@@ -89,58 +97,117 @@ jobs:
           minimum = json.load(open("hacs.json", encoding="utf-8"))["homeassistant"]
           assert __version__ == minimum, (__version__, minimum)
           PY
-      # Decision 14 (P-119): the commits the VT 10.5.1 tag (the user's decision, 2026-10-13;
-      # 10.4.0 before) and the SmartPI 0.4.0 tag (docs/en/development/plans/plan-0.1.md A5)
-      # pointed at when checked, fetched by their full hash (PB-86); an archive that cannot be
-      # reached fails the job rather than skipping tests.
-      - name: VT 10.5.1 and SmartPI 0.4.0 by their release commits
-        if: steps.docs.outputs.only != 'true'
-        run: |
-          set -euo pipefail
-          fetch() {  # repository, the full commit, the folder under vendor/
-            local repo="$1" commit="$2" folder="$3"
-            mkdir -p "vendor/$folder"
-            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
-              | tar -xz -C "vendor/$folder" --strip-components=1
-          }
-          mkdir -p vendor/custom_components
-          fetch jmcollin78/versatile_thermostat 17ea26e0406057b395a27e3bb1a4ec7c39bb3a3c \
-            versatile_thermostat-10.5.1
-          fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
-          ln -s ../versatile_thermostat-10.5.1/custom_components/versatile_thermostat \
-            vendor/custom_components/versatile_thermostat
-          ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
-            vendor/custom_components/vtherm_smartpi
-          test -f vendor/custom_components/versatile_thermostat/manifest.json
-          test -f vendor/custom_components/vtherm_smartpi/manifest.json
-      - name: The Home Assistant version tested
-        if: steps.docs.outputs.only != 'true'
-        run: python -c 'from homeassistant.const import __version__; print(f"Home Assistant {__version__}")' | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Ruff
-        if: steps.docs.outputs.only != 'true'
+        if: matrix.part == 'core'
         run: ruff check .
       - name: Formatting
-        if: steps.docs.outputs.only != 'true'
+        if: matrix.part == 'core'
         run: ruff format --check .
       - name: Types
-        if: steps.docs.outputs.only != 'true'
+        if: matrix.part == 'core'
         run: mypy
-      # Two runs (P-120): the core tests on their own, without Home Assistant's pytest plugin
-      # (layer 1 of docs/en/development/plan.md's "Test environment"; sockets stay closed, as that
-      # plugin keeps them), then every other test with it; coverage adds up over both, and its
-      # floor is checked once, at the end of the second run.
-      - name: Core tests, without Home Assistant
-        if: steps.docs.outputs.only != 'true'
+      - name: Tests, ${{ matrix.part }}
+        env:
+          GROUP: ${{ matrix.group }}
+          PART: ${{ matrix.part }}
         run: |
-          mkdir -p .tmp
-          python -m pytest -q -n auto -p no:homeassistant --disable-socket --allow-unix-socket --cov --cov-branch --cov-report= --cov-fail-under=0 tests/core
-      - name: The other tests, with coverage of both runs
-        if: steps.docs.outputs.only != 'true'
-        run: python -m pytest -q -n auto --cov --cov-branch --cov-append --cov-report=term --ignore=tests/core
+          set -euo pipefail
+          coverage=(--cov --cov-branch --cov-report= --cov-fail-under=0)
+          case "$PART" in
+            core)
+              python -m pytest -q -n auto -p no:homeassistant --disable-socket \
+                --allow-unix-socket "${coverage[@]}" tests/core ;;
+            acceptance)
+              python -m pytest -q -n auto "${coverage[@]}" tests/integration/test_acceptance.py ;;
+            control)
+              python -m pytest -q -n auto "${coverage[@]}" tests/integration/test_control.py ;;
+            rest)
+              python -m pytest -q -n auto "${coverage[@]}" --ignore=tests/core \
+                --ignore=tests/integration/test_acceptance.py \
+                --ignore=tests/integration/test_control.py ;;
+          esac
+          mv .tmp/coverage ".tmp/coverage.$GROUP-$PART"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.group }}-${{ matrix.part }}
+          path: .tmp/coverage.*
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  # The checks the rulesets require, by their names: every part of their Home Assistant version
+  # passed — a part that failed uploads no coverage — and, P-35, every module at least 95 % with
+  # branches over all four parts, the config and options flows 100 %.
+  tests:
+    name: ${{ matrix.label }}
+    needs: [changes, parts]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: ha
+            label: "Tests – supported Home Assistant version"
+          - group: ha-minimum
+            label: "Tests – oldest supported Home Assistant version"
+    steps:
+      - name: Documentation only?
+        id: gate
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          ONLY: ${{ needs.changes.outputs.only }}
+        run: |
+          if [ "$CHANGES" != success ]; then
+            echo "The documentation check did not run through: $CHANGES" >&2
+            exit 1
+          fi
+          if [ "$ONLY" = true ]; then
+            echo "Documentation only: tests skipped." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "only=$ONLY" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.gate.outputs.only != 'true'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.gate.outputs.only != 'true'
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: steps.gate.outputs.only != 'true'
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+          cache-suffix: coverage
+      - name: Coverage, as the parts measured it
+        if: steps.gate.outputs.only != 'true'
+        run: uv pip install --system --group test
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.only != 'true'
+        with:
+          pattern: coverage-${{ matrix.group }}-*
+          merge-multiple: true
+          path: .tmp
+      - name: Every part passed
+        if: steps.gate.outputs.only != 'true'
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          missing=0
+          for part in core acceptance control rest; do
+            if [ ! -f ".tmp/coverage.$GROUP-$part" ]; then
+              echo "The part '$part' did not pass: no coverage from it." >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
       # P-35: every module at least 95 % with branches, the config and options flows 100 %.
       - name: Coverage of each module
-        if: steps.docs.outputs.only != 'true'
+        if: steps.gate.outputs.only != 'true'
         run: |
+          python -m coverage combine
+          python -m coverage report
           python -m coverage json -o .tmp/coverage-report.json
           python - <<'PY'
           import json, sys
@@ -168,34 +235,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: ./.github/actions/test-env
         with:
-          python-version: "3.14"
-      - name: Install the pinned test environment, then the newest vtherm_api
+          group: ha
+      - name: The newest vtherm_api
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install --group ha
-          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
-          python -m pip install --group test --group ha -c "$constraints"
-          python -m pip install -U vtherm-api
-          python -m pip show vtherm-api | head -2
-      - name: VT 10.5.1 and SmartPI 0.4.0 by their release commits
-        run: |
-          set -euo pipefail
-          fetch() {  # repository, the full commit, the folder under vendor/
-            local repo="$1" commit="$2" folder="$3"
-            mkdir -p "vendor/$folder"
-            curl -fsSL "https://github.com/$repo/archive/$commit.tar.gz" \
-              | tar -xz -C "vendor/$folder" --strip-components=1
-          }
-          mkdir -p vendor/custom_components
-          fetch jmcollin78/versatile_thermostat 17ea26e0406057b395a27e3bb1a4ec7c39bb3a3c \
-            versatile_thermostat-10.5.1
-          fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
-          ln -s ../versatile_thermostat-10.5.1/custom_components/versatile_thermostat \
-            vendor/custom_components/versatile_thermostat
-          ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
-            vendor/custom_components/vtherm_smartpi
+          uv pip install --system -U vtherm-api
+          uv pip show --system vtherm-api | head -2
       - name: Types
         run: mypy
       - name: All tests
@@ -216,9 +262,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: ./.github/actions/test-env
         with:
-          python-version: "3.14"
+          group: ha
+          vendor: none
       - name: The newest VT and SmartPI releases by their commits
         env:
           GH_TOKEN: ${{ github.token }}
@@ -245,22 +292,17 @@ jobs:
           mkdir -p vendor/custom_components
           fetch jmcollin78/versatile_thermostat versatile_thermostat
           fetch KipK/vtherm_smartpi vtherm_smartpi
-      - name: Install the pinned test environment, the newest vtherm_api and VT's requirements
+      - name: The newest vtherm_api and VT's and SmartPI's requirements
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install --group ha
-          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
-          python -m pip install --group test --group ha -c "$constraints"
-          python -m pip install -U vtherm-api
-          mkdir -p .tmp
+          uv pip install --system -U vtherm-api
           python - <<'PY' > .tmp/upstream-requirements.txt
           import json
           for component in ("versatile_thermostat", "vtherm_smartpi"):
               path = f"vendor/custom_components/{component}/manifest.json"
               print("\n".join(json.load(open(path, encoding="utf-8")).get("requirements", [])))
           PY
-          python -m pip install -r .tmp/upstream-requirements.txt -c "$constraints"
-          python -m pip show vtherm-api | head -2
+          uv pip install --system -r .tmp/upstream-requirements.txt -c "$HA_CONSTRAINTS"
+          uv pip show --system vtherm-api | head -2
       - name: Types
         run: mypy
       - name: All tests
