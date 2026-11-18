@@ -16,6 +16,25 @@ requires_vendor = pytest.mark.skipif(
 )
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> Iterator[None]:
+    """Home Assistant stops at every test's end, and the plugin's stop then waits up to
+    ``STOP_REPORT_WAIT_S`` (5 s) for a device that reports late — which the fakes never do: 38
+    tests idled 5 s each at their teardown (2026-11-17). The wait is 0 from the teardown's start,
+    before any fixture's finalizer stops Home Assistant; a test of the stop runs it in its body
+    and keeps the wait. Put back after, unless the teardown set it itself (a test's
+    ``monkeypatch`` undone)."""
+    from custom_components.vtherm_smart_boiler import control
+
+    left = control.STOP_REPORT_WAIT_S
+    control.STOP_REPORT_WAIT_S = 0.0
+    try:
+        return (yield)
+    finally:
+        if control.STOP_REPORT_WAIT_S == 0.0:
+            control.STOP_REPORT_WAIT_S = left
+
+
 @pytest.fixture(autouse=True)
 def _one_entry_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
     """P-125, T11: the integration allows one entry (``single_config_entry``), so a test never
