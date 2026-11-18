@@ -17,6 +17,8 @@ const FILES = {
     root,
     "custom_components/vtherm_smart_boiler/frontend/vtherm-smart-boiler-panel.js",
   ),
+  "/translations/en.json": join(root, "custom_components/vtherm_smart_boiler/translations/en.json"),
+  "/translations/pl.json": join(root, "custom_components/vtherm_smart_boiler/translations/pl.json"),
 };
 const VIEWS = [
   { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, dialog: true, preview: true },
@@ -25,6 +27,9 @@ const VIEWS = [
   { name: "phone-en-burner-dark", width: 390, height: 844, query: "?lang=en&dark=1#burner", scale: 1 },
   { name: "desktop-pl-use", width: 1280, height: 720, query: "#use", scale: 1 },
   { name: "phone-pl-use-dark", width: 390, height: 844, query: "?dark=1#use", scale: 1 },
+  { name: "desktop-pl-status", width: 1280, height: 720, query: "#status", scale: 1, reset: true },
+  { name: "phone-en-status-dark", width: 390, height: 844, query: "?lang=en&dark=1#status", scale: 1 },
+  { name: "desktop-en-status-user", width: 1280, height: 720, query: "?lang=en&user=1#status", scale: 1 },
   { name: "phone-pl-dark", width: 390, height: 844, query: "?dark=1", scale: 1 },
   { name: "desktop-en-user", width: 1280, height: 600, query: "?lang=en&user=1", scale: 1 },
   { name: "desktop-pl-hot-water", width: 1280, height: 600, query: "?dhw=1", scale: 1 },
@@ -49,7 +54,11 @@ for (const view of VIEWS) {
     const path = new URL(route.request().url()).pathname;
     const file = FILES[path];
     if (!file) return route.fulfill({ status: 404 });
-    const contentType = path.endsWith(".js") ? "text/javascript" : "text/html";
+    const contentType = path.endsWith(".js")
+      ? "text/javascript"
+      : path.endsWith(".json")
+        ? "application/json"
+        : "text/html";
     return route.fulfill({ path: file, contentType });
   });
   await page.goto(`http://preview.local/index.html${view.query}`);
@@ -59,7 +68,9 @@ for (const view of VIEWS) {
         ? "vtherm-smart-boiler-burner .tiles"
         : view.query.includes("#use")
           ? "vtherm-smart-boiler-use .tiles"
-          : "vtherm-smart-boiler-overview .hero",
+          : view.query.includes("#status")
+            ? "vtherm-smart-boiler-status .verdict"
+            : "vtherm-smart-boiler-overview .hero",
     )
     .waitFor();
   await page.waitForTimeout(300);
@@ -71,6 +82,13 @@ for (const view of VIEWS) {
     await page.locator("vtherm-smart-boiler-overview dialog button.primary").click();
     const call = await page.evaluate(() => window.lastCall);
     console.log(`${view.name}: confirmed, the switch was called with`, JSON.stringify(call));
+  }
+  if (view.reset) {
+    await page.locator("vtherm-smart-boiler-status button.outline").first().click();
+    await page.locator("vtherm-smart-boiler-status dialog[open]").waitFor();
+    await page.screenshot({ path: join(out, `${view.name}-reset.png`) });
+    await page.locator("vtherm-smart-boiler-status dialog button.primary").click();
+    console.log(`${view.name}: confirmed, the button was pressed with`, JSON.stringify(await page.evaluate(() => window.lastCall)));
   }
   if (view.replay) {
     await page.locator("vtherm-smart-boiler-timeline input.scrub").fill(String(view.replay));

@@ -71,6 +71,43 @@
       contributions: { weather: 0.41, dhw: -0.08, settings: 0.09, other: 0.04 },
       not_judged: [], other_within_normal: true,
     }),
+    entity("sensor.verdict", "worth_it", {
+      monitoring_since: "2026-10-02T06:00:00+00:00", days_left_out: 3,
+      reasons: [
+        { code: "good_condensing", kind: "fine", value: 0.96, limit: 0.5 },
+        { code: "frequent_starts", kind: "problem", value: 3.4, limit: 3, changed_by_control: true },
+        { code: "short_burns", kind: "problem", value: 0.46, limit: 0.3, changed_by_control: false },
+        { code: "load_unknown", kind: "missing", value: null, limit: null, detail: "estimate_only" },
+      ],
+    }),
+    entity("sensor.signal_problems", "1", {
+      signals: {
+        flame: "ok", flow: "ok", return: "ok", modulation: "ok", ch_setpoint: "not_mapped",
+        dhw_active: "ok", pressure: "stale", flue_gas: "not_mapped", outdoor: "ok", gas_meter: "not_mapped",
+      },
+    }),
+    entity("binary_sensor.signals", "on", { problems: [] }),
+    entity("binary_sensor.frequent_starts", "on", { level: "warning", limit: 3 }),
+    entity("binary_sensor.pressure_low", "off", { level: null, limit: 0.8 }),
+    entity("binary_sensor.flue_gas_high", "unknown", { reason: "unknown_input" }),
+    entity("binary_sensor.write_failed", "off"),
+    entity("binary_sensor.link_lost", "off"),
+    entity("binary_sensor.long_burn", "off", { reason: null }),
+    entity("binary_sensor.outdoor_problem", "off", { status: "ok" }),
+    entity("sensor.loss", "0.182", {
+      unit_of_measurement: "kW/K", source: "entered", confidence: 1, entered: 0.182, measured: 0.214,
+      measured_confidence: 0.71, measured_range: [0.171, 0.257], mismatch: true,
+    }),
+    entity("sensor.threshold", "15.5", {
+      unit_of_measurement: "°C", source: "measured", confidence: 0.82, entered: null, measured: 15.5,
+      measured_confidence: 0.82, mismatch: false,
+    }),
+    entity("sensor.lowest_water", "38", {
+      unit_of_measurement: "°C", state: "suggestion", counted_burns: 64, short_share: 46, reference: 41.2,
+      source: "ch_setpoint", window_days: 14, missing: [], estimate_from_power: 36,
+    }),
+    entity("button.reset_loss", "unknown"),
+    entity("button.reset_threshold", "unknown"),
     ...zones.map((z, i) => entity(z, "heat", {
       friendly_name: names[i], current_temperature: rooms[i][0], temperature: rooms[i][1], on_percent: rooms[i][2],
     })),
@@ -105,6 +142,14 @@
       condensing_share: "sensor.condensing_share",
       gas_per_degree_day: "sensor.gas_per_degree_day", degree_days: "sensor.degree_days",
       change_report: "sensor.change_report",
+      verdict: "sensor.verdict", signal_problems: "sensor.signal_problems", connection: "binary_sensor.signals",
+      alarm_frequent_starts: "binary_sensor.frequent_starts", alarm_pressure_low: "binary_sensor.pressure_low",
+      alarm_flue_gas_high: "binary_sensor.flue_gas_high", alarm_write_failed: "binary_sensor.write_failed",
+      alarm_boiler_link_lost: "binary_sensor.link_lost", long_burn: "binary_sensor.long_burn",
+      outdoor_sensor_problem: "binary_sensor.outdoor_problem",
+      loss_coefficient: "sensor.loss", heating_threshold: "sensor.threshold",
+      lowest_water_suggestion: "sensor.lowest_water",
+      reset_loss_coefficient: "button.reset_loss", reset_heating_threshold: "button.reset_threshold",
     },
     short_burn_min: 10,
     curve: {
@@ -205,6 +250,7 @@
   const stateText = { heating: { pl: "Grzanie", en: "Heating" }, idle: { pl: "Postój", en: "Idle" } };
   const hass = {
     language: lang, locale: { language: lang }, user: { is_admin: query.get("user") !== "1" }, states,
+    themes: { darkMode: Boolean(query.get("dark")) },
     callWS: async (m) =>
       m.type === "vtherm_smart_boiler/burns" ? sampleBurns()
       : m.type === "vtherm_smart_boiler/days" ? sampleWeeks()
@@ -215,6 +261,15 @@
       : installation,
     callService: async (domain, service, data) => { window.lastCall = [domain, service, data]; },
     formatEntityState: (e) => stateText[e.state]?.[lang] ?? e.state,
+    // The plugin's own translations (translations/*.json), as Home Assistant hands them out.
+    loadBackendTranslation: async (category, domain) => {
+      const data = await (await fetch(`/translations/${lang}.json`)).json();
+      const flat = {};
+      const walk = (node, path) => Object.entries(node).forEach(([k, v]) =>
+        v && typeof v === "object" ? walk(v, `${path}.${k}`) : (flat[`${path}.${k}`] = v));
+      walk(data, `component.${domain}`);
+      return (key) => flat[key] ?? "";
+    },
   };
   const panel = document.querySelector("vtherm-smart-boiler-panel");
   panel.narrow = innerWidth < 600;
