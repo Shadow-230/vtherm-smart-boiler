@@ -5,10 +5,11 @@
 Status: aktualny.
 
 Home Assistant w Dockerze, w dedykowanym kontenerze LXC na Proxmox, z wtyczką, Versatile Thermostat,
-SmartPI i symulatorem kotła tylko do testów (`sim/custom_components/boiler_sim`). Instancje testowe same
-utrzymują aktualne wydania Home Assistanta, VT i SmartPI (użytkownik, 2026-11-17; do tego czasu Home
-Assistant 2026.9.3, VT 10.5.1 i SmartPI 0.4.0 w wersji dołączonej do projektu), więc każdy raport z testów
-zapisuje wersje, które zastał jego przebieg. Wtyczka wymaga Home Assistanta 2026.10.4 lub nowszego. Scenariusze akceptacyjne działają tu
+SmartPI i symulatorem kotła tylko do testów (`sim/custom_components/boiler_sim`). Wersje na instancjach
+testowych zmieniają się tylko na polecenie użytkownika (użytkownik, 2026-11-17): Home Assistant przez
+`--ha WERSJA` przy wdrożeniu, VT i SmartPI albo dołączone do projektu, albo własne instancji (`--own-vt`,
+§3); każdy raport z testów zapisuje wersje, które zastał jego przebieg. Wtyczka wymaga Home Assistanta
+2026.10.4 lub nowszego. Scenariusze akceptacyjne działają tu
 (`docs/en/development/plans/plan-0.2.md`, J4), zanim cokolwiek trafi do prawdziwego kotła.
 
 Claude łączy się z tą instancją dopiero po tym, jak powiesz, że zaczynamy, tylko pod adresem z
@@ -134,6 +135,13 @@ hosta Proxmox, więc zapora na nim jest poza jego zasięgiem.
   fizykę) i `configuration.yaml` jako pliki — dowiązania do `vendor/` są zamieniane na pliki — jednym
   strumieniem tar przez SSH, więc po obu stronach potrzeba tylko `tar` i `ssh`; każda integracja
   zastępuje swoją starą kopię w całości. Potem uruchamia lub restartuje kontener.
+- Wersje zmieniają się tylko na polecenie użytkownika. `--ha WERSJA` ustawia tag obrazu Home
+  Assistanta; bez niego instancja zostaje przy tym, który ma (z jej `.env`, a bez niego z obrazu
+  wskazanego w jej `compose.yaml`; bez obu wdrożenie się zatrzymuje). `--own-vt` nie wysyła ani VT,
+  ani SmartPI i pomija `devenv/compose.vendored.yaml` w `COMPOSE_FILE`, więc instancja używa tych,
+  które ma zainstalowane we własnym `config/custom_components`; jeśli ich tam nie ma, wdrożenie
+  zatrzymuje się, zanim cokolwiek zmieni. Bez `--own-vt` dołączone wersje są jak dotąd montowane nad
+  nimi tylko do odczytu.
 - Pierwsze uruchomienie: otwórz adres URL, utwórz konto właściciela, ustaw lokalizację i jednostki metryczne.
 
 W `configuration.yaml` nie ma `default_config`, więc nic nie skanuje sieci lokalnej. Do `config/`

@@ -1,0 +1,9 @@
+# VT and SmartPI as vendored (vendor/), mounted read-only over whatever the instance has in its own
+# config/custom_components: a deploy's default (scripts/deploy_test.sh). A deploy with --own-vt
+# leaves this file out of COMPOSE_FILE, so the instance runs the VT and SmartPI installed in it,
+# at the versions the user keeps there (the user, 2026-11-17).
+services:
+  homeassistant:
+    volumes:
+      - ./custom_components/versatile_thermostat:/config/custom_components/versatile_thermostat:ro
+      - ./custom_components/vtherm_smartpi:/config/custom_components/vtherm_smartpi:ro
