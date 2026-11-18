@@ -40,7 +40,14 @@ store and its version stay as they are; the water journaled is the setpoint writ
 its sensor shows it, its first value and then each change of at least 1 K from the value last
 journaled, so a ramp's small steps add up; the plugin's starts and stops are journaled too, and
 the first look after a start only sets the baseline; a settings save names what the page changed
-or the sections the settings changed. The HA side is the new `journal.py`. For I10.3a the user consented on 2026-11-18 to Playwright, its
+or the sections the settings changed. The HA side is the new `journal.py`. I10.7 is done: the
+signature is the new `core/signature.py`, each group's line fitted through its heating days —
+colder than the heating threshold in use, with heating gas — by the building fit's own rules
+(`core/building.py`: days, outdoor spread, more gas on colder days, R²), with why a line is
+missing, and the two compared in the middle of the temperatures both cover; `days` sends it
+with the gas meter's unit (none without a meter, as the "gas per degree-day" sensor has none).
+A day keeps its starts hour by hour from its start (`hourly_starts`, 23 or 25 hours at a clock
+change); the page places them at their clock hours in the browser's time zone. For I10.3a the user consented on 2026-11-18 to Playwright, its
 Chromium and the system libraries Chromium needs (`scripts/bootstrap_browser.sh`): every part is
 checked on screenshots of sample data before its pull request. I10.1 differs from its row in four points: Node.js
 24 LTS, not 26 (26 needs `libatomic`, missing on hosts without it); the option is the
@@ -140,7 +147,7 @@ the notes and sources are in `research/2026-11-18-visualisation-options.md`.
 | I10.4 ✅ | **Changing the curve from the page.** The preview (drag the design point, the offset, the room, the exponent, the lowest water) asks `curve` for the points and the checks; "Save" for an administrator only: a confirmation listing old → new, then a new command `vtherm_smart_boiler/curve/save` that runs the same checks as the settings and saves the entry the same way (one reload, as the settings do); a refused value is shown with the reason. Tests: a non-administrator refused, every check refusing as in the settings, the saved entry equal to one saved through the settings | a scenario that saves the curve through the page once it exists; until then the settings scenarios cover the same save path |
 | I10.5 ✅ | **Burner, Use, Status and alarms.** From the plugin's entities, the recorder and its long-term statistics: the burn timeline and lengths, starts per hour, condensing; gas per degree-day by week, "use against yesterday"; the verdict with its reasons, the signals' health, the alarms, the building values with "Forget measured values" (an administrator, with confirmation, the existing buttons) | none |
 | I10.6 ✅ | **The journal.** `core/journal.py`: what the plugin decided and why — the heat call on and off, a water setpoint change of at least 1 K with its reason, a circuit's need holding the water, hand-back and resuming, an alarm raised and cleared, settings saved (from the page or the settings). Kept in the entry's store: 14 days, at most 2,000 entries, the oldest dropped first (provisional, K4). The command `vtherm_smart_boiler/journal`; the tab with the event lane, the list with filters and the zoomable week. Tests first | the scenarios that hand back or raise an alarm: each leaves its journal entry |
-| I10.7 | **Analyses.** The energy signature: each day's gas against its mean outdoor temperature, observing and control apart, the fitted lines computed in `core/` and sent with `days`; the calendar of burner starts by hour — new daily summaries keep 24 hourly start counts, older days show without (the store keeps reading them). Tests first | none |
+| I10.7 ✅ | **Analyses.** The energy signature: each day's gas against its mean outdoor temperature, observing and control apart, the fitted lines computed in `core/` and sent with `days`; the calendar of burner starts by hour — new daily summaries keep 24 hourly start counts, older days show without (the store keeps reading them). Tests first | none |
 | I10.8 | **Cards.** The overview's parts as cards in the card picker: status and tiles, schematic and rooms, curve, last 24 h; each finds the plugin's one entry by itself | none |
 | I10.9 | **Documents.** User guide EN and PL (a section on the page and the cards), technical documentation EN and PL, `docs/en/specification/scope.md` and its Polish twin, `CHANGELOG.md`; this plan marked done | none |
 | I10.10 🔒 | **In the test Home Assistant**, after the user says to start (J4): the page and the cards load, every tab reads its data, the curve saves through the page, the journal fills; screenshots for the user's review | the page and the cards |

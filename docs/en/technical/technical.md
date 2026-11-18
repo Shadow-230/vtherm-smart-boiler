@@ -99,7 +99,16 @@ docs/                                     the documentation, one folder per lang
   limits, as control decides it before the comfort correction, a circuit's need and the ramp),
   with the settings' own checks by their translation keys; `vtherm_smart_boiler/days` — the
   daily summaries in their stored form, with the last 12 weeks' gas per degree-day reckoned by
-  `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule);
+  `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule),
+  the energy signature fitted by `core/signature.py` — each day's heating gas per 24 h against
+  its mean outdoor temperature, the days only watched and the days under control apart, each
+  group's line through its heating days (colder than the heating threshold in use, with heating
+  gas) by the building fit's rules (`core/building.py`: days, outdoor spread, more gas on colder
+  days, R²), or why there is none, and the two compared in the middle of the temperatures both
+  cover — and the gas meter's unit (none without a meter: the gas is then estimated in the unit
+  of the boiler's gas figures); each day kept since I10.7 holds its heating starts hour by hour
+  from its start (`hourly_starts`, 23 or 25 hours at a clock change), which the page places at
+  their clock hours; days kept before have none and still read;
   `vtherm_smart_boiler/burns` — the burns of the monitor's
   last analysis as it classified them (heating, hot water, unknown), so the page draws the
   monitor's own; `vtherm_smart_boiler/journal` — the journal (see

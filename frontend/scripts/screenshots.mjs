@@ -27,6 +27,9 @@ const VIEWS = [
   { name: "phone-en-burner-dark", width: 390, height: 844, query: "?lang=en&dark=1#burner", scale: 1 },
   { name: "desktop-pl-use", width: 1280, height: 720, query: "#use", scale: 1 },
   { name: "phone-pl-use-dark", width: 390, height: 844, query: "?dark=1#use", scale: 1 },
+  { name: "desktop-pl-analyses", width: 1280, height: 900, query: "#analyses", scale: 1 },
+  { name: "phone-en-analyses-dark", width: 390, height: 844, query: "?lang=en&dark=1#analyses", scale: 1 },
+  { name: "desktop-en-analyses-user", width: 1280, height: 900, query: "?lang=en&user=1#analyses", scale: 1 },
   { name: "desktop-pl-journal", width: 1280, height: 900, query: "#journal", scale: 1, zoom: true },
   { name: "desktop-en-journal-week", width: 1280, height: 900, query: "?lang=en#journal", scale: 1, week: true },
   { name: "phone-pl-journal-dark", width: 390, height: 844, query: "?dark=1#journal", scale: 1 },
@@ -75,7 +78,9 @@ for (const view of VIEWS) {
             ? "vtherm-smart-boiler-status .verdict"
             : view.query.includes("#journal")
               ? "vtherm-smart-boiler-journal .tracks"
-              : "vtherm-smart-boiler-overview .hero",
+              : view.query.includes("#analyses")
+                ? "vtherm-smart-boiler-analyses .calendar"
+                : "vtherm-smart-boiler-overview .hero",
     )
     .waitFor();
   await page.waitForTimeout(300);

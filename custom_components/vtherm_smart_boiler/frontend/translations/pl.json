@@ -152,6 +152,7 @@
     "burner": "Palnik",
     "label": "Widoki strony",
     "use": "Zużycie",
+    "analyses": "Analizy",
     "journal": "Dziennik",
     "status": "Stan i alarmy"
   },
@@ -302,5 +303,31 @@
     "section_freshness": "Świeżość",
     "section_control": "Sterowanie",
     "section_curve": "Krzywa grzewcza"
+  },
+  "analyses": {
+    "signature": "Sygnatura energetyczna",
+    "observing": "Tylko obserwacja",
+    "control": "Pod sterowaniem",
+    "not_fitted": "Poza linią (ciepło albo bez gazu na grzanie)",
+    "signature_hint": "Gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej. Zimniejsze dni biorą więcej; linia mówi, o ile więcej na każdy stopień. Dni pod sterowaniem są rysowane osobno, więc oba zestawy da się porównać przy tej samej pogodzie.",
+    "no_days": "Jeszcze żadnego dnia: podsumowania przybywają dzień po dniu, gdy znany jest gaz i temperatura zewnętrzna.",
+    "y_unit": "W górę: gaz na grzanie na dzień ({unit}). W poprzek: średnia temperatura zewnętrzna dnia.",
+    "y_estimated": "W górę: gaz na grzanie na dzień, oszacowany z modulacji w jednostce danych gazu kotła. W poprzek: średnia temperatura zewnętrzna dnia.",
+    "day": "{date}: {outdoor} °C, {gas} — {group}",
+    "line": "o {slope} więcej na każdy stopień chłodniej; bez gazu na grzanie od {balance} °C w górę (dni: {days}, R² {r2})",
+    "no_line_too_few_days": "jeszcze bez linii — potrzeba co najmniej {days} dni grzania",
+    "no_line_too_little_spread": "jeszcze bez linii — temperatury zewnętrzne dni muszą się rozkładać na co najmniej {spread} K",
+    "no_line_not_heating": "bez linii — zimniejsze dni nie brały więcej gazu",
+    "no_line_too_scattered": "bez linii — dni są zbyt rozrzucone",
+    "compare_less": "Przy {outdoor} °C: tylko obserwacja {observing} na dzień, pod sterowaniem {control} — o {percent} % mniej.",
+    "compare_more": "Przy {outdoor} °C: tylko obserwacja {observing} na dzień, pod sterowaniem {control} — o {percent} % więcej.",
+    "signature_summary": "Dni: {count}. Tylko obserwacja: {observing}. Pod sterowaniem: {control}.",
+    "starts": "Starty palnika według godzin",
+    "starts_hint": "Starty grzania w każdej godzinie ostatnich 4 tygodni, ciemniej = więcej. Wiele godzin z rzędu ze startami to taktowanie kotła; dolny wiersz to średnia każdej godziny.",
+    "not_kept": "nie zapisano (dni sprzed tej wersji)",
+    "hour": "{date} {hour}:00 — starty: {count}",
+    "hour_not_kept": "{date}: godzin nie zapisano",
+    "mean": "Średnia",
+    "error": "Nie udało się odczytać analiz: {message}"
   }
 }

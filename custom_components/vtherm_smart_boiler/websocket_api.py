@@ -32,8 +32,12 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, LEVEL, LEVEL_ADVANCED
 from .control_config import curve_problems, lowest_above_max
+from .core.building import MIN_FIT_DAYS, MIN_OUTDOOR_SPREAD_K
 from .core.curve_view import curve_points
 from .core.journal import JOURNAL_DAYS, JOURNAL_MAX, entry_to_stored
+from .core.parameters import ParameterKey
+from .core.signals import Signal
+from .core.signature import Signature, SignatureFit, energy_signature
 from .core.weekly import weekly_use
 
 if TYPE_CHECKING:
@@ -222,20 +226,57 @@ def ws_curve(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, A
 def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
     """The daily summaries kept (a year at most), oldest first, in their stored form; ``since``:
     only the days that start at or after it (a Unix time). With them, the last 12 weeks' gas per
-    degree-day as ``core.weekly`` reckons it, over every day kept."""
+    degree-day as ``core.weekly`` reckons it, and the energy signature as ``core.signature``
+    fits it through the heating threshold in use (I10.7), both over every day kept."""
     coordinator = _coordinator(hass)
     if coordinator is None:
         _not_running(connection, msg)
         return
     since = msg.get("since")
     days = sorted(coordinator.daily.values(), key=lambda day: day.start)
+    data = coordinator.data
+    threshold = (
+        None if data is None else data.parameters.get(ParameterKey.HEATING_THRESHOLD).effective()
+    )
+    signature = energy_signature(days, None if threshold is None else threshold.value)
     connection.send_result(
         msg["id"],
         {
             "days": [day.to_dict() for day in days if since is None or day.start >= since],
             "weeks": [asdict(week) for week in weekly_use(days, WEEKS_SHOWN)],
+            "signature": _signature(signature),
+            "gas_unit": _meter_unit(hass, coordinator),
         },
     )
+
+
+def _meter_unit(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> str | None:
+    """The gas meter's unit as its entity reports it now; ``None`` without a meter — the days'
+    gas is then estimated in the unit of the boiler's gas figures (P-75)."""
+    entity = coordinator.config.signals.get(Signal.GAS_METER)
+    state = hass.states.get(entity) if entity else None
+    unit = state.attributes.get("unit_of_measurement") if state is not None else None
+    return str(unit) if unit else None
+
+
+def _signature(signature: Signature) -> dict[str, Any]:
+    def fit(found: SignatureFit) -> dict[str, Any]:
+        line = found.line
+        return {
+            "line": None if line is None else {**asdict(line), "balance": line.balance},
+            "reason": None if found.reason is None else found.reason.value,
+        }
+
+    compared = signature.comparison
+    return {
+        "days": [asdict(day) for day in signature.days],
+        "observing": fit(signature.observing),
+        "control": fit(signature.control),
+        "comparison": None if compared is None else asdict(compared),
+        # What a line needs, so the page says why there is none (``core.building``'s rules).
+        "min_days": MIN_FIT_DAYS,
+        "min_spread_k": MIN_OUTDOOR_SPREAD_K,
+    }
 
 
 @websocket_command({vol.Required("type"): f"{DOMAIN}/burns"})
