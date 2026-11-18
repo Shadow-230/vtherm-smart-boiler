@@ -82,7 +82,10 @@ Each topic lives only in its file; do not copy it here.
   user). Consented 2026-11-18 for the Boiler page (`plan-0.2-i10.md`): Node.js (LTS) from
   nodejs.org into `.tools/node/`, checked against its published SHA-256, and the npm packages
   `lit`, `typescript`, `vite`, `vitest` with what they depend on into `frontend/node_modules/`;
-  any other package needs the user's consent first. Sources and documents of typical DIY boiler
+  for the page's screenshots, `playwright` likewise, its Chromium into `.tools/ms-playwright/`,
+  and the system libraries Chromium needs as Debian packages fetched with `apt-get download`
+  (no root) and unpacked into `.tools/chromium-libs/` (`scripts/bootstrap_browser.sh`); any
+  other package needs the user's consent first. Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read

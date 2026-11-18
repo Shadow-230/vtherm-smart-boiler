@@ -293,7 +293,11 @@ scripts/env.sh mypy
 ```
 
 The Boiler page, in `frontend/`: `../scripts/env.sh npm test` and `../scripts/env.sh npm run build`
-(types checked first); commit the built files.
+(types checked first); commit the built files. `../scripts/env.sh npm run screenshots` draws the
+built page on sample data (`frontend/preview/index.html`) in a headless Chromium — light and
+dark, a desktop and a phone, an administrator and a user who is not — into `.tmp/screenshots/`,
+and fails on any error in the page; `scripts/bootstrap_browser.sh` puts that Chromium, and the
+system libraries it needs, into `.tools/`.
 
 ## 8. Water data for zone algorithms
 

@@ -16,7 +16,11 @@ I10.2: the page stays in this repository, part of the plugin — it appears with
 and reviewed with it, and needs no versioned contract between two products; `frontend/` can be
 moved out later if its releases ever need their own pace. I10.2: the commands' schemas use
 `probatio`, Home Assistant's own since 2026.10; the curve's points come from the new
-`core/curve_view.py`. I10.1 differs from its row in four points: Node.js
+`core/curve_view.py`. I10.3 is built in four parts, each its own pull request: I10.3a the live
+status, the Control switch and the tiles (done); I10.3b the schematic and the rooms; I10.3c the
+curve card; I10.3d the last 24 h. For I10.3a the user consented on 2026-11-18 to Playwright, its
+Chromium and the system libraries Chromium needs (`scripts/bootstrap_browser.sh`): every part is
+checked on screenshots of sample data before its pull request. I10.1 differs from its row in four points: Node.js
 24 LTS, not 26 (26 needs `libatomic`, missing on hosts without it); the option is the
 configuration switch "Page in the sidebar" on the plugin's device, not a settings field (it
 works at once, with no reload, and the settings' monitor section shows only at the advanced
