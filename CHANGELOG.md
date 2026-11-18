@@ -66,8 +66,8 @@ version is decided then.
 **The Boiler page (being built)**
 
 - A page "Boiler" in Home Assistant's sidebar, for every user, in Home Assistant's language; the
-  switch **Page in the sidebar** (on by default) takes it away and puts it back. For now it shows
-  the status with its reasons, the **Control** switch — an administrator only, after a
+  switch **Page in the sidebar** (on by default) takes it away and puts it back (the user guide,
+  section 4.12). Its overview shows the status with its reasons, the **Control** switch — an administrator only, after a
   confirmation — and tiles for the water asked and confirmed, flow, return, outdoor, flame and the
   rooms calling for heat; and the schematic of the installation, drawn from the settings — the
   boiler, its tank or its own hot water, each circuit with its valve, pump and radiators or

@@ -55,7 +55,7 @@ custom_components/vtherm_smart_boiler/   the integration (HA side)
 ├── core/                                 pure logic, no HA imports
 ├── transport/                            reading the boiler's entities, and the writers
 ├── translations/                         en.json (the source) and other languages
-└── frontend/                             the Boiler page as built, its licenses, its texts
+└── frontend/                             the Boiler page and its cards as built, licenses, texts
 frontend/                                 the Boiler page's source (TypeScript, Lit, Vite)
 tests/                                    tests: core/, integration/, sim/, tools/, and the rest
 sim/                                      the physics simulator and its test-only HA components
@@ -77,7 +77,7 @@ docs/                                     the documentation, one folder per lang
   stand-in `opentherm_gw`, both for tests only.
 - `tools/import_history.py` turns a copy of an HA recorder database into the core's history,
   so the monitor's analysis can be checked on recorded data.
-- The Boiler page (being built, [`plan-0.2-i10.md`](../development/plans/plan-0.2-i10.md)):
+- The Boiler page ([`plan-0.2-i10.md`](../development/plans/plan-0.2-i10.md)):
   `frontend/` is its source; `npm run build` there writes the module the plugin serves into
   `custom_components/vtherm_smart_boiler/frontend/`, with the licenses of the packages bundled
   into it. Those files are committed, so HACS installs them; CI builds them again and fails where

@@ -437,6 +437,45 @@ gives no advice on these settings. While hot water or a large change of the wate
 disturbs the rooms, the plugin pauses SmartPI's learning (on by default), so the swings it causes
 stay out of SmartPI's model.
 
+### 4.12 The Boiler page and cards
+
+The plugin adds a page **Boiler** to Home Assistant's sidebar, for every user; the switch **Page
+in the sidebar** on the plugin's device takes it away and puts it back. Everyone sees the page.
+Only an administrator can change anything on it, and every change asks for confirmation first.
+
+| Tab | What it shows |
+|---|---|
+| Overview | The status with its reasons and the **Control** switch; tiles for the water the plugin asks, flow, return, outdoor, flame and the rooms calling. The installation drawn from the settings, with each circuit's rooms and whether they take heat. The heating curve with "where we are", the last 7 days' decisions and a preview of changes. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic, the rooms and the curve show it |
+| Burner | The burner's metrics; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
+| Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day; the change against yesterday, cause by cause |
+| Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature. The burner's heating starts by hour over the last 4 weeks |
+| Journal | What the plugin decided and why, over the last 14 days. It shows its starts and stops, control taking the boiler and handing it back, the heat call, the water setpoint written (changes of 1 K or more), a circuit's need, the alarms and the settings saved. You see it as lanes that zoom by dragging across them, and as a list you can filter |
+| Status and alarms | The control verdict with its reasons; every alarm, the active ones first, each opening its history; the signals' health; the building values with where they come from; the suggested lowest water temperature with its evidence |
+
+**Changes from the page.** An administrator, after confirming:
+
+- switches **Control** on or off — the same switch as the entity, with its checks;
+- saves the heating curve's point at the hardest frost (and its offset, at the advanced level of
+  the settings) **through the plugin's own settings**: every check they make applies, the plugin
+  reloads as after any settings save, and the journal notes it. A save the settings would stop
+  for (a confirmation, another section) is not made from the page: finish it in the settings;
+- forgets a measured building value with the plugin's own reset buttons.
+
+**What it shows, and what not.** The page shows only what the plugin and Home Assistant already
+know. The curve's points, the burns, the weeks, the signature and the journal come from the
+plugin, not from a second copy of its rules. A value whose entity is not picked in the settings
+is not shown. An unknown value is a gap, never the last one carried on. The last 24 h and the
+last 7 days come from Home Assistant's recorder (10 days by default). The page follows your
+profile's language (English and Polish; other languages show English) and the light or dark
+theme, and it works on a phone.
+
+**Cards.** The overview's parts are also cards for your own dashboards: **Boiler: status**,
+**Boiler: schematic**, **Boiler: heating curve** and **Boiler: last 24 h**. Add one as any card
+(edit the dashboard, add a card, search for "Boiler"). They have no settings: each finds the
+plugin by itself, and the same rules apply to changes. They are there while the plugin runs,
+whether the page is in the sidebar or not. After an update, reload the browser page if a card
+still shows the old version.
+
 ## 5. Connecting the boiler
 
 The plugin reads the boiler through entities you pick in its forms. To control the boiler it
@@ -1117,7 +1156,7 @@ disabled by default.
 
 | Entity | What it does |
 |---|---|
-| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. The page is being built: for now it shows the status with its reasons, the Control switch (an administrator, with confirmation), the tiles, the schematic of the installation drawn from the settings, with each circuit's rooms and whether they take heat, the heating curve with "where we are", the last 7 days' decisions and a preview of changes that an administrator can save, after confirming, through the plugin's own settings and their checks, and the last 24 h from the recorder, whose scrubber and play show any moment of the day in every part of the page; the tab Burner: the burner's metrics, the monitor's burns of the last 24 h, and how long the heating burns lasted, the short ones marked; the tab Use: gas per degree-day and the degree-days, the last 12 weeks' gas per degree-day, and the change against yesterday cause by cause; the tab Analyses: the energy signature — each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature — and the burner's heating starts by hour over the last 4 weeks (days kept before this version show without their hours); the tab Journal: what the plugin decided and why over the last 14 days — its starts and stops, control taking the boiler and handing it back, the heat call, the water setpoint written, a circuit's need, the alarms and the settings saved (from the page or the settings) — as lanes you can zoom into by dragging and as a list you can filter; the tab Status and alarms: the control verdict with its reasons, the alarms (the active ones first, each opening its history), the signals' health, the building values with where they come from — an administrator can forget a measured one there, after confirming — and the suggested lowest water temperature with its evidence. The overview's parts are also cards for your own dashboards, in the card picker as "Boiler: status", "Boiler: schematic", "Boiler: heating curve" and "Boiler: last 24 h", with no settings; they are there while the plugin runs, whether the page is in the sidebar or not |
+| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. What the page and its cards show: [The Boiler page and cards](#412-the-boiler-page-and-cards) |
 
 Problems that need you also show as repair issues under Settings → Repairs.
 

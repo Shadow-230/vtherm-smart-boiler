@@ -52,7 +52,10 @@ each card is the overview showing one of its parts (`parts`), so a card and the 
 drift apart; the cards need no settings and the module is loaded on every page while the entry
 runs, whatever the sidebar switch, taken back at unload; the card picker names them in the
 page's language as it is when the picker opens; the last 24 h alone says the moment shows on its
-own chart. For I10.3a the user consented on 2026-11-18 to Playwright, its
+own chart. I10.9 is done: the user guide has its section 4.12 on the page and the cards (section
+4 rather than a new numbered one, so no other section's number or link moves); the scope lists
+the page among the user levels and across all stages. I10.0 to I10.9 are done; I10.10 waits for
+the user's start (J4). For I10.3a the user consented on 2026-11-18 to Playwright, its
 Chromium and the system libraries Chromium needs (`scripts/bootstrap_browser.sh`): every part is
 checked on screenshots of sample data before its pull request. I10.1 differs from its row in four points: Node.js
 24 LTS, not 26 (26 needs `libatomic`, missing on hosts without it); the option is the
@@ -154,7 +157,7 @@ the notes and sources are in `research/2026-11-18-visualisation-options.md`.
 | I10.6 ✅ | **The journal.** `core/journal.py`: what the plugin decided and why — the heat call on and off, a water setpoint change of at least 1 K with its reason, a circuit's need holding the water, hand-back and resuming, an alarm raised and cleared, settings saved (from the page or the settings). Kept in the entry's store: 14 days, at most 2,000 entries, the oldest dropped first (provisional, K4). The command `vtherm_smart_boiler/journal`; the tab with the event lane, the list with filters and the zoomable week. Tests first | the scenarios that hand back or raise an alarm: each leaves its journal entry |
 | I10.7 ✅ | **Analyses.** The energy signature: each day's gas against its mean outdoor temperature, observing and control apart, the fitted lines computed in `core/` and sent with `days`; the calendar of burner starts by hour — new daily summaries keep 24 hourly start counts, older days show without (the store keeps reading them). Tests first | none |
 | I10.8 ✅ | **Cards.** The overview's parts as cards in the card picker: status and tiles, schematic and rooms, curve, last 24 h; each finds the plugin's one entry by itself | none |
-| I10.9 | **Documents.** User guide EN and PL (a section on the page and the cards), technical documentation EN and PL, `docs/en/specification/scope.md` and its Polish twin, `CHANGELOG.md`; this plan marked done | none |
+| I10.9 ✅ | **Documents.** User guide EN and PL (a section on the page and the cards), technical documentation EN and PL, `docs/en/specification/scope.md` and its Polish twin, `CHANGELOG.md`; this plan marked done | none |
 | I10.10 🔒 | **In the test Home Assistant**, after the user says to start (J4): the page and the cards load, every tab reads its data, the curve saves through the page, the journal fills; screenshots for the user's review | the page and the cards |
 
 ## Provisional choices (to confirm at K4)

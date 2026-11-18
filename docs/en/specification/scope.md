@@ -154,6 +154,7 @@ a heat pump controller (excluded), or anything that sends data outside.
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
 | Diagnostics | hidden | model parameters, confidence, sample rejection reasons |
+| The Boiler page and cards | the page in the sidebar (on by default, a switch hides it) and four cards — status, schematic, curve, the last 24 h; everyone sees them, only an administrator changes anything there, after confirming, through the settings' own checks (I10, the user's decisions of 2026-11-18) | the same; the curve's offset is saved from the page at the advanced level only |
 | Learning | the comfort correction, so far the only learning under control, is off by default and shown at both levels (K4, the user's decision of 2026-11-17, reversing that of 2026-10-10 — an entry keeps what it stored; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
 
 Switching advanced → simple offers "restore advanced settings to defaults" (unchecked by
@@ -602,6 +603,15 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
   2026-10-10). A room it warms does not ask for heat.
 - **DHW** is detected in every stage; under control it pauses learning — in zones calling for
   heat (§5), and it holds the plugin's comfort correction at every draw (S-61).
+- **The Boiler page** (I10, `docs/en/development/plans/plan-0.2-i10.md`) shows what the plugin
+  knows and decides, in every stage, and nothing it does not: the overview (status and the
+  Control switch, tiles, the installation's schematic with its rooms, the curve with "where we
+  are", the last 24 h replayable), Burner, Use, Analyses (the energy signature, the starts by
+  hour), Journal (what the plugin decided and why, 14 days) and Status and alarms; the
+  overview's parts are also cards. Every law it shows is the plugin's own, sent to it — the page
+  keeps no copy. Changes from it (the Control switch, the curve, forgetting a measured building
+  value) go through the plugin's own switch, settings and buttons, an administrator only, after
+  confirming.
 
 **Control base — from the first control release**
 

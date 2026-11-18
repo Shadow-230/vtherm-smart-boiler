@@ -55,7 +55,7 @@ custom_components/vtherm_smart_boiler/   integracja (strona HA)
 ├── core/                                 czysta logika, bez importów HA
 ├── transport/                            odczyt encji kotła i moduły zapisu
 ├── translations/                         en.json (źródło) i inne języki
-└── frontend/                             zbudowana strona „Kocioł”, jej licencje, jej teksty
+└── frontend/                             zbudowana strona „Kocioł” i karty, licencje, teksty
 frontend/                                 źródło strony „Kocioł” (TypeScript, Lit, Vite)
 tests/                                    testy: core/, integration/, sim/, tools/ i reszta
 sim/                                      symulator fizyki i jego komponenty HA tylko do testów
@@ -77,7 +77,7 @@ docs/                                     dokumentacja, osobny katalog na każdy
   zastępczy `opentherm_gw`, oba tylko do testów.
 - `tools/import_history.py` zamienia kopię bazy recordera HA na historię rdzenia, żeby analizę
   monitora można było sprawdzić na zapisanych danych.
-- Strona „Kocioł” (w budowie, [`plan-0.2-i10.md`](../../en/development/plans/plan-0.2-i10.md)):
+- Strona „Kocioł” ([`plan-0.2-i10.md`](../../en/development/plans/plan-0.2-i10.md)):
   `frontend/` to jej źródło; `npm run build` w tym katalogu zapisuje moduł, który wtyczka
   udostępnia, do `custom_components/vtherm_smart_boiler/frontend/`, razem z licencjami pakietów w
   nim zawartych. Te pliki są w repozytorium, więc HACS je instaluje; CI buduje je ponownie i
