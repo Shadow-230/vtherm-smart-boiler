@@ -3,6 +3,7 @@
 // what they say. The schematic, the curve and the last 24 h come in the next steps.
 import { LitElement, css, html, nothing } from "lit";
 import { localize } from "./localize";
+import "./analyses-view";
 import "./burner-view";
 import "./overview";
 import "./journal-view";
@@ -13,7 +14,7 @@ import type { HomeAssistant, Installation, PanelInfo } from "./types";
 
 export const PANEL_TAG = "vtherm-smart-boiler-panel";
 
-const TABS = ["overview", "burner", "use", "journal", "status"] as const;
+const TABS = ["overview", "burner", "use", "analyses", "journal", "status"] as const;
 type Tab = (typeof TABS)[number];
 
 /** The tab a link names (#burner), else the overview. */
@@ -133,6 +134,11 @@ export class SmartBoilerPanel extends LitElement {
             .hass=${this.hass}
             .installation=${this.load.installation}
           ></vtherm-smart-boiler-use>
+          <vtherm-smart-boiler-analyses
+            ?hidden=${this.tab !== "analyses"}
+            .hass=${this.hass}
+            .installation=${this.load.installation}
+          ></vtherm-smart-boiler-analyses>
           <vtherm-smart-boiler-journal
             ?hidden=${this.tab !== "journal"}
             .hass=${this.hass}

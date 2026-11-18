@@ -152,6 +152,7 @@
     "burner": "Burner",
     "label": "Views of the page",
     "use": "Use",
+    "analyses": "Analyses",
     "journal": "Journal",
     "status": "Status and alarms"
   },
@@ -302,5 +303,31 @@
     "section_freshness": "Freshness",
     "section_control": "Control",
     "section_curve": "Heating curve"
+  },
+  "analyses": {
+    "signature": "Energy signature",
+    "observing": "Watching only",
+    "control": "Under control",
+    "not_fitted": "Not fitted (warm, or no heating gas)",
+    "signature_hint": "Each day's heating gas against its mean outdoor temperature. Colder days take more; the line says how much more per degree. Days under control are drawn apart, so the two compare in the same weather.",
+    "no_days": "No day yet: the daily summaries are filled day by day, where gas and the outdoor temperature are known.",
+    "y_unit": "Up: heating gas per day ({unit}). Across: the day's mean outdoor temperature.",
+    "y_estimated": "Up: heating gas per day, estimated from the modulation in the unit of the boiler's gas figures. Across: the day's mean outdoor temperature.",
+    "day": "{date}: {outdoor} °C, {gas} — {group}",
+    "line": "{slope} more for each degree colder; no heating gas from {balance} °C up ({days} days, R² {r2})",
+    "no_line_too_few_days": "no line yet — it needs {days} heating days or more",
+    "no_line_too_little_spread": "no line yet — the days' outdoor temperatures must spread over {spread} K or more",
+    "no_line_not_heating": "no line — colder days did not take more gas",
+    "no_line_too_scattered": "no line — the days scatter too much for one",
+    "compare_less": "At {outdoor} °C: watching only {observing} a day, under control {control} — {percent} % less.",
+    "compare_more": "At {outdoor} °C: watching only {observing} a day, under control {control} — {percent} % more.",
+    "signature_summary": "{count} days. Watching only: {observing}. Under control: {control}.",
+    "starts": "Burner starts by hour",
+    "starts_hint": "Heating starts in each hour of the last 4 weeks, darker for more. Many hours in a row with starts mean the boiler cycles; the bottom row is each hour's mean.",
+    "not_kept": "not kept (days before this version)",
+    "hour": "{date} {hour}:00 — starts: {count}",
+    "hour_not_kept": "{date}: its hours were not kept",
+    "mean": "Mean",
+    "error": "The analyses could not be read: {message}"
   }
 }

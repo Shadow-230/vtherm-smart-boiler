@@ -90,7 +90,12 @@ version is decided then.
   control taking the boiler and handing it back, the heat call, the water setpoint written, a
   circuit's need, the alarms and each settings save, from the page or the settings — as lanes
   that zoom by dragging and as a filtered list. The plugin keeps the journal in a store of its
-  own, 14 days and 2,000 entries at most; it only watches and changes nothing.
+  own, 14 days and 2,000 entries at most; it only watches and changes nothing. A tab
+  **Analyses**: the energy signature — each day's heating gas against its mean outdoor
+  temperature, the days only watched and the days under control apart, each with the line the
+  plugin fits, and the two compared at the same temperature — and the burner's heating starts by
+  hour over the last 4 weeks. Each daily summary now keeps its heating starts hour by hour; days
+  kept before show without them.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
   water was decided with, as the curve reads it.
 

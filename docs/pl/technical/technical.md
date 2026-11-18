@@ -99,7 +99,17 @@ docs/                                     dokumentacja, osobny katalog na każdy
   potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze
   sprawdzeniami z ustawień według ich kluczy tłumaczeń; `vtherm_smart_boiler/days` — podsumowania
   dni w zapisanej postaci, razem z gazem na stopniodzień z ostatnich 12 tygodni liczonym przez
-  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora);
+  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora), sygnaturą
+  energetyczną dopasowaną przez `core/signature.py` — gaz na grzanie każdego dnia na 24 h wobec
+  jego średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, linia
+  każdej grupy przez jej dni grzania (zimniejsze niż próg grzania w użyciu, z gazem na grzanie)
+  według zasad dopasowania budynku (`core/building.py`: liczba dni, rozrzut temperatur, więcej
+  gazu w zimniejsze dni, R²) albo powód jej braku, i obie porównane w środku temperatur, które
+  obie obejmują — oraz z jednostką licznika gazu (bez licznika żadną: gaz jest wtedy szacowany w
+  jednostce danych gazu kotła); każdy dzień zapisany od I10.7 trzyma swoje starty grzania
+  godzina po godzinie od swojego początku (`hourly_starts`, 23 albo 25 godzin przy zmianie
+  czasu), które strona umieszcza na ich godzinach zegarowych; dni zapisane wcześniej ich nie mają
+  i nadal są czytane;
   `vtherm_smart_boiler/burns` — palenia z ostatniej analizy monitora tak,
   jak je sklasyfikował (ogrzewanie, ciepła woda, nieznane), więc strona rysuje palenia samego
   monitora; `vtherm_smart_boiler/journal` — dziennik (zob. [Stan trwały](#6-stan-trwały)), od

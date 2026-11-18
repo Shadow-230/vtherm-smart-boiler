@@ -125,6 +125,33 @@ async def test_the_days_oldest_first_and_from_a_moment(
     assert [day["start"] for day in reply["result"]["days"]] == [2 * DAY, 3 * DAY]
 
 
+async def test_the_days_come_with_their_energy_signature(
+    hass: HomeAssistant, hass_ws_client: Any
+) -> None:
+    """I10.7: the signature as core.signature fits it through the heating threshold in use —
+    here the class default, 15 °C: eight cold days on one line, a warm one shown, not fitted."""
+    _boiler, entry = await monitoring(hass)
+    client = await connect(hass, hass_ws_client)
+    temperatures = [-6.0, -4.0, -2.0, 0.0, 2.0, 4.0, 6.0, 8.0, 17.0]
+    entry.runtime_data.daily = {
+        k * DAY: replace(
+            DaySummary.empty(k * DAY, (k + 1) * DAY),
+            observed_s=DAY,
+            outdoor_mean=t,
+            gas=max(0.2, 12.0 - 0.8 * t),
+        )
+        for k, t in enumerate(temperatures)
+    }
+    signature = (await client.ask("days"))["result"]["signature"]
+    assert [day["fitted"] for day in signature["days"]] == [True] * 8 + [False]
+    line = signature["observing"]["line"]
+    assert (line["slope"], line["intercept"]) == (pytest.approx(-0.8), pytest.approx(12.0))
+    assert (line["days"], line["balance"]) == (8, pytest.approx(15.0))
+    assert signature["control"] == {"line": None, "reason": "too_few_days"}
+    assert signature["comparison"] is None
+    assert (await client.ask("days"))["result"]["gas_unit"] is None  # no gas meter here
+
+
 async def test_the_curve_as_control_decides_it(rig: Rig, hass_ws_client: Any) -> None:
     await start(rig)
     client = await connect(rig.hass, hass_ws_client)

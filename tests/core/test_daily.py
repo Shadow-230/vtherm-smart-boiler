@@ -80,6 +80,30 @@ def test_a_day_keeps_what_adds_up_and_round_trips() -> None:
     assert DaySummary.from_dict(day.to_dict()) == day
 
 
+def test_a_day_keeps_its_heating_starts_by_hour() -> None:
+    """I10.7: a day keeps its heating starts hour by hour from its start — as many hours as the
+    day has, 23 or 25 at a clock change — adding up to its starts; a burn across midnight counts
+    in the last hour of the day it started in."""
+    [day] = days_of(cycling(1), 1)
+    assert day.hourly_starts == (2,) * 24
+    first = summarize_day(midnight_burn(), POWER, 0, DAY, known_until=2 * DAY)
+    assert first.hourly_starts is not None
+    assert (first.hourly_starts[23], sum(first.hourly_starts)) == (1, 1)
+    second = summarize_day(midnight_burn(), POWER, DAY, 2 * DAY, known_until=2 * DAY)
+    assert second.hourly_starts == (0,) * 24
+    short = summarize_day(cycling(2), PARAMETERS, 0, 23 * HOUR)
+    assert short.hourly_starts == (2,) * 23
+    assert sum(short.hourly_starts) == short.starts
+
+
+def test_a_day_stored_before_its_hours_were_kept_reads_without_them() -> None:
+    [day] = days_of(cycling(1), 1)
+    stored = day.to_dict()
+    assert stored["hourly_starts"] == [2] * 24
+    del stored["hourly_starts"]
+    assert DaySummary.from_dict(stored).hourly_starts is None
+
+
 def test_the_verdict_is_reached_despite_short_gaps() -> None:
     """P17: seconds of unknown flame after a restart no longer keep the verdict away."""
     days = days_of(cycling(7, gaps=True), 7)
@@ -546,7 +570,7 @@ def test_every_stored_field_round_trips_through_json() -> None:
     day = DaySummary(
         0.0, DAY, DAY, 10, 9, 1, HOUR, 10 * HOUR, 0.5 * HOUR, HOUR, 7.0, 12.5,
         outdoor_mean=8.0, heat_kwh=40.0, settings="abc", other_gas=0.3, controlled_s=0.0,
-        outdoor_s=((7, 0.5 * DAY), (9, 0.5 * DAY)),
+        outdoor_s=((7, 0.5 * DAY), (9, 0.5 * DAY)), hourly_starts=(0,) * 23 + (10,),
     )  # fmt: skip
     stored = day.to_dict()
     assert set(stored) == {field.name for field in fields(DaySummary)}
