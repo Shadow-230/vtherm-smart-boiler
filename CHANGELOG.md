@@ -78,7 +78,9 @@ version is decided then.
   the plugin checks as the settings do, and that an administrator can save after confirming —
   through the plugin's own settings, their checks and their save; and the last 24 h from the
   recorder — the water the plugin asked, flow, return and the burns — whose scrubber and play show
-  any moment of the day in every part of the page, the Control switch then out of reach.
+  any moment of the day in every part of the page, the Control switch then out of reach. A tab
+  **Burner**: the burner's metrics, the monitor's own burns of the last 24 h, and how long the
+  heating burns lasted, the short ones marked by the monitor's short-burn length.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
   water was decided with, as the curve reads it.
 

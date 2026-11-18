@@ -39,6 +39,7 @@ const INSTALLATION: Installation = {
     control_setpoint: "sensor.setpoint", demand_count: "sensor.calling",
   },
   curve: null,
+  short_burn_min: 10,
 };
 
 function inputs(

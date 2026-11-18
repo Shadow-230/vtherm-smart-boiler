@@ -69,7 +69,7 @@ async def test_nothing_running_answers_not_running(
     async_setup_websocket(hass)
     async_setup_websocket(hass)  # once per run: a second call changes nothing
     client = await connect(hass, hass_ws_client)
-    for command in ("installation", "curve", "days", "curve/save"):
+    for command in ("installation", "curve", "days", "burns", "curve/save"):
         reply = await client.ask(command)
         assert reply["success"] is False, command
         assert reply["error"]["code"] == "not_running"
@@ -93,6 +93,7 @@ async def test_the_installation_of_a_monitor_only_entry(
     assert view["entities"]["sidebar_page"] == entity_id(hass, entry, "switch", "sidebar_page")
     assert set(view["boiler"]) == {"type", "dhw", "condensing"}
     assert view["curve"] is None  # monitoring only: control sets no water
+    assert view["short_burn_min"] == 10.0  # the monitor's default
     for circuit in view["circuits"]:
         assert set(circuit) == {
             "id", "name", "control", "fixed_temperature", "max_flow", "needed", "zones",
@@ -335,3 +336,32 @@ async def test_no_curve_to_save_without_control(hass: HomeAssistant, hass_ws_cli
     assert reply["success"] is False
     assert reply["error"]["code"] == "not_available"
     assert hass.config_entries.options.async_progress() == []
+
+
+async def test_the_burns_are_the_monitors_own(hass: HomeAssistant, hass_ws_client: Any) -> None:
+    """I10.5: the page draws the burns of the monitor's last analysis, as it classified them."""
+    from types import SimpleNamespace
+
+    from custom_components.vtherm_smart_boiler.core.cycles import Burn, BurnKind, ClassifiedBurn
+
+    _boiler, entry = await monitoring(hass)
+    client = await connect(hass, hass_ws_client)
+    coordinator = entry.runtime_data
+    coordinator.analysis = None
+    assert (await client.ask("burns"))["result"] == {"at": None, "burns": []}
+    coordinator.analysis = SimpleNamespace(
+        at=5000.0,
+        day=SimpleNamespace(
+            burns=[
+                ClassifiedBurn(Burn(1000.0, 1600.0, True, True), BurnKind.CH, 1.0),
+                ClassifiedBurn(Burn(2000.0, 2300.0, True, False), BurnKind.DHW, 0.9),
+            ]
+        ),
+    )
+    assert (await client.ask("burns"))["result"] == {
+        "at": 5000.0,
+        "burns": [
+            {"start": 1000.0, "end": 1600.0, "kind": "ch", "start_seen": True, "end_seen": True},
+            {"start": 2000.0, "end": 2300.0, "kind": "dhw", "start_seen": True, "end_seen": False},
+        ],
+    }

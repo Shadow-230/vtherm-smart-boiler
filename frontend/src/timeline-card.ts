@@ -236,7 +236,7 @@ export class SmartBoilerTimeline extends LitElement {
             }}
           />
           <div class="xaxis" aria-hidden="true">
-            ${hourTicks(from, to, 4, lang).map(
+            ${hourTicks(from, to, this.offsetWidth < 560 ? 8 : 4, lang).map(
               (tick) => html`<span style="left: ${share(tick.t)}">${tick.label}</span>`,
             )}
           </div>

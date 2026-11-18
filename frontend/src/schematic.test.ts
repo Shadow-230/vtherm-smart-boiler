@@ -39,6 +39,7 @@ const INSTALLATION: Installation = {
   weather: null,
   entities: { demand_count: "sensor.calling", boiler_called: "binary_sensor.called" },
   curve: null,
+  short_burn_min: 10,
 };
 
 function inputs(states: HassEntity[], installation = INSTALLATION, language = "en"): LiveInputs {

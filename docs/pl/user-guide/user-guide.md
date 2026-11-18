@@ -1165,7 +1165,7 @@ domyślnie wyłączone.
 
 | Encja | Co robi |
 |---|---|
-| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje stan z przyczynami, przełącznik sterowania (administrator, z potwierdzeniem), kafelki, schemat instalacji rysowany z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło, krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, który administrator może zapisać, po potwierdzeniu, przez własne ustawienia wtyczki i ich sprawdzenia, oraz ostatnie 24 h z recordera, których suwak i odtwarzanie pokazują dowolną chwilę doby w każdej części strony |
+| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje stan z przyczynami, przełącznik sterowania (administrator, z potwierdzeniem), kafelki, schemat instalacji rysowany z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło, krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, który administrator może zapisać, po potwierdzeniu, przez własne ustawienia wtyczki i ich sprawdzenia, oraz ostatnie 24 h z recordera, których suwak i odtwarzanie pokazują dowolną chwilę doby w każdej części strony; zakładka Palnik: metryki palnika, palenia z ostatnich 24 h tak, jak widzi je monitor, i jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
 
 Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w Ustawienia → Naprawy.
 

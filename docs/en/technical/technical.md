@@ -94,7 +94,9 @@ docs/                                     the documentation, one folder per lang
   nothing saved, from `core/curve_view.py` (the curve at the room temperature in use, then the
   limits, as control decides it before the comfort correction, a circuit's need and the ramp),
   with the settings' own checks by their translation keys; `vtherm_smart_boiler/days` — the
-  daily summaries in their stored form; and one write, for an administrator only:
+  daily summaries in their stored form; `vtherm_smart_boiler/burns` — the burns of the monitor's
+  last analysis as it classified them (heating, hot water, unknown), so the page draws the
+  monitor's own; and one write, for an administrator only:
   `vtherm_smart_boiler/curve/save` saves the curve's design point and, at the advanced level, its
   offset **through the plugin's own options flow** — its "Heating curve" form filled with the
   stored values and the changes, then "Save and finish" — so every check and the save with its

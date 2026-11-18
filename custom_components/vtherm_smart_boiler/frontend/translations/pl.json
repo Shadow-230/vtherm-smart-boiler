@@ -146,5 +146,37 @@
     "loading": "Wczytywanie historii…",
     "no_history": "Brak historii: recorder nie zapisuje tych encji.",
     "error": "Nie udało się odczytać historii: {message}"
+  },
+  "tabs": {
+    "overview": "Przegląd",
+    "burner": "Palnik",
+    "label": "Widoki strony"
+  },
+  "burner": {
+    "starts_per_hour": "Starty na godzinę",
+    "starts_per_hour_detail": "ogrzewanie, ostatnie 24 h",
+    "median_burn": "Typowe palenie",
+    "median_burn_detail": "mediana palenia ogrzewania",
+    "short_burn_share": "Krótkie palenia",
+    "short_burn_share_detail": "palenia ogrzewania krótsze niż {value} min",
+    "burner_hours": "Godziny palnika",
+    "burner_hours_detail": "ogrzewanie, ostatnie 24 h",
+    "condensing_share": "Kondensacja",
+    "condensing_share_detail": "czasu palenia ogrzewania z powrotem poniżej 55 °C",
+    "timeline": "Palenia — ostatnie 24 h",
+    "heat": "ogrzewanie",
+    "dhw": "ciepła woda",
+    "unknown": "nieznany rodzaj",
+    "burn": "{from}–{to} · {minutes} min · {kind}",
+    "summary": "{count} paleń w ostatnich 24 h: ogrzewanie {heat}, ciepła woda {dhw}, nieznany rodzaj {unknown}.",
+    "lengths": "Jak długo trwały palenia ogrzewania",
+    "lengths_hint": "Palenia z ostatnich 24 h według długości. Krótkie palenia zużywają kocioł i gaz.",
+    "short": "{count} krótkich (poniżej {value} min)",
+    "minutes": "minuty",
+    "count": "{label} min: {count}",
+    "as_of": "Tak, jak widzi je analiza monitora z {time}.",
+    "none": "Brak paleń w ostatnich 24 h.",
+    "no_analysis": "Monitor nie przeanalizował jeszcze paleń.",
+    "error": "Nie udało się odczytać paleń: {message}"
   }
 }

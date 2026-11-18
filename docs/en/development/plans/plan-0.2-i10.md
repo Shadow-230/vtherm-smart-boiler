@@ -27,7 +27,10 @@ settings', `vtherm_smart_boiler/curve/save` drives the plugin's options flow its
 "Heating curve" form with the stored values and the changes, then "Save and finish" — so the
 checks and the save are the settings' own by construction; a save the settings would stop for is
 not made. The offset is saved at the advanced level only, where the settings show it. The
-journal entry for a save comes with the journal (I10.6). For I10.3a the user consented on 2026-11-18 to Playwright, its
+journal entry for a save comes with the journal (I10.6). I10.5 is built in three parts: I10.5a
+the tabs and Burner (done — the burns are the monitor's own, through the new
+`vtherm_smart_boiler/burns`, and the short-burn length is the monitor's); I10.5b Use; I10.5c
+Status and alarms. For I10.3a the user consented on 2026-11-18 to Playwright, its
 Chromium and the system libraries Chromium needs (`scripts/bootstrap_browser.sh`): every part is
 checked on screenshots of sample data before its pull request. I10.1 differs from its row in four points: Node.js
 24 LTS, not 26 (26 needs `libatomic`, missing on hosts without it); the option is the
