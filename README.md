@@ -50,6 +50,11 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
 - **Safety first:** frost protection, protection against short cycling, read-back of every
   write, never fighting another controller, nothing written to the boiler's permanent memory,
   and a safe hand-back to the boiler's own control on every exit — retried until confirmed.
+- **A Boiler page in the sidebar, and cards.** The boiler at a glance — its status, the
+  installation drawn from your settings with each room, the heating curve with where it is now,
+  the last 24 h to replay — plus the burner, gas use, analyses, a journal of what the plugin
+  decided and why, and the alarms. Nothing else to install; an administrator can switch control
+  and change the curve there, after confirming.
 - Every option has a cautious default and a text that says what it does and what it risks.
 
 # Use cases

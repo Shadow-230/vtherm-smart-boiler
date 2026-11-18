@@ -154,6 +154,7 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
 | Sterowanie | domyślnie wyłączone; po włączeniu sterowanie działa automatycznie w wybranym trybie; zmiany krzywej: podpowiedzi (domyślnie) albo automatycznie w ustawionym paśmie (Niskie / Średnie / Wysokie) | pasmo własne, nadpisania pojedynczych parametrów, ręczna edycja wyuczonych wartości, reset do profilu |
 | Alarmy | rozsądne reakcje domyślne | progi dla każdego alarmu; reakcja tylko tam, gdzie pozwala na nią decyzja 7 (§7) |
 | Diagnostyka | ukryta | parametry modelu, pewność, powody odrzucenia próbek |
+| Strona „Kocioł” i karty | strona w menu bocznym (domyślnie włączona, przełącznik ją ukrywa) i cztery karty — stan, schemat, krzywa, ostatnie 24 h; widzi je każdy, zmienia coś tylko administrator, po potwierdzeniu, przez sprawdzenia samych ustawień (I10, decyzje użytkownika z 2026-11-18) | to samo; przesunięcie krzywej zapisuje się ze strony tylko na poziomie zaawansowanym |
 | Nauka | korekta komfortu, dotąd jedyna nauka przy sterowaniu, jest domyślnie wyłączona i pokazana na obu poziomach (K4, decyzja użytkownika z 2026-11-17, odwracająca decyzję z 2026-10-10 — wpis zachowuje to, co zapisał; `docs/en/development/plans/plan-0.2-g11.md`); jej limit ustawia użytkownik, na poziomie zaawansowanym; późniejsza nauka włączana w bezpiecznych granicach | wstrzymanie i wznowienie, korekta komfortu, pasmo strojenia (zasada 13), okna nauki, ustawienia ochrony algorytmów stref |
 
 Przejście z zaawansowanego na proste oferuje „przywróć ustawienia zaawansowane do wartości domyślnych” (domyślnie
@@ -633,6 +634,15 @@ wersja podrzędna 14), co właśnie robił.
   ono ogrzewa, nie prosi o ciepło.
 - **C.w.u.** jest wykrywane na każdym etapie; pod sterowaniem wstrzymuje naukę — w strefach
   wołających o ciepło (§5) — i przy każdym poborze trzyma korektę komfortu wtyczki w miejscu (S-61).
+- **Strona „Kocioł”** (I10, `docs/en/development/plans/plan-0.2-i10.md`) pokazuje, co wtyczka wie
+  i decyduje, na każdym etapie, i nic poza tym: przegląd (stan i przełącznik sterowania, kafelki,
+  schemat instalacji z pokojami, krzywa z „gdzie jesteśmy”, ostatnie 24 h do odtworzenia), Palnik,
+  Zużycie, Analizy (sygnatura energetyczna, starty według godzin), Dziennik (co wtyczka
+  zdecydowała i dlaczego, 14 dni) oraz Stan i alarmy; części przeglądu są też kartami. Każde
+  prawo, które pokazuje, jest własnym prawem wtyczki, przysłanym do strony — strona nie trzyma
+  jego kopii. Zmiany z niej (przełącznik sterowania, krzywa, zapomnienie zmierzonej wartości
+  budynku) idą przez własny przełącznik, ustawienia i przyciski wtyczki, tylko dla
+  administratora, po potwierdzeniu.
 
 **Podstawa sterowania — od pierwszego wydania ze sterowaniem**
 

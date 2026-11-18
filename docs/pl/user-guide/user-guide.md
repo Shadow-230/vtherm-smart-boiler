@@ -463,6 +463,47 @@ doradza tych ustawień. Gdy ciepła woda albo duża zmiana temperatury wody zabu
 wtyczka wstrzymuje uczenie SmartPI (domyślnie włączone), żeby wywołane przez nią wahania nie
 trafiły do modelu SmartPI.
 
+### 4.12 Strona „Kocioł” i karty
+
+Wtyczka dodaje stronę **Kocioł** do menu bocznego Home Assistanta, dla każdego użytkownika;
+przełącznik **Strona w menu bocznym** na urządzeniu wtyczki ją zabiera i przywraca. Stronę widzi
+każdy. Zmienić coś na niej może tylko administrator, a każda zmiana najpierw prosi o
+potwierdzenie.
+
+| Zakładka | Co pokazuje |
+|---|---|
+| Przegląd | Stan z przyczynami i przełącznik **Sterowanie**; kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i wołającymi pokojami. Instalację narysowaną z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat, pokoje i krzywa ją pokażą |
+| Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
+| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn |
+| Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze. Starty grzania palnika według godzin z ostatnich 4 tygodni |
+| Dziennik | Co wtyczka zdecydowała i dlaczego w ostatnich 14 dniach. Pokazuje jej starty i zatrzymania, przejęcie kotła przez sterowanie i jego oddanie, wezwanie ciepła, zapisaną nastawę wody (zmiany o 1 K i więcej), potrzebę obiegu, alarmy i zapisane ustawienia. Widać to jako pasy, które przybliża się przeciągnięciem, i jako listę z filtrami |
+| Stan i alarmy | Werdykt sterowania z powodami; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
+
+**Zmiany ze strony.** Administrator, po potwierdzeniu:
+
+- włącza albo wyłącza **Sterowanie** — ten sam przełącznik co encja, z jej sprawdzeniami;
+- zapisuje punkt krzywej grzewczej przy największym mrozie (i jej przesunięcie, na poziomie
+  zaawansowanym ustawień) **przez własne ustawienia wtyczki**: obowiązuje każde ich sprawdzenie,
+  wtyczka przeładowuje się jak po każdym zapisie ustawień, a dziennik to odnotowuje. Zapisu, przy
+  którym ustawienia by się zatrzymały (potwierdzenie, inna sekcja), strona nie robi: dokończ go w
+  ustawieniach;
+- zapomina zmierzoną wartość budynku własnymi przyciskami wtyczki.
+
+**Co pokazuje, a czego nie.** Strona pokazuje tylko to, co wtyczka i Home Assistant już wiedzą.
+Punkty krzywej, palenia, tygodnie, sygnatura i dziennik pochodzą z wtyczki, a nie z drugiej kopii
+jej zasad. Wartości, której encja nie jest wybrana w ustawieniach, strona nie pokazuje. Nieznana
+wartość to luka, nigdy ostatnia znana przeniesiona dalej. Ostatnie 24 h i ostatnie 7 dni
+pochodzą z recordera Home Assistanta (domyślnie 10 dni). Strona używa języka twojego profilu
+(angielski i polski; inne języki widzą angielski) oraz jasnego albo ciemnego motywu i działa na
+telefonie.
+
+**Karty.** Części przeglądu są też kartami na twoje własne pulpity: **Kocioł: stan**, **Kocioł:
+schemat**, **Kocioł: krzywa grzewcza** i **Kocioł: ostatnie 24 h**. Dodaj je jak każdą kartę
+(edytuj pulpit, dodaj kartę, wyszukaj „Kocioł”). Nie mają ustawień: każda sama znajduje wtyczkę,
+a zmiany podlegają tym samym zasadom. Są dostępne, póki wtyczka działa, czy strona jest w menu
+bocznym, czy nie. Po aktualizacji odśwież stronę przeglądarki, jeśli karta pokazuje jeszcze starą
+wersję.
+
 ## 5. Podłączenie kotła
 
 Wtyczka czyta kocioł przez encje, które wybierasz w jej formularzach. Do sterowania potrzebuje
@@ -1165,7 +1206,7 @@ domyślnie wyłączone.
 
 | Encja | Co robi |
 |---|---|
-| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje stan z przyczynami, przełącznik sterowania (administrator, z potwierdzeniem), kafelki, schemat instalacji rysowany z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło, krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, który administrator może zapisać, po potwierdzeniu, przez własne ustawienia wtyczki i ich sprawdzenia, oraz ostatnie 24 h z recordera, których suwak i odtwarzanie pokazują dowolną chwilę doby w każdej części strony; zakładka Palnik: metryki palnika, palenia z ostatnich 24 h tak, jak widzi je monitor, i jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi; zakładka Zużycie: gaz na stopniodzień i stopniodni, gaz na stopniodzień z ostatnich 12 tygodni oraz zmiana wobec przedwczoraj według przyczyn; zakładka Analizy: sygnatura energetyczna — gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze — oraz starty grzania palnika według godzin z ostatnich 4 tygodni (dni zapisane przed tą wersją są bez godzin); zakładka Dziennik: co wtyczka zdecydowała i dlaczego w ostatnich 14 dniach — jej starty i zatrzymania, przejęcie kotła przez sterowanie i jego oddanie, wezwanie ciepła, zapisana nastawa wody, potrzeba obiegu, alarmy i zapisane ustawienia (ze strony albo z ustawień) — jako pasy, które można przybliżyć przeciągnięciem, i jako lista z filtrami; zakładka Stan i alarmy: werdykt sterowania z powodami, alarmy (najpierw aktywne, każdy otwiera swoją historię), stan sygnałów, wartości budynku z ich źródłem — administrator może tam zapomnieć zmierzoną, po potwierdzeniu — oraz proponowana najniższa temperatura wody z uzasadnieniem. Części przeglądu są też kartami na twoje własne pulpity, w wyborze kart jako „Kocioł: stan”, „Kocioł: schemat”, „Kocioł: krzywa grzewcza” i „Kocioł: ostatnie 24 h”, bez ustawień; są dostępne, póki wtyczka działa, czy strona jest w menu bocznym, czy nie |
+| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Co pokazują strona i jej karty: [Strona „Kocioł” i karty](#412-strona-kocioł-i-karty) |
 
 Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w Ustawienia → Naprawy.
 
