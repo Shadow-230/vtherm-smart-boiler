@@ -72,8 +72,12 @@ version is decided then.
   rooms calling for heat; and the schematic of the installation, drawn from the settings — the
   boiler, its tank or its own hot water, each circuit with its valve, pump and radiators or
   underfloor loop — with the water moving where it flows now, the measured temperatures, and
-  each circuit's rooms: how hard each one's controller heats and whether it calls for heat. The
-  curve and the last 24 h come next.
+  each circuit's rooms: how hard each one's controller heats and whether it calls for heat; and
+  the heating curve as control decides the water, with "where we are" on it, the last 7 days'
+  decisions and a preview of changes — drag the point at the hardest frost, shift the curve — that
+  the plugin checks as the settings do and that saves nothing. The last 24 h come next.
+- The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
+  water was decided with, as the curve reads it.
 
 ### Requirements
 

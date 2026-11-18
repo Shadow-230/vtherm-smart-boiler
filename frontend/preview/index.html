@@ -46,6 +46,7 @@
   const states = Object.fromEntries([
     entity("sensor.control_state", "heating", {
       reasons_text: lang === "pl" ? "pokoje wołają o ciepło, woda według krzywej" : "rooms call for heat, water from the curve",
+      target: 41.1, curve_outdoor: 3.8, curve_room: 21,
     }),
     entity("switch.control", "on"),
     entity("sensor.control_setpoint", "41.0", { requested: 41.0, read_back: 41.0 }),
@@ -88,12 +89,42 @@
       control_setpoint: "sensor.control_setpoint", demand_count: "sensor.calling",
       boiler_called: "binary_sensor.boiler_called",
     },
-    curve: null,
+    curve: {
+      entered: true, design_outdoor: -15, design_flow: 55, room: 20, exponent: 1.3, offset: 0,
+      hard_min: 20, hard_max: 70, circuit_max: null, boiler_max: null, room_auto: true,
+      comfort_correction: false, correction_max_k: 3,
+    },
+  };
+  // Stand-ins for the plugin's curve and the recorder's history — sample arithmetic only.
+  const sampleCurve = (m) => {
+    const room = m.room ?? 20, dOut = m.design_outdoor ?? -15, dFlow = m.design_flow ?? 55;
+    const offset = m.offset ?? 0;
+    const points = [];
+    for (let o = m.outdoor_from; o <= m.outdoor_to + 1e-9; o += m.step) {
+      const load = Math.max(0, (room - o) / (room - dOut));
+      const water = room + (dFlow - room) * Math.pow(load, 1 / 1.3) + offset;
+      points.push([o, Math.min(70, Math.max(20, water))]);
+    }
+    const problems = dFlow < room + 5 ? ["design_flow_too_low"] : [];
+    return { points, problems };
+  };
+  const sampleHistory = () => {
+    const out = [];
+    const now = Date.now() / 1000;
+    for (let h = 168; h > 0; h -= 2) {
+      const outdoor = 1.5 + 3.5 * Math.cos((2 * Math.PI * ((h % 24) - 9)) / 24) - 2 * Math.sin(h / 30);
+      const room = h % 24 < 7 ? 19 : 21;
+      out.push({ s: "heating", lu: now - h * 3600, a: { curve_outdoor: outdoor, target: sampleCurve({ room, outdoor_from: outdoor, outdoor_to: outdoor, step: 1 }).points[0][1] + (Math.sin(h) - 0.5) } });
+    }
+    return { "sensor.control_state": out };
   };
   const stateText = { heating: { pl: "Grzanie", en: "Heating" } };
   const hass = {
     language: lang, locale: { language: lang }, user: { is_admin: query.get("user") !== "1" }, states,
-    callWS: async () => installation,
+    callWS: async (m) =>
+      m.type === "vtherm_smart_boiler/curve" ? sampleCurve(m)
+      : m.type === "history/history_during_period" ? sampleHistory()
+      : installation,
     callService: async (domain, service, data) => { window.lastCall = [domain, service, data]; },
     formatEntityState: (e) => stateText[e.state]?.[lang] ?? e.state,
   };

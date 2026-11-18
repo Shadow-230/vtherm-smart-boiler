@@ -1824,6 +1824,9 @@
           "curve_room": {
             "name": "Curve's room temperature"
           },
+          "curve_outdoor": {
+            "name": "Curve's outdoor temperature"
+          },
           "boiler_called": {
             "name": "Heat call"
           },
