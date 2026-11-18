@@ -94,7 +94,9 @@ docs/                                     dokumentacja, osobny katalog na każdy
   roboczych, bez zapisu, z `core/curve_view.py` (krzywa przy temperaturze pokojowej w użyciu,
   potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze
   sprawdzeniami z ustawień według ich kluczy tłumaczeń; `vtherm_smart_boiler/days` — podsumowania
-  dni w zapisanej postaci; `vtherm_smart_boiler/burns` — palenia z ostatniej analizy monitora tak,
+  dni w zapisanej postaci, razem z gazem na stopniodzień z ostatnich 12 tygodni liczonym przez
+  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora);
+  `vtherm_smart_boiler/burns` — palenia z ostatniej analizy monitora tak,
   jak je sklasyfikował (ogrzewanie, ciepła woda, nieznane), więc strona rysuje palenia samego
   monitora; oraz jeden zapis, tylko dla administratora:
   `vtherm_smart_boiler/curve/save` zapisuje punkt krzywej przy największym mrozie i, na poziomie

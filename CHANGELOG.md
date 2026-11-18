@@ -80,7 +80,9 @@ version is decided then.
   recorder — the water the plugin asked, flow, return and the burns — whose scrubber and play show
   any moment of the day in every part of the page, the Control switch then out of reach. A tab
   **Burner**: the burner's metrics, the monitor's own burns of the last 24 h, and how long the
-  heating burns lasted, the short ones marked by the monitor's short-burn length.
+  heating burns lasted, the short ones marked by the monitor's short-burn length. A tab **Use**:
+  gas per degree-day and the degree-days, the last 12 weeks' gas per degree-day, and the change
+  against yesterday cause by cause — weather, hot water, settings and the rest.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
   water was decided with, as the curve reads it.
 

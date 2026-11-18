@@ -5,11 +5,12 @@ import { LitElement, css, html, nothing } from "lit";
 import { localize } from "./localize";
 import "./burner-view";
 import "./overview";
+import "./use-view";
 import type { HomeAssistant, Installation, PanelInfo } from "./types";
 
 export const PANEL_TAG = "vtherm-smart-boiler-panel";
 
-const TABS = ["overview", "burner"] as const;
+const TABS = ["overview", "burner", "use"] as const;
 type Tab = (typeof TABS)[number];
 
 /** The tab a link names (#burner), else the overview. */
@@ -109,7 +110,12 @@ export class SmartBoilerPanel extends LitElement {
             ?hidden=${this.tab !== "burner"}
             .hass=${this.hass}
             .installation=${this.load.installation}
-          ></vtherm-smart-boiler-burner>`;
+          ></vtherm-smart-boiler-burner>
+          <vtherm-smart-boiler-use
+            ?hidden=${this.tab !== "use"}
+            .hass=${this.hass}
+            .installation=${this.load.installation}
+          ></vtherm-smart-boiler-use>`;
     }
   }
 

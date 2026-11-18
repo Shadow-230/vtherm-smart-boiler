@@ -64,6 +64,13 @@
     entity("sensor.short_burn_share", "9", { unit_of_measurement: "%" }),
     entity("sensor.burner_hours", "8.7", { unit_of_measurement: "h" }),
     entity("sensor.condensing_share", "96", { unit_of_measurement: "%" }),
+    entity("sensor.gas_per_degree_day", "0.44", { unit_of_measurement: "m³/K·d" }),
+    entity("sensor.degree_days", "96", { unit_of_measurement: "K·d" }),
+    entity("sensor.change_report", "7", {
+      unit_of_measurement: "%", unit: "m³", previous: 6.1, current: 6.56,
+      contributions: { weather: 0.41, dhw: -0.08, settings: 0.09, other: 0.04 },
+      not_judged: [], other_within_normal: true,
+    }),
     ...zones.map((z, i) => entity(z, "heat", {
       friendly_name: names[i], current_temperature: rooms[i][0], temperature: rooms[i][1], on_percent: rooms[i][2],
     })),
@@ -96,6 +103,8 @@
       starts_per_hour: "sensor.starts_per_hour", median_burn: "sensor.median_burn",
       short_burn_share: "sensor.short_burn_share", burner_hours: "sensor.burner_hours",
       condensing_share: "sensor.condensing_share",
+      gas_per_degree_day: "sensor.gas_per_degree_day", degree_days: "sensor.degree_days",
+      change_report: "sensor.change_report",
     },
     short_burn_min: 10,
     curve: {
@@ -181,11 +190,24 @@
     }
     return { at: now - 120, burns };
   };
+  // Twelve sample weeks of gas per degree-day; one without a value (gas missing on a day).
+  const sampleWeeks = () => {
+    const end = Date.now() / 1000;
+    const values = [0.51, 0.49, 0.53, 0.47, null, 0.45, 0.49, 0.46, 0.44, 0.43, 0.46, 0.44];
+    return {
+      days: [],
+      weeks: values.map((v, i) => ({
+        start: end - (12 - i) * 7 * 86400, end: end - (11 - i) * 7 * 86400, days: 7,
+        gas: v == null ? null : v * 96, degree_days: 96, per_degree_day: v,
+      })),
+    };
+  };
   const stateText = { heating: { pl: "Grzanie", en: "Heating" }, idle: { pl: "Postój", en: "Idle" } };
   const hass = {
     language: lang, locale: { language: lang }, user: { is_admin: query.get("user") !== "1" }, states,
     callWS: async (m) =>
       m.type === "vtherm_smart_boiler/burns" ? sampleBurns()
+      : m.type === "vtherm_smart_boiler/days" ? sampleWeeks()
       : m.type === "vtherm_smart_boiler/curve/save" ? ((window.lastSave = m), { saved: true, errors: {} })
       : m.type === "vtherm_smart_boiler/curve" ? sampleCurve(m)
       : m.type === "history/history_during_period"

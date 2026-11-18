@@ -29,7 +29,8 @@ checks and the save are the settings' own by construction; a save the settings w
 not made. The offset is saved at the advanced level only, where the settings show it. The
 journal entry for a save comes with the journal (I10.6). I10.5 is built in three parts: I10.5a
 the tabs and Burner (done — the burns are the monitor's own, through the new
-`vtherm_smart_boiler/burns`, and the short-burn length is the monitor's); I10.5b Use; I10.5c
+`vtherm_smart_boiler/burns`, and the short-burn length is the monitor's); I10.5b Use (done — the
+weeks reckoned by the new `core/weekly.py` and sent with the days); I10.5c
 Status and alarms. For I10.3a the user consented on 2026-11-18 to Playwright, its
 Chromium and the system libraries Chromium needs (`scripts/bootstrap_browser.sh`): every part is
 checked on screenshots of sample data before its pull request. I10.1 differs from its row in four points: Node.js
