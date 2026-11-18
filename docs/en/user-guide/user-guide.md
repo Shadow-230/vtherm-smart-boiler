@@ -1113,6 +1113,12 @@ disabled by default.
 | Reset comfort correction | sets the comfort correction back to 0 |
 | Reset measured heat loss, Reset measured heating threshold | forget the measured building values |
 
+**The page**
+
+| Entity | What it does |
+|---|---|
+| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. The page is being built: for now it shows its frame |
+
 Problems that need you also show as repair issues under Settings → Repairs.
 
 ## 10. How often data updates

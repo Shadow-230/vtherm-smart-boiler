@@ -55,7 +55,8 @@
       "alarm_boiler_not_responding": { "default": "mdi:fire-off", "state": { "off": "mdi:check-circle-outline" } }
     },
     "switch": {
-      "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }
+      "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } },
+      "sidebar_page": { "default": "mdi:water-boiler", "state": { "off": "mdi:water-boiler-off" } }
     },
     "button": {
       "reset_comfort_correction": { "default": "mdi:restore" },

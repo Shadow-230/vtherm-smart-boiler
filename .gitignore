@@ -11,6 +11,11 @@ devenv/ssh/
 .venv/
 .tmp/
 vendor/
+# A worktree may link these to the main checkout's: a link is a file, not a folder.
+/.venv
+/vendor
+# The Boiler page's packages (frontend/, plan-0.2-i10.md).
+frontend/node_modules/
 __pycache__/
 *.py[cod]
 .pytest_cache/

@@ -1,0 +1,24 @@
+{
+  "name": "vtherm-smart-boiler-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Boiler page and cards of Smart Boiler for Versatile Thermostat",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24.22.3"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vite": "8.3.7",
+    "vitest": "5.1.0"
+  }
+}

@@ -1161,6 +1161,12 @@ domyślnie wyłączone.
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
 | Wyzeruj zmierzone straty ciepła, Wyzeruj zmierzony próg grzania | zapominają zmierzone wartości budynku |
 
+**Strona**
+
+| Encja | Co robi |
+|---|---|
+| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje swoją ramkę |
+
 Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w Ustawienia → Naprawy.
 
 ## 10. Jak często odświeżają się dane

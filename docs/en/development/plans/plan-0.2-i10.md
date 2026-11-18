@@ -11,7 +11,16 @@ change settings — the curve first — with the same checks as the plugin's set
 `docs/en/development/plan.md`), before the first release (the user's decision of 2026-11-18).
 Nothing here changes how the plugin controls the boiler.
 
-Status on 2026-11-18: I10.0 in progress.
+Status on 2026-11-18: I10.0 and I10.1 done. I10.1 differs from its row in four points: Node.js
+24 LTS, not 26 (26 needs `libatomic`, missing on hosts without it); the option is the
+configuration switch "Page in the sidebar" on the plugin's device, not a settings field (it
+works at once, with no reload, and the settings' monitor section shows only at the advanced
+level); the page's texts live beside the built page, in
+`custom_components/vtherm_smart_boiler/frontend/translations/`, where the plugin reads the
+sidebar title; the cards' script comes with the cards, in I10.8. The manifest lists `frontend`,
+`http` and `panel_custom` as `after_dependencies`: as `dependencies` they would need Home
+Assistant's frontend package, which the tests do not have; without the frontend no page is
+registered.
 
 ## The user's decisions (2026-11-18)
 
@@ -93,8 +102,8 @@ the notes and sources are in `research/2026-11-18-visualisation-options.md`.
 
 | Step | Work | J4 impact |
 |---|---|---|
-| I10.0 | this plan; `CLAUDE.md` (where to continue, the Node.js consent), the development plan EN and PL point to it | none |
-| I10.1 | **Tooling and an empty page.** `scripts/bootstrap_node.sh`; `scripts/env.sh` with Node.js; `frontend/` with the build and the tests; a page that renders a title in Home Assistant's theme and language. `panel.py`: the files served, the sidebar page (shown to everyone, hidden by the new option "Show the Boiler page in the sidebar", on by default, with its translated description), removed when the entry unloads; the cards' script. The manifest's `dependencies`: `frontend`, `http`, `panel_custom`. Tests: the page registered and removed, the option, the built files present, the translations' parity including the page's. CI: a job that builds the page, runs its tests and checks the committed files match — a change in `.github/workflows/`, so it waits for the user to grant the `workflow` scope for that one push | none — a new page; the scenarios do not open it |
+| I10.0 ✅ | this plan; `CLAUDE.md` (where to continue, the Node.js consent), the development plan EN and PL point to it | none |
+| I10.1 ✅ | **Tooling and an empty page.** `scripts/bootstrap_node.sh`; `scripts/env.sh` with Node.js; `frontend/` with the build and the tests; a page that renders a title in Home Assistant's theme and language. `panel.py`: the files served, the sidebar page (shown to everyone, hidden by the new option "Show the Boiler page in the sidebar", on by default, with its translated description), removed when the entry unloads; the cards' script. The manifest's `dependencies`: `frontend`, `http`, `panel_custom`. Tests: the page registered and removed, the option, the built files present, the translations' parity including the page's. CI: a job that builds the page, runs its tests and checks the committed files match — a change in `.github/workflows/`, so it waits for the user to grant the `workflow` scope for that one push | none — a new page; the scenarios do not open it |
 | I10.2 | **The page's data.** WebSocket commands, read-only, for any signed-in user: `vtherm_smart_boiler/installation` (the boiler type, hot water, the circuits with their type and zones, each zone's emitters, the picked entity of every signal, the plugin's entities by role, the curve's settings); `vtherm_smart_boiler/curve` (the curve's points for given settings and the result of the same checks as the settings, computed by `core.curve` and `control_config`); `vtherm_smart_boiler/days` (the daily summaries). Tests first | none |
 | I10.3 | **The overview.** Status and the Control switch (with confirmation; an administrator only), the tiles, the schematic built from `installation` (combi, single with a tank, circuits straight from the boiler, behind a fixed valve, run by other automation), the rooms under their circuits, the curve with "where we are" and the last 7 days, the last 24 h from the recorder with the scrubber and play driving every part. Light and dark from the theme; usable on a phone. Tests: the schematic's layout and the scales as pure functions | none |
 | I10.4 | **Changing the curve from the page.** The preview (drag the design point, the offset, the room, the exponent, the lowest water) asks `curve` for the points and the checks; "Save" for an administrator only: a confirmation listing old → new, then a new command `vtherm_smart_boiler/curve/save` that runs the same checks as the settings and saves the entry the same way (one reload, as the settings do); a refused value is shown with the reason. Tests: a non-administrator refused, every check refusing as in the settings, the saved entry equal to one saved through the settings | a scenario that saves the curve through the page once it exists; until then the settings scenarios cover the same save path |

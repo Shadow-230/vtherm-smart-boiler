@@ -2742,6 +2742,9 @@
       }
     },
     "switch": {
+      "sidebar_page": {
+        "name": "Page in the sidebar"
+      },
       "control": {
         "name": "Control (experimental)",
         "state_attributes": {

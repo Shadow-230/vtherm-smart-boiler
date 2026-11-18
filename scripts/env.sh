@@ -34,6 +34,14 @@ export TMPDIR="$ROOT/.tmp"
 # The pinned uv in .tools/bootstrap comes first: Home Assistant installs its own uv into .venv.
 export PATH="$TOOLS/bootstrap/bin:$ROOT/.venv/bin:$TOOLS/bin:$PATH"
 
+# Node.js and npm for the Boiler page's build (docs/en/development/plans/plan-0.2-i10.md): Node.js
+# from .tools/node (scripts/bootstrap_node.sh); npm's cache and any global install stay in .tools/.
+export PATH="$TOOLS/node/bin:$PATH"
+export npm_config_cache="$TOOLS/cache/npm"
+export npm_config_prefix="$TOOLS/npm-global"
+export npm_config_update_notifier=false
+export npm_config_fund=false
+
 mkdir -p "$TMPDIR"
 
 if [ "$#" -eq 0 ]; then
