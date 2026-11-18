@@ -1824,6 +1824,9 @@
           "curve_room": {
             "name": "Temperatura pokojowa krzywej"
           },
+          "curve_outdoor": {
+            "name": "Temperatura zewnętrzna krzywej"
+          },
           "boiler_called": {
             "name": "Wezwanie do grzania"
           },

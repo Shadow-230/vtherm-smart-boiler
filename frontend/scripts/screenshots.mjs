@@ -19,7 +19,7 @@ const FILES = {
   ),
 };
 const VIEWS = [
-  { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, dialog: true },
+  { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, dialog: true, preview: true },
   { name: "phone-pl-dark", width: 390, height: 844, query: "?dark=1", scale: 1 },
   { name: "desktop-en-user", width: 1280, height: 600, query: "?lang=en&user=1", scale: 1 },
   { name: "desktop-pl-hot-water", width: 1280, height: 600, query: "?dhw=1", scale: 1 },
@@ -57,6 +57,18 @@ for (const view of VIEWS) {
     await page.locator("vtherm-smart-boiler-overview dialog button.primary").click();
     const call = await page.evaluate(() => window.lastCall);
     console.log(`${view.name}: confirmed, the switch was called with`, JSON.stringify(call));
+  }
+  if (view.preview) {
+    await page.locator("vtherm-smart-boiler-curve button.outline").click();
+    await page.locator("vtherm-smart-boiler-curve button.handle").waitFor();
+    const handle = page.locator("vtherm-smart-boiler-curve button.handle");
+    const box = await handle.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2 - 40, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    await page.locator("vtherm-smart-boiler-curve").screenshot({ path: join(out, `${view.name}-curve-preview.png`) });
   }
   if (errors.length) {
     failed = true;

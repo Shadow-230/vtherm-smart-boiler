@@ -790,6 +790,8 @@ class ControlStatus:
     zones_without_data: tuple[str, ...] = ()  # calling zones that feed no criterion (PB-23)
     correction: float = 0.0  # the comfort correction now, K (P-38)
     curve_room: float | None = None  # the curve's room temperature now, °C (G11 D)
+    # The outdoor temperature the water was decided with, as the curve reads it (I10.3c), °C.
+    curve_outdoor: float | None = None
     activation_at: float | None = None  # when a start waiting VT's activation delay is due
     frost_closed_zones: tuple[str, ...] = ()  # watched rooms below the frost limit VT keeps closed
     # X8, the relay path (R15): the relay as seen ("on", "off", "other", "unreachable"), where
@@ -2107,6 +2109,7 @@ class ControlUnit:
             zones_without_data=out.decision.zones_without_data,
             correction=out.decision.correction,
             curve_room=out.decision.curve_room,
+            curve_outdoor=out.decision.effective_outdoor,
             activation_at=out.decision.activation_at,
             frost_closed_zones=tuple(self._frost_issue_shown),
             relay_state=relay_state,

@@ -1,9 +1,10 @@
 // The overview (docs/en/development/plans/plan-0.2-i10.md, I10.3): the status with its reasons
-// and the Control switch, the tiles, then the schematic with the rooms. Only an administrator can switch control,
+// and the Control switch, the tiles, then the schematic with the rooms beside the curve. Only an administrator can switch control,
 // and only after confirming; the switch's own checks still apply — a refusal is shown as given.
 import { LitElement, css, html, nothing } from "lit";
 import { liveView, type LiveView } from "./live";
 import { localize } from "./localize";
+import "./curve-card";
 import "./schematic-card";
 import type { HomeAssistant, Installation } from "./types";
 
@@ -135,10 +136,18 @@ export class SmartBoilerOverview extends LitElement {
           </section>`
         : nothing}
 
-      <vtherm-smart-boiler-schematic
-        .hass=${this.hass}
-        .installation=${this.installation}
-      ></vtherm-smart-boiler-schematic>
+      <div class="row">
+        <vtherm-smart-boiler-schematic
+          class="wide"
+          .hass=${this.hass}
+          .installation=${this.installation}
+        ></vtherm-smart-boiler-schematic>
+        <vtherm-smart-boiler-curve
+          class="side"
+          .hass=${this.hass}
+          .installation=${this.installation}
+        ></vtherm-smart-boiler-curve>
+      </div>
 
       ${control
         ? html`<dialog aria-labelledby="confirm-title" @cancel=${() => (this.confirming = false)}>
@@ -275,6 +284,20 @@ export class SmartBoilerOverview extends LitElement {
       flex-basis: 100%;
       margin: 0;
       color: var(--error-color, #db4437);
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .wide {
+      flex: 999 1 640px;
+      min-width: 0;
+    }
+    .side {
+      flex: 1 1 360px;
+      min-width: 0;
     }
     .tiles {
       display: grid;

@@ -11558,6 +11558,24 @@ async def test_the_auto_curve_room_follows_the_warmest_room(rig: Rig) -> None:
     assert curve_room(rig) == 23.0
 
 
+async def test_the_control_state_shows_the_outdoor_temperature_of_the_curve(rig: Rig) -> None:
+    """I10.3c: beside the curve's room temperature, the outdoor temperature the water was decided
+    with — the lower of the current and the averaged, as the curve reads it — so the Boiler page
+    puts "where we are" on the curve itself; none before a water decision."""
+    heated(rig, "living", 21.0)
+    await start(rig, curve=AUTO_CURVE)
+    await rig.advance(60)
+    assert rig.state("sensor", "control_state").attributes["curve_outdoor"] is None
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.state("sensor", "control_state").attributes["curve_outdoor"] == round(OUTDOOR, 1)
+    rig.outdoor = OUTDOOR - 6.0  # a cold snap is followed at once
+    await rig.advance(6 * 60, step=60)  # the next water decision
+    assert rig.state("sensor", "control_state").attributes["curve_outdoor"] == round(
+        OUTDOOR - 6.0, 1
+    )
+
+
 @pytest.mark.parametrize(
     ("curve", "room"),
     [

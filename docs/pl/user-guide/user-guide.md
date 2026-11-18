@@ -1153,7 +1153,7 @@ domyślnie wyłączone.
 | Encja | Co pokazuje albo robi |
 |---|---|
 | Sterowanie (eksperymentalne) | włącza i wyłącza sterowanie; jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
-| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami |
+| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie — w miejsce czujnika kotła centralnego VT; przy zmianie wysyłane jest zdarzenie |
 | Wołające o ciepło, Moc wołających | wołające urządzenia (albo strefy) i zsumowana moc stref, każde obok swojego progu, tak jak pokazuje je kocioł centralny VT |
@@ -1165,7 +1165,7 @@ domyślnie wyłączone.
 
 | Encja | Co robi |
 |---|---|
-| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje stan z przyczynami, przełącznik sterowania (administrator, z potwierdzeniem), kafelki i schemat instalacji rysowany z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło |
+| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje stan z przyczynami, przełącznik sterowania (administrator, z potwierdzeniem), kafelki, schemat instalacji rysowany z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło, oraz krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, który niczego nie zapisuje |
 
 Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w Ustawienia → Naprawy.
 

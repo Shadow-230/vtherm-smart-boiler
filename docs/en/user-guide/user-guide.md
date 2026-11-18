@@ -1105,7 +1105,7 @@ disabled by default.
 | Entity | What it shows or does |
 |---|---|
 | Control (experimental) | switches control on and off; its attributes say what blocks it and what a hand-back does in your installation |
-| Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons |
+| Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not — VT's central boiler sensor's place; an event fires when it changes |
 | Calling for heat, Calling power | the devices (or zones) calling and the zones' power summed, each beside its threshold, as VT's central boiler shows them |
@@ -1117,7 +1117,7 @@ disabled by default.
 
 | Entity | What it does |
 |---|---|
-| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. The page is being built: for now it shows the status with its reasons, the Control switch (an administrator, with confirmation), the tiles, and the schematic of the installation drawn from the settings, with each circuit's rooms and whether they take heat |
+| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. The page is being built: for now it shows the status with its reasons, the Control switch (an administrator, with confirmation), the tiles, the schematic of the installation drawn from the settings, with each circuit's rooms and whether they take heat, and the heating curve with "where we are", the last 7 days' decisions and a preview of changes that saves nothing |
 
 Problems that need you also show as repair issues under Settings → Repairs.
 
