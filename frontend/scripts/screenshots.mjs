@@ -22,6 +22,8 @@ const VIEWS = [
   { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, dialog: true },
   { name: "phone-pl-dark", width: 390, height: 844, query: "?dark=1", scale: 1 },
   { name: "desktop-en-user", width: 1280, height: 600, query: "?lang=en&user=1", scale: 1 },
+  { name: "desktop-pl-hot-water", width: 1280, height: 600, query: "?dhw=1", scale: 1 },
+  { name: "desktop-en-combi-dark", width: 1280, height: 600, query: "?lang=en&combi=1&dark=1", scale: 1 },
 ];
 
 mkdirSync(out, { recursive: true });

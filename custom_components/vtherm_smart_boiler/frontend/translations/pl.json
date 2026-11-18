@@ -48,5 +48,32 @@
     "rooms": "Pokoje",
     "rooms_value": "{calling} z {total}",
     "rooms_detail": "woła o ciepło"
+  },
+  "schematic": {
+    "title": "Instalacja i pokoje",
+    "boiler": "Kocioł",
+    "burning_heating": "pali · ogrzewanie",
+    "burning_hot_water": "pali · ciepła woda",
+    "pause": "przerwa między paleniami",
+    "idle": "stoi",
+    "tank": "Zasobnik",
+    "hot_water": "c.w.u.",
+    "cold_water": "zimna",
+    "direct": "prosto z kotła",
+    "fixed_valve": "zawór termostatyczny {value} °C",
+    "other": "inna automatyka",
+    "other_need": "inna automatyka · potrzeba {value} °C",
+    "boiler_mixed": "mieszany przez kocioł",
+    "rooms": "Kto bierze ciepło",
+    "rooms_hint": "Pasek — jak mocno grzeje regulator pokoju. Obwódka — pokój woła o ciepło.",
+    "takes_heat": "bierze ciepło",
+    "no_heat": "nie woła",
+    "legend_hot": "gorąca woda",
+    "legend_mixed": "zmieszana",
+    "legend_return": "powrót",
+    "legend_idle": "stoi",
+    "legend_moving": "białe kreski — woda płynie · zielone — pompa lub zawór pracuje",
+    "aria": "Instalacja: {status}. Ciepło biorą: {rooms}.",
+    "nobody": "nikt"
   }
 }

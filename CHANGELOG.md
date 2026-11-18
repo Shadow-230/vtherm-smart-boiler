@@ -69,7 +69,11 @@ version is decided then.
   switch **Page in the sidebar** (on by default) takes it away and puts it back. For now it shows
   the status with its reasons, the **Control** switch — an administrator only, after a
   confirmation — and tiles for the water asked and confirmed, flow, return, outdoor, flame and the
-  rooms calling for heat; the schematic, the curve and the last 24 h come next.
+  rooms calling for heat; and the schematic of the installation, drawn from the settings — the
+  boiler, its tank or its own hot water, each circuit with its valve, pump and radiators or
+  underfloor loop — with the water moving where it flows now, the measured temperatures, and
+  each circuit's rooms: how hard each one's controller heats and whether it calls for heat. The
+  curve and the last 24 h come next.
 
 ### Requirements
 

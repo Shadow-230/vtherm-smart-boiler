@@ -1,9 +1,10 @@
-// The overview's live part (docs/en/development/plans/plan-0.2-i10.md, I10.3): the status with
-// its reasons and the Control switch, then the tiles. Only an administrator can switch control,
+// The overview (docs/en/development/plans/plan-0.2-i10.md, I10.3): the status with its reasons
+// and the Control switch, the tiles, then the schematic with the rooms. Only an administrator can switch control,
 // and only after confirming; the switch's own checks still apply — a refusal is shown as given.
 import { LitElement, css, html, nothing } from "lit";
 import { liveView, type LiveView } from "./live";
 import { localize } from "./localize";
+import "./schematic-card";
 import type { HomeAssistant, Installation } from "./types";
 
 export const OVERVIEW_TAG = "vtherm-smart-boiler-overview";
@@ -133,6 +134,11 @@ export class SmartBoilerOverview extends LitElement {
             )}
           </section>`
         : nothing}
+
+      <vtherm-smart-boiler-schematic
+        .hass=${this.hass}
+        .installation=${this.installation}
+      ></vtherm-smart-boiler-schematic>
 
       ${control
         ? html`<dialog aria-labelledby="confirm-title" @cancel=${() => (this.confirming = false)}>

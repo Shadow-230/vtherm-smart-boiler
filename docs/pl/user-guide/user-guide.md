@@ -1165,7 +1165,7 @@ domyślnie wyłączone.
 
 | Encja | Co robi |
 |---|---|
-| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje stan z przyczynami, przełącznik sterowania (administrator, z potwierdzeniem) i kafelki |
+| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Strona jest w budowie: na razie pokazuje stan z przyczynami, przełącznik sterowania (administrator, z potwierdzeniem), kafelki i schemat instalacji rysowany z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło |
 
 Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w Ustawienia → Naprawy.
 
