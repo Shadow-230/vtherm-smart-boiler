@@ -1,8 +1,9 @@
 """The Boiler page in the sidebar (``docs/en/development/plans/plan-0.2-i10.md``, I10.1): put
 there for every user with its title in Home Assistant's language, taken away and put back by its
 switch, gone with the entry, hidden after a restart where it was left hidden, and nothing at all
-without Home Assistant's frontend. The tests have no frontend package, so its two functions and
-the HTTP server are stand-ins here."""
+without Home Assistant's frontend. Its cards (I10.8): the module loaded on every page while the
+entry runs, whatever the switch, and no longer once it unloads. The tests have no frontend
+package, so its functions and the HTTP server are stand-ins here."""
 
 from __future__ import annotations
 
@@ -37,6 +38,8 @@ class Frontend:
     register: AsyncMock
     remove: MagicMock
     serve: AsyncMock
+    add_script: MagicMock
+    remove_script: MagicMock
 
 
 @pytest.fixture
@@ -48,8 +51,12 @@ def frontend(hass: HomeAssistant) -> Iterator[Frontend]:
     with (
         patch("homeassistant.components.panel_custom.async_register_panel") as register,
         patch("homeassistant.components.frontend.async_remove_panel") as remove,
+        patch("homeassistant.components.frontend.add_extra_js_url") as add_script,
+        patch("homeassistant.components.frontend.remove_extra_js_url") as remove_script,
     ):
-        yield Frontend(register, remove, hass.http.async_register_static_paths)
+        yield Frontend(
+            register, remove, hass.http.async_register_static_paths, add_script, remove_script
+        )
 
 
 async def started(hass: HomeAssistant):
@@ -148,7 +155,8 @@ async def test_a_page_left_hidden_stays_hidden_after_a_restart(
 
     assert hass.states.get("switch.boiler_page").state == "off"
     frontend.register.assert_not_awaited()
-    frontend.serve.assert_not_awaited()
+    frontend.serve.assert_awaited_once()  # for the cards, which do not follow the switch
+    frontend.add_script.assert_called_once()
 
 
 async def test_without_the_frontend_nothing_is_registered(hass: HomeAssistant) -> None:
@@ -156,6 +164,8 @@ async def test_without_the_frontend_nothing_is_registered(hass: HomeAssistant) -
     with (
         patch("homeassistant.components.panel_custom.async_register_panel") as register,
         patch("homeassistant.components.frontend.async_remove_panel") as remove,
+        patch("homeassistant.components.frontend.add_extra_js_url") as add_script,
+        patch("homeassistant.components.frontend.remove_extra_js_url") as remove_script,
     ):
         entry = await started(hass)
         page = entity_id(hass, entry, "switch", "sidebar_page")
@@ -165,6 +175,46 @@ async def test_without_the_frontend_nothing_is_registered(hass: HomeAssistant) -
         assert await hass.config_entries.async_unload(entry.entry_id)
     register.assert_not_called()
     remove.assert_not_called()
+    add_script.assert_not_called()
+    remove_script.assert_not_called()
+
+
+async def test_the_cards_are_loaded_while_the_entry_runs(
+    hass: HomeAssistant, frontend: Frontend
+) -> None:
+    """I10.8: the page's module on every page of Home Assistant, at its versioned address, so
+    its cards are in the card picker; once per address across a reload; gone at unload."""
+    entry = await started(hass)
+    frontend.add_script.assert_called_once()
+    (_hass, url) = frontend.add_script.call_args.args
+    assert url == frontend.register.await_args.kwargs["module_url"]  # the page's own module
+    assert url.startswith(f"{STATIC_URL}/{PANEL_MODULE}?v=")
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    frontend.remove_script.assert_called_once_with(hass, url)
+    assert frontend.add_script.call_count == 2
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert frontend.remove_script.call_count == 2
+    assert frontend.remove_script.call_args.args == (hass, url)
+
+
+async def test_a_new_module_takes_the_place_of_the_old(
+    hass: HomeAssistant, frontend: Frontend
+) -> None:
+    """After an update the module's address changes: the old one is taken away first."""
+    from custom_components.vtherm_smart_boiler.panel import async_add_cards
+
+    await started(hass)
+    (_hass, old) = frontend.add_script.call_args.args
+    with patch("custom_components.vtherm_smart_boiler.panel.module_version", return_value="new"):
+        assert await async_add_cards(hass)
+        assert await async_add_cards(hass)  # the same address again: nothing to do
+    frontend.remove_script.assert_called_once_with(hass, old)
+    assert frontend.add_script.call_args.args == (hass, f"{STATIC_URL}/{PANEL_MODULE}?v=new")
+    assert frontend.add_script.call_count == 2
 
 
 @pytest.mark.parametrize("home_assistant_has_it", [True, False])

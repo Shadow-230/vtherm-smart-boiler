@@ -88,7 +88,12 @@ docs/                                     the documentation, one folder per lang
   (`translations/`), which Home Assistant hands it in the user's language
   (`hass.loadBackendTranslation("entity", …)`), so each is written once. `panel.py` serves the
   files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
-  "Page in the sidebar" takes it away and puts it back. Without Home Assistant's frontend running
+  "Page in the sidebar" takes it away and puts it back. While the entry runs, `panel.py` also
+  has Home Assistant load the same module on every page (`frontend.add_extra_js_url`, taken
+  back at unload, an older address replaced after an update), so the overview's parts are in the
+  card picker as four cards — status and tiles, schematic and rooms, the curve, the last 24 h —
+  each the page's own part (`frontend/src/cards.ts`), with no settings: each finds the running
+  entry through `vtherm_smart_boiler/installation`. Without Home Assistant's frontend running
   nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
   `websocket_api.py` holds what the page reads, five read-only WebSocket commands for any
   signed-in user, each answering from the running entry (else the error `not_running`):

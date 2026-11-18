@@ -42,6 +42,7 @@ _RUNTIME_MODULES = (
     "feature_manager",
     "entity",
     "journal",
+    "panel",
     "websocket_api",
 )
 
@@ -60,6 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
     from .control import ControlUnit
     from .coordinator import SmartBoilerCoordinator
     from .journal import Journal
+    from .panel import async_add_cards, async_remove_cards
     from .vtherm_link import vt_run
     from .websocket_api import async_setup_websocket
 
@@ -134,6 +136,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         _forget_not_heated(hass, entry)  # the plugin runs: a failed setup's issue goes (SB-10)
         # Last, once nothing can fail: a failed setup removes nothing from the registry (PB-07).
         _remove_stale_entities(hass, entry, coordinator)
+        # The Boiler page's cards in the card picker while the entry runs (I10.8).
+        if await async_add_cards(hass):
+            entry.async_on_unload(lambda: async_remove_cards(hass))
     except Exception:
         await _async_setup_failed(hass, entry, coordinator, forwarded=forwarded)
         raise

@@ -12,6 +12,8 @@
 <title>Boiler page preview</title>
 <style>
   html, body { margin: 0; height: 100%; }
+  body { background: var(--primary-background-color); color: var(--primary-text-color); }
+  .dashboard { display: grid; gap: 12px; padding: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); align-items: start; }
   body {
     --primary-color: #03a9f4; --primary-background-color: #fafafa; --secondary-background-color: #e5e5e5;
     --card-background-color: #fff; --primary-text-color: #212121; --secondary-text-color: #727272;
@@ -356,8 +358,23 @@
     },
   };
   const panel = document.querySelector("vtherm-smart-boiler-panel");
-  panel.narrow = innerWidth < 600;
-  panel.hass = hass;
+  if (query.get("cards")) {
+    // ?cards=1: the four cards on a dashboard-like grid instead of the page.
+    panel.remove();
+    document.documentElement.lang = lang;
+    const grid = document.createElement("div");
+    grid.className = "dashboard";
+    for (const tag of ["status", "schematic", "curve", "day"].map((p) => `vtherm-smart-boiler-${p}-card`)) {
+      const card = document.createElement(tag);
+      card.setConfig({});
+      card.hass = hass;
+      grid.append(card);
+    }
+    document.body.append(grid);
+  } else {
+    panel.narrow = innerWidth < 600;
+    panel.hass = hass;
+  }
 </script>
 </body>
 </html>

@@ -96,6 +96,10 @@ version is decided then.
   plugin fits, and the two compared at the same temperature — and the burner's heating starts by
   hour over the last 4 weeks. Each daily summary now keeps its heating starts hour by hour; days
   kept before show without them.
+- **Cards** for your own dashboards, in the card picker while the plugin runs: "Boiler: status"
+  (the status, the Control switch and the tiles), "Boiler: schematic" (the installation and its
+  rooms), "Boiler: heating curve" and "Boiler: last 24 h" — the page's own parts, with no
+  settings, the same rules for changes.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
   water was decided with, as the curve reads it.
 

@@ -134,6 +134,7 @@
   "timeline": {
     "title": "Ostatnie 24 h",
     "hint": "Przewiń albo odtwórz dobę: kafelki, schemat, pokoje i krzywa pokażą tamtą chwilę.",
+    "hint_alone": "Przewiń albo odtwórz dobę: wykres, palenia i legenda pokażą tamtą chwilę.",
     "play": "Odtwórz dobę",
     "pause": "Zatrzymaj",
     "now": "Teraz",
@@ -329,5 +330,15 @@
     "hour_not_kept": "{date}: godzin nie zapisano",
     "mean": "Średnia",
     "error": "Nie udało się odczytać analiz: {message}"
+  },
+  "cards": {
+    "status": "Kocioł: stan",
+    "status_detail": "Stan Smart Boilera z przyczynami, przełącznik sterowania i kafelki.",
+    "schematic": "Kocioł: schemat",
+    "schematic_detail": "Instalacja grzewcza narysowana z ustawień Smart Boilera, z pokojami każdego obiegu i tym, czy biorą ciepło.",
+    "curve": "Kocioł: krzywa grzewcza",
+    "curve_detail": "Krzywa grzewcza z tym, gdzie Smart Boiler jest teraz, i jego ostatnimi 7 dniami; administrator może podejrzeć i zapisać zmianę.",
+    "timeline": "Kocioł: ostatnie 24 h",
+    "timeline_detail": "Ostatnie 24 godziny z recordera — woda, zasilanie, powrót i palenia — z suwakiem i odtwarzaniem."
   }
 }

@@ -22,6 +22,10 @@ import type { HomeAssistant, Installation } from "./types";
 
 export const OVERVIEW_TAG = "vtherm-smart-boiler-overview";
 
+/** The overview's parts; a card shows one of them (I10.8). */
+export const PARTS = ["status", "schematic", "curve", "timeline"] as const;
+export type Part = (typeof PARTS)[number];
+
 const FLAME_PATH =
   "M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1-3.6 2.2-4.8.3 1.6 1 2.6 2 3.1C11 9 11.3 6 12 3z";
 
@@ -29,6 +33,7 @@ export class SmartBoilerOverview extends LitElement {
   static properties = {
     hass: { attribute: false },
     installation: { attribute: false },
+    parts: { attribute: false },
     confirming: { state: true },
     error: { state: true },
     history: { state: true },
@@ -38,6 +43,8 @@ export class SmartBoilerOverview extends LitElement {
 
   declare hass?: HomeAssistant;
   declare installation?: Installation;
+  /** The parts shown: all of them on the page, one on a card. */
+  declare parts: readonly Part[];
   declare confirming: boolean;
   declare error: string;
   declare history: History | null;
@@ -49,6 +56,7 @@ export class SmartBoilerOverview extends LitElement {
 
   constructor() {
     super();
+    this.parts = PARTS;
     this.confirming = false;
     this.error = "";
     this.history = null;
@@ -57,7 +65,8 @@ export class SmartBoilerOverview extends LitElement {
   }
 
   protected willUpdate(): void {
-    if (this.hass && this.installation && !this.historyAsked) {
+    // The last 24 h are read only where they are shown: a card of another part does not ask.
+    if (this.hass && this.installation && !this.historyAsked && this.parts.includes("timeline")) {
       this.historyAsked = true;
       void this.askHistory();
     }
@@ -164,6 +173,67 @@ export class SmartBoilerOverview extends LitElement {
           : control.on
             ? this.t("control.hint_on")
             : this.t("control.hint_off");
+    const part = (name: Part) => this.parts.includes(name);
+    const schematic = part("schematic");
+    const curve = part("curve");
+    return html`
+      ${part("status") ? this.statusPart(status, control, tiles, replay, canSwitch, hint) : nothing}
+      ${schematic || curve
+        ? html`<div class="row ${schematic && curve ? "" : "single"}">
+            ${schematic
+              ? html`<vtherm-smart-boiler-schematic
+                  class="wide"
+                  .hass=${shown}
+                  .installation=${this.installation}
+                ></vtherm-smart-boiler-schematic>`
+              : nothing}
+            ${curve
+              ? html`<vtherm-smart-boiler-curve
+                  class="side"
+                  .hass=${shown}
+                  .installation=${this.installation}
+                ></vtherm-smart-boiler-curve>`
+              : nothing}
+          </div>`
+        : nothing}
+      ${part("timeline")
+        ? html`<vtherm-smart-boiler-timeline
+            .hass=${this.hass}
+            .installation=${this.installation}
+            .history=${this.history}
+            .from=${this.window[0]}
+            .to=${this.window[1]}
+            .at=${this.at}
+            .status=${this.historyStatus}
+            .alone=${this.parts.length === 1}
+            @at-change=${(e: CustomEvent<number | null>) => this.moveTo(e.detail)}
+          ></vtherm-smart-boiler-timeline>`
+        : nothing}
+      ${control && part("status")
+        ? html`<dialog aria-labelledby="confirm-title" @cancel=${() => (this.confirming = false)}>
+            <h2 id="confirm-title">
+              ${control.on ? this.t("control.confirm_off_title") : this.t("control.confirm_on_title")}
+            </h2>
+            <p>${control.on ? this.t("control.confirm_off_body") : this.t("control.confirm_on_body")}</p>
+            <div class="actions">
+              <button class="text" @click=${() => this.decide(false, view)}>${this.t("control.cancel")}</button>
+              <button class="primary" @click=${() => this.decide(true, view)}>
+                ${control.on ? this.t("control.confirm_off") : this.t("control.confirm_on")}
+              </button>
+            </div>
+          </dialog>`
+        : nothing}
+    `;
+  }
+
+  private statusPart(
+    status: LiveView["status"],
+    control: LiveView["control"],
+    tiles: LiveView["tiles"],
+    replay: boolean,
+    canSwitch: boolean,
+    hint: string,
+  ) {
     return html`
       <section class="card hero">
         <div class="status">
@@ -209,45 +279,6 @@ export class SmartBoilerOverview extends LitElement {
               </div>`,
             )}
           </section>`
-        : nothing}
-
-      <div class="row">
-        <vtherm-smart-boiler-schematic
-          class="wide"
-          .hass=${shown}
-          .installation=${this.installation}
-        ></vtherm-smart-boiler-schematic>
-        <vtherm-smart-boiler-curve
-          class="side"
-          .hass=${shown}
-          .installation=${this.installation}
-        ></vtherm-smart-boiler-curve>
-      </div>
-
-      <vtherm-smart-boiler-timeline
-        .hass=${this.hass}
-        .installation=${this.installation}
-        .history=${this.history}
-        .from=${this.window[0]}
-        .to=${this.window[1]}
-        .at=${this.at}
-        .status=${this.historyStatus}
-        @at-change=${(e: CustomEvent<number | null>) => this.moveTo(e.detail)}
-      ></vtherm-smart-boiler-timeline>
-
-      ${control
-        ? html`<dialog aria-labelledby="confirm-title" @cancel=${() => (this.confirming = false)}>
-            <h2 id="confirm-title">
-              ${control.on ? this.t("control.confirm_off_title") : this.t("control.confirm_on_title")}
-            </h2>
-            <p>${control.on ? this.t("control.confirm_off_body") : this.t("control.confirm_on_body")}</p>
-            <div class="actions">
-              <button class="text" @click=${() => this.decide(false, view)}>${this.t("control.cancel")}</button>
-              <button class="primary" @click=${() => this.decide(true, view)}>
-                ${control.on ? this.t("control.confirm_off") : this.t("control.confirm_on")}
-              </button>
-            </div>
-          </dialog>`
         : nothing}
     `;
   }
@@ -394,6 +425,9 @@ export class SmartBoilerOverview extends LitElement {
     .wide {
       flex: 999 1 640px;
       min-width: 0;
+    }
+    .row.single > * {
+      flex: 1 1 100%;
     }
     .side {
       flex: 1 1 360px;

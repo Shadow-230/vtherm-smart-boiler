@@ -47,7 +47,12 @@ colder than the heating threshold in use, with heating gas — by the building f
 missing, and the two compared in the middle of the temperatures both cover; `days` sends it
 with the gas meter's unit (none without a meter, as the "gas per degree-day" sensor has none).
 A day keeps its starts hour by hour from its start (`hourly_starts`, 23 or 25 hours at a clock
-change); the page places them at their clock hours in the browser's time zone. For I10.3a the user consented on 2026-11-18 to Playwright, its
+change); the page places them at their clock hours in the browser's time zone. I10.8 is done:
+each card is the overview showing one of its parts (`parts`), so a card and the page cannot
+drift apart; the cards need no settings and the module is loaded on every page while the entry
+runs, whatever the sidebar switch, taken back at unload; the card picker names them in the
+page's language as it is when the picker opens; the last 24 h alone says the moment shows on its
+own chart. For I10.3a the user consented on 2026-11-18 to Playwright, its
 Chromium and the system libraries Chromium needs (`scripts/bootstrap_browser.sh`): every part is
 checked on screenshots of sample data before its pull request. I10.1 differs from its row in four points: Node.js
 24 LTS, not 26 (26 needs `libatomic`, missing on hosts without it); the option is the
@@ -148,7 +153,7 @@ the notes and sources are in `research/2026-11-18-visualisation-options.md`.
 | I10.5 ✅ | **Burner, Use, Status and alarms.** From the plugin's entities, the recorder and its long-term statistics: the burn timeline and lengths, starts per hour, condensing; gas per degree-day by week, "use against yesterday"; the verdict with its reasons, the signals' health, the alarms, the building values with "Forget measured values" (an administrator, with confirmation, the existing buttons) | none |
 | I10.6 ✅ | **The journal.** `core/journal.py`: what the plugin decided and why — the heat call on and off, a water setpoint change of at least 1 K with its reason, a circuit's need holding the water, hand-back and resuming, an alarm raised and cleared, settings saved (from the page or the settings). Kept in the entry's store: 14 days, at most 2,000 entries, the oldest dropped first (provisional, K4). The command `vtherm_smart_boiler/journal`; the tab with the event lane, the list with filters and the zoomable week. Tests first | the scenarios that hand back or raise an alarm: each leaves its journal entry |
 | I10.7 ✅ | **Analyses.** The energy signature: each day's gas against its mean outdoor temperature, observing and control apart, the fitted lines computed in `core/` and sent with `days`; the calendar of burner starts by hour — new daily summaries keep 24 hourly start counts, older days show without (the store keeps reading them). Tests first | none |
-| I10.8 | **Cards.** The overview's parts as cards in the card picker: status and tiles, schematic and rooms, curve, last 24 h; each finds the plugin's one entry by itself | none |
+| I10.8 ✅ | **Cards.** The overview's parts as cards in the card picker: status and tiles, schematic and rooms, curve, last 24 h; each finds the plugin's one entry by itself | none |
 | I10.9 | **Documents.** User guide EN and PL (a section on the page and the cards), technical documentation EN and PL, `docs/en/specification/scope.md` and its Polish twin, `CHANGELOG.md`; this plan marked done | none |
 | I10.10 🔒 | **In the test Home Assistant**, after the user says to start (J4): the page and the cards load, every tab reads its data, the curve saves through the page, the journal fills; screenshots for the user's review | the page and the cards |
 
