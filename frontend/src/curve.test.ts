@@ -5,7 +5,7 @@ import type { CurveSettings, HassEntity } from "./types";
 const SETTINGS: CurveSettings = {
   entered: true, design_outdoor: -15, design_flow: 55, room: 21, exponent: 1.3, offset: 0,
   hard_min: 20, hard_max: 70, circuit_max: null, boiler_max: null, room_auto: true,
-  comfort_correction: false, correction_max_k: 3,
+  comfort_correction: false, correction_max_k: 3, advanced: false,
 };
 
 function state(attributes: Record<string, unknown>, value = "heating"): HassEntity {

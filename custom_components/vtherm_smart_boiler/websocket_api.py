@@ -1,26 +1,35 @@
-"""What the Boiler page reads (``docs/en/development/plans/plan-0.2-i10.md``, I10.2).
+"""What the Boiler page reads, and the one change it can make
+(``docs/en/development/plans/plan-0.2-i10.md``, I10.2 and I10.4).
 
-Three WebSocket commands, read-only, for any signed-in user: the installation as the settings
-describe it, the curve's points with the settings' own checks, and the daily summaries. Each
-answers from the running entry; with none running, the error ``not_running``. The page computes
-no law of its own: the curve comes from ``core.curve_view``, the checks from ``control_config``.
-The commands are registered once per run of Home Assistant — one cannot be taken back.
+Read-only, for any signed-in user: the installation as the settings describe it, the curve's
+points with the settings' own checks, and the daily summaries. One write, for an administrator
+only: the curve saved — through the plugin's own settings, so every check and the save itself
+are theirs (I10.4). Each answers from the running entry; with none running, the error
+``not_running``. The page computes no law of its own: the curve comes from ``core.curve_view``,
+the checks from ``control_config`` and the settings. The commands are registered once per run of
+Home Assistant — one cannot be taken back.
 """
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import probatio as vol  # Home Assistant's schemas for WebSocket commands since 2026.10
 from homeassistant.components.websocket_api import async_register_command
 from homeassistant.components.websocket_api.connection import ActiveConnection
-from homeassistant.components.websocket_api.decorators import websocket_command
+from homeassistant.components.websocket_api.decorators import (
+    async_response,
+    require_admin,
+    websocket_command,
+)
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import FlowResultType, InvalidData, UnknownFlow, UnknownStep
 from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN
+from .const import DOMAIN, LEVEL, LEVEL_ADVANCED
 from .control_config import curve_problems, lowest_above_max
 from .core.curve_view import curve_points
 
@@ -41,7 +50,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
     """Register the page's commands, once per run of Home Assistant."""
     if hass.data.get(_DATA):
         return
-    for handler in (ws_installation, ws_curve, ws_days):
+    for handler in (ws_installation, ws_curve, ws_days, ws_curve_save):
         async_register_command(hass, handler)
     hass.data[_DATA] = True
 
@@ -127,6 +136,8 @@ def _curve_settings(coordinator: SmartBoilerCoordinator) -> dict[str, Any] | Non
         "room_auto": loop.room_auto,
         "comfort_correction": loop.comfort_correction,
         "correction_max_k": loop.correction_max_k,
+        # The settings' advanced level shows the offset: only then can the page save it.
+        "advanced": coordinator.config_entry.options.get(LEVEL) == LEVEL_ADVANCED,
     }
 
 
@@ -215,3 +226,87 @@ def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
         msg["id"],
         {"days": [day.to_dict() for day in days if since is None or day.start >= since]},
     )
+
+
+# What the page may change of the curve, as the settings' "Heating curve" form names it; the
+# offset only where the entry's level shows it.
+SAVE_KEYS = ("design_outdoor", "design_flow", "offset")
+CURVE_STEP = "control_curve"
+NOT_AVAILABLE = "not_available"
+
+
+def _form_values(schema: Any) -> dict[str, Any]:
+    """The values a settings form shows: each field's default, which the form fills from the
+    stored options."""
+    values: dict[str, Any] = {}
+    for marker in schema.schema:
+        default = getattr(marker, "default", None)
+        if callable(default):
+            value = default()
+            if value is not vol.UNDEFINED and value is not None and repr(value) != "...":
+                values[str(marker)] = value
+    return values
+
+
+@websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/curve/save",
+        vol.Optional("design_outdoor"): vol.Coerce(float),
+        vol.Optional("design_flow"): vol.Coerce(float),
+        vol.Optional("offset"): vol.Coerce(float),
+    }
+)
+@require_admin
+@async_response
+async def ws_curve_save(
+    hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Save the curve the page previewed — an administrator only — through the plugin's own
+    settings: their "Heating curve" form with the stored values and these changes, then "Save
+    and finish". Every check is the settings' own and the save is theirs, with its one reload.
+    A form that refuses answers its errors by their translation keys; a save the settings would
+    take the user through first (a confirmation, another section) is not made — the answer names
+    the step, for the user to finish in the settings. Nothing is changed then."""
+    coordinator = _coordinator(hass)
+    if coordinator is None:
+        _not_running(connection, msg)
+        return
+    changes = {key: msg[key] for key in SAVE_KEYS if key in msg}
+    options = hass.config_entries.options
+    flow = await options.async_init(coordinator.config_entry.entry_id)
+    flow_id = flow["flow_id"]
+    try:
+        try:
+            form = await options.async_configure(flow_id, {"next_step_id": CURVE_STEP})
+        except InvalidData, UnknownStep:  # the curve's item is not on the menu
+            form = None
+        schema = form.get("data_schema") if form else None
+        if schema is None or form is None or form.get("step_id") != CURVE_STEP:
+            connection.send_error(msg["id"], NOT_AVAILABLE, "the curve cannot be changed now")
+            return
+        if "offset" in changes and "offset" not in {str(m) for m in schema.schema}:
+            refused = {"saved": False, "errors": {"offset": "offset_advanced"}}
+            connection.send_result(msg["id"], refused)
+            return
+        try:
+            answer = await options.async_configure(flow_id, {**_form_values(schema), **changes})
+        except InvalidData as err:  # outside a field's bounds, as the form's own number box
+            field = str(err.path[0]) if err.path else "base"
+            refused = {"saved": False, "errors": {field: "out_of_range"}}
+            connection.send_result(msg["id"], refused)
+            return
+        if answer.get("type") is FlowResultType.FORM and answer.get("step_id") == CURVE_STEP:
+            errors = dict(answer.get("errors") or {})
+            connection.send_result(msg["id"], {"saved": False, "errors": errors})
+            return
+        saved = await options.async_configure(flow_id, {"next_step_id": "save"})
+        if saved.get("type") is FlowResultType.CREATE_ENTRY:
+            connection.send_result(msg["id"], {"saved": True, "errors": {}})
+            return
+        connection.send_result(
+            msg["id"],
+            {"saved": False, "errors": {"base": "needs_settings"}, "step": saved.get("step_id")},
+        )
+    finally:
+        with suppress(UnknownFlow):  # a save finishes the flow itself
+            options.async_abort(flow_id)

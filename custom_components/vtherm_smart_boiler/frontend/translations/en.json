@@ -115,8 +115,21 @@
       "design_outdoor_too_warm": "The hardest frost must be at least 10 °C below the curve's room temperature.",
       "hard_min_not_below_design_flow": "The lowest water must be below the water at the hardest frost.",
       "hard_min_above_max": "The lowest water is above a circuit's or the boiler's highest.",
-      "invalid_curve": "These values make no curve."
-    }
+      "invalid_curve": "These values make no curve.",
+      "out_of_range": "a value is outside what the settings accept.",
+      "offset_advanced": "the offset is set at the advanced level of the plugin's settings.",
+      "needs_settings": "the settings need you for this save — open them to finish.",
+      "other": "the settings refused it ({key})."
+    },
+    "save": "Save",
+    "save_title": "Save the curve?",
+    "save_body": "The plugin's settings save it with their own checks and reload once; control goes on with the new curve.",
+    "save_point": "Point at the hardest frost",
+    "saving": "Saving…",
+    "saved": "Saved: the plugin reloads its settings.",
+    "refused": "Not saved: {reason}",
+    "open_settings": "Open the plugin's settings",
+    "admin_only": "Only an administrator can save the curve."
   },
   "timeline": {
     "title": "The last 24 h",
