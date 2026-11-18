@@ -25,7 +25,9 @@
     "confirm_on_body": "Sterowanie jest eksperymentalne. Wtyczka zacznie ustawiać temperaturę wody w kotle według krzywej grzewczej. W każdej chwili możesz je wyłączyć, a kocioł wróci do swoich ustawień.",
     "confirm_on": "Włącz",
     "cancel": "Anuluj",
-    "failed": "Przełącznik się nie zmienił: {message}"
+    "failed": "Przełącznik się nie zmienił: {message}",
+    "replay": "odtwarzanie · {time}",
+    "replay_hint": "Chwila z przeszłości: nic nie da się zmienić."
   },
   "tiles": {
     "water": "Woda — prośba wtyczki",
@@ -115,5 +117,21 @@
       "hard_min_above_max": "Najniższa woda jest powyżej najwyższej wody obiegu albo kotła.",
       "invalid_curve": "Z tych wartości nie da się zrobić krzywej."
     }
+  },
+  "timeline": {
+    "title": "Ostatnie 24 h",
+    "hint": "Przewiń albo odtwórz dobę: kafelki, schemat, pokoje i krzywa pokażą tamtą chwilę.",
+    "play": "Odtwórz dobę",
+    "pause": "Zatrzymaj",
+    "now": "Teraz",
+    "slider": "Chwila doby",
+    "legend_requested": "prośba wtyczki",
+    "legend_flow": "zasilanie",
+    "legend_return": "powrót",
+    "legend_heat": "palenie: ogrzewanie",
+    "legend_hot_water": "palenie: ciepła woda",
+    "loading": "Wczytywanie historii…",
+    "no_history": "Brak historii: recorder nie zapisuje tych encji.",
+    "error": "Nie udało się odczytać historii: {message}"
   }
 }
