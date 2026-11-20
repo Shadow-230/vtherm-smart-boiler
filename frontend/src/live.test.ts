@@ -37,6 +37,7 @@ const INSTALLATION: Installation = {
   entities: {
     control: "switch.control", control_state: "sensor.control_state",
     control_setpoint: "sensor.setpoint", demand_count: "sensor.calling",
+    boiler_called: "binary_sensor.called",
   },
   curve: null,
   short_burn_min: 10,
@@ -74,7 +75,7 @@ describe("liveView", () => {
   it("shows the control state in Home Assistant's own words, with its reasons", () => {
     const view = liveView(inputs(HEATING));
     expect(view.status).toEqual({
-      title: "«heating»", detail: "rooms call for heat", flame: true, code: "heating",
+      title: "«heating»", detail: "rooms call for heat", heat: "burning", code: "heating",
     });
     expect(view.control).toEqual({ entityId: "switch.control", on: true, available: true });
   });
@@ -124,8 +125,23 @@ describe("liveView", () => {
     const view = liveView(inputs([], bare));
     expect(view.tiles).toEqual([]);
     expect(view.control).toBeNull();
-    expect(view.status).toMatchObject({ code: "monitoring", flame: false });
+    expect(view.status).toMatchObject({ code: "monitoring", heat: "off" });
     expect(view.status.detail).toContain("Control is not set up");
+  });
+
+  it("tells the burner lit from the boiler called for heat between burns", () => {
+    const status = (states: HassEntity[]) => liveView(inputs(states)).status.heat;
+    const heating = entity("sensor.control_state", "heating");
+    // Called — by the plugin's heat call, else by a mode that calls — the burner off for now.
+    expect(status([heating, entity("binary_sensor.called", "on"), entity("binary_sensor.flame", "off")])).toBe("called");
+    expect(status([heating, entity("binary_sensor.flame", "off")])).toBe("called");
+    expect(status([entity("sensor.control_state", "frost")])).toBe("called");
+    // Lit: whatever control says, the burner burns (hot water too).
+    expect(status([entity("sensor.control_state", "idle"), entity("binary_sensor.flame", "on")])).toBe("burning");
+    // Not heating: idle, handed back, or a heat call that says no.
+    expect(status([entity("sensor.control_state", "idle"), entity("binary_sensor.flame", "off")])).toBe("off");
+    expect(status([heating, entity("binary_sensor.called", "off")])).toBe("off");
+    expect(status([entity("sensor.control_state", "handed_back")])).toBe("off");
   });
 
   it("tells the burner's state where control is not set up", () => {

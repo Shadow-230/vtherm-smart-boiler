@@ -16,11 +16,14 @@ export interface Tile {
 export interface StatusView {
   title: string;
   detail: string;
-  /** The burner is lit (heating or hot water): the flame drawn in its colour. */
-  flame: boolean;
+  /** "burning": the burner is lit (heating or hot water); "called": the boiler is called for
+   * heat, the burner not lit right now (between burns); "off": neither. */
+  heat: HeatState;
   /** The control state's own code ("heating", "idle", …), or "monitoring" without control. */
   code: string;
 }
+
+export type HeatState = "burning" | "called" | "off";
 
 export interface ControlView {
   entityId: string;
@@ -72,16 +75,33 @@ function flameOn(inputs: LiveInputs): boolean {
   return signal(inputs, "flame")?.state === "on";
 }
 
+// The control states that call the boiler for heat (``core.boiler_call``), where the plugin's
+// "Heat call" sensor is not there to say it.
+const CALLING_MODES = new Set(["heating", "frost", "fallback"]);
+
+/** Whether the boiler is lit, called for heat between burns, or neither: the plugin's "Heat
+ * call" says whether it is called, else the control state does. */
+function heatState(inputs: LiveInputs, flame: boolean): HeatState {
+  if (flame) return "burning";
+  const called = plugin(inputs, "boiler_called");
+  if (called && called.state !== "unavailable" && called.state !== "unknown") {
+    return called.state === "on" ? "called" : "off";
+  }
+  const control = plugin(inputs, "control_state");
+  return control && CALLING_MODES.has(control.state) ? "called" : "off";
+}
+
 function statusView(inputs: LiveInputs): StatusView {
   const { t } = inputs;
   const flame = flameOn(inputs);
+  const heat = heatState(inputs, flame);
   const control = plugin(inputs, "control_state");
   if (control && control.state !== "unavailable") {
     const reasons = control.attributes.reasons_text;
     return {
       title: inputs.stateText(control),
       detail: typeof reasons === "string" ? reasons : "",
-      flame,
+      heat,
       code: control.state,
     };
   }
@@ -91,7 +111,7 @@ function statusView(inputs: LiveInputs): StatusView {
     : flame
       ? t("status.burner_on")
       : t("status.burner_off");
-  return { title: t("status.monitoring"), detail, flame, code: "monitoring" };
+  return { title: t("status.monitoring"), detail, heat, code: "monitoring" };
 }
 
 function controlView(inputs: LiveInputs): ControlView | null {

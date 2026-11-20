@@ -237,7 +237,12 @@ export class SmartBoilerOverview extends LitElement {
     return html`
       <section class="card hero">
         <div class="status">
-          <div class="flame ${status.flame ? "lit" : ""}" aria-hidden="true">
+          <div
+            class="flame ${status.heat}"
+            role="img"
+            aria-label=${this.t(`status.heat_${status.heat}`)}
+            title=${this.t(`status.heat_${status.heat}`)}
+          >
             <svg viewBox="0 0 24 24"><path d=${FLAME_PATH}></path></svg>
           </div>
           <div class="words">
@@ -322,8 +327,18 @@ export class SmartBoilerOverview extends LitElement {
       flex: none;
       color: var(--disabled-text-color, #9e9e9e);
     }
-    .flame.lit {
+    /* Called for heat between burns: the flame in the heating colour, outlined; lit: filled, on
+       a warm ground. */
+    .flame.called,
+    .flame.burning {
       color: var(--state-climate-heat-color, #ff8100);
+      background: color-mix(in srgb, var(--state-climate-heat-color, #ff8100) 14%, transparent);
+    }
+    .flame.burning {
+      background: color-mix(in srgb, var(--state-climate-heat-color, #ff8100) 24%, transparent);
+    }
+    .flame.burning svg {
+      fill: currentColor;
     }
     .flame svg {
       width: 30px;

@@ -38,6 +38,7 @@ const VIEWS = [
   { name: "desktop-pl-status", width: 1280, height: 720, query: "#status", scale: 1, reset: true },
   { name: "phone-en-status-dark", width: 390, height: 844, query: "?lang=en&dark=1#status", scale: 1 },
   { name: "desktop-en-status-user", width: 1280, height: 720, query: "?lang=en&user=1#status", scale: 1 },
+  { name: "desktop-pl-between-burns", width: 1280, height: 600, query: "?flame=0", scale: 1 },
   { name: "phone-pl-dark", width: 390, height: 844, query: "?dark=1", scale: 1 },
   { name: "desktop-en-user", width: 1280, height: 600, query: "?lang=en&user=1", scale: 1 },
   { name: "desktop-pl-hot-water", width: 1280, height: 600, query: "?dhw=1", scale: 1 },

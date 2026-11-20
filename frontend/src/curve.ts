@@ -24,10 +24,11 @@ export function chartFor(settings: CurveSettings): Chart {
   };
 }
 
-/** A point's place as shares of the chart (0–1, left to right and top to bottom). */
+/** A point's place as shares of the chart (0–1, left to right and top to bottom): warmer to the
+ * left and colder to the right, as boiler manuals draw a heating curve — it rises to the right. */
 export function place(chart: Chart, outdoor: number, water: number): { x: number; y: number } {
   return {
-    x: (outdoor - chart.outdoorFrom) / (chart.outdoorTo - chart.outdoorFrom),
+    x: (chart.outdoorTo - outdoor) / (chart.outdoorTo - chart.outdoorFrom),
     y: (chart.waterTo - water) / (chart.waterTo - chart.waterFrom),
   };
 }
@@ -105,7 +106,7 @@ export interface Draft {
  * water between 25 and 80 °C, on half degrees. The plugin's checks still judge it. */
 export function dragTo(chart: Chart, x: number, y: number): Pick<Draft, "design_outdoor" | "design_flow"> {
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-  const outdoor = chart.outdoorFrom + clamp(x, 0, 1) * (chart.outdoorTo - chart.outdoorFrom);
+  const outdoor = chart.outdoorTo - clamp(x, 0, 1) * (chart.outdoorTo - chart.outdoorFrom);
   const water = chart.waterTo - clamp(y, 0, 1) * (chart.waterTo - chart.waterFrom);
   return {
     design_outdoor: clamp(Math.round(outdoor * 2) / 2, -30, -5),

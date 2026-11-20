@@ -55,7 +55,10 @@ page's language as it is when the picker opens; the last 24 h alone says the mom
 own chart. I10.9 is done: the user guide has its section 4.12 on the page and the cards (section
 4 rather than a new numbered one, so no other section's number or link moves); the scope lists
 the page among the user levels and across all stages. I10.0 to I10.9 are done; I10.10 waits for
-the user's start (J4). For I10.3a the user consented on 2026-11-18 to Playwright, its
+the user's start (J4). The user's remarks of 2026-11-20, on the page in a Home Assistant: the
+curve is drawn as boiler manuals draw it, warmer on the left and colder on the right (the arrow
+keys follow); the status's flame shows the boiler called for heat between burns, not only the
+burner lit. For I10.3a the user consented on 2026-11-18 to Playwright, its
 Chromium and the system libraries Chromium needs (`scripts/bootstrap_browser.sh`): every part is
 checked on screenshots of sample data before its pull request. I10.1 differs from its row in four points: Node.js
 24 LTS, not 26 (26 needs `libatomic`, missing on hosts without it); the option is the

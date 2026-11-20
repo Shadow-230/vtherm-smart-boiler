@@ -9,7 +9,10 @@
     "monitoring": "Monitoring",
     "monitoring_detail": "Control is not set up: the plugin watches the boiler and counts.",
     "burner_on": "The burner is on.",
-    "burner_off": "The burner is off."
+    "burner_off": "The burner is off.",
+    "heat_burning": "The burner is lit",
+    "heat_called": "Called for heat — the burner is not lit right now",
+    "heat_off": "The boiler is not heating"
   },
   "control": {
     "label": "Control",
@@ -91,7 +94,7 @@
     "legend_days": "the last 7 days",
     "legend_saved": "saved",
     "legend_draft": "draft",
-    "axis": "Outdoor temperature (°C) — up: water (°C)",
+    "axis": "Outdoor temperature (°C), colder to the right — up: water (°C)",
     "highest": "highest {value}",
     "lowest": "lowest {value}",
     "design_point": "Point at the hardest frost",
