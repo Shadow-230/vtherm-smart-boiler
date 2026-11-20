@@ -3,7 +3,7 @@
   The Boiler page on sample data, for screenshots (frontend/scripts/screenshots.mjs): a stand-in
   for Home Assistant's `hass` object and theme. Sample values only — no real installation.
   ?lang=en|pl, ?dark=1, ?user=1 (a user who is not an administrator), ?dhw=1 (hot water),
-  ?combi=1 (a combi boiler).
+  ?combi=1 (a combi boiler), ?flame=0 (called for heat, the burner between burns).
 -->
 <html lang="en">
 <head>
@@ -57,7 +57,7 @@
     entity("sensor.return", "34.2"),
     entity("sensor.outdoor", "3.8"),
     entity("sensor.pressure", "1.6"),
-    entity("binary_sensor.flame", "on"),
+    entity("binary_sensor.flame", query.get("flame") === "0" ? "off" : "on"),
     entity("sensor.modulation", "34"),
     entity("binary_sensor.dhw", query.get("dhw") ? "on" : "off"),
     entity("sensor.calling", "2", { calling_zones: [zones[0], zones[1]] }),

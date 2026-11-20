@@ -215,8 +215,9 @@ export class SmartBoilerCurve extends LitElement {
     const draft = this.draft;
     if (!draft) return;
     const step: Record<string, [number, number]> = {
-      ArrowLeft: [-0.5, 0],
-      ArrowRight: [0.5, 0],
+      // Colder to the right on the chart.
+      ArrowLeft: [0.5, 0],
+      ArrowRight: [-0.5, 0],
       ArrowUp: [0, 0.5],
       ArrowDown: [0, -0.5],
     };

@@ -20,11 +20,11 @@ describe("the chart", () => {
     });
   });
 
-  it("places points and draws a path through them", () => {
+  it("places points warmer to the left and colder to the right, as boiler manuals draw it", () => {
     const chart = chartFor(SETTINGS);
-    expect(place(chart, -20, 75)).toEqual({ x: 0, y: 0 });
-    expect(place(chart, 20, 15)).toEqual({ x: 1, y: 1 });
-    expect(pathOf(chart, [[-20, 75], [0, 45]], 1000, 280)).toBe("M0.0 0.0L500.0 140.0");
+    expect(place(chart, 20, 75)).toEqual({ x: 0, y: 0 });
+    expect(place(chart, -20, 15)).toEqual({ x: 1, y: 1 });
+    expect(pathOf(chart, [[-20, 75], [0, 45]], 1000, 280)).toBe("M1000.0 0.0L500.0 140.0");
     expect(pathOf(chart, [], 1000, 280)).toBe("");
   });
 
@@ -70,8 +70,8 @@ describe("dragging the design point", () => {
     expect(dragTo(chart, at.x, at.y)).toEqual({ design_outdoor: -12.5, design_flow: 58 });
   });
   it("stays where a curve can stand", () => {
-    expect(dragTo(chart, 1, 0)).toEqual({ design_outdoor: -5, design_flow: 75 });
-    expect(dragTo(chart, -1, 2)).toEqual({ design_outdoor: -20, design_flow: 25 });
+    expect(dragTo(chart, 1, 0)).toEqual({ design_outdoor: -20, design_flow: 75 });
+    expect(dragTo(chart, -1, 2)).toEqual({ design_outdoor: -5, design_flow: 25 });
   });
 });
 

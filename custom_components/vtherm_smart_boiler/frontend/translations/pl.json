@@ -9,7 +9,10 @@
     "monitoring": "Obserwacja",
     "monitoring_detail": "Sterowanie nie jest skonfigurowane: wtyczka obserwuje kocioł i liczy.",
     "burner_on": "Palnik pali.",
-    "burner_off": "Palnik nie pali."
+    "burner_off": "Palnik nie pali.",
+    "heat_burning": "Palnik pali",
+    "heat_called": "Kocioł wezwany do grzania — palnik w tej chwili nie pali",
+    "heat_off": "Kocioł nie grzeje"
   },
   "control": {
     "label": "Sterowanie",
@@ -91,7 +94,7 @@
     "legend_days": "ostatnie 7 dni",
     "legend_saved": "zapisana",
     "legend_draft": "robocza",
-    "axis": "Temperatura na zewnątrz (°C) — w górę: woda (°C)",
+    "axis": "Temperatura na zewnątrz (°C), zimniej w prawo — w górę: woda (°C)",
     "highest": "najwyższa {value}",
     "lowest": "najniższa {value}",
     "design_point": "Punkt przy największym mrozie",
