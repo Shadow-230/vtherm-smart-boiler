@@ -85,10 +85,13 @@ def installation_view(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) 
     installation = config.installation
     registry = er.async_get(hass)
     prefix = f"{entry.entry_id}_"
+    # The entities this run creates, by domain and unique ID: an earlier version's entry with
+    # the same key in another domain (the Control switch, I11.3) never stands for one.
+    created = coordinator.expected_entities
     entities = {
         found.unique_id.removeprefix(prefix): found.entity_id
         for found in er.async_entries_for_config_entry(registry, entry.entry_id)
-        if found.unique_id.startswith(prefix)
+        if found.unique_id.startswith(prefix) and (found.domain, found.unique_id) in created
     }
     boiler = installation.boiler
     return {

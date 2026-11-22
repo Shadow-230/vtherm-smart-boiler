@@ -444,8 +444,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._control_entity: str | None = None
         self._stopped = False
         self._started_at: float | None = None  # when this run began following the entities
-        # The entities the platforms create now (disabled ones too): the rest are stale.
-        self.expected_unique_ids: set[str] = set()
+        # The entities the platforms create now (disabled ones too), by domain and unique ID —
+        # the registry tells entities apart by both: an earlier version's entity of another
+        # domain with the same unique ID (the Control switch, I11.3) is stale too.
+        self.expected_entities: set[tuple[str, str]] = set()
         # The platforms that set themselves up for this run: only they say what is stale (PB-07).
         self.platforms_set_up: set[str] = set()
         self.control: ControlUnit | None = None
@@ -803,7 +805,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def expect_entities(self, platform: str, entities: list[Any]) -> None:
         """A platform's entities for this run — none where it creates none."""
         self.platforms_set_up.add(platform)
-        self.expected_unique_ids.update(e.unique_id for e in entities if e.unique_id)
+        self.expected_entities.update((platform, e.unique_id) for e in entities if e.unique_id)
 
     def schedule_save(self, delay: float = SAVE_DELAY_S) -> None:
         """Save within ``delay``. Each delayed save restarts the store's timer, so one is

@@ -165,7 +165,11 @@ def _register_set_control(hass: HomeAssistant, entry: SmartBoilerConfigEntry) ->
     checks the settings make (on refused while a blocker that needs the user remains, off with
     the safe hand-back). A person calling it — from a dashboard, a script they start, the
     developer tools — is sent to the settings, where an administrator switches control (the
-    user's decisions of 2026-11-22): only an automation's call carries no user."""
+    user's decisions of 2026-11-22): only an automation's call carries no user. An automation
+    started by hand ("Run", ``automation.trigger``) carries none either — Home Assistant gives
+    its run a context of its own — so anyone who may run it switches control: the
+    administrator's choice in writing it, said in the user guide (the user's decision of
+    2026-11-22, after the test session's review)."""
     import probatio as vol
     from homeassistant.core import ServiceCall
     from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -1151,10 +1155,10 @@ def _remove_stale_entities(
     from homeassistant.helpers import entity_registry as er
 
     registry = er.async_get(hass)
-    expected = coordinator.expected_unique_ids
+    expected = coordinator.expected_entities
     for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
         if registered.domain in coordinator.platforms_set_up and (
-            registered.unique_id not in expected
+            (registered.domain, registered.unique_id) not in expected
         ):
             registry.async_remove(registered.entity_id)
 

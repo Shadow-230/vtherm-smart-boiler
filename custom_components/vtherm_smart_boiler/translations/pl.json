@@ -17,7 +17,7 @@
       },
       "mode": {
         "title": "Tryb sterowania",
-        "description": "Co wtyczka robi z kotłem. Pełne sterowanie ustala temperaturę wody i włącza grzanie; wł./wył. tylko włącza grzanie; samo monitorowanie niczego nie zapisuje. Wybór niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.",
+        "description": "Co wtyczka robi z kotłem. Pełne sterowanie ustala temperaturę wody i włącza grzanie; wł./wył. tylko włącza grzanie; samo monitorowanie niczego nie zapisuje. Wybór trybu niczego nie włącza: sterowanie zostaje wyłączone, dopóki po jego ustawieniu nie zaznaczysz „Sterowanie włączone” w opcjach integracji.",
         "data": {
           "control_mode": "Tryb sterowania",
           "condensing": "Kocioł kondensacyjny",
@@ -3157,7 +3157,7 @@
     },
     "control_state_unreadable": {
       "title": "Nie udało się odczytać pamięci wtyczki o kotle",
-      "description": "Plik, w którym wtyczka pamięta, czy trzyma kocioł, zniknął albo jest uszkodzony. Dla bezpieczeństwa najpierw oddaje kocioł, jeśli pozwalają na to jej opcje; to zgłoszenie znika, gdy kocioł pokaże to oddanie. Potem sterowanie działa jak zwykle. Dopóki zgłoszenie jest, sprawdź kocioł i przełącznik sterowania."
+      "description": "Plik, w którym wtyczka pamięta, czy trzyma kocioł, zniknął albo jest uszkodzony. Dla bezpieczeństwa najpierw oddaje kocioł, jeśli pozwalają na to jej opcje; to zgłoszenie znika, gdy kocioł pokaże to oddanie. Potem sterowanie działa jak zwykle. Dopóki zgłoszenie jest, sprawdź kocioł i stan „Sterowanie”."
     },
     "setup_failed_not_heated": {
       "title": "Wtyczka nie wystartowała: dom nie jest ogrzewany",

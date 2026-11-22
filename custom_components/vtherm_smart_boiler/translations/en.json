@@ -17,7 +17,7 @@
       },
       "mode": {
         "title": "Control mode",
-        "description": "What the plugin does with the boiler. Full control sets the water temperature and switches heating; on/off switches heating only; monitoring only writes nothing. Choosing switches nothing on: control has its own switch, off until you turn it on.",
+        "description": "What the plugin does with the boiler. Full control sets the water temperature and switches heating; on/off switches heating only; monitoring only writes nothing. Choosing a mode switches nothing on: control stays off until you tick \"Control on\" in the integration's options, once it is set up.",
         "data": {
           "control_mode": "Control mode",
           "condensing": "Condensing boiler",
@@ -3157,7 +3157,7 @@
     },
     "control_state_unreadable": {
       "title": "The plugin's memory of the boiler could not be read",
-      "description": "The file where the plugin remembers whether it holds the boiler is missing or damaged. To be safe it hands the boiler back first, where its options let it; this notice goes once the boiler shows that hand-back. Control then works as usual. While it stays, check the boiler and the control switch."
+      "description": "The file where the plugin remembers whether it holds the boiler is missing or damaged. To be safe it hands the boiler back first, where its options let it; this notice goes once the boiler shows that hand-back. Control then works as usual. While it stays, check the boiler and the Control state."
     },
     "setup_failed_not_heated": {
       "title": "The plugin did not start: the house is not heated",
