@@ -32,6 +32,7 @@ from .profiles import (
     BOILERS,
     HOUSES,
     ZoneProfile,
+    light_bedroom_zones,
     radiator_zones,
     shared_loop_zones,
     underfloor_zones,
@@ -51,6 +52,7 @@ MAX_STEP_S = 10.0
 MAX_CATCH_UP_S = 6 * HOUR
 ZONE_LAYOUTS: dict[str, Callable[[], tuple[ZoneProfile, ...]]] = {
     "radiators": radiator_zones,
+    "radiators_light_bedroom": light_bedroom_zones,  # the gateway's configuration (L15)
     "underfloor": underfloor_zones,
     "shared_loop": shared_loop_zones,
 }
