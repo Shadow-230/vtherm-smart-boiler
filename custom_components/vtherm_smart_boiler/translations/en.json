@@ -3433,11 +3433,11 @@
     },
     "curve_too_low": {
       "title": "The heating curve looks too low for {zones}",
-      "description": "For three hours the comfort correction has been at its limit of {limit} K, and most rooms — {zones} — still do not reach their setpoints with valves fully open. Possible causes, the likeliest first: the heating curve is too low (its design flow, in Heating curve); a room's radiator too small for it; a room losing heat (a window, leaks). The correction holds at its limit and does not climb further."
+      "description": "For three hours the comfort correction has been as high as it may go (its limit of {limit} K, or the 3 K it may rise in a day), and most rooms — {zones} — still do not reach their setpoints with valves fully open. Possible causes, the likeliest first: the heating curve is too low (its design flow, in Heating curve); a room's radiator too small for it; a room losing heat (a window, leaks). The correction climbs no further: not past its limit, nor by more than 3 K a day."
     },
     "room_short_at_limit": {
       "title": "{zones} stays short of its setpoint",
-      "description": "For three hours the comfort correction has been at its limit of {limit} K, and {zones} still does not reach its setpoint with its valve fully open, while the other rooms do. Possible causes, the likeliest first: its radiator is too small for it; it loses heat (a window, its valve, leaks); the heating curve is too low for it. The correction holds at its limit and does not climb further."
+      "description": "For three hours the comfort correction has been as high as it may go (its limit of {limit} K, or the 3 K it may rise in a day), and {zones} still does not reach its setpoint with its valve fully open, while the other rooms do. Possible causes, the likeliest first: its radiator is too small for it; it loses heat (a window, its valve, leaks); the heating curve is too low for it. The correction climbs no further: not past its limit, nor by more than 3 K a day."
     },
     "boiler_power_limit": {
       "title": "The boiler is at its power limit for {zones}",

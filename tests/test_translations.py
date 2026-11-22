@@ -1228,7 +1228,9 @@ def test_the_comfort_correction_says_it_is_off_and_what_it_costs() -> None:
         }, key
         assert "radiator" in issue["description"], key
         assert "heat" in issue["description"], key
-        assert "does not climb further" in issue["description"], key
+        assert "climbs no further" in issue["description"], key
+        # L13: as high as it may go — its limit, or the day's 3 K spent (2026-11-22).
+        assert "3 K it may rise in a day" in issue["description"], key
 
 
 def test_sb10_texts_are_translated() -> None:

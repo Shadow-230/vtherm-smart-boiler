@@ -3433,11 +3433,11 @@
     },
     "curve_too_low": {
       "title": "Krzywa grzewcza wygląda na za niską dla: {zones}",
-      "description": "Od trzech godzin korekta komfortu stoi na limicie {limit} K, a większość pokoi — {zones} — dalej nie dochodzi do nastaw przy całkiem otwartych zaworach. Możliwe przyczyny, od najbardziej prawdopodobnej: za niska krzywa grzewcza (jej projektowe zasilanie, w Krzywej grzewczej); za mały grzejnik w pokoju; pokój tracący ciepło (okno, nieszczelności). Korekta stoi na limicie i dalej nie rośnie."
+      "description": "Od trzech godzin korekta komfortu jest tak wysoko, jak może (na limicie {limit} K albo po 3 K, o które może wzrosnąć w ciągu doby), a większość pokoi — {zones} — dalej nie dochodzi do nastaw przy całkiem otwartych zaworach. Możliwe przyczyny, od najbardziej prawdopodobnej: za niska krzywa grzewcza (jej projektowe zasilanie, w Krzywej grzewczej); za mały grzejnik w pokoju; pokój tracący ciepło (okno, nieszczelności). Korekta dalej nie rośnie: ani ponad limit, ani o więcej niż 3 K na dobę."
     },
     "room_short_at_limit": {
       "title": "{zones} nie dochodzi do nastawy",
-      "description": "Od trzech godzin korekta komfortu stoi na limicie {limit} K, a {zones} dalej nie dochodzi do nastawy przy całkiem otwartym zaworze, choć inne pokoje dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: za mały grzejnik; pokój traci ciepło (okno, zawór, nieszczelności); za niska dla niego krzywa grzewcza. Korekta stoi na limicie i dalej nie rośnie."
+      "description": "Od trzech godzin korekta komfortu jest tak wysoko, jak może (na limicie {limit} K albo po 3 K, o które może wzrosnąć w ciągu doby), a {zones} dalej nie dochodzi do nastawy przy całkiem otwartym zaworze, choć inne pokoje dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: za mały grzejnik; pokój traci ciepło (okno, zawór, nieszczelności); za niska dla niego krzywa grzewcza. Korekta dalej nie rośnie: ani ponad limit, ani o więcej niż 3 K na dobę."
     },
     "boiler_power_limit": {
       "title": "Kocioł jest na granicy mocy dla: {zones}",

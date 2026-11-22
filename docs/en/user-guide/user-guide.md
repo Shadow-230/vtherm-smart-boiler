@@ -304,8 +304,9 @@ open, the water rises slowly above the curve, up to its limit: 3 K by default, u
 in **Heating curve** beside the correction; never more than 3 K a day. For a room whose SmartPI
 is in its learning phase, "short" means below its setpoint + 0.5 K, where SmartPI stops heating
 it. It does not rise while the boiler starts more often than before. One room short counts like
-any other — the water never goes higher for one room's sake. After three hours at its limit with
-a room still short, the correction holds there, and a repair issue names the room and the
+any other — the water never goes higher for one room's sake. After three hours as high as it may
+go — at its limit, or once it has risen 3 K within a day — with a room still short, the correction
+holds there, and a repair issue names the room and the
 possible causes: the curve too low, the room's radiator too small, or the room losing heat. What
 it costs: more gas, and more burner starts — with VT's TPI zones it often sits at its limit and
 raises the starts several times over for almost no warmth. That is why it is off: where a room
@@ -944,7 +945,7 @@ Control alarms are named "Control: …".
 | Control: changed by another controller | something else wrote to the boiler |
 | Control: hand-back failed | the hand-back has not been confirmed |
 | Control: internal error | an error in the plugin stopped control |
-| Control: comfort correction at its limit | at its limit (3 K by default) for 3 hours: see its repair issue |
+| Control: comfort correction at its limit | at its limit (3 K by default), or at the 3 K it may rise in a day, for 3 hours: see its repair issue |
 | Control: the boiler's confirmation is missing | a setpoint not shown back for 5 minutes |
 | Control: commands often lost | 3 lost commands within 24 hours (information) |
 | Control: no sign the boiler heats | heating on for 30 minutes with no flame or rise |
@@ -970,8 +971,8 @@ Repair issues about control:
 | Control waits for the gateway's confirmation | the setpoint read-back has no value |
 | The control options cannot be used | open the options and set control up again |
 | Alarm reactions no longer offered | those alarms now only inform |
-| The heating curve looks too low for … | the correction at its limit for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
-| … stays short of its setpoint | the correction at its limit for 3 h, one room short: check its radiator, valve and window first, then the curve |
+| The heating curve looks too low for … | the correction as high as it may go for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
+| … stays short of its setpoint | the correction as high as it may go for 3 h, one room short: check its radiator, valve and window first, then the curve |
 
 The control switch also names the setup answers that keep control off: monitoring only, a
 control or a topology that does not fit the boiler's connection, and on ESPHome the safe start
