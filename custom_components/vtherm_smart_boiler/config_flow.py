@@ -349,6 +349,9 @@ def level_schema(options: dict[str, Any]) -> vol.Schema:
 
 CONNECTION = "connection"
 CONTROL_MODE = "control_mode"
+# I11.1: control switched in the settings — the user's wish, shown and applied at "Save and
+# finish", never stored in the options.
+CONTROL_ON = "control_on"
 HEAT_SOURCE = "heat_source"
 BOILER_TYPE = "type"
 DHW_PRIORITY = "dhw_priority"
@@ -443,17 +446,25 @@ def mode_due(options: Mapping[str, Any], asked_before: Mapping[str, Any]) -> boo
     return any(boiler.get(key) != value for key, value in asked_before.items())
 
 
-def mode_schema(options: dict[str, Any]) -> vol.Schema:
+def _meaningful(options: Mapping[str, Any]) -> dict[str, Any]:
+    """The options a save reloads the entry for: all but the level of detail, which changes only
+    what the settings show (``__init__.py`` ``_async_options_updated``)."""
+    return {key: value for key, value in options.items() if key != LEVEL}
+
+
+def mode_schema(options: dict[str, Any], control_on: bool | None = None) -> vol.Schema:
     """The second panel (decisions 6, 7, 8): the control mode the connection can do, with no
     default; condensing for a boiler that burns fuel; the hot-water priority for one that heats
-    hot water — on by default, as the plugin took it before."""
+    hot water — on by default, as the plugin took it before. ``control_on``: the running entry's
+    wish to control, shown first where control runs (I11.1); ``None``: not shown."""
     boiler = _stored_boiler(options)
     modes = modes_offered(options)
-    fields: dict[Any, Any] = {
-        vol.Required(CONTROL_MODE, default=_suggested_mode(options, modes)): _select(
-            CONTROL_MODE, modes
-        )
-    }
+    fields: dict[Any, Any] = {}
+    if control_on is not None:
+        fields[vol.Required(CONTROL_ON, default=control_on)] = selector.BooleanSelector()
+    fields[vol.Required(CONTROL_MODE, default=_suggested_mode(options, modes))] = _select(
+        CONTROL_MODE, modes
+    )
     source = _known(HeatSource, boiler.get(HEAT_SOURCE))
     if source is None or source.burns_fuel:
         fields[vol.Required("condensing", default=boiler.get("condensing", True))] = (
@@ -3071,10 +3082,21 @@ class _Steps:
         """The second panel (I6), a menu item of its own (I8, decision D1): the control mode the
         connection can do, condensing and the hot-water priority where they apply."""
         if user_input is not None:
+            if CONTROL_ON in user_input:
+                self._note_wish(bool(user_input[CONTROL_ON]))
             apply_mode(self.options, user_input)
             self._mode_due = False
             return await self._after("mode")
-        return self._form(step_id="mode", data_schema=mode_schema(self.options))
+        return self._form(
+            step_id="mode", data_schema=mode_schema(self.options, self._control_on_shown())
+        )
+
+    def _control_on_shown(self) -> bool | None:
+        """The wish to control the "Control mode" item shows; ``None``: not shown (I11.1)."""
+        return None
+
+    def _note_wish(self, wish: bool) -> None:
+        """The wish answered in "Control mode", applied at "Save and finish" (I11.1)."""
 
     async def async_step_signals(
         self, user_input: dict[str, Any] | None = None
@@ -4050,6 +4072,10 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         # Blockers the edit would add to control, awaiting confirmation; confirmed: saved anyway.
         self._blocking: list[str] = []
         self._blocking_confirmed = False
+        # I11.1: the wish to control answered in "Control mode", applied at "Save and finish";
+        # the blockers that refused switching it on.
+        self._wish: bool | None = None
+        self._on_refused: list[str] = []
         # Stored sections of another shape, each shown first at the save (PB-06).
         self._unreadable: list[str] = []
         # The new relay whose separate-contact tick was asked again (PB-45).
@@ -4246,6 +4272,8 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             # Open after R6 #3: an edit that would keep control from running is confirmed first.
             self._blocking = blocking
             return await self.async_step_confirm_blocking()
+        if (refused := await self._async_apply_wish()) is not None:
+            return refused
         entry = self.config_entry
         if entry.state in (ConfigEntryState.SETUP_ERROR, ConfigEntryState.SETUP_RETRY):
             # The failed setup left no update listener to reload it (H9): the new options are
@@ -4253,6 +4281,63 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
             self.hass.config_entries.async_update_entry(entry, options=self.options)
             self.hass.config_entries.async_schedule_reload(entry.entry_id)
         return self.async_create_entry(data=self.options)
+
+    def _control_unit(self) -> Any:
+        """The running entry's control unit, where control runs; ``None`` otherwise."""
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        unit = None if coordinator is None else getattr(coordinator, "control", None)
+        return None if unit is None or unit.hand_back_only else unit
+
+    def _control_on_shown(self) -> bool | None:
+        unit = self._control_unit()
+        if unit is None:
+            return None
+        return unit.enabled if self._wish is None else self._wish
+
+    def _note_wish(self, wish: bool) -> None:
+        unit = self._control_unit()
+        self._wish = None if unit is None or wish == unit.enabled else wish
+
+    async def _async_apply_wish(self) -> ConfigFlowResult | None:
+        """I11.1: the wish to control, applied as the switch applied it — off at once, with the
+        safe hand-back (where the boiler does not take it, its alarm and repair issue say so);
+        on refused while a blocker that needs the user remains, its text shown. Saved with other
+        changes, on is kept for the reload's run, which waits for its blockers as after a
+        restart: this run, its options being replaced, does not take the boiler."""
+        wish, self._wish = self._wish, None
+        unit = self._control_unit()
+        if wish is None or unit is None or wish == unit.enabled:
+            return None
+        if not wish:
+            await unit.async_set_enabled(False)
+            return None
+        if _meaningful(self.options) != _meaningful(self.config_entry.options):
+            await unit.async_keep_wish(True)
+            return None
+        refused = unit.blockers_for_on(dt_util.utcnow().timestamp())
+        if refused:
+            self._on_refused = refused
+            return await self.async_step_control_blocked()
+        await unit.async_set_enabled(True)
+        return None
+
+    async def async_step_control_blocked(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """I11.1: control not switched on — the first blocker that needs the user and how many
+        more; nothing is changed, and the menu shows again."""
+        if user_input is not None or not self._on_refused:
+            self._on_refused = []
+            return await self.async_step_init()
+        first, *others = self._on_refused
+        return self.async_show_form(
+            step_id="control_blocked",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "first": await self._async_blocker_text(first),
+                "more": str(len(others)),
+            },
+        )
 
     def _new_blockers(self) -> list[str]:
         """The configuration blockers the options to be saved give control that the stored ones

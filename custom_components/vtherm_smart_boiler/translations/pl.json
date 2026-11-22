@@ -595,13 +595,15 @@
       },
       "mode": {
         "title": "Tryb sterowania",
-        "description": "Co wtyczka robi z kotłem. Pełne sterowanie ustala temperaturę wody i włącza grzanie; wł./wył. tylko włącza grzanie; samo monitorowanie niczego nie zapisuje. Wybór niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.",
+        "description": "Co wtyczka robi z kotłem. Pełne sterowanie ustala temperaturę wody i włącza grzanie; wł./wył. tylko włącza grzanie; samo monitorowanie niczego nie zapisuje. Wybór trybu niczego nie włącza: sterowanie włącza pole „Sterowanie włączone”, widoczne tu, gdy wtyczka działa z ustawionym sterowaniem.",
         "data": {
+          "control_on": "Sterowanie włączone",
           "control_mode": "Tryb sterowania",
           "condensing": "Kocioł kondensacyjny",
           "dhw_priority": "Ciepła woda ma priorytet"
         },
         "data_description": {
+          "control_on": "Włączone: wtyczka steruje kotłem tak, jak ustawiają to pozycje sterowania (eksperymentalne). Wyłączone: od razu oddaje kocioł jego własnemu sterownikowi. Działa po „Zapisz i zakończ”. Gdy coś nie pozwala sterowaniu działać, czeka; stan sterowania mówi dlaczego.",
           "control_mode": "Bez wartości domyślnej: wybierany świadomie. Pokazane są tylko tryby, które umie połączenie.",
           "condensing": "Kocioł kondensacyjny dostaje progi spalin dla kondensacji i jest oceniany po tym, jak często kondensuje. Zła odpowiedź ostrzega za późno albo na darmo i zniekształca werdykt.",
           "dhw_priority": "Włączone (domyślnie): podczas ciepłej wody pokoje nie dostają ciepła — kocioł dwufunkcyjny albo zasobnik na zaworze trójdrogowym. Wyłączone: jedno i drugie naraz. Zła odpowiedź wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć bez ciepła."
@@ -1000,6 +1002,10 @@
         "data_description": {
           "save_anyway": "Zaznacz, aby mimo to zapisać zmianę. Bez zaznaczenia (domyślnie) nic nie zostanie zapisane i wrócisz do menu ze swoimi zmianami: możesz je poprawić albo zamknąć okno, żeby je porzucić."
         }
+      },
+      "control_blocked": {
+        "title": "Sterowanie nie zostało włączone",
+        "description": "Sterowania nie da się jeszcze włączyć: {first} (innych powodów: {more}, wszystkie są w stanie sterowania). Nic nie zostało zmienione."
       },
       "control_relay": {
         "title": "Przekaźnik",

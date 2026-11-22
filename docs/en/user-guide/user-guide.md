@@ -119,9 +119,12 @@ Only one entry of the integration can exist: it runs one boiler.
      [Control is opt-in](#42-control-is-opt-in)).
 4. **Read the verdict.** Once it has the days of data, the sensor **Control verdict** says whether
    control is worth enabling ([4.1](#41-monitoring-and-the-verdict)). You decide.
-5. **Switch control on** with the switch **Control (experimental)** of the integration's device,
-   on the first day or later. If something is missing, the switch says what, and the monitor
-   keeps running. Until you switch it on, the plugin writes nothing to the boiler.
+5. **Switch control on** in the integration's options: **Control mode**, tick **Control on**,
+   then **Save and finish** — on the first day or later. Only an administrator opens the options.
+   If something is missing, a window says what, nothing changes, and the monitor keeps running.
+   Untick it to switch control off: the boiler is handed back at once. Until you switch it on, the
+   plugin writes nothing to the boiler. (The switch **Control (experimental)** of the
+   integration's device still switches it too, until it becomes a state shown only.)
 
 **Changing settings later.** The integration's options open the same menu, with **Save and
 finish** in place of **Create**. Nothing is saved until you choose it: it checks everything,

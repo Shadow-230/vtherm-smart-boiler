@@ -595,13 +595,15 @@
       },
       "mode": {
         "title": "Control mode",
-        "description": "What the plugin does with the boiler. Full control sets the water temperature and switches heating; on/off switches heating only; monitoring only writes nothing. Choosing switches nothing on: control has its own switch, off until you turn it on.",
+        "description": "What the plugin does with the boiler. Full control sets the water temperature and switches heating; on/off switches heating only; monitoring only writes nothing. Choosing a mode switches nothing on: control is switched on with \"Control on\", shown here once the plugin runs with control set up.",
         "data": {
+          "control_on": "Control on",
           "control_mode": "Control mode",
           "condensing": "Condensing boiler",
           "dhw_priority": "Hot water has priority"
         },
         "data_description": {
+          "control_on": "On: the plugin controls the boiler as the control items set it (experimental). Off: it hands the boiler back to its own controller at once. Applied at \"Save and finish\". While something keeps control from running, it waits; the control state says why.",
           "control_mode": "No default: chosen on purpose. Only the modes the connection can do are offered.",
           "condensing": "Condensing boilers get condensing flue-gas limits and are judged on how often they condense. A wrong answer warns late or for nothing, and skews the verdict.",
           "dhw_priority": "On (default): during hot water the rooms get no heat — a combi, or a tank on a three-way valve. Off: both run together. A wrong answer pauses the zones' learning needlessly, or lets them learn without heat."
@@ -1000,6 +1002,10 @@
         "data_description": {
           "save_anyway": "Tick to save the change all the same. Left unticked (default), nothing is saved and the menu shows again with your changes: change them, or close the window to discard them."
         }
+      },
+      "control_blocked": {
+        "title": "Control not switched on",
+        "description": "Control cannot be switched on yet: {first} ({more} other reasons, all listed on the control state). Nothing was changed."
       },
       "control_relay": {
         "title": "Relay",
