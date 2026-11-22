@@ -170,15 +170,18 @@ def late_rooms(result, start: float, end: float) -> dict[str, list[float]]:
 def test_rooms_hold_their_setpoints_under_control(mean: float, correction: bool) -> None:
     """With the comfort correction on, every room holds its setpoint within a kelvin and none
     overheats. With the defaults — the correction off since the user's decision of 2026-10-03
-    (K4.1) — the curve alone heats: the rooms near the curve's room temperature hold, and a room
-    set 2 K above it (the bathroom, 22 °C) stays up to about 2 K short at −5 °C: the cost the
-    option's text names (switch the correction on for such a room, or set the curve for it)."""
+    (K4.1) — the curve alone heats: the rooms near the curve's room temperature hold, within
+    1.2 K at the coldest hour of the ±3 K daily swing (the living room, 0.5 K above the curve's
+    room, 19.4 °C at −5 °C in the house of 22 h — 19.6 °C in the heavier one before L16), and a
+    room set 2 K above it (the bathroom, 22 °C) stays up to about 2.5 K short at −5 °C (19.5 °C;
+    19.9 °C before L16): the cost the option's text names (switch the correction on for such a
+    room, or set the curve for it)."""
     loop = replace(LOOP, control=replace(LOOP.control, comfort_correction=correction))
     result = simulate(scenario([mean, mean], LoopController(loop)))
     targets = {z.zone_id: z.target for z in radiator_zones()}
     for zid, temps in late_rooms(result, 12 * HOUR, 2 * DAY).items():
         above_the_curve = targets[zid] - CURVE.room > 1.0
-        short_by = 2.5 if above_the_curve and not correction else 1.0
+        short_by = 1.0 if correction else 2.8 if above_the_curve else 1.2
         assert min(temps) > targets[zid] - short_by, zid
         assert max(temps) < targets[zid] + 1.5, zid
     assert result.override_s > 0.95 * 2 * DAY  # control held the boiler the whole time
@@ -458,9 +461,10 @@ def test_comfort_parity_without_rooms_is_not_met() -> None:
     raises=AssertionError,
     reason=(
         "K4 (S-15, decision 8 of 0.2.3; the criterion of 2026-11-17): with VT's default 5-min "
-        "TPI cycle and the ±3 K daily outdoor swing, the rooms as warm (within 0.01 K), the "
-        "burner starts x1.20 as often at +8 °C (6.8 an hour) and x2.16 at -5 °C as the boiler's "
-        "own regulation, its median burn 2 min — every gap between the zones' pulses stops it. "
+        "TPI cycle and the ±3 K daily outdoor swing, the rooms as warm (within 0.02 K), the "
+        "burner starts x1.12 as often at +8 °C (6.5 an hour) and x2.04 at -5 °C as the boiler's "
+        "own regulation, its median burn 2 min — every gap between the zones' pulses stops it "
+        "(the house of 22 h, L16; x1.20 and x2.16 in the heavier one before). "
         "The plugin advises a 10–15 min cycle (the zone_cycle_short issue); with 15 min the "
         "criterion passes (the next test)"
     ),
@@ -482,7 +486,7 @@ def test_j4s_starts_criterion_with_the_daily_swing(mean: float) -> None:
 @pytest.mark.parametrize("mean", [8.0, -5.0])
 def test_j4s_starts_criterion_with_the_advised_vt_cycle(mean: float) -> None:
     """K4 (2026-11-17): the same day with the zones' TPI cycle at 15 min, as the plugin advises
-    for zones that call a boiler — at +8 °C the ratio holds (x0.99), at −5 °C the absolute
+    for zones that call a boiler — at +8 °C the ratio holds (x0.98), at −5 °C the absolute
     measure (about 2 starts an hour, the median burn about 12 min); the rooms as warm."""
     own, controlled = starts_both_ways(
         mean, comfort_correction=False, swing=SWING_K, cycle_s=ADVISED_CYCLE_S
@@ -514,22 +518,28 @@ def test_the_starts_criterion_passes_on_either_measure() -> None:
     assert not meets_starts_criterion(burns([30.0] * 24), burns(many))
 
 
-@pytest.mark.xfail(
+CORRECTION_ON_FAILS = pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
     reason=(
         "K4.1 (S-15): the comfort correction, when switched on, rises to +3 K while a TPI zone "
         "sits at full duty short of its target, and every zone's cycle then stops the burner: "
-        "x1.75 at +8 °C, x5 at -5 °C (research/2026-10-02-z3-starts-ratio.md) — why it is off "
-        "by default. Rule 3 (decision 11 of 0.2.3) leaves it so: the hours before the "
-        "correction began, the house warming up, show as many starts as after "
+        "x5.2 at -5 °C (x5 in the heavier house before L16; research/2026-10-02-z3-starts-"
+        "ratio.md) — why it is off by default. Rule 3 (decision 11 of 0.2.3) leaves it so: the "
+        "hours before the correction began, the house warming up, show as many starts as after "
         "(research/2026-10-06-p2-4-report.md)"
     ),
 )
-@pytest.mark.parametrize("mean", [8.0, -5.0])
+
+
+@pytest.mark.parametrize(
+    "mean", [8.0, pytest.param(-5.0, marks=CORRECTION_ON_FAILS)], ids=["plus_8", "minus_5"]
+)
 def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) -> None:
     """The cost the option's text names: with the comfort correction switched on, the same
-    house fails J4's criterion."""
+    house fails J4's criterion at −5 °C. At a steady +8 °C it passes in the house of 22 h
+    (L16): the correction rises to about +1.2 K, the starts rise and rule 3 brings it back
+    (x1.00); in the heavier house before, the warm-up's starts hid the rise (x1.75)."""
     own, controlled = starts_both_ways(mean, comfort_correction=True)
     assert meets_starts_criterion(own, controlled)
 
@@ -537,14 +547,15 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
 @pytest.mark.parametrize(
     ("mean", "correction", "swing", "low", "high"),
     [
-        (8.0, False, SWING_K, 1.15, 1.25),
-        (-5.0, False, SWING_K, 2.0, 2.3),
-        (8.0, True, 0.0, 1.65, 1.85),
-        (-5.0, True, 0.0, 4.7, 5.5),
-        # The correction on — with the daily swing, x1.39 and x6.28 (the "1.4 to 6 times" the
-        # option's text names): why it is off by default since K4 (2026-11-17).
-        (8.0, True, SWING_K, 1.3, 1.5),
-        (-5.0, True, SWING_K, 5.9, 6.7),
+        (8.0, False, SWING_K, 1.07, 1.17),
+        (-5.0, False, SWING_K, 1.95, 2.15),
+        (8.0, True, 0.0, 0.95, 1.05),
+        (-5.0, True, 0.0, 4.9, 5.4),
+        # The correction on — with the daily swing, x1.93 and x5.96: why it is off by default
+        # since K4 (2026-11-17). The option's text names "1.4 to 6 times", measured in the
+        # heavier house before L16 (x1.39 and x6.28).
+        (8.0, True, SWING_K, 1.8, 2.05),
+        (-5.0, True, SWING_K, 5.7, 6.2),
     ],
     ids=[
         "swing_plus_8",
@@ -559,10 +570,11 @@ def test_the_documented_starts_ratios_hold(
     mean: float, correction: bool | None, swing: float, low: float, high: float
 ) -> None:
     """PB-94: the two strict xfails above fail on the starts criterion alone; this pins the
-    ratios their reasons document (x1.20 and x2.16 with the daily swing and the correction off,
-    x1.75 and x5 with the correction on), and those of the defaults since G11 — the correction
-    on with the daily swing — so a far worse ratio, or a crash, shows here instead of passing
-    as the expected failure. Comfort parity holds in each (within 0.05 K)."""
+    ratios their reasons document (x1.12 and x2.04 with the daily swing and the correction off,
+    x1.00 and x5.2 with the correction on; the house of 22 h, L16), and those of the defaults
+    since G11 — the correction on with the daily swing — so a far worse ratio, or a crash,
+    shows here instead of passing as the expected failure. Comfort parity holds in each (within
+    0.05 K)."""
     own, controlled = starts_both_ways(mean, comfort_correction=correction, swing=swing)
     ratio = starts(controlled, DAY, 2 * DAY) / starts(own, DAY, 2 * DAY)
     assert low <= ratio <= high, ratio

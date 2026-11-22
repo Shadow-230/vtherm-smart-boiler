@@ -10,6 +10,7 @@ from dataclasses import replace
 import pytest
 from custom_components.boiler_sim.plant import (
     EMITTER_TAU_S,
+    HOUR,
     Plant,
     PlantOutput,
     Request,
@@ -20,9 +21,11 @@ from custom_components.boiler_sim.profiles import (
     HOUSES,
     LONG_RESTART_LOCKOUT_S,
     ZoneProfile,
+    light_bedroom_zones,
     radiator_zones,
 )
 
+from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.installation import EmitterType
 
 
@@ -214,3 +217,82 @@ def test_a_heating_switch_never_renews_the_setpoint_override() -> None:
     assert not p.step(10_000.0, 10.0, 0.0, False, [1.0] * 3).demand
     p.set_heating(10_010.0, True, holds=False)
     assert p.heating_allowed(10_071.0) is None  # an expiring switch lapses: nothing in force
+
+
+def _cooling(zones: tuple[ZoneProfile, ...], hours: float) -> list[float]:
+    """How far each room falls from 20 °C at +3 °C with the heating off and its emitter cold."""
+    p = Plant(BOILERS["condensing_small"], HOUSES["average"], zones, 20.0)
+    p.room = [20.0] * len(zones)
+    off = Request(demand=False)
+    run(p, 0.0, hours * HOUR, 3.0, openings=[0.0] * len(zones), request=off)
+    return [20.0 - room for room in p.room]
+
+
+def test_the_average_house_follows_a_change_in_about_a_day() -> None:
+    """L16 (the user's decision of 2026-11-22): every role's house, ``average``, follows a change
+    with a time constant of 20 to 24 h — 40 h before, a house that hardly lost heat — and a room
+    at 20 °C, the heating off at +3 °C, cools 0.55 to 0.8 K in the first hour (0.35 K before;
+    J4 measured 0.29 K/h in the bedroom, 2026-11-22)."""
+    assert 20.0 <= HOUSES["average"].time_constant_h <= 24.0
+    for drop in _cooling(radiator_zones(), 1.0):
+        assert 0.55 <= drop <= 0.8, drop
+
+
+def test_a_zone_with_its_own_capacity_cools_faster_than_the_house() -> None:
+    """L15: the light bedroom has its own heat capacity, below its share of the house's, and
+    follows a change faster than the rooms that have their share; those keep the house's pace."""
+    living, bedroom, bath = _cooling(light_bedroom_zones(), 1.0)
+    assert bedroom > 2.0 * living
+    assert living == pytest.approx(bath)
+
+
+# SmartPI learning from scratch, as the plugin and J4 read it (SmartPI 0.4.0 ``HYST_UPPER_C``,
+# ``HYST_LOWER_C``; 0.6.7's documentation, as the test session read it on 2026-11-22: 5 cooling
+# and 4 or 5 heating phases, each a full swing): on at 0.3 K under the setpoint, off at 0.5 K
+# over it, decided at each VT cycle of 5 min. Assumed: SmartPI's own rules beyond the band.
+LEARNING_BAND = (-0.3, 0.5)
+VT_CYCLE_S = 300.0
+LEARNING_PHASES = 10
+
+
+def _learning_phases(zones: tuple[ZoneProfile, ...], hours: float) -> list[tuple[str, float]]:
+    """The bedroom on SmartPI's learning on/off, the other rooms on thermostatic heads, the water
+    at instance 1's curve at +3 °C (``HeatingCurve()``: 55 °C at −15 °C, 40.1 °C here): each
+    phase that ends — "heat" at the band's top, "cool" at its bottom — with its end in hours."""
+    outdoor = 3.0
+    flow = HeatingCurve().flow(outdoor)
+    p = Plant(BOILERS["condensing_small"], HOUSES["average"], zones, flow - 2.0)
+    p.settle(outdoor)
+    bed = [z.zone_id for z in zones].index("zone_bedroom")
+    target = zones[bed].target
+    p.room[bed] = target - 0.1
+    on, t, phases = True, 0.0, []
+    while t < hours * HOUR and len(phases) < LEARNING_PHASES:
+        if t % VT_CYCLE_S == 0:
+            if on and p.room[bed] >= target + LEARNING_BAND[1]:
+                on = False
+                phases.append(("heat", t / HOUR))
+            elif not on and p.room[bed] <= target + LEARNING_BAND[0]:
+                on = True
+                phases.append(("cool", t / HOUR))
+        openings = p.thermostatic_openings()
+        openings[bed] = 1.0 if on else 0.0
+        p.set_setpoint(t, flow)
+        p.step(t, 10.0, outdoor, False, openings)
+        t += 10.0
+    return phases
+
+
+def test_smartpi_never_ends_a_heating_phase_in_a_bedroom_of_the_houses_pace() -> None:
+    """L15, J4 of 2026-11-21/22 (19.8 °C after 27 h): a bedroom with its share of the house and
+    a radiator sized like the others' settles at about 20.0 °C on the default curve, with its
+    valve open — the top of SmartPI's band; no phase ends in a day."""
+    assert _learning_phases(radiator_zones(), 24.0) == []
+
+
+def test_smartpi_learns_in_the_light_bedroom_within_hours() -> None:
+    """L15: in the light bedroom of the gateway's configuration SmartPI's ten phases end within
+    14 h (about 11 h here) — once SmartPI's own rules hold as assumed above; J4 measures it."""
+    phases = _learning_phases(light_bedroom_zones(), 14.0)
+    assert len(phases) == LEARNING_PHASES, phases
+    assert [kind for kind, _at in phases] == ["heat", "cool"] * (LEARNING_PHASES // 2)

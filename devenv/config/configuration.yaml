@@ -62,11 +62,13 @@ j4_faults:
 # switch, and an OpenTherm wall thermostat on the gateway's terminals (21 °C 06:00–22:00, 17 °C
 # otherwise, UTC). The gateway is the test-only stub integration "opentherm_gw"
 # (sim/custom_components/opentherm_gw), set up in the user interface through its config flow:
-# its entry has the ID below.
+# its entry has the ID below. The bedroom, where SmartPI learns, is light and has a large
+# radiator, so that SmartPI's learning from scratch ends within hours, not days (L15; about
+# 11 h in the simulator's model, sim/custom_components/boiler_sim/profiles.py).
 boiler_sim:
   boiler: condensing_small
   house: average
-  zones: radiators
+  zones: radiators_light_bedroom
   valves: switch
   topology: with_thermostat
   write_type: expiring
