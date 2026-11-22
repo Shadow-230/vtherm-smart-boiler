@@ -806,7 +806,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     )
     from .forecasts import remove_partition_files
     from .journal import journal_store
+    from .panel import async_hide_panel
 
+    async_hide_panel(hass)  # the page goes with the entry (a reload keeps it: F17)
     _delete_removed_issues(hass, entry.entry_id)
     for key in (
         "hand_back_owed",

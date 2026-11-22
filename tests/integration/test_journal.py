@@ -65,6 +65,57 @@ async def test_control_taken_heating_and_handed_back(rig: Rig, hass_ws_client: A
     assert kinds(await journal(client, since=back["at"])) == ["handed_back", "call_off"]
 
 
+async def test_a_reload_under_control_journals_the_hand_back_and_the_takeover(
+    rig: Rig, hass_ws_client: Any
+) -> None:
+    """J4 I10.10, F18 (B1, B3, a page's save): the unload hands the boiler back before the
+    stop, and the start takes it again — both journaled, around "stopped" and "started"."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    client = await connect(rig.hass, hass_ws_client)
+    entries = await journal(client)
+    stop = kinds(entries).index("stopped")
+    assert kinds(entries)[stop - 1 : stop + 3] == [
+        "handed_back", "stopped", "started", "took_over",
+    ]  # fmt: skip
+    assert "reasons" not in entries[stop - 1]  # the stop's own: the next entry says why
+    assert "water" in kinds(entries)[stop + 3 :]
+
+
+async def test_home_assistant_stopping_under_control_journals_the_hand_back(rig: Rig) -> None:
+    """The hand-back runs as a shutdown job, before the stop event that journals the stop."""
+    from custom_components.vtherm_smart_boiler.core.journal import Kind
+
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.entry is not None
+    journal = rig.entry.runtime_data.journal
+    await rig.hass.async_stop()
+    assert [e.kind for e in journal.entries][-2:] == [Kind.HANDED_BACK, Kind.STOPPED]
+
+
+async def test_a_hand_back_still_owed_at_the_stop_is_not_journaled(rig: Rig) -> None:
+    """The gateway gone at the unload: the hand-back stays owed (a repair issue says so), and
+    the journal does not say it was made."""
+    from custom_components.vtherm_smart_boiler.core.journal import Kind
+
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    assert rig.entry is not None
+    journal = rig.entry.runtime_data.journal
+    rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
+    assert await rig.hass.config_entries.async_unload(rig.entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert [e.kind for e in journal.entries][-1] == Kind.STOPPED
+    assert Kind.HANDED_BACK not in [e.kind for e in journal.entries]
+
+
 async def test_an_alarm_raised_is_journaled(rig: Rig, hass_ws_client: Any) -> None:
     await start(rig)
     rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")

@@ -88,7 +88,10 @@ docs/                                     dokumentacja, osobny katalog na każdy
   w języku użytkownika (`hass.loadBackendTranslation("entity", …)`), więc każde jest zapisane
   raz. `panel.py`
   udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
-  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Póki wpis działa, `panel.py` każe
+  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Strona zostaje na czas
+  przeładowania — zabrana, wyrzuciłaby oglądającego ją użytkownika z błędem; start rejestruje ją
+  ponownie w jednym kroku — i znika z wyłączonym albo usuniętym wpisem albo z wyłączonym tym
+  przełącznikiem (F17 z J4). Póki wpis działa, `panel.py` każe
   też Home Assistantowi wczytywać ten sam moduł na każdej stronie (`frontend.add_extra_js_url`,
   zabierane przy wyładowaniu, starszy adres zastępowany po aktualizacji), więc części przeglądu
   są w wyborze kart jako cztery karty — stan i kafelki, schemat i pokoje, krzywa, ostatnie 24 h —
@@ -320,8 +323,11 @@ ostatnio zapisanej w dzienniku — potrzebę obiegu, która trzyma wodę, alarm 
 podniesionym poziomem) i ustąpiony oraz każdy zapis ustawień, ze strony (z tym, co zmienił) albo
 z ustawień (z sekcjami, które się zmieniły); każde z powodami, które podało sterowanie. Tylko
 obserwuje — słucha stanu sterowania i odświeżeń monitora i niczego nie zmienia; jego błąd jest
-logowany raz. Pierwsze spojrzenie po starcie ustala punkt wyjścia: zapisany jest sam start, a
-nie to, co już było; alarm, którego nie da się teraz ocenić, zostaje taki, jaki był. Trzyma 14
+logowany raz. Pierwsze spojrzenie po starcie zapisuje ponowne przejęcie kotła przez sterowanie
+— po restarcie albo przeładowaniu, z wezwaniem ciepła, wodą i potrzebą obiegu — a zatrzymanie
+zapisuje oddanie kotła, które sterowanie zrobiło tuż przed nim, chyba że oddanie jest jeszcze
+należne (F18 z J4); alarmy już podniesione są punktem wyjścia startu; alarm, którego nie da się
+teraz ocenić, zostaje taki, jaki był. Trzyma 14
 dni i najwyżej 2000 wpisów, najstarsze wypadają pierwsze (tymczasowo, K4); zapisywany minutę po
 zmianie, od razu przy wyładowaniu wpisu i przez Home Assistanta przy jego zatrzymaniu; magazyn,
 którego nie da się odczytać, zaczyna pusty dziennik. Znika razem z innymi magazynami wpisu, gdy

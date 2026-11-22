@@ -77,7 +77,14 @@ class SidebarPageSwitch(SmartBoilerEntity, SwitchEntity, RestoreEntity):
             await async_show_panel(self.hass, self.coordinator.config_entry.entry_id)
 
     async def async_will_remove_from_hass(self) -> None:
-        async_hide_panel(self.hass)  # the entry unloads or reloads: the page goes with it
+        """A reload keeps the page: taking it away throws a user on it off with an error, and
+        the start registers it again in one step (J4 I10.10, F17). It goes with the entry
+        disabled or this switch disabled; the entry removed takes it in ``async_remove_entry``."""
+        registered = self.registry_entry
+        if self.coordinator.config_entry.disabled_by is not None or (
+            registered is not None and registered.disabled
+        ):
+            async_hide_panel(self.hass)
         await super().async_will_remove_from_hass()
 
     @callback

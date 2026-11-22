@@ -52,18 +52,39 @@ OFF = Observed(
 
 
 def run(*looks: Observed, start: float = 0.0) -> list[Entry]:
-    """The entries of a run of looks, one a minute; the first sets the baseline."""
+    """The entries of a run of looks, one a minute, after the first: what changed since it (the
+    first look's own entries, a start's, are tested apart)."""
     state = JournalState()
     out: list[Entry] = []
     for k, look in enumerate(looks):
         state, entries = follow(state, look, start + 60.0 * k)
-        out.extend(entries)
+        if k:
+            out.extend(entries)
     return out
 
 
-def test_the_first_look_after_a_start_journals_nothing() -> None:
-    assert run(HEATING) == []
-    assert run(OFF) == []
+def test_a_start_under_control_journals_the_boiler_taken_again() -> None:
+    """J4 I10.10, F18: a start under control — a restart, a reload — takes the boiler again:
+    the takeover, the heat call, a circuit's need and the water as it takes them. Without
+    control nothing; alarms already raised stay the baseline (journaled when raised)."""
+    need = replace(HEATING, reasons=("circuit_asks", "limit_circuit_need"))
+    _state, entries = follow(JournalState(), need, 0.0)
+    assert [(e.kind, e.reasons, e.value) for e in entries] == [
+        (Kind.TOOK_OVER, need.reasons, None),
+        (Kind.CALL_ON, need.reasons, None),
+        (Kind.WATER, need.reasons, 45.0),
+        (Kind.CIRCUIT_NEED, need.reasons, 45.0),
+    ]
+    state, entries = follow(JournalState(), IDLE, 0.0)
+    assert [e.kind for e in entries] == [Kind.TOOK_OVER]
+    # The water taken is the baseline of its steps, as any first water of a session.
+    _state, entries = follow(state, replace(HEATING, water=45.0), 60.0)
+    assert [(e.kind, e.value, e.previous) for e in entries if e.kind is Kind.WATER] == [
+        (Kind.WATER, 45.0, None)
+    ]
+    assert follow(JournalState(), OFF, 0.0)[1] == ()
+    raised = replace(OFF, alarms={"alarm_write_failed": "alarm"})
+    assert follow(JournalState(), raised, 0.0)[1] == ()
 
 
 def test_the_heat_call_on_and_off_with_their_reasons() -> None:

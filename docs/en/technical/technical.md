@@ -88,7 +88,10 @@ docs/                                     the documentation, one folder per lang
   (`translations/`), which Home Assistant hands it in the user's language
   (`hass.loadBackendTranslation("entity", …)`), so each is written once. `panel.py` serves the
   files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
-  "Page in the sidebar" takes it away and puts it back. While the entry runs, `panel.py` also
+  "Page in the sidebar" takes it away and puts it back. The page stays through a reload — taken
+  away, it would throw a user on it off with an error; the start registers it again in one step
+  — and goes with the entry disabled or removed, or that switch disabled (J4's F17). While the
+  entry runs, `panel.py` also
   has Home Assistant load the same module on every page (`frontend.add_extra_js_url`, taken
   back at unload, an older address replaced after an update), so the overview's parts are in the
   card picker as four cards — status and tiles, schematic and rooms, the curve, the last 24 h —
@@ -304,8 +307,10 @@ circuit's need holding the water, an alarm raised (or its level raised) and clea
 settings save, from the page (naming what it changed) or from the settings (naming the sections
 that changed); each with the reasons control gave. It only watches — it listens to control's
 state and the monitor's updates and changes nothing; a failure in it is logged once. The first
-look after a start sets the baseline: the start is journaled, not what was already so; an alarm
-that cannot be judged stays as it was. Kept 14 days and 2,000 entries at most, the oldest dropped
+look after a start journals control taking the boiler again — a restart's or a reload's
+takeover, with the heat call, the water and a circuit's need — and the stop journals the stop's
+own hand-back, made by control just before, unless it is still owed (J4's F18); the alarms
+already raised are the start's baseline; an alarm that cannot be judged stays as it was. Kept 14 days and 2,000 entries at most, the oldest dropped
 first (provisional, K4); written a minute after a change, at once when the entry unloads, and by
 Home Assistant at its stop; a store that cannot be read starts an empty journal. It goes with
 the entry's other stores when the entry is removed.
