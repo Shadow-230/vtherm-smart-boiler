@@ -35,8 +35,10 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    MockModule,
     async_fire_mqtt_message,
     async_fire_time_changed,
+    mock_integration,
     mock_restore_cache,
 )
 
@@ -13769,6 +13771,70 @@ async def test_a_heating_switch_a_vt_zone_drives_blocks_control(rig: Rig) -> Non
     registry.async_update_entity(rig.zones.entities["living"], config_entry_id=vt.entry_id)
     await rig.advance(10)
     assert "entity_used_by_zone" in blockers(rig)
+
+
+@pytest.mark.parametrize("target", ["setpoint", "heating", "hand_back"])
+@pytest.mark.parametrize(("iot_class", "blocked"), [("cloud_polling", True), ("local_push", False)])
+async def test_a_write_target_through_a_cloud_blocks_control(
+    rig: Rig, target: str, iot_class: str, blocked: bool
+) -> None:
+    """A maker's cloud cannot carry this control: it limits the calls, and with no internet the
+    boiler could not be handed back. A setpoint, heating switch or external-control switch whose
+    integration says it works through a cloud blocks control, and nothing is written. Negative:
+    the same entity of a local integration."""
+    mock_integration(rig.hass, MockModule("maker", partial_manifest={"iot_class": iot_class}))
+    number = FakeNumber(rig.hass)
+    heating = FakeSwitch(rig.hass)
+    external = FakeSwitch(rig.hass, entity_id="input_boolean.fake_external", on=False)
+    entity_id = {"setpoint": number, "heating": heating, "hand_back": external}[target].entity_id
+    domain, object_id = entity_id.split(".", 1)
+    er.async_get(rig.hass).async_get_or_create(
+        domain, "maker", object_id, suggested_object_id=object_id
+    )
+    for fake in (number, heating, external):
+        fake.register()
+    await start(
+        rig,
+        write_path="entity",
+        setpoint_entity=number.entity_id,
+        write_type="held",
+        ch_entity=heating.entity_id,
+        ch_write_type="held",
+        hand_back="switch",
+        hand_back_entity=external.entity_id,
+        hand_back_entity_write_type="expiring",
+        confirmed_entity=number.entity_id,
+        topology="virtual",
+    )
+    await rig.advance(10)
+    assert ("write_through_cloud" in blockers(rig)) is blocked
+    if not blocked:
+        await rig.switch(True)
+        await rig.advance(30)
+        assert number.writes
+        return
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_write_through_cloud"
+    await rig.advance(60)
+    assert (number.writes, heating.writes, external.writes) == ([], [], [])
+
+
+async def test_a_relay_through_a_cloud_blocks_control(rig: Rig, relay: FakeRelay) -> None:
+    """The relay too: found at run time, it is handed back and nothing more is written."""
+    mock_integration(rig.hass, MockModule("maker", partial_manifest={"iot_class": "cloud_push"}))
+    await start_relay(rig)
+    await rig.switch(True)
+    assert relay.calls == [True]
+    registry = er.async_get(rig.hass)
+    registered = registry.async_get(RELAY)
+    assert registered is not None
+    registry.entities[RELAY] = attr.evolve(registered, platform="maker")
+    await rig.advance(10)
+    assert "write_through_cloud" in blockers(rig)
+    assert relay.calls == [True, False]  # handed back: the rest state
+    await rig.advance(600)
+    assert relay.calls == [True, False]
 
 
 async def test_a_relay_boiler_thermostat_without_both_modes_blocks_control(

@@ -224,6 +224,11 @@ To, co wtyczka może zrobić, zależy od tego, co integracja potrafi zapisać:
     zostawiał kocioł na jego własnym sterowaniu w ciągu około minuty. Wartość 0, którą kocioł od
     początku ignoruje, blokuje sterowanie i oddaje sterowanie, tak jak robi to odpowiedź O dla
     włącznika grzania. Nie wiadomo, co robi pompa przy 0; teksty o tym mówią.
+  - Usługa w chmurze (użytkownik, 2026-11-22): cel zapisu, którego integracja podaje w manifeście
+    `cloud_polling` albo `cloud_push`, jest odrzucany w formularzach i blokuje sterowanie, przy
+    każdym połączeniu; nadal można go monitorować. Bez internetu nie ma oddania kotła, a liczba
+    wywołań jest ograniczona (darmowy plan Viessmanna: 1450 na dobę, z czego odpytywanie przez
+    Home Assistant zajmuje 1440). Pomocnika albo mostu MQTT przed chmurą nie widać.
   - Wpis utworzony przed I6 nie ma tych odpowiedzi i działa jak dawniej: bez nowej blokady; opcje
     pokazują panele, wstępnie wypełnione z zapisanej ścieżki zapisu tam, gdzie ta wskazuje
     połączenie.

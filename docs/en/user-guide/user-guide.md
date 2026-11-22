@@ -531,6 +531,12 @@ connection"). ESPHome and EMS-ESP are controllers on Home Assistant's side: thei
 or through a cloud, so control is offered only with a write type that is known and not
 persistent.
 
+**Control never writes through a cloud service.** Without internet the plugin could not hand the
+boiler back, and cloud services limit how often they may be called. An entity whose integration
+says it works through a cloud is refused as a write target and blocks control; it can still be
+monitored. Wi-Fi alone is fine: a device Home Assistant reaches locally is not a cloud. A helper
+or an MQTT bridge in front of a cloud cannot be seen by the plugin, so do not use one for control.
+
 ### 5.1 The write paths
 
 The boiler's connection decides it; an installation set up before the connection question

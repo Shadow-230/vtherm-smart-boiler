@@ -219,6 +219,11 @@ What the plugin can do depends on what the integration can write:
     leaves the boiler on its own control within about a minute. A 0 the boiler ignores from the
     start blocks control and hands back, as answer O does for a heating switch. What the pump
     does at 0 is not known; the texts say so.
+  - A cloud service (the user, 2026-11-22): a write target whose integration's manifest says
+    `cloud_polling` or `cloud_push` is refused in the forms and blocks control, whatever the
+    connection; it can still be monitored. Without internet there is no hand-back, and the calls
+    are limited (Viessmann's free tier: 1450 a day, of which Home Assistant's polling takes 1440).
+    A helper or an MQTT bridge in front of a cloud does not show.
   - An entry made before I6 has none of these answers and works as before: no new blocker; the
     options offer the panels, pre-filled from the stored write path where it names the
     connection.

@@ -8,13 +8,18 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    MockModule,
+    mock_integration,
+)
 
 from custom_components.vtherm_smart_boiler import transport
 from custom_components.vtherm_smart_boiler.core.signals import GatewayOutdoor, Signal
 from custom_components.vtherm_smart_boiler.transport.entities import (
     EntityTransport,
     gateway_signals,
+    through_cloud,
 )
 
 from .harness import BOILER_ENTITIES, FakeBoiler
@@ -146,6 +151,32 @@ async def test_no_mqtt_entity_is_the_gateways_elsewhere(hass: HomeAssistant) -> 
     mapping = {Signal.CH_SETPOINT: read_back, Signal.PRESSURE: pressure}
     assert gateway_signals(hass, mapping, over_mqtt=False, read_back=read_back) == frozenset()
     assert gateway_signals(hass, {Signal.PRESSURE: pressure}, over_mqtt=True) == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("iot_class", "cloud"),
+    [
+        ("cloud_polling", True),
+        ("cloud_push", True),
+        ("local_polling", False),
+        ("local_push", False),
+        ("calculated", False),
+        (None, False),
+    ],
+)
+async def test_an_entity_is_through_a_cloud_as_its_integration_says(
+    hass: HomeAssistant, iot_class: str | None, cloud: bool
+) -> None:
+    """Home Assistant's own word for how an integration reaches its device: the manifest's
+    ``iot_class``. Wi-Fi alone says nothing: a local integration over Wi-Fi is local."""
+    manifest = {} if iot_class is None else {"iot_class": iot_class}
+    mock_integration(hass, MockModule("maker", partial_manifest=manifest))
+    assert through_cloud(hass, _registered(hass, "target", platform="maker")) is cloud
+
+
+async def test_an_entity_nothing_is_known_of_is_not_taken_for_a_cloud(hass: HomeAssistant) -> None:
+    assert through_cloud(hass, "number.not_registered") is False
+    assert through_cloud(hass, _registered(hass, "target", platform="not_loaded")) is False
 
 
 async def test_a_gateway_outdoor_zero_follows_the_last_reading(hass: HomeAssistant) -> None:
