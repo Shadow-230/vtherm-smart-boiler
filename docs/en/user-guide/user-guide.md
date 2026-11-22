@@ -125,7 +125,9 @@ Only one entry of the integration can exist: it runs one boiler.
    Untick it to switch control off: the boiler is handed back at once. Until you switch it on, the
    plugin writes nothing to the boiler. An automation switches control with the action
    `vtherm_smart_boiler.set_control` (`enabled`: on or off), with the same checks; called by a
-   person — from a dashboard, a script you start, the developer tools — it is refused. The
+   person — from a dashboard, a script you start, the developer tools — it is refused. An
+   automation started by hand ("Run") carries no person either, so anyone who may run such an
+   automation switches control with it: give one only to people who may switch control. The
    entity **Control (experimental)** of the integration's device shows whether control is on; it
    switches nothing.
 
