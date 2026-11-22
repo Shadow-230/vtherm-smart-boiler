@@ -26,5 +26,6 @@ __pycache__/
 coverage.xml
 htmlcov/
 
-# Claude Code local settings
+# Claude Code local settings, and this machine's own instructions for Claude (CLAUDE.local.md)
 .claude/
+CLAUDE.local.md
