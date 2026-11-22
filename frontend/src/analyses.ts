@@ -1,6 +1,7 @@
 // What the Analyses tab draws from the plugin's days (vtherm_smart_boiler/days): the energy
 // signature as the plugin fitted it, placed on the chart, and the heating starts of each day by
 // clock hour. The fits and the counts are the plugin's own; only their places are reckoned here.
+import { hourOf } from "./time";
 
 export interface SignatureDay {
   start: number;
@@ -93,7 +94,7 @@ export interface HourRow {
 /** The last `count` days' heating starts by clock hour, newest first: each hour from the day's
  * start placed at its clock hour in the browser's time zone, so a day of 23 or 25 hours lands
  * right (a repeated hour adds up, a skipped one stays empty). */
-export function hourRows(days: StoredDay[], count: number): HourRow[] {
+export function hourRows(days: StoredDay[], count: number, timeZone?: string): HourRow[] {
   return [...days]
     .sort((a, b) => b.start - a.start)
     .slice(0, count)
@@ -102,7 +103,7 @@ export function hourRows(days: StoredDay[], count: number): HourRow[] {
       if (!Array.isArray(kept)) return { start: day.start, hours: Array<number | null>(24).fill(null), total: day.starts };
       const hours = Array<number | null>(24).fill(0);
       kept.forEach((n, k) => {
-        const hour = new Date((day.start + k * 3600) * 1000).getHours();
+        const hour = hourOf((day.start + k * 3600) * 1000, timeZone);
         hours[hour] = (hours[hour] ?? 0) + n;
       });
       return { start: day.start, hours, total: day.starts };

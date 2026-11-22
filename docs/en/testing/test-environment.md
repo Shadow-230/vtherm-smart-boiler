@@ -245,7 +245,9 @@ circuit run by other automation asks for heat; E7 adds that circuit through "Add
 removes it at its end. Its `input_boolean.j4_set_control` drives the automation "J4 set
 control", which calls `vtherm_smart_boiler.set_control`: I2 switches control through it, and
 checks the same action called with the runner's token — a person's — is refused; I1 ticks
-"Control on" together with another change in "Control mode" (I11). Their results come
+"Control on" together with another change in "Control mode" (I11). P2 reads what the Boiler page
+reads: the installation, the curve with a draft that saves nothing, the days and the burns
+(`devenv/j4/page_checks.py`). Their results come
 from entity states and the simulator's command counters (attributes of
 `sensor.boiler_sim_persistent_writes`: commands per path, `ch_writes`, `relay_commands`,
 `dhw_enable_writes`; its state counts only writes of type persistent). The starts criterion

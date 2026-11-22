@@ -30,6 +30,13 @@ from options import (
     GATEWAY_ITEMS,
     REMOVE_CIRCUIT,
 )
+from page_checks import (
+    burns_problems,
+    curve_problems,
+    days_problems,
+    draft_problems,
+    installation_problems,
+)
 from walk import CONTROL_BLOCKED, save_options
 
 # I11.1: the tick in "Control mode" that switches control; asked again while the entry is not
@@ -2140,8 +2147,36 @@ async def I2(r: Run):
         await r.ha.call("input_boolean", "turn_off", entity_id=SET_CONTROL_SWITCH)
 
 
+# --- the Boiler page's commands ---------------------------------------------------------------
+
+
+async def P2(r: Run):
+    """what the Boiler page reads on a real Home Assistant: the installation, the curve and a
+    draft of it that saves nothing, the days and the burns (J4 of 2026-11-18: the pack read only
+    the journal; the checks are in page_checks.py)"""
+
+    async def ask(command: str, **fields) -> dict:
+        return await r.ha.ws_cmd({"type": f"vtherm_smart_boiler/{command}", **fields})
+
+    def told(what: str, problems: list[str]) -> None:
+        r.check(not problems, f"{what}: {problems or 'as the page needs it'}")
+
+    before = await ask("installation")
+    told("the installation", installation_problems(before, [f"climate.{z}" for z, _t in ZONES]))
+    saved = await ask("curve")
+    told("the curve", curve_problems(saved))
+    settings = before.get("curve") or {}
+    if "design_flow" in settings:
+        draft = await ask("curve", design_flow=settings["design_flow"] + 5.0)
+        told("a draft of the curve", draft_problems(saved, draft))
+        after = await ask("installation")
+        r.check(after.get("curve") == settings, "the draft saved nothing")
+    told("the days", days_problems(await ask("days")))
+    told("the burns", burns_problems(await ask("burns")))
+
+
 SCENARIOS.update(
-    {f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1, E7, I1, I2)}
+    {f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1, E7, I1, I2, P2)}
 )
 
 

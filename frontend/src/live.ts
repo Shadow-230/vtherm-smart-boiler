@@ -44,6 +44,8 @@ export interface LiveInputs {
   t: Translate;
   /** Home Assistant's own text for an entity's state, in its language. */
   stateText: (entity: HassEntity) => string;
+  /** A control reason's text in the user's language; empty where it is not to be had. */
+  reasonText?: (code: string) => string;
 }
 
 const CONDENSING_BELOW = 55; // °C, the usual return for condensing (the user guide's metric)
@@ -91,16 +93,26 @@ function heatState(inputs: LiveInputs, flame: boolean): HeatState {
   return control && CALLING_MODES.has(control.state) ? "called" : "off";
 }
 
+/** Why control is as it is, in the user's language; where a reason has no text there, the text
+ * the plugin wrote in Home Assistant's language (F20). */
+function reasonsDetail(inputs: LiveInputs, control: HassEntity): string {
+  const written = control.attributes.reasons_text;
+  const fallback = typeof written === "string" ? written : "";
+  const codes = control.attributes.reasons;
+  if (!inputs.reasonText || !Array.isArray(codes) || !codes.length) return fallback;
+  const texts = codes.map((code) => inputs.reasonText?.(String(code)) ?? "");
+  return texts.every(Boolean) ? texts.join(", ") : fallback;
+}
+
 function statusView(inputs: LiveInputs): StatusView {
   const { t } = inputs;
   const flame = flameOn(inputs);
   const heat = heatState(inputs, flame);
   const control = plugin(inputs, "control_state");
   if (control && control.state !== "unavailable") {
-    const reasons = control.attributes.reasons_text;
     return {
       title: inputs.stateText(control),
-      detail: typeof reasons === "string" ? reasons : "",
+      detail: reasonsDetail(inputs, control),
       heat,
       code: control.state,
     };

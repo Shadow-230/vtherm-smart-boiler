@@ -80,6 +80,19 @@ describe("liveView", () => {
     expect(view.control).toEqual({ entityId: "switch.control", on: true, available: true });
   });
 
+  it("tells the reasons in the user's language, Home Assistant's text only without one (F20)", () => {
+    const control = entity("sensor.control_state", "heating", {
+      reasons: ["demand", "curve"],
+      reasons_text: "written by the server",
+    });
+    const states = HEATING.map((e) => (e.entity_id === control.entity_id ? control : e));
+    const detail = (reasonText?: (code: string) => string) =>
+      liveView({ ...inputs(states), reasonText }).status.detail;
+    expect(detail((code) => `«${code}»`)).toBe("«demand», «curve»");
+    expect(detail((code) => (code === "curve" ? "" : code))).toBe("written by the server");
+    expect(detail()).toBe("written by the server");
+  });
+
   it("gives every tile its value and what it means", () => {
     const tiles = Object.fromEntries(liveView(inputs(HEATING)).tiles.map((t) => [t.key, t]));
     expect(Object.keys(tiles)).toEqual(["water", "flow", "return", "outdoor", "flame", "rooms"]);

@@ -19,6 +19,7 @@ import {
   type Severity,
   type SignalStatus,
 } from "./status";
+import { profileZone } from "./time";
 import type { HassEntity, HomeAssistant, Installation } from "./types";
 
 export const STATUS_TAG = "vtherm-smart-boiler-status";
@@ -156,7 +157,7 @@ export class SmartBoilerStatus extends LitElement {
       <div class="verdict ${known ? state : "none"}">${stateText}</div>
       <p class="muted small">
         ${date && !Number.isNaN(date.getTime())
-          ? this.t("checks.since", { date: date.toLocaleDateString(this.language, { day: "numeric", month: "long", year: "numeric" }) })
+          ? this.t("checks.since", { date: date.toLocaleDateString(this.language, { day: "numeric", month: "long", year: "numeric", timeZone: profileZone(this.hass) }) })
           : nothing}
         ${typeof leftOut === "number" && leftOut > 0 ? html` · ${this.t("checks.left_out", { count: String(leftOut) })}` : nothing}
       </p>

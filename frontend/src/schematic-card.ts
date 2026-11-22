@@ -58,70 +58,66 @@ export class SmartBoilerSchematic extends LitElement {
     return html`
       <section class="card">
         <h3>${this.t("schematic.title")}</h3>
-        <div class="scroll">
-          <div class="inner">
-            <div
-              class="drawing"
-              role="img"
-              aria-label=${this.t("schematic.aria", {
-                status,
-                rooms: taking.length ? taking.join(", ") : this.t("schematic.nobody"),
-              })}
-            >
-              <svg viewBox=${box} aria-hidden="true">
-                <defs>
-                  <linearGradient id="sb-body" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#fbfbfa"></stop>
-                    <stop offset="1" stop-color="#b9b8b2"></stop>
-                  </linearGradient>
-                  <linearGradient id="sb-hot" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#e34948"></stop>
-                    <stop offset="1" stop-color="#2a78d6"></stop>
-                  </linearGradient>
-                  <linearGradient id="sb-still" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#c9c8c2"></stop>
-                    <stop offset="1" stop-color="#8f8e88"></stop>
-                  </linearGradient>
-                </defs>
-                ${svg`
-                  <path class="body" d=${paths.body}></path>
-                  <path class="pipe gray" d=${paths.gray}></path>
-                  <path class="pipe blue" d=${paths.blue}></path>
-                  <path class="pipe red" d=${paths.red}></path>
-                  <path class="pipe mix" d=${paths.mix}></path>
-                  <path class="coil off" d=${paths.coilOff}></path>
-                  <path class="coil on" d=${paths.coilOn}></path>
-                  <path class="floor off" d=${paths.floorOff}></path>
-                  <path class="floor on" d=${paths.floorOn}></path>
-                  <path class="rad off" d=${paths.radOff}></path>
-                  <path class="rad on" d=${paths.radOn}></path>
-                  <path class="flow" d=${paths.flow}></path>
-                  <path class="arrow red" d=${paths.arrRed}></path>
-                  <path class="arrow blue" d=${paths.arrBlue}></path>
-                  <path class="valve off" d=${paths.valveOff}></path>
-                  <path class="valve on" d=${paths.valveOn}></path>
-                  <path class="pump" d=${paths.pumps}></path>
-                  <path class="pump-mark off" d=${paths.pumpOff}></path>
-                  <path class="pump-mark on" d=${paths.pumpOn}></path>
-                `}
-              </svg>
-              <svg
-                class="flame ${view.flame ? "lit" : ""}"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-                style="left: ${percent(135, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(205, VIEW_BOX.y, VIEW_BOX.height)}"
-              >
-                <path d=${FLAME_PATH}></path>
-              </svg>
-              ${view.labels.map(
-                (label) => html`<span
-                  class=${label.kind}
-                  style="left: ${percent(label.x, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(label.y, VIEW_BOX.y, VIEW_BOX.height)}"
-                  >${label.text}</span
-                >`,
-              )}
-            </div>
-          </div>
+        <div
+          class="drawing"
+          role="img"
+          aria-label=${this.t("schematic.aria", {
+            status,
+            rooms: taking.length ? taking.join(", ") : this.t("schematic.nobody"),
+          })}
+        >
+          <svg viewBox=${box} aria-hidden="true">
+            <defs>
+              <linearGradient id="sb-body" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#fbfbfa"></stop>
+                <stop offset="1" stop-color="#b9b8b2"></stop>
+              </linearGradient>
+              <linearGradient id="sb-hot" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#e34948"></stop>
+                <stop offset="1" stop-color="#2a78d6"></stop>
+              </linearGradient>
+              <linearGradient id="sb-still" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#c9c8c2"></stop>
+                <stop offset="1" stop-color="#8f8e88"></stop>
+              </linearGradient>
+            </defs>
+            ${svg`
+              <path class="body" d=${paths.body}></path>
+              <path class="pipe gray" d=${paths.gray}></path>
+              <path class="pipe blue" d=${paths.blue}></path>
+              <path class="pipe red" d=${paths.red}></path>
+              <path class="pipe mix" d=${paths.mix}></path>
+              <path class="coil off" d=${paths.coilOff}></path>
+              <path class="coil on" d=${paths.coilOn}></path>
+              <path class="floor off" d=${paths.floorOff}></path>
+              <path class="floor on" d=${paths.floorOn}></path>
+              <path class="rad off" d=${paths.radOff}></path>
+              <path class="rad on" d=${paths.radOn}></path>
+              <path class="flow" d=${paths.flow}></path>
+              <path class="arrow red" d=${paths.arrRed}></path>
+              <path class="arrow blue" d=${paths.arrBlue}></path>
+              <path class="valve off" d=${paths.valveOff}></path>
+              <path class="valve on" d=${paths.valveOn}></path>
+              <path class="pump" d=${paths.pumps}></path>
+              <path class="pump-mark off" d=${paths.pumpOff}></path>
+              <path class="pump-mark on" d=${paths.pumpOn}></path>
+            `}
+          </svg>
+          <svg
+            class="flame ${view.flame ? "lit" : ""}"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            style="left: ${percent(135, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(205, VIEW_BOX.y, VIEW_BOX.height)}"
+          >
+            <path d=${FLAME_PATH}></path>
+          </svg>
+          ${view.labels.map(
+            (label) => html`<span
+              class="${label.kind}${label.minor ? " minor" : ""}"
+              style="left: ${percent(label.x, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(label.y, VIEW_BOX.y, VIEW_BOX.height)}"
+              >${label.text}</span
+            >`,
+          )}
         </div>
         ${count
               ? html`<div class="rooms" style="grid-template-columns: ${columns}">
@@ -192,12 +188,6 @@ export class SmartBoilerSchematic extends LitElement {
       margin: 0 0 6px;
       font-size: 16px;
       font-weight: 600;
-    }
-    .scroll {
-      overflow-x: auto;
-    }
-    .inner {
-      min-width: 720px;
     }
     .drawing {
       position: relative;
@@ -313,8 +303,9 @@ export class SmartBoilerSchematic extends LitElement {
     }
     .flame {
       position: absolute;
-      width: 40px;
-      height: 40px;
+      width: 4%;
+      height: auto;
+      aspect-ratio: 1;
       transform: translate(-50%, -50%);
       fill: none;
       stroke: var(--sb-still);
@@ -339,7 +330,7 @@ export class SmartBoilerSchematic extends LitElement {
       transform: translate(-50%, -50%);
       white-space: nowrap;
       pointer-events: none;
-      font-size: 12px;
+      font-size: clamp(8px, 1.55cqw, 12px);
     }
     .text {
       color: var(--secondary-text-color);
@@ -351,8 +342,8 @@ export class SmartBoilerSchematic extends LitElement {
       background: #1d1d1c;
       color: #fff;
       font-weight: 600;
-      font-size: 13px;
-      padding: 3px 8px;
+      font-size: clamp(9px, 1.7cqw, 13px);
+      padding: 0.22em 0.6em;
       border-radius: 6px;
       box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
       font-variant-numeric: tabular-nums;
@@ -376,7 +367,8 @@ export class SmartBoilerSchematic extends LitElement {
       font-weight: 600;
       color: var(--secondary-text-color);
     }
-    /* Narrower than the drawing: the drawing scrolls; the rooms stack, each circuit named. */
+    /* A narrow column: the drawing shrinks to it, its labels with it; the rooms stack, each
+       circuit named. */
     @container (max-width: 760px) {
       .rooms {
         grid-template-columns: minmax(0, 1fr) !important;
@@ -384,6 +376,17 @@ export class SmartBoilerSchematic extends LitElement {
       .column-name {
         display: block;
         margin-top: 6px;
+      }
+    }
+    @container (max-width: 480px) {
+      .minor {
+        display: none;
+      }
+      .inside {
+        white-space: normal;
+        width: 19%;
+        text-align: center;
+        line-height: 1.1;
       }
     }
     .room {
