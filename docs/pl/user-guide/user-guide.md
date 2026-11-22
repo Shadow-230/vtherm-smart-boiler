@@ -325,8 +325,8 @@ najwyżej 10 K, ustawianego w **Krzywej grzewczej** obok korekty; nigdy więcej 
 Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy +
 0,5 K, gdzie SmartPI przestaje je grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej.
 Jedno niedogrzane pomieszczenie liczy się jak każde inne — woda nigdy nie idzie wyżej dla jednego
-pokoju. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, korekta
-tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
+pokoju. Po trzech godzinach tak wysoko, jak może — na limicie albo po wzroście o 3 K w ciągu
+doby — gdy pomieszczenie nadal nie dochodzi do nastawy, korekta tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
 mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i więcej startów palnika — przy
 strefach TPI w VT często stoi na limicie i kilkakrotnie zwiększa liczbę startów, prawie nie dodając
 ciepła. Dlatego jest wyłączona: gdy pokój zostaje zimny, najpierw podnieś krzywą. Przycisk
@@ -993,7 +993,7 @@ Alarmy sterowania mają nazwy „Sterowanie: …”.
 | Sterowanie: zmiana przez inny sterownik | coś innego zapisało do kotła |
 | Sterowanie: oddanie nieudane | oddanie sterowania nie zostało potwierdzone |
 | Sterowanie: błąd wewnętrzny | błąd we wtyczce zatrzymał sterowanie |
-| Sterowanie: korekta komfortu na granicy | na swoim limicie (domyślnie 3 K) przez 3 godziny: zobacz jej zgłoszenie |
+| Sterowanie: korekta komfortu na granicy | na swoim limicie (domyślnie 3 K) albo po wzroście o 3 K w ciągu doby, przez 3 godziny: zobacz jej zgłoszenie |
 | Sterowanie: brak potwierdzenia z kotła | nastawa nie jest pokazywana z powrotem przez 5 minut |
 | Sterowanie: polecenia często giną | 3 utracone polecenia w ciągu 24 godzin (informacja) |
 | Sterowanie: brak oznak grzania kotła | grzanie włączone przez 30 minut bez płomienia i bez wzrostu temperatury |
@@ -1019,8 +1019,8 @@ Zgłoszenia w Naprawach dotyczące sterowania:
 | Sterowanie czeka na potwierdzenie z bramki | odczyt zwrotny nastawy nie ma wartości |
 | Opcji sterowania nie da się użyć | otwórz opcje i ustaw sterowanie ponownie |
 | Reakcje na alarmy nie są już dostępne | te alarmy teraz tylko informują |
-| Krzywa grzewcza wygląda na za niską dla: … | korekta 3 h na limicie, większość pomieszczeń niedogrzana: najpierw podnieś krzywą, potem sprawdź grzejniki i ucieczkę ciepła |
-| … nie dochodzi do nastawy | korekta 3 h na limicie, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
+| Krzywa grzewcza wygląda na za niską dla: … | korekta 3 h tak wysoko, jak może, większość pomieszczeń niedogrzana: najpierw podnieś krzywą, potem sprawdź grzejniki i ucieczkę ciepła |
+| … nie dochodzi do nastawy | korekta 3 h tak wysoko, jak może, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
 
 Przełącznik sterowania podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
 tylko monitorowanie, sterowanie albo topologia

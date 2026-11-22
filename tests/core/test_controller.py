@@ -2429,6 +2429,32 @@ def test_rule_3_the_correction_steps_back_while_the_starts_rise() -> None:
     assert state.starts_baseline.began == began.began  # the same hours, not new ones
 
 
+def test_one_step_back_after_the_limit_with_the_days_rise_spent_still_warns() -> None:
+    """J4's L13 (Q1's first run), the user's decision of 2026-11-22: the correction reaches its
+    limit, the day's 3 K spent; the starts rise for a moment and rule 3 steps it back; it cannot
+    rise again until a day has passed, the room still short. That time counts as at its limit,
+    so the warning comes after three hours, not a day later."""
+    before = -92 * 60.0  # once the span since it began reaches back to it, the starts are even
+    state, _ = run(short_with_starts(0.0, 91, (before,)), WATER)
+    assert state.correction == 3.0
+    state, _ = run(short_with_starts(91 * 60.0, 3, (before, 91 * 60.0)), WATER, state)
+    assert state.correction < 3.0  # stepped back
+    state, decisions = run(short_with_starts(94 * 60.0, 200, (before, 91 * 60.0)), WATER, state)
+    assert state.correction < 3.0  # it cannot rise: the day's rise is spent
+    assert decisions[-1].correction_at_limit
+
+
+def test_the_days_rise_spent_without_a_room_short_is_no_warning() -> None:
+    """Negative: the day's rise spent, the rooms then satisfied — the correction falls and
+    nothing is at its limit."""
+    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    assert state.correction == 3.0
+    state, decisions = run(minutes(5460.0, 240, lambda t: (satisfied(t),)), WATER, state)
+    assert state.correction < 3.0
+    assert not decisions[-1].correction_at_limit
+    assert state.correction_limit_s == 0.0
+
+
 def test_rule_3_unknown_starts_never_raise_the_correction() -> None:
     """Negative: the starts unknown — no rise; the fall goes on."""
     state, _ = run(minutes(0.0, 31, lambda t: (short(t),), starts=None), WATER)

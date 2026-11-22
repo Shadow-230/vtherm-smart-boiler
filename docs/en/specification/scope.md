@@ -803,7 +803,9 @@ How control decides (principle 12):
   it is reset at
   hand-back and at the end of a session; one room short counts like any other — the curve must
   hold every room — within these bounds, never higher for one room's sake (additions 2 and 3 of
-  2026-10-10); at its limit for 3 h with a room still short, it holds there, and the
+  2026-10-10); as high as it may go for 3 h — at its limit, or with the day's 3 K spent, so that
+  one step back after the limit does not hide it for a day (J4's L13, the user's decision of
+  2026-11-22) — with a room still short, it holds there, and the
   information alarm and a warning repair issue name the room and the possible causes — the
   heating curve too low, the room's radiator too small, the room losing heat; the curve first
   when most rooms are short, the radiator and the heat loss first when one is — gone once the

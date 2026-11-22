@@ -354,6 +354,9 @@ class ControlState:
     upper: float | None = None  # the highest setpoint the limits allow, at the last decision
     circuit_need: float | None = None  # the circuits' need held then (I8, F3): its change decides
     correction_limit_s: float = 0.0  # seconds at the band's edge, a cap's time left out
+    # The last water decision found the correction as high as it may go: at its limit, or a
+    # room short with the day's rise spent (L13).
+    correction_at_top: bool = False
     # The correction's rises within the last day, (time, K): at most ``CORRECTION_DAY_K``. Kept
     # through a hand-back (the day's rate is not reset by one); a new session starts afresh.
     rises: tuple[tuple[float, float], ...] = ()
@@ -508,6 +511,7 @@ def _release(
         water_s=0.0,
         last_step_at=None,
         correction_limit_s=0.0,
+        correction_at_top=False,
         frost=False,
         frost_since=None,
         frost_from=None,
@@ -528,6 +532,7 @@ def reset_correction(state: ControlState) -> ControlState:
         heat_s=0.0,
         water_s=0.0,
         correction_limit_s=0.0,
+        correction_at_top=False,
         decided_at=None,
         last_step_at=None,
     )
@@ -921,13 +926,17 @@ def _heating_decision(
         # setpoint: a rise could not show, so it is not learned (S-25).
         held = inputs.clipped or curve_value + state.correction >= upper - _EPSILON
         correction, rises, baseline = _correction(state, inputs, config, held)
+        top = correction >= config.correction_max_k or (
+            config.comfort_correction and _day_spent(rises) and bool(_short_zones(inputs, config))
+        )
         state = replace(
             state,
             heat_s=0.0,
             water_s=0.0,
             rises=rises,
             starts_baseline=baseline,
-            correction_limit_s=_limit_time(state, correction, held, config.correction_max_k),
+            correction_limit_s=_limit_time(state, top, held),
+            correction_at_top=top,
         )
         if correction > 0:
             water.append(Reason.COMFORT_CORRECTION)
@@ -1248,13 +1257,21 @@ def _correction(
     return max(0.0, correction), rises, baseline
 
 
-def _limit_time(state: ControlState, correction: float, held: bool, limit: float) -> float:
-    """The time the correction has sat at its band's edge, the user's ``limit``, counted from
-    the decision that reached it; paused while a cap or a clip holds the setpoint (S-25,
-    T-48)."""
-    if correction < limit:
+def _day_spent(rises: tuple[tuple[float, float], ...]) -> bool:
+    """The day's rise spent: the correction cannot rise until a day has passed since its first
+    rises (principle 13 (2))."""
+    return sum(k for _t, k in rises) >= CORRECTION_DAY_K - _EPSILON
+
+
+def _limit_time(state: ControlState, top: bool, held: bool) -> float:
+    """The time the correction has been as high as it may go (``top``) — at its band's edge,
+    the user's limit, or, with a room short, the day's rise spent, so that one step back after
+    the edge does not hide the warning for a day (J4's L13, the user's decision of 2026-11-22) —
+    counted from the decision that found it there; paused while a cap or a clip holds the
+    setpoint (S-25, T-48)."""
+    if not top:
         return 0.0
-    if state.correction < limit or held:
+    if not state.correction_at_top or held:
         return state.correction_limit_s
     return state.correction_limit_s + state.water_s
 

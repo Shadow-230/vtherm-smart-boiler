@@ -846,7 +846,9 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   `docs/en/development/plans/plan-0.2.3.md`); jest zerowana przy oddaniu sterowania i na końcu
   sesji; jeden pokój, w którym brakuje ciepła, liczy się jak każdy inny — krzywa musi utrzymać każdy
   pokój — w tych granicach, nigdy wyżej ze względu na jeden pokój (dodatki 2 i 3 z 2026-10-10); gdy
-  osiąga swój limit na 3 h, a w którymś pokoju wciąż brakuje ciepła, zostaje na limicie, a alarm
+  przez 3 h jest tak wysoko, jak może — na swoim limicie albo po wyczerpaniu 3 K na dobę, żeby jeden
+  krok wstecz po limicie nie ukrył tego na dobę (L13 z J4, decyzja użytkownika z 2026-11-22) — a w
+  którymś pokoju wciąż brakuje ciepła, zostaje tam, a alarm
   informacyjny i zgłoszenie naprawy na poziomie ostrzeżenia wskazują pokój i możliwe przyczyny — za
   niska krzywa grzewcza, za mały grzejnik w pokoju, pokój traci ciepło; najpierw krzywa, gdy
   w większości pokoi brakuje ciepła, a najpierw grzejnik i utrata ciepła, gdy brakuje go w jednym —
