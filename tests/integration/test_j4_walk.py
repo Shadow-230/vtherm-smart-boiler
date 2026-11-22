@@ -217,6 +217,34 @@ async def test_monitoring_only_refuses_the_control_switch(rig: Rig, hass_client:
     assert _control(rig)["topology"] == "gateway_with_thermostat"
 
 
+async def test_control_is_switched_through_the_settings(rig: Rig, hass_client: Any) -> None:
+    """I11.5: J4's runner switches control as an administrator does — "Control mode", "Control
+    on", saved (plan-0.2-i11.md) — on, then off with the hand-back; with monitoring only, on is
+    refused with the blocker's own text and nothing changes."""
+    boiler = {"class": "flow_setpoint", "dhw": "combi", "connection": "opentherm_gw"}
+    boiler |= {"control_mode": "full", "heat_source": "gas"}
+    await start(rig, entry_options=ONE_CIRCUIT | {"boiler": boiler})
+    rest = await _rest(rig, hass_client)
+    entry_id = _entry_id(rig)
+
+    await walk.save_options(
+        rest, entry_id, {"control_on": True}, ("mode",), required=["control_on"]
+    )
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert rig.state("binary_sensor", "control").state == "on"
+    await walk.save_options(rest, entry_id, {"control_on": False}, ("mode",))
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert rig.state("binary_sensor", "control").state == "off"
+
+    await walk.save_options(rest, entry_id, {"control_mode": "monitor"}, ("mode",))
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    refused = await walk.save_options(rest, entry_id, {"control_on": True}, ("mode",), strict=False)
+    assert refused["errors"] == {"control_on": "control_blocked"}
+    assert refused["description_placeholders"]["first"]  # the blocker's own text
+    assert rig.state("binary_sensor", "control").state == "off"
+    assert rig.hass.config_entries.options.async_progress() == []  # the flow closed
+
+
 async def test_the_relay_path_walks_its_device_and_behaviour(rig: Rig, hass_client: Any) -> None:
     """R6, R8 and the relay's settings (instance 6): the relay's own settings in the control
     device, VT's activation delay in the behaviour (no longer a relay form of its own, I8)."""

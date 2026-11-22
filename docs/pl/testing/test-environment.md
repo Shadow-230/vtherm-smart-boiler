@@ -214,7 +214,7 @@ są gubione — utrata łączności; `relay`: stan przekaźnika nieznany;
 `set_room_temperature` (jeden pokój ustawiany od razu, na przykład na 4 °C jak przy ochronie przed mrozem), `reset_gateway` i
 `restart_device` (utracone polecenie ze śladem), `relay_restart` (zauważony albo, z `reported: false`,
 niezauważony), `relay_wifi_loss`, `relay_switch` (automatyka albo jego przycisk), `set_wall_setpoint`,
-`set_fault` — oraz własnej usługi atrapy `opentherm_gw.reset_gateway`, przełącznika sterowania i opcji, a także
+`set_fault` — oraz własnej usługi atrapy `opentherm_gw.reset_gateway` i opcji (przez nie przełącza się sterowanie: „Tryb sterowania”, „Sterowanie włączone”, I11), a także
 testowego wstrzykiwacza usterek `j4_faults` (w instancji 1, przez `configuration.yaml`): `monitor` (własny
 monitor wtyczki zawodzi albo znów działa), `restart_with_stores` (wpis zatrzymany, jego magazyny danych
 podmienione lub usunięte tak, jak zostawia je awaria, utrata pliku albo inna wersja, i wpis uruchomiony ponownie) oraz

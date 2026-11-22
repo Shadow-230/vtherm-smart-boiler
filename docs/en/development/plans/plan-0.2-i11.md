@@ -70,7 +70,7 @@ administrator rights switched control on with `switch.turn_on`.
 | I11.2 ✅ | **The service for automations.** Registered with its texts; the checks of the switch; refused when a person calls it. Tests first: an automation's call, a person's call, a blocker, a hand-back not taken | none until I11.5 |
 | I11.3 ✅ | **The state.** The switch replaced by the binary sensor with the same attributes; `Rig.switch` through the service; the page's `installation` names the new entity; docs EN and PL (user guide, technical, scope) | every scenario that switches control — after I11.5 |
 | I11.4 ✅ | **The page.** The Control card: the state and "Change in settings"; the built page committed; screenshots of sample data | the page by hand, as I10.10's check C |
-| I11.5 | **J4's runner.** Control through the settings; the binary sensor read; `docs/en/testing/test-environment.md` and its Polish twin | every scenario that switches control |
+| I11.5 ✅ | **J4's runner.** Control through the settings; the binary sensor read; `docs/en/testing/test-environment.md` and its Polish twin | every scenario that switches control |
 | I11.6 🔒 | **In the test Home Assistant**, after the user says to start: the scenarios above, and a user without administrator rights refused everywhere | — |
 
 One pull request at a time (`CLAUDE.md`), each with its tests and its "J4 impact".
