@@ -70,6 +70,54 @@ def test_a_room_short_with_the_water_holding_its_setpoint_has_water_too_cool() -
     assert state.rooms_named == ("a",)
 
 
+def test_water_above_its_setpoint_with_the_flame_on_throughout_has_water_too_cool() -> None:
+    """J4's F15 (Q2): a curve too low, the boiler burning at its minimum without a break, its
+    water above the setpoint it cannot go down to (34 °C for 31.7 °C, modulation 0), a room
+    short and not warming: the water reached what was asked and is too cool for the room."""
+    state = burn(3.1, short_rooms, flow=34.0, setpoint=31.7, modulation=0.0)
+    assert state.found is LongRunClass.WATER_TOO_COOL
+    assert state.rooms_named == ("a",)
+
+
+def swinging(
+    hours: float,
+    rooms,
+    flow,
+    setpoint: float = 45.0,
+    modulation: float | None = 60.0,
+) -> LongRun:
+    """``burn`` with the flame on throughout and the flow given at each moment."""
+    state = LongRun()
+    for i in range(round(hours * HOUR / MIN) + 1):
+        now = i * MIN
+        state = follow_long_run(state, now, True, flow(now), setpoint, modulation, rooms(now))
+    return state
+
+
+def test_a_flow_that_swings_or_lags_but_reaches_its_setpoint_has_water_too_cool() -> None:
+    """The user's note of 2026-11-22: the boiler's own hysteresis and its delays keep the flow
+    from holding its setpoint within a kelvin. Reaching it — at most ``HOLDING_K`` under it, or
+    above — once in the last ``AVERAGE_S`` is enough: here 3 K under most of the time, at the
+    setpoint one minute in twenty."""
+
+    def flow(now: float) -> float:
+        return 45.0 if round(now / MIN) % 20 == 0 else 42.0
+
+    state = swinging(3.1, short_rooms, flow)
+    assert state.found is LongRunClass.WATER_TOO_COOL
+
+
+def test_the_power_limit_comes_first_even_if_the_flow_once_reached_its_setpoint() -> None:
+    """On average below its setpoint by more than ``HOLDING_K`` at the burner's top, with the
+    flame on throughout: the power limit, though the flow touched its setpoint once."""
+
+    def flow(now: float) -> float:
+        return 45.0 if round(now / MIN) % 20 == 0 else 42.0
+
+    state = swinging(3.1, short_rooms, flow, modulation=95.0)
+    assert state.found is LongRunClass.POWER_LIMIT
+
+
 def test_nothing_before_three_hours_of_flame() -> None:
     assert burn(2.9, short_rooms).found is None
 

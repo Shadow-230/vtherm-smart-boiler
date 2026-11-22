@@ -964,7 +964,7 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu przez jego czas (obieg prosto z kotła: nie podczas grzania ciepłej wody) | sprawdź jego maksimum |
-| Długie palenie bez nagrzewania | palnik pracuje 3 h — razem z przerwami do 30 min, więc liczy się też kocioł, który ciągle gaśnie i startuje — a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń (woda dochodzi do nastawy), kocioł na granicy mocy (płomień cały czas, poniżej nastawy przy wysokiej modulacji), czy woda za ciepła | woda za chłodna: podnieś krzywą (korekta, gdy jest włączona, ją podnosi); za ciepła: obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
+| Długie palenie bez nagrzewania | palnik pracuje 3 h — razem z przerwami do 30 min, więc liczy się też kocioł, który ciągle gaśnie i startuje — a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń (woda choć raz w ostatnich 30 minutach doszła do nastawy albo jest ponad nią, bo kocioł pracuje na minimum), kocioł na granicy mocy (płomień cały czas, poniżej nastawy przy wysokiej modulacji), czy woda za ciepła | woda za chłodna: podnieś krzywą (korekta, gdy jest włączona, ją podnosi); za ciepła: obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
 
 Zgłoszenia w Naprawach:
 

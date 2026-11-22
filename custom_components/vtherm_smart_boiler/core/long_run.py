@@ -12,11 +12,14 @@ rooms the caller counts — heating, known, not warmed by foreign heat — and, 
 1. rooms short and not warming, the flame on without a break for ``LONG_RUN_S``, the flow below
    its setpoint by more than ``HOLDING_K`` at a modulation of at least ``HIGH_MODULATION`` → the
    boiler at its power limit (a warning);
-2. rooms short and not warming — one counts like any other (addition 2) — and the water at its
-   setpoint: with the flame on throughout the last ``AVERAGE_S``, the flow holding it within
-   ``HOLDING_K``; with the burner stopping in that time, the flow having reached it within
-   ``HOLDING_K`` → the water too cool for them (information: the curve too low; the comfort
-   correction, where it is on, raises it, and at its limit names the room and the causes);
+2. rooms short and not warming — one counts like any other (addition 2) — and the water having
+   reached its setpoint: the flow, at some moment of the last ``AVERAGE_S``, under it by at most
+   ``HOLDING_K`` or above it — whether the burner stops in that time or not → the water too cool
+   for them (information: the curve too low; the comfort correction, where it is on, raises it,
+   and at its limit names the room and the causes). Reaching it once is enough: the boiler's own
+   hysteresis and its delays keep a flow from holding a setpoint within a kelvin (the user's
+   note, 2026-11-22), and a boiler at its minimum keeps its water above a setpoint too low for
+   the rooms (J4's F15, Q2: 34 °C for 31.7 °C);
 3. every room over its setpoint by at least ``TOO_HOT_K`` for ``TOO_HOT_S`` → the water too hot,
    lower the curve (information);
 4. otherwise nothing — rooms at their setpoints is the ideal state: few starts, condensing.
@@ -39,7 +42,8 @@ HOUR = 3600.0
 LONG_RUN_S = 3 * HOUR  # a run this long is judged
 GAP_S = 30 * 60.0  # the flame off longer ends a run: a boiler cycling keeps it (K4, F10)
 NOT_RISING_K = 0.2  # a room rising less over the run's last 3 h is not warming: above sensor noise
-HOLDING_K = 1.0  # the flow this close to its setpoint holds it: the boiler's own regulation band
+HOLDING_K = 1.0  # the flow this close under its setpoint has reached it; further below on average
+# at the burner's top: the power limit
 HIGH_MODULATION = 90.0  # percent: the burner near its top
 TOO_HOT_K = 0.3  # every room this far over its setpoint ... (``SHORT_K``'s mirror)
 TOO_HOT_S = HOUR  # ... this long: the water too hot
@@ -179,17 +183,13 @@ def _classify(
     gaps = [sp - flow for _t, flow, sp, _m, _on in burning if flow is not None and sp is not None]
     levels = [m for _t, _f, _s, m, _on in burning if m is not None]
     if short and gaps:
-        if len(burning) < len(water):  # the burner stopped within the window: it cycles
-            if min(gaps) <= HOLDING_K:  # having reached its setpoint
-                return LongRunClass.WATER_TOO_COOL, short
-        else:
-            gap = fmean(gaps)
+        if unbroken:  # the flame on without a break: the power limit can be told
             level = fmean(levels) if levels else None
             high = level is not None and level >= HIGH_MODULATION
-            if unbroken and gap > HOLDING_K and high:
+            if fmean(gaps) > HOLDING_K and high:
                 return LongRunClass.POWER_LIMIT, short
-            if abs(gap) <= HOLDING_K:
-                return LongRunClass.WATER_TOO_COOL, short
+        if min(gaps) <= HOLDING_K:  # having reached its setpoint, or above it
+            return LongRunClass.WATER_TOO_COOL, short
     if hot_since is not None and now - hot_since >= TOO_HOT_S:
         return LongRunClass.WATER_TOO_HOT, tuple(sorted(room.zone_id for room in rooms))
     return None, ()
