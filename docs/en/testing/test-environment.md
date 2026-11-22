@@ -181,7 +181,13 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
    **Heating curve** — design flow 55 °C. The runner puts this base back after each scenario
    that changes it (`devenv/j4/options.py`, saved item by item through the menu by
    `devenv/j4/walk.py`; `tests/integration/test_j4_walk.py` walks the same base through the
-   real options flow).
+   real options flow), also when the scenario stops half-way, and enables again any VT zone entry
+   a scenario disabled. Before each scenario it checks the instance's base and role — the
+   gateway topology the scenario needs, a starts instance's stored curve — reading again after
+   10 s before it refuses, as Home Assistant writes a save to disk a few seconds late; a refused
+   scenario, or one whose precondition does not hold (Q5 with SmartPI still learning from
+   scratch), reads NOT RUN with its reason. B6 restarts the instance's own directory
+   (`TEST_HA_DIR_N`).
    - At the advanced level, the signal "Wired thermostat setpoint"
      `sensor.otgw_sim_thermostat_room_setpoint` (the wall thermostat's own setting, 21 °C 06:00–22:00
      and 17 °C otherwise, UTC).

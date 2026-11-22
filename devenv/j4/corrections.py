@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from run import SCENARIOS, ZONES, Run, main
+from run import SCENARIOS, ZONES, NotRun, Run, main
 
 FLAME = "binary_sensor.boiler_sim_flame"
 SMARTPI_ZONE = "climate.zone_bedroom"
@@ -167,10 +167,31 @@ async def Q3(r: Run):
         await r.zones()
 
 
+async def smartpi_bootstrap(r: Run) -> str | None:
+    """The bedroom's SmartPI diagnostic state while it still learns from scratch ("bootstrap_…",
+    SmartPI 0.4.0 onward; the VT climate names the sensor in ``specific_states``), else
+    ``None`` — also where the sensor cannot be found."""
+    states = await r.attr(SMARTPI_ZONE, "specific_states")
+    sensor = states.get("regulation_diagnostics") if isinstance(states, dict) else None
+    if not isinstance(sensor, str) or not sensor.startswith("sensor."):
+        return None
+    state = await r.s(sensor)
+    return state if isinstance(state, str) and state.startswith("bootstrap") else None
+
+
 async def Q5(r: Run):
     """one room short while the others hold (its setpoint out of reach): the curve must hold
     every room — the correction rises for it, and at its limit for 3 h the warning names that
     room, the radiator and the heat loss first"""
+    # "The others hold" needs the bedroom's SmartPI past its bootstrap: learning from scratch it
+    # runs on/off and its room counts as short (G11 C) — two rooms short, the curve warning
+    # rightly instead (J4 of 2026-11-18, an instance set up a minute before).
+    learning = await smartpi_bootstrap(r)
+    if learning is not None:
+        raise NotRun(
+            f"the bedroom's SmartPI still learns from scratch ({learning}): run Q5 once its "
+            "bootstrap is over"
+        )
     try:
         await r.options(curve=CORRECTION_ON)
         await set_targets(r, {"zone_living": 28.0})
