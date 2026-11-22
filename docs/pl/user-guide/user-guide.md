@@ -135,8 +135,8 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    włączysz, wtyczka nic nie zapisuje do kotła. Automatyzacja przełącza sterowanie akcją
    `vtherm_smart_boiler.set_control` (`enabled`: włączone albo wyłączone), z tymi samymi
    sprawdzeniami; wywołana przez osobę — z pulpitu, uruchomionego przez nią skryptu, narzędzi
-   deweloperskich — jest odrzucana. (Przełącznik **Sterowanie (eksperymentalne)** na
-   urządzeniu integracji też je jeszcze przełącza, dopóki nie stanie się samym pokazaniem stanu.)
+   deweloperskich — jest odrzucana. Encja **Sterowanie (eksperymentalne)** na urządzeniu
+   integracji pokazuje, czy sterowanie jest włączone; niczego nie przełącza.
 
 **Późniejsze zmiany ustawień.** Opcje integracji otwierają to samo menu, z **Zapisz i zakończ**
 zamiast **Utwórz**. Nic nie jest zapisywane, dopóki tego nie wybierzesz: sprawdza wszystko,
@@ -175,7 +175,7 @@ Potem czujnik **Werdykt sterowania** pokazuje jedną z wartości:
 | Jeszcze za mało danych | zmierzono za mało, żeby ocenić |
 
 Werdykt jest radą. Decyzja należy do ciebie. Zanim się pojawi, a poza sezonem grzewczym także
-wtedy, gdy dni miną bez wystarczających danych, przełącznik sterowania mówi, że sterowanie ruszy
+wtedy, gdy dni miną bez wystarczających danych, **Sterowanie (eksperymentalne)** mówi, że sterowanie ruszy
 bez werdyktu.
 
 Co znaczą werdykt i wartości budynku:
@@ -194,12 +194,13 @@ Co znaczą werdykt i wartości budynku:
 
 ### 4.2 Sterowanie włączasz sam
 
-Sterowanie jest **domyślnie wyłączone**. To przełącznik **Sterowanie (eksperymentalne)**.
-Możesz go włączyć od pierwszego dnia, gdy wypełnione są wszystkie wymagane ustawienia, na
-przykład:
+Sterowanie jest **domyślnie wyłączone**. Włączasz je w opcjach integracji (**Tryb sterowania**,
+**Sterowanie włączone**, potem **Zapisz i zakończ**); encja **Sterowanie (eksperymentalne)**
+pokazuje, czy jest włączone. Możesz je włączyć od pierwszego dnia, gdy wypełnione są wszystkie
+wymagane ustawienia, na przykład:
 
 - tryb sterowania „pełne sterowanie” albo „wł./wył.” (tylko monitorowanie i tylko temperatura
-  pokoju zostawiają sterowanie wyłączone, a przełącznik mówi dlaczego);
+  pokoju zostawiają sterowanie wyłączone, a **Sterowanie (eksperymentalne)** mówi dlaczego);
 - sposób zapisu do kotła i sposób jego oddania (zobacz
   [Podłączenie kotła](#5-podłączenie-kotła)), pasujące do połączenia kotła;
 - projektowa temperatura zasilania krzywej grzewczej (nie ma wartości domyślnej);
@@ -211,7 +212,7 @@ przykład:
   zmieniona po uruchomieniu Home Assistant, nawet bez kotła centralnego, też wymaga tego jednego
   ponownego uruchomienia.
 
-Gdy czegoś brakuje, przełącznik sterowania mówi czego. Monitor dalej działa, a kocioł zostaje
+Gdy czegoś brakuje, **Sterowanie (eksperymentalne)** mówi czego. Monitor dalej działa, a kocioł zostaje
 przy własnym sterowaniu albo przy swoim termostacie.
 
 ### 4.3 Kiedy grzanie się włącza i wyłącza
@@ -612,8 +613,8 @@ Po oddaniu sterowania albo gdy Home Assistant nie działa, obowiązuje maksymaln
 ustawiona w kotle (albo w termostacie ściennym), a nie we wtyczce: na nim opiera się wtedy
 niezmieszany obieg podłogowy.
 
-Przełącznik sterowania pokazuje, co oddanie sterowania robi w twojej instalacji („Po oddaniu
-sterowania”).
+**Sterowanie (eksperymentalne)** pokazuje, co oddanie sterowania robi w twojej instalacji („Po
+oddaniu sterowania”).
 
 ### 5.3 Sposób podłączenia bramki
 
@@ -756,8 +757,8 @@ kocioł w ciągu około minuty wraca do własnego ustawienia.
   w ciągu około minuty. Przełącznik grzania nie jest przy tym połączeniu potrzebny; nigdy nie
   używaj do tego „heating activated” z EMS-ESP — kocioł zapisuje je w swojej pamięci. Co robi
   pompa kotła przy nastawie 0, nie wiadomo.
-- Jeśli kocioł od początku ignoruje 0, sterowanie staje i oddaje kocioł; przełącznik sterowania
-  podaje wtedy: Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie.
+- Jeśli kocioł od początku ignoruje 0, sterowanie staje i oddaje kocioł; **Sterowanie
+  (eksperymentalne)** podaje wtedy: Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie.
 - Kocioł przyjmuje nastawę z magistrali tylko poniżej ustawienia na własnym panelu (dokumentacja
   EMS-ESP): przy tym ustawieniu poniżej najwyższej temperatury wody we wtyczce wyższe nastawy nie
   są przyjmowane, a wtyczka to zgłasza.
@@ -829,7 +830,7 @@ zapisała, przypisuje to do jednego z czterech rodzajów:
 
 **Wtyczka nigdy nie walczy z innym sterownikiem.** Gdy ustępuje, wykonuje pełne bezpieczne
 oddanie sterowania i pozostaje wyłączona („zatrzask”), dopóki nie wyłączysz i nie włączysz
-sterowania. Opcjonalny „samodzielny powrót” (domyślnie wyłączony, nie dla przekaźników) przejmuje
+sterowania — w opcjach: odznacz **Sterowanie włączone** i zapisz, potem zaznacz i zapisz znowu. Opcjonalny „samodzielny powrót” (domyślnie wyłączony, nie dla przekaźników) przejmuje
 kocioł z powrotem po 60 minutach bez obcej wartości.
 
 Jeśli kocioł od początku sesji ignoruje **„wyłącz grzanie” albo „włącz grzanie”** wtyczki,
@@ -1030,7 +1031,7 @@ Zgłoszenia w Naprawach dotyczące sterowania:
 | Krzywa grzewcza wygląda na za niską dla: … | korekta 3 h tak wysoko, jak może, większość pomieszczeń niedogrzana: najpierw podnieś krzywą, potem sprawdź grzejniki i ucieczkę ciepła |
 | … nie dochodzi do nastawy | korekta 3 h tak wysoko, jak może, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
 
-Przełącznik sterowania podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
+**Sterowanie (eksperymentalne)** podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
 tylko monitorowanie, sterowanie albo topologia
 niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny start.
 
@@ -1308,8 +1309,8 @@ target:
 
 ## 14. Rozwiązywanie problemów
 
-- **Sterowanie się nie włącza albo stan sterowania mówi „Niedozwolone”.** Atrybuty przełącznika
-  (`blockers_text`, `blocked_by_text`) mówią, czego brakuje; zgłoszenie w Naprawach zwykle mówi,
+- **Sterowanie się nie włącza albo stan sterowania mówi „Niedozwolone”.** Atrybuty encji
+  **Sterowanie (eksperymentalne)** (`blockers_text`, `blocked_by_text`) mówią, czego brakuje; zgłoszenie w Naprawach zwykle mówi,
   co zrobić.
 - **Stan sterowania zostaje „Oddane kotłu”.** Wtyczka się wycofała — inny sterownik, kocioł
   ignorujący „grzanie wył.”, alarm ustawiony na oddanie. Usuń przyczynę, potem wyłącz i włącz
@@ -1357,8 +1358,8 @@ target:
 
 ## 16. Usuwanie
 
-1. Możesz najpierw wyłączyć **Sterowanie (eksperymentalne)** i sprawdzić, że kocioł wrócił do
-   własnego sterowania.
+1. Możesz najpierw wyłączyć sterowanie (**Tryb sterowania**, odznacz **Sterowanie włączone**) i
+   sprawdzić, że kocioł wrócił do własnego sterowania.
 2. Usuń wpis: Ustawienia → Urządzenia oraz usługi → Smart Boiler for Versatile Thermostat → Usuń.
    Wtyczka oddaje kocioł, wznawia wstrzymane przez siebie uczenie SmartPI i usuwa swój zapisany
    stan, dziennik i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w

@@ -64,7 +64,7 @@ async def save_with(rig: Rig, **answers: Any) -> dict[str, Any]:
 
 
 def control_on(rig: Rig) -> bool:
-    return rig.state("switch", "control").state == "on"
+    return rig.state("binary_sensor", "control").state == "on"
 
 
 async def started(rig: Rig, **control: Any) -> None:

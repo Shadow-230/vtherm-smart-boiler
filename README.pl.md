@@ -56,8 +56,8 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
 - **Strona „Kocioł” w menu bocznym i karty.** Kocioł w jednym miejscu — jego stan, instalacja
   narysowana z twoich ustawień z każdym pokojem, krzywa grzewcza z tym, gdzie jest teraz, ostatnie
   24 h do odtworzenia — oraz palnik, zużycie gazu, analizy, dziennik tego, co wtyczka zdecydowała
-  i dlaczego, i alarmy. Nic więcej do instalowania; administrator może tam włączyć sterowanie i
-  zmienić krzywą, po potwierdzeniu.
+  i dlaczego, i alarmy. Nic więcej do instalowania; administrator może tam zmienić krzywą, po
+  potwierdzeniu. Sterowanie przełącza administrator w ustawieniach wtyczki, a także automatyzacje.
 - Każda opcja ma ostrożną wartość domyślną i opis, który mówi, co robi i czym ryzykuje.
 
 # Do czego się przydaje

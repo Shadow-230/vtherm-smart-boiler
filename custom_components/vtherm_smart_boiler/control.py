@@ -435,7 +435,9 @@ WRITE_IGNORED_ISSUE = "write_ignored_no_heat"
 # 5 minutes — "confirmation missing", and a repair issue: a warning, an error where a hand-back
 # stops heating. Never a step aside by itself.
 NOT_SHOWN_ISSUE = "setpoint_not_shown"
-RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
+# Without the wish restored by then, control counts as off — the setup gives it back at once
+# since I11.3, so this only guards a step that runs before it.
+RESTORE_WAIT_S = 60.0
 # X8's repair issues: the relay out of reach for five minutes (one text per declared state after
 # a power cut), the relay never taking the command this session, and a relay resting "off" while
 # control does not hold it and a room asks for heat or is near freezing.
@@ -1409,7 +1411,6 @@ class ControlUnit:
         refused = (
             not self._coordinator.control_readable
             or self._stored_enabled is not True
-            or self._switch_disabled()
             or control.latched
             or self._session.failed
             or self._taken_with != self._raw
@@ -1463,14 +1464,6 @@ class ControlUnit:
             and self._stored_enabled is True
         )
 
-    def _switch_disabled(self) -> bool:
-        """The control switch entity is disabled in Home Assistant: control is off (answer K)."""
-        registry = er.async_get(self._hass)
-        unique_id = f"{self._coordinator.config_entry.entry_id}_control"
-        entity_id = registry.async_get_entity_id("switch", DOMAIN, unique_id)
-        entry = registry.async_get(entity_id) if entity_id is not None else None
-        return entry is not None and entry.disabled
-
     # --- lifecycle ------------------------------------------------------------------------
 
     async def async_hand_back_owed(self, now: float) -> None:
@@ -1519,10 +1512,9 @@ class ControlUnit:
         )
 
     async def async_restore_enabled(self, on: bool) -> None:
-        """The switch, once added, gives the user's wish back after a restart (the stored wish,
-        or its own restored state when none was stored): control steps may run. Unlike a change
-        made by the user, it does not clear an internal error (C10). A switch that is never
-        added (disabled) leaves control off once ``RESTORE_WAIT_S`` has passed."""
+        """The setup gives the user's wish back after a restart — the stored wish, off when none
+        was stored (I11.3; the control switch did it when added): control steps may run. Unlike
+        a change made by the user, it does not clear an internal error (C10)."""
         async with self._lock:
             if self._restored or self._stopped or self._stopping:
                 return

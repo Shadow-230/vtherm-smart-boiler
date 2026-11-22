@@ -825,9 +825,12 @@ async def controlling_with_the_plugin(
     await hass.async_block_till_done()
     for zone in zones:
         await heat_to(hass, 21.0, zone)
-    control = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
+    control = er.async_get(hass).async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{entry.entry_id}_control"
+    )
     assert control is not None
-    await hass.services.async_call("switch", "turn_on", {"entity_id": control}, blocking=True)
+    # I11.2: control switched on as an automation does it.
+    await hass.services.async_call(DOMAIN, "set_control", {"enabled": True}, blocking=True)
     await hass.async_block_till_done()
     assert hass.states.get(control).state == "on"
     return entry, boiler
@@ -966,9 +969,11 @@ async def test_a_vt_central_entry_update_reloads_every_zone_without_a_hand_back(
         assert states[-1] == ("heat", True), entity_id
     await later(hass, freezer, 10.0)
     assert "zones_recognition" not in reasons()  # every zone reported again
-    switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
-    assert switch is not None
-    assert hass.states.get(switch).state == "on"
+    control = er.async_get(hass).async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{entry.entry_id}_control"
+    )
+    assert control is not None
+    assert hass.states.get(control).state == "on"
     assert not entry.runtime_data.control.hand_back_owed
     assert writes == []  # no hand-back value, heating neither off nor on
     assert hass.states.get(CH_SWITCH).state == ch_before

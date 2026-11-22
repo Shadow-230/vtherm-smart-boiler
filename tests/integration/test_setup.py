@@ -3577,13 +3577,15 @@ async def test_the_continuous_values_stay_in_the_diagnostics(
 def test_text_attributes_stay_out_of_the_recorder() -> None:
     """P-39: the ``_text`` siblings are the codes again in words — kept out of the recorder, as
     the features' texts are."""
+    from custom_components.vtherm_smart_boiler.binary_sensor import (
+        ControlStateSensor as ControlSensor,
+    )
     from custom_components.vtherm_smart_boiler.core.signal_check import Feature
     from custom_components.vtherm_smart_boiler.sensor import (
         BoilerSensor,
         ControlStateSensor,
         FeaturesSensor,
     )
-    from custom_components.vtherm_smart_boiler.switch import ControlSwitch
 
     for cls, texts in (
         (BoilerSensor, {"reasons_text"}),
@@ -3591,7 +3593,7 @@ def test_text_attributes_stay_out_of_the_recorder() -> None:
             ControlStateSensor,
             {"reasons_text", "blockers_text", "blockers_waiting_text", "latched_by_text"},
         ),
-        (ControlSwitch, {"blockers_text", "blocked_by_text"}),
+        (ControlSensor, {"blockers_text", "blocked_by_text"}),  # the switch's place (I11.3)
         (FeaturesSensor, {f"{feature.value}_missing_text" for feature in Feature}),
     ):
         assert texts <= cls._unrecorded_attributes, cls.__name__

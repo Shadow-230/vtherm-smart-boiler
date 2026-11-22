@@ -251,7 +251,7 @@
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
-          "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the switch shows \"not enough data\".",
+          "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the Control state shows \"not enough data\".",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in one hour raise the alarm. Default 12. Below it, more than 6 an hour over 3 hours raises a warning: gas boilers are designed for about 6 cycles an hour. Too high hides short-cycling.",
@@ -495,7 +495,7 @@
       "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value.",
       "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to, the read-backs and write types that judge the hand-back, the device's timeout and the lowest water temperature cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
-      "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
+      "control_holds_boiler": "Control has the boiler: switch control off first (Control mode, Control on), so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
       "count_threshold_above_zones": "More than the circuits' zones — or, counting devices, their devices: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
@@ -849,7 +849,7 @@
         "data_description": {
           "condensing_return": "A return below this counts as condensing, in °C. Default 55 °C. Too high overstates the condensing share.",
           "short_burn_min": "Burns shorter than this count as short, in minutes. Default 10. Longer makes more burns short, and the verdict harsher.",
-          "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the switch shows \"not enough data\".",
+          "monitoring_days": "Days of data the monitor's verdict needs, from when the integration was added. Default 7, the shortest. It holds nothing back: control can be switched on any time, even without a verdict; until then the Control state shows \"not enough data\".",
           "flue_gas_warning": "Flue gas above this raises a warning on a condensing boiler, in °C. Default 85 °C. Too high warns too late.",
           "flue_gas_alarm": "Flue gas above this raises an alarm, in °C. Default 100 °C. A limit set too high warns too late for plastic flue pipes.",
           "starts_per_hour_limit": "More burner starts than this in one hour raise the alarm. Default 12. Below it, more than 6 an hour over 3 hours raises a warning: gas boilers are designed for about 6 cycles an hour. Too high hides short-cycling.",
@@ -1080,7 +1080,7 @@
       "hand_back_value_effect_missing": "The value method needs its effect: what the device does with the hand-back value.",
       "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to, the read-backs and write types that judge the hand-back, the device's timeout and the lowest water temperature cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
-      "control_holds_boiler": "Control has the boiler: switch control off first, so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
+      "control_holds_boiler": "Control has the boiler: switch control off first (Control mode, Control on), so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
       "count_threshold_above_zones": "More than the circuits' zones — or, counting devices, their devices: heating would never be asked for.",
       "no_demand_criterion": "Set at least one criterion: a zone count of 0 needs a power or an opening threshold.",
       "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
@@ -2323,6 +2323,159 @@
       }
     },
     "binary_sensor": {
+      "control": {
+        "name": "Control (experimental)",
+        "state_attributes": {
+          "hand_back_effect": {
+            "name": "On hand-back",
+            "state": {
+              "thermostat_takes_over": "The thermostat takes over",
+              "heating_stops": "Heating stops until control resumes",
+              "device_decides": "The device's own fallback applies",
+              "own_control_resumes": "The boiler's own control takes over",
+              "relay_rests_off": "The relay rests off: heat only from a thermostat wired to the boiler",
+              "relay_rests_on": "The relay rests on: the boiler heats by its own setting"
+            }
+          },
+          "frost_protection_by": {
+            "name": "Frost protection by",
+            "state": {
+              "plugin": "The plugin",
+              "thermostat": "The thermostat",
+              "boiler": "The boiler's own, if it has one",
+              "device": "The boiler's or the device's own control"
+            }
+          },
+          "outage_effect": {
+            "name": "If Home Assistant is down",
+            "state": {
+              "heating_stops": "Heating stops after about a minute without Home Assistant: the gateway drops the plugin's setpoint, and the boiler heats again only once control resumes"
+            }
+          },
+          "off_by": {
+            "name": "Heating off by",
+            "state": {
+              "heating_switch": "The heating switch",
+              "low_setpoint": "A low setpoint",
+              "relay": "The relay"
+            }
+          },
+          "wall_thermostat_setpoint": {
+            "name": "Wall thermostat after hand-back (°C)"
+          },
+          "wall_thermostat_warning": {
+            "name": "Wall thermostat warning",
+            "state": {
+              "not_mapped": "Not known: map the wall thermostat's setpoint",
+              "unknown": "The wall thermostat reports no setpoint",
+              "low": "Below 15 °C: the house cools after a hand-back"
+            }
+          },
+          "confirmation": {
+            "name": "Confirmation",
+            "state": {
+              "controlled_without_confirmation": "Controlled without confirmation",
+              "without_heat_confirmation": "Controlled without confirmation that the boiler heats"
+            }
+          },
+          "blocked_by": {
+            "name": "Blocked by",
+            "state": {
+              "boiler_link_lost": "Boiler link lost: control waits until it has been back for a minute"
+            }
+          },
+          "verdict": {
+            "name": "Verdict",
+            "state": {
+              "worth_it": "Worth enabling",
+              "not_worth_it": "Not worth enabling: control may still be switched on",
+              "not_enough_data": "Not enough data: control may start without a verdict"
+            }
+          },
+          "blockers": {
+            "name": "Blockers",
+            "state": {
+              "no_write_path": "Control is not set up",
+              "boiler_class_no_control": "The boiler's connection cannot be controlled",
+              "path_not_for_boiler_class": "The write path does not suit the boiler's connection",
+              "no_setpoint_entity": "No setpoint entity picked",
+              "write_type_not_supported": "The setpoint entity's write type cannot be used",
+              "no_hand_back": "No hand-back chosen",
+              "timeout_needs_expiring_writes": "The timeout hand-back needs expiring writes",
+              "no_gateway": "No OpenTherm Gateway ID",
+              "no_mqtt_topic": "No MQTT topic prefix or node name",
+              "mqtt_topic_invalid": "An MQTT topic prefix or node name with a space or a wildcard (+ or #)",
+              "no_confirmed_setpoint": "No setpoint read-back picked",
+              "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
+              "no_topology": "The gateway's connection is not declared",
+              "curve_not_entered": "The heating curve is not entered",
+              "one_direct_circuit_only": "At most one circuit fed straight from the boiler and none the boiler mixes can be controlled",
+              "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
+              "no_zones": "No Versatile Thermostat zone",
+              "count_threshold_above_zones": "The demand threshold asks for more zones than there are",
+              "off_setpoint_not_below_hard_min": "\"Off\" is not below the lowest water temperature",
+              "hand_back_switch_not_writable": "The external control switch's write type cannot be used",
+              "hand_back_value_above_max": "The hand-back value is above a maximum",
+              "off_setpoint_near_hand_back_value": "\"Off\" is too close to the hand-back value",
+              "hand_back_switch_is_heating_switch": "The external control switch also serves another role",
+              "entity_for_two_signals": "One entity feeds two signals",
+              "topology_not_for_path": "The gateway's connection does not suit the write path",
+              "design_flow_too_low": "The design flow temperature is too low",
+              "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature",
+              "design_outdoor_too_warm": "The outdoor temperature at the hardest frost is too warm",
+              "hard_min_not_below_design_flow": "The lowest water temperature is not below the design flow temperature",
+              "hard_min_above_max": "The lowest water temperature is above a maximum",
+              "no_heating_switch": "No heating switch the plugin may use",
+              "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
+              "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
+              "thermostat_kind_dont_know": "\"I don't know\" answered: what is wired to the gateway's thermostat terminals",
+              "thermostat_kind_contradicts_topology": "The answer on the thermostat terminals does not fit the gateway's connection",
+              "no_flame_signal": "No flame signal",
+              "no_flow_signal": "No flow temperature signal",
+              "no_relay_entity": "No relay picked",
+              "relay_domain_not_supported": "The relay is neither a switch nor a boiler thermostat entity",
+              "relay_in_another_role": "The relay also serves another role",
+              "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
+              "ha_starting": "Home Assistant is starting",
+              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have run since Home Assistant started: then one restart of Home Assistant clears this",
+              "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
+              "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
+              "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit",
+              "setpoint_step_too_coarse": "The setpoint entity's step is too coarse",
+              "control_error": "Stopped after an internal error: switch control off and on",
+              "monitor_failed": "The plugin's monitor keeps failing",
+              "control_state_not_saved": "The plugin cannot save its memory of the boiler",
+              "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
+              "heating_on_ignored": "The boiler did not take \"heating on\": switch control off and on",
+              "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
+              "gateway_not_set_up": "The gateway's integration is removed or disabled",
+              "mqtt_not_set_up": "The MQTT integration is removed or disabled",
+              "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
+              "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
+              "relay_used_by_zone": "A zone already switches the relay",
+              "entity_used_by_zone": "A zone already drives the setpoint entity or a switch",
+              "relay_of_boiler_interface": "The relay belongs to the boiler's or VT's own integration",
+              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off",
+              "control_mode_monitor": "Monitoring only chosen",
+              "connection_not_for_path": "The control set up does not fit the boiler's connection",
+              "topology_not_for_connection": "The topology does not fit the boiler's connection",
+              "esphome_start_not_confirmed": "The ESP's safe start not confirmed"
+            }
+          },
+          "blockers_text": {
+            "name": "Blockers (text)"
+          },
+          "blocked_by_text": {
+            "name": "Blocked by (text)"
+          },
+          "allowed_services": {
+            "name": "Services control may call"
+          },
+          "experimental": {
+            "name": "Experimental"
+          }
+        }
+      },
       "boiler_called": {
         "name": "Heat call",
         "state_attributes": {
@@ -2753,159 +2906,6 @@
     "switch": {
       "sidebar_page": {
         "name": "Page in the sidebar"
-      },
-      "control": {
-        "name": "Control (experimental)",
-        "state_attributes": {
-          "hand_back_effect": {
-            "name": "On hand-back",
-            "state": {
-              "thermostat_takes_over": "The thermostat takes over",
-              "heating_stops": "Heating stops until control resumes",
-              "device_decides": "The device's own fallback applies",
-              "own_control_resumes": "The boiler's own control takes over",
-              "relay_rests_off": "The relay rests off: heat only from a thermostat wired to the boiler",
-              "relay_rests_on": "The relay rests on: the boiler heats by its own setting"
-            }
-          },
-          "frost_protection_by": {
-            "name": "Frost protection by",
-            "state": {
-              "plugin": "The plugin",
-              "thermostat": "The thermostat",
-              "boiler": "The boiler's own, if it has one",
-              "device": "The boiler's or the device's own control"
-            }
-          },
-          "outage_effect": {
-            "name": "If Home Assistant is down",
-            "state": {
-              "heating_stops": "Heating stops after about a minute without Home Assistant: the gateway drops the plugin's setpoint, and the boiler heats again only once control resumes"
-            }
-          },
-          "off_by": {
-            "name": "Heating off by",
-            "state": {
-              "heating_switch": "The heating switch",
-              "low_setpoint": "A low setpoint",
-              "relay": "The relay"
-            }
-          },
-          "wall_thermostat_setpoint": {
-            "name": "Wall thermostat after hand-back (°C)"
-          },
-          "wall_thermostat_warning": {
-            "name": "Wall thermostat warning",
-            "state": {
-              "not_mapped": "Not known: map the wall thermostat's setpoint",
-              "unknown": "The wall thermostat reports no setpoint",
-              "low": "Below 15 °C: the house cools after a hand-back"
-            }
-          },
-          "confirmation": {
-            "name": "Confirmation",
-            "state": {
-              "controlled_without_confirmation": "Controlled without confirmation",
-              "without_heat_confirmation": "Controlled without confirmation that the boiler heats"
-            }
-          },
-          "blocked_by": {
-            "name": "Blocked by",
-            "state": {
-              "boiler_link_lost": "Boiler link lost: control waits until it has been back for a minute"
-            }
-          },
-          "verdict": {
-            "name": "Verdict",
-            "state": {
-              "worth_it": "Worth enabling",
-              "not_worth_it": "Not worth enabling: control may still be switched on",
-              "not_enough_data": "Not enough data: control may start without a verdict"
-            }
-          },
-          "blockers": {
-            "name": "Blockers",
-            "state": {
-              "no_write_path": "Control is not set up",
-              "boiler_class_no_control": "The boiler's connection cannot be controlled",
-              "path_not_for_boiler_class": "The write path does not suit the boiler's connection",
-              "no_setpoint_entity": "No setpoint entity picked",
-              "write_type_not_supported": "The setpoint entity's write type cannot be used",
-              "no_hand_back": "No hand-back chosen",
-              "timeout_needs_expiring_writes": "The timeout hand-back needs expiring writes",
-              "no_gateway": "No OpenTherm Gateway ID",
-              "no_mqtt_topic": "No MQTT topic prefix or node name",
-              "mqtt_topic_invalid": "An MQTT topic prefix or node name with a space or a wildcard (+ or #)",
-              "no_confirmed_setpoint": "No setpoint read-back picked",
-              "thermostat_setpoint_same_as_read_back": "The thermostat's own setpoint is the setpoint read-back",
-              "no_topology": "The gateway's connection is not declared",
-              "curve_not_entered": "The heating curve is not entered",
-              "one_direct_circuit_only": "At most one circuit fed straight from the boiler and none the boiler mixes can be controlled",
-              "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
-              "no_zones": "No Versatile Thermostat zone",
-              "count_threshold_above_zones": "The demand threshold asks for more zones than there are",
-              "off_setpoint_not_below_hard_min": "\"Off\" is not below the lowest water temperature",
-              "hand_back_switch_not_writable": "The external control switch's write type cannot be used",
-              "hand_back_value_above_max": "The hand-back value is above a maximum",
-              "off_setpoint_near_hand_back_value": "\"Off\" is too close to the hand-back value",
-              "hand_back_switch_is_heating_switch": "The external control switch also serves another role",
-              "entity_for_two_signals": "One entity feeds two signals",
-              "topology_not_for_path": "The gateway's connection does not suit the write path",
-              "design_flow_too_low": "The design flow temperature is too low",
-              "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature",
-              "design_outdoor_too_warm": "The outdoor temperature at the hardest frost is too warm",
-              "hard_min_not_below_design_flow": "The lowest water temperature is not below the design flow temperature",
-              "hard_min_above_max": "The lowest water temperature is above a maximum",
-              "no_heating_switch": "No heating switch the plugin may use",
-              "thermostat_on_off": "An on/off contact on the gateway's thermostat terminals",
-              "thermostat_kind_unknown": "Not answered: what is wired to the gateway's thermostat terminals",
-              "thermostat_kind_dont_know": "\"I don't know\" answered: what is wired to the gateway's thermostat terminals",
-              "thermostat_kind_contradicts_topology": "The answer on the thermostat terminals does not fit the gateway's connection",
-              "no_flame_signal": "No flame signal",
-              "no_flow_signal": "No flow temperature signal",
-              "no_relay_entity": "No relay picked",
-              "relay_domain_not_supported": "The relay is neither a switch nor a boiler thermostat entity",
-              "relay_in_another_role": "The relay also serves another role",
-              "relay_contact_not_confirmed": "Not confirmed that the relay is a separate contact",
-              "ha_starting": "Home Assistant is starting",
-              "vt_central_boiler_active": "Versatile Thermostat's own central boiler is configured or may have run since Home Assistant started: then one restart of Home Assistant clears this",
-              "vt_central_boiler_unknown": "Versatile Thermostat's central boiler cannot be ruled out yet",
-              "setpoint_outside_entity_range": "The setpoint entity does not take every value control may write",
-              "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit",
-              "setpoint_step_too_coarse": "The setpoint entity's step is too coarse",
-              "control_error": "Stopped after an internal error: switch control off and on",
-              "monitor_failed": "The plugin's monitor keeps failing",
-              "control_state_not_saved": "The plugin cannot save its memory of the boiler",
-              "heating_off_ignored": "The boiler did not take \"heating off\": switch control off and on",
-              "heating_on_ignored": "The boiler did not take \"heating on\": switch control off and on",
-              "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
-              "gateway_not_set_up": "The gateway's integration is removed or disabled",
-              "mqtt_not_set_up": "The MQTT integration is removed or disabled",
-              "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
-              "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
-              "relay_used_by_zone": "A zone already switches the relay",
-              "entity_used_by_zone": "A zone already drives the setpoint entity or a switch",
-              "relay_of_boiler_interface": "The relay belongs to the boiler's or VT's own integration",
-              "relay_climate_modes": "The thermostat entity cannot be set to both heat and off",
-              "control_mode_monitor": "Monitoring only chosen",
-              "connection_not_for_path": "The control set up does not fit the boiler's connection",
-              "topology_not_for_connection": "The topology does not fit the boiler's connection",
-              "esphome_start_not_confirmed": "The ESP's safe start not confirmed"
-            }
-          },
-          "blockers_text": {
-            "name": "Blockers (text)"
-          },
-          "blocked_by_text": {
-            "name": "Blocked by (text)"
-          },
-          "allowed_services": {
-            "name": "Services control may call"
-          },
-          "experimental": {
-            "name": "Experimental"
-          }
-        }
       }
     },
     "button": {
@@ -3217,7 +3217,7 @@
     },
     "control_stopped_heating": {
       "title": "Control stopped and the boiler does not heat",
-      "description": "Control handed the boiler back because something now blocks it (the control switch lists what). With this installation a hand-back stops heating: the boiler heats again when control resumes once the blocker is gone, or when you return it to its own control. Frost protection now rests on the boiler's own, if it has one."
+      "description": "Control handed the boiler back because something now blocks it (the Control state lists what). With this installation a hand-back stops heating: the boiler heats again when control resumes once the blocker is gone, or when you return it to its own control. Frost protection now rests on the boiler's own, if it has one."
     },
     "control_latched": {
       "title": "Control stepped aside: another controller writes to the boiler",

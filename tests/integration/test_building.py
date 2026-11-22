@@ -203,7 +203,7 @@ async def test_reset_buttons_forget_measured_values_and_refit_from_new_days_only
     await rig.advance(30)
     assert 0.0 not in rig.gateway.setpoints()[count:]
     assert rig.state("sensor", "control_state").state == "heating"
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
 
     # Twenty days after the resets, of the house insulated since: 0.2 kW/K up to 16 °C.
     await rig.switch(False)
@@ -412,20 +412,22 @@ async def test_the_switch_says_control_starts_without_a_verdict(rig: Rig) -> Non
     await setup(hass, entry)
     await hass.async_block_till_done(wait_background_tasks=True)
     rig.entry = entry
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["verdict"] == "not_enough_data"
     assert switch.attributes["blockers"] == []
     await rig.switch(True)
     await rig.advance(30)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert rig.state("sensor", "control_state").state == "heating"  # without a verdict
     for source in (SOURCE_EN, SOURCE_PL):
-        states = source["entity"]["switch"]["control"]["state_attributes"]["verdict"]["state"]
+        states = source["entity"]["binary_sensor"]["control"]["state_attributes"]["verdict"][
+            "state"
+        ]
         assert set(states) == {"worth_it", "not_worth_it", "not_enough_data"}
     assert (
         "without a verdict"
         in (
-            SOURCE_EN["entity"]["switch"]["control"]["state_attributes"]["verdict"]["state"][
+            SOURCE_EN["entity"]["binary_sensor"]["control"]["state_attributes"]["verdict"]["state"][
                 "not_enough_data"
             ]
         )
@@ -452,4 +454,4 @@ async def test_without_a_flame_signal_the_verdict_names_it(rig: Rig) -> None:
     verdict = rig.state("sensor", "verdict")
     assert verdict.state == "not_enough_data"
     assert [r["code"] for r in verdict.attributes["reasons"]] == ["no_burner_signal"]
-    assert rig.state("switch", "control").attributes["verdict"] == "not_enough_data"
+    assert rig.state("binary_sensor", "control").attributes["verdict"] == "not_enough_data"

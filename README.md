@@ -53,8 +53,9 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
 - **A Boiler page in the sidebar, and cards.** The boiler at a glance — its status, the
   installation drawn from your settings with each room, the heating curve with where it is now,
   the last 24 h to replay — plus the burner, gas use, analyses, a journal of what the plugin
-  decided and why, and the alarms. Nothing else to install; an administrator can switch control
-  and change the curve there, after confirming.
+  decided and why, and the alarms. Nothing else to install; an administrator can change the
+  curve there, after confirming. Control is switched in the plugin's settings, by an
+  administrator, and by automations.
 - Every option has a cautious default and a text that says what it does and what it risks.
 
 # Use cases

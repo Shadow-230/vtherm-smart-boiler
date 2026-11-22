@@ -130,6 +130,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         await coordinator.async_load_texts()  # the coded lists' texts (P-39)
         forwarded = True  # before: a forward that fails part-way leaves platforms set up
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        if coordinator.control is not None:
+            # I11.3: the wish the control store kept comes back at once, where the control
+            # switch gave it back when added (P-11); with none stored, control is off.
+            await coordinator.control.async_restore_enabled(coordinator.control.stored_wish is True)
         feature_manager.async_attach(hass, coordinator)
         entry.async_on_unload(entry.add_update_listener(_async_options_updated))
         # The journal (I10.6) follows from here: the start, then each change.
