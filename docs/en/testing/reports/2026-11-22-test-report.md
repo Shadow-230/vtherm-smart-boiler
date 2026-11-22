@@ -16,9 +16,12 @@ section 5, the findings F15–F20 and L12–L14 in section 7.
   days. Then we tested the new Boiler page from `dev`.
 - **Almost everything works.** 79 test runs: 70 passed straight away, and one more passed when
   repeated. The failures that remain are explained below; most of them come from our own test
-  tools, not from the plugin.
-- **The plugin does not make the boiler start more often than the boiler's own controls**, as long
-  as Versatile Thermostat's cycle is 15 minutes, the cycle the plugin advises. The rooms stay just
+  tools, not from the plugin. One stays unexplained: a test of the comfort correction failed once
+  and passed when repeated; a check without Home Assistant is proposed.
+- **With Versatile Thermostat's cycle at 15 minutes, the cycle the plugin advises, the plugin keeps
+  the boiler's starts within the limit.** At +8 °C the boiler starts as often as on its own; at
+  −5 °C about a quarter more often (2.0 against 1.7 starts an hour), within the limit of 6 an hour
+  with burns of at least 10 minutes. The rooms stay just
   as warm. With VT's default 5-minute cycle the boiler starts more often, as expected, and the
   plugin now warns about that cycle.
 - **Four faults in the plugin**, none of which loses control of the boiler or leaves it unsafe:
@@ -41,11 +44,11 @@ section 5, the findings F15–F20 and L12–L14 in section 7.
   - a boiler driven through its own entities;
   - a gateway with nothing on the thermostat terminals.
 
-  On each path we checked handing the boiler back safely, restarts, lost signals, other
-  controllers, faults, hot water, frost, US units and the wall thermostat's own program.
+  On the gateway path we checked handing the boiler back safely, restarts, lost signals, other
+  controllers, faults, hot water, frost, US units and the wall thermostat's own program; on the
+  other paths, the checks that apply to them.
 - **The starts criterion.** For a full day, the plugin's control and the boiler's own controls ran
-  side by side, at +8 °C and at −5 °C outside, first with a 15-minute and then with a 5-minute VT
-  cycle.
+  side by side, at +8 °C and at −5 °C outside, with a 15-minute and with a 5-minute VT cycle.
 - **The new Boiler page (step I10.10).** We tested the page and its four cards in the browser:
   - as an administrator and as an ordinary user;
   - in Polish and English;
@@ -60,7 +63,7 @@ section 5, the findings F15–F20 and L12–L14 in section 7.
 | Handing the boiler back safely (switching off, reloads, restarts, a killed Home Assistant) | works |
 | Lost signals, a lost gateway, other controllers, the boiler's faults | works |
 | Hot water, frost protection, floor heating limits, US units | works |
-| The wall thermostat's own program at 6:00 | works |
+| The wall thermostat's own program at 06:00 UTC (07:00 in Poland) | works |
 | The relay (timers, restarts, lost Wi-Fi, start delay) | works; two tests failed only because of our test tool |
 | The boiler's own entities, a stand-alone gateway | works |
 | The starts criterion, 15-minute VT cycle | **passed** at +8 °C (as many starts as the boiler alone) and at −5 °C (about 2 starts an hour, burns of about 12 minutes) |
@@ -75,13 +78,15 @@ section 5, the findings F15–F20 and L12–L14 in section 7.
 ## The faults, in simple words
 
 1. **No "water too cool" advice when the boiler runs at its minimum.** With a curve set too low,
-   the boiler burnt for more than four hours at its minimum, and two rooms stayed cold. The water
+   the boiler burnt at its minimum for more than four hours with short breaks (the last 2.7 hours
+   without one), and two rooms stayed cold. The water
    came out a little warmer than the plugin asked, because the boiler could not go lower. The
    plugin only gives the advice when the water matches its setting closely, so it stayed silent.
    The fix is small.
 2. **Saving the curve from the page resets the radiators' exponent.** We moved the curve's point
    by 1 °C, and the saved exponent (1.0) quietly went back to the default (1.3). The water then
-   rose by about 2.3 °C instead of 1, and the confirmation window did not mention it.
+   rose by 2.3 °C (47.9 to 50.2 °C), where the change asked for adds well under 1 °C at that
+   outdoor temperature, and the confirmation window did not mention it.
 3. **After saving from the page, the page closes.** The save works, but while the plugin reloads,
    the page is removed for a moment and the browser jumps to the main dashboard, so the user does
    not see the result. The same happens whenever the plugin reloads with the page open.
@@ -99,9 +104,10 @@ There are also small display issues:
 
 Several failures came from the test scenarios, not from the plugin:
 - One test waited for the boiler to burn long enough, and it never did.
-- Two relay tests restarted the relay before it was switched on.
+- Two relay tests restarted the relay after a short VT pulse, before it stayed on.
 - One test assumed SmartPI had finished learning, on an installation one minute old.
-- One test is shorter than the 3 hours the warning it checks needs.
+- One test ends about an hour after the comfort correction reaches its limit, but the warning it
+  checks needs 3 hours at the limit.
 - The 12-hour test at −2 °C expects warmer rooms than the default curve gives.
 
 The development session will fix the tools.
