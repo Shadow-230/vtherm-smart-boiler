@@ -3124,6 +3124,12 @@
     },
     "blocked_esphome_start_not_confirmed": {
       "message": "Not confirmed that the ESP starts at safe values with a short API reboot_timeout: it would keep the last setpoint and heating for up to 15 minutes if Home Assistant stopped. Tick it in Control device once the ESP is set so. Other reasons: {count} (all are listed on the control state)."
+    },
+    "control_in_settings": {
+      "message": "Control is switched in the plugin's settings, by an administrator: Control mode, Control on. This action is for automations."
+    },
+    "control_not_running": {
+      "message": "The plugin does not control a boiler now: control is not set up, or the plugin is not running."
     }
   },
   "issues": {
@@ -3448,6 +3454,18 @@
     "boiler_power_limit": {
       "title": "The boiler is at its power limit for {zones}",
       "description": "For three hours the burner has run without a break while {zones} stays short, and the water stays over a kelvin below the setpoint at 90 % modulation or more: the boiler cannot give more. Check that it is set to its full heating power, and whether the house loses more heat than the boiler was sized for. Control changes nothing."
+    }
+  },
+  "services": {
+    "set_control": {
+      "name": "Set control",
+      "description": "Switches control on or off, for automations. A person switches control in the plugin's settings (Control mode, Control on); called by a person, this action is refused.",
+      "fields": {
+        "enabled": {
+          "name": "On",
+          "description": "On: control on, refused while something that needs you blocks it. Off: the boiler is handed back at once."
+        }
+      }
     }
   }
 }

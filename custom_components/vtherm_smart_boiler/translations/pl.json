@@ -3124,6 +3124,12 @@
     },
     "blocked_esphome_start_not_confirmed": {
       "message": "Nie potwierdzono, że ESP startuje na bezpiecznych wartościach z krótkim reboot_timeout API: po zatrzymaniu Home Assistant trzymałby ostatnią nastawę i grzanie do 15 minut. Zaznacz to w Urządzeniu sterującym, gdy ESP jest tak ustawiony. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "control_in_settings": {
+      "message": "Sterowanie przełącza administrator w ustawieniach wtyczki: Tryb sterowania, Sterowanie włączone. Ta akcja jest dla automatyzacji."
+    },
+    "control_not_running": {
+      "message": "Wtyczka nie steruje teraz kotłem: sterowanie nie jest ustawione albo wtyczka nie działa."
     }
   },
   "issues": {
@@ -3448,6 +3454,18 @@
     "boiler_power_limit": {
       "title": "Kocioł jest na granicy mocy dla: {zones}",
       "description": "Od trzech godzin palnik pracuje bez przerwy, {zones} nie dochodzi do nastawy, a woda jest ponad kelwin poniżej nastawy przy modulacji 90 % lub więcej: kocioł nie da więcej. Sprawdź, czy jest ustawiony na pełną moc grzewczą i czy dom nie traci więcej ciepła, niż kocioł przewidziano. Sterowanie niczego nie zmienia."
+    }
+  },
+  "services": {
+    "set_control": {
+      "name": "Ustaw sterowanie",
+      "description": "Włącza albo wyłącza sterowanie, dla automatyzacji. Osoba przełącza sterowanie w ustawieniach wtyczki (Tryb sterowania, Sterowanie włączone); wywołana przez osobę, ta akcja jest odrzucana.",
+      "fields": {
+        "enabled": {
+          "name": "Włączone",
+          "description": "Włączone: sterowanie włączone, odrzucone, gdy blokuje je coś, co wymaga twojej uwagi. Wyłączone: kocioł zostaje od razu oddany."
+        }
+      }
     }
   }
 }

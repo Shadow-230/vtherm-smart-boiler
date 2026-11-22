@@ -132,7 +132,10 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    włączone**, potem **Zapisz i zakończ** — od pierwszego dnia albo później. Opcje otwiera tylko
    administrator. Jeśli czegoś brakuje, okno mówi czego, nic się nie zmienia, a monitor dalej
    działa. Odznacz, żeby wyłączyć sterowanie: kocioł zostaje od razu oddany. Dopóki go nie
-   włączysz, wtyczka nic nie zapisuje do kotła. (Przełącznik **Sterowanie (eksperymentalne)** na
+   włączysz, wtyczka nic nie zapisuje do kotła. Automatyzacja przełącza sterowanie akcją
+   `vtherm_smart_boiler.set_control` (`enabled`: włączone albo wyłączone), z tymi samymi
+   sprawdzeniami; wywołana przez osobę — z pulpitu, uruchomionego przez nią skryptu, narzędzi
+   deweloperskich — jest odrzucana. (Przełącznik **Sterowanie (eksperymentalne)** na
    urządzeniu integracji też je jeszcze przełącza, dopóki nie stanie się samym pokazaniem stanu.)
 
 **Późniejsze zmiany ustawień.** Opcje integracji otwierają to samo menu, z **Zapisz i zakończ**

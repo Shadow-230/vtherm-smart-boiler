@@ -183,3 +183,93 @@ async def test_only_an_administrator_reaches_the_tick(
         headers={"Authorization": f"Bearer {hass_read_only_access_token}"},
     )
     assert reply.status == 401
+
+
+# --- I11.2: the action for automations -----------------------------------------------------
+
+
+async def set_control(rig: Rig, enabled: bool, user_id: str | None = None) -> None:
+    """The action as an automation calls it (no user), or as a person does (``user_id``)."""
+    from homeassistant.core import Context
+
+    await rig.hass.services.async_call(
+        "vtherm_smart_boiler",
+        "set_control",
+        {"enabled": enabled},
+        blocking=True,
+        context=Context(user_id=user_id),
+    )
+
+
+async def test_an_automation_switches_control_on_and_off(rig: Rig) -> None:
+    await started(rig)
+    await set_control(rig, True)
+    assert control_on(rig)
+    await rig.advance(60)
+    assert ("setpoint", EXPECTED) in rig.gateway.calls
+    await set_control(rig, False)
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    assert not control_on(rig)
+
+
+async def test_a_person_calling_the_action_is_sent_to_the_settings(
+    rig: Rig, hass_admin_user: Any
+) -> None:
+    """The user's decision of 2026-11-22: control is switched in the settings — an
+    administrator too is refused here, from a dashboard, a script or the developer tools."""
+    from homeassistant.exceptions import ServiceValidationError
+
+    await started(rig)
+    with pytest.raises(ServiceValidationError) as raised:
+        await set_control(rig, True, user_id=hass_admin_user.id)
+    assert raised.value.translation_key == "control_in_settings"
+    assert not control_on(rig)
+
+
+async def test_the_action_refuses_on_as_the_settings_do(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from homeassistant.exceptions import ServiceValidationError
+
+    await started(rig)
+    assert rig.entry is not None
+    unit = rig.entry.runtime_data.control
+    monkeypatch.setattr(unit, "blockers", lambda _now: ("thermostat_kind_unknown",))
+    with pytest.raises(ServiceValidationError) as raised:
+        await set_control(rig, True)
+    assert raised.value.translation_key == "blocked_thermostat_kind_unknown"
+    assert raised.value.translation_placeholders == {"count": "0"}
+    assert not control_on(rig)
+
+
+async def test_the_action_says_when_the_boiler_did_not_take_the_hand_back(rig: Rig) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    await started(rig)
+    await set_control(rig, True)
+    await rig.advance(20)
+    rig.gateway.connected = False
+    rig.live()
+    with pytest.raises(HomeAssistantError) as raised:
+        await set_control(rig, False)
+    assert raised.value.translation_key == "hand_back_failed"
+    assert not control_on(rig)
+
+
+async def test_the_action_goes_with_the_entry(hass: HomeAssistant) -> None:
+    """Registered while the entry runs; without control it says so."""
+    from homeassistant.core import Context
+    from homeassistant.exceptions import ServiceValidationError
+
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            "vtherm_smart_boiler", "set_control", {"enabled": True}, blocking=True,
+            context=Context(),
+        )  # fmt: skip
+    assert raised.value.translation_key == "control_not_running"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert not hass.services.has_service("vtherm_smart_boiler", "set_control")

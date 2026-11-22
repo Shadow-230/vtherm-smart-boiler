@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 
 PLATFORMS = ("sensor", "binary_sensor", "switch", "button")
+# I11.2: the action an automation switches control with (the user's decisions of 2026-11-22).
+SET_CONTROL = "set_control"
 # The notice asking what is wired to the gateway's thermostat terminals (answer K, X6).
 KIND_ISSUE = "thermostat_kind_missing"
 # An entity the options name that Home Assistant removed: one repair issue per entity (P-19).
@@ -132,6 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         entry.async_on_unload(entry.add_update_listener(_async_options_updated))
         # The journal (I10.6) follows from here: the start, then each change.
         entry.async_on_unload(coordinator.journal.async_follow(coordinator))
+        _register_set_control(hass, entry)
         coordinator.async_start_background()
         # Renames and removals are followed only for an entry that runs (P-19).
         entry.async_on_unload(_follow_entities(hass, entry, coordinator, registered))
@@ -151,6 +154,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         await _async_setup_failed(hass, entry, coordinator, forwarded=forwarded)
         raise
     return True
+
+
+def _register_set_control(hass: HomeAssistant, entry: SmartBoilerConfigEntry) -> None:
+    """I11.2: the action an automation switches control with, while the entry runs — with the
+    checks the settings make (on refused while a blocker that needs the user remains, off with
+    the safe hand-back). A person calling it — from a dashboard, a script they start, the
+    developer tools — is sent to the settings, where an administrator switches control (the
+    user's decisions of 2026-11-22): only an automation's call carries no user."""
+    import probatio as vol
+    from homeassistant.core import ServiceCall
+    from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+    from homeassistant.helpers import config_validation as cv
+    from homeassistant.util import dt as dt_util
+
+    async def set_control(call: ServiceCall) -> None:
+        if call.context.user_id is not None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="control_in_settings"
+            )
+        coordinator = getattr(entry, "runtime_data", None)
+        unit = None if coordinator is None else coordinator.control
+        if unit is None or unit.hand_back_only:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="control_not_running"
+            )
+        if call.data["enabled"]:
+            refused = unit.blockers_for_on(dt_util.utcnow().timestamp())
+            if refused:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key=f"blocked_{refused[0]}",
+                    translation_placeholders={"count": str(len(refused) - 1)},
+                )
+            await unit.async_set_enabled(True)
+        elif not await unit.async_set_enabled(False):
+            # PB-39: control is off, but the boiler did not take the hand-back.
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="hand_back_failed")
+
+    hass.services.async_register(
+        DOMAIN, SET_CONTROL, set_control, schema=vol.Schema({vol.Required("enabled"): cv.boolean})
+    )
+    entry.async_on_unload(lambda: hass.services.async_remove(DOMAIN, SET_CONTROL))
 
 
 async def _async_options_error_text(hass: HomeAssistant, code: str) -> str:
