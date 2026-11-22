@@ -472,6 +472,17 @@ doradza tych ustawień. Gdy ciepła woda albo duża zmiana temperatury wody zabu
 wtyczka wstrzymuje uczenie SmartPI (domyślnie włączone), żeby wywołane przez nią wahania nie
 trafiły do modelu SmartPI.
 
+**Gdy czujnik milczy.** VT przełącza strefę w tryb bezpieczny, gdy przez czas opóźnienia
+bezpieczeństwa, domyślnie 60 minut, nie dostaje nowej wartości z czujnika pokojowego albo
+zewnętrznego, a strefa chce grzać przez co najmniej połowę czasu. Strefa grzeje wtedy tylko przez
+10% czasu, aż przyjdzie nowa wartość (to domyślne ustawienia VT). Sprawny czujnik, który wysyła
+tylko zmiany, może milczeć tak długo, gdy temperatura się nie zmienia. Jeśli strefa z tego powodu
+często wchodzi w tryb bezpieczny, ustaw dłuższe opóźnienie bezpieczeństwa w ustawieniach
+zaawansowanych tej strefy w VT albo wskaż VT atrybut `last_seen` czujnika, jeśli go ma. Przy
+dłuższym opóźnieniu czujnik, który naprawdę się zepsuł, zostanie zauważony później. Wtyczka nie
+zmienia tego ustawienia. Nadal liczy wezwanie strefy na ciepło, nie opiera się na jej temperaturze
+i podaje ją w atrybucie `room_sensor_lost_zones` encji **Stan sterowania**.
+
 ### 4.12 Strona „Kocioł” i karty
 
 Wtyczka dodaje stronę **Kocioł** do menu bocznego Home Assistanta, dla każdego użytkownika;

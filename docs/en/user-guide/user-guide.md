@@ -448,6 +448,16 @@ gives no advice on these settings. While hot water or a large change of the wate
 disturbs the rooms, the plugin pauses SmartPI's learning (on by default), so the swings it causes
 stay out of SmartPI's model.
 
+**When a sensor goes quiet.** VT puts a zone into its safety mode when it gets no new value from
+the room or outdoor sensor for its safety delay, 60 minutes by default, while the zone wants at
+least half of the heating time. The zone then heats for only 10% of the time until a new value
+arrives (VT's defaults). A healthy sensor that sends only changes can stay quiet that long when
+the temperature is steady. If a zone keeps going into safety mode for this reason, set a longer
+safety delay in that zone's advanced settings in VT, or give VT the sensor's `last_seen`
+attribute, if it has one. With a longer delay, a sensor that really failed is noticed later. The
+plugin does not change this setting. It keeps counting the zone's call for heat, does not rely on
+its temperature, and lists it in the attribute `room_sensor_lost_zones` of **Control state**.
+
 ### 4.12 The Boiler page and cards
 
 The plugin adds a page **Boiler** to Home Assistant's sidebar, for every user; the switch **Page
