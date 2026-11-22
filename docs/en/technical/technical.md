@@ -307,8 +307,10 @@ circuit's need holding the water, an alarm raised (or its level raised) and clea
 settings save, from the page (naming what it changed) or from the settings (naming the sections
 that changed); each with the reasons control gave. It only watches — it listens to control's
 state and the monitor's updates and changes nothing; a failure in it is logged once. The first
-look after a start sets the baseline: the start is journaled, not what was already so; an alarm
-that cannot be judged stays as it was. Kept 14 days and 2,000 entries at most, the oldest dropped
+look after a start journals control taking the boiler again — a restart's or a reload's
+takeover, with the heat call, the water and a circuit's need — and the stop journals the stop's
+own hand-back, made by control just before, unless it is still owed (J4's F18); the alarms
+already raised are the start's baseline; an alarm that cannot be judged stays as it was. Kept 14 days and 2,000 entries at most, the oldest dropped
 first (provisional, K4); written a minute after a change, at once when the entry unloads, and by
 Home Assistant at its stop; a store that cannot be read starts an empty journal. It goes with
 the entry's other stores when the entry is removed.

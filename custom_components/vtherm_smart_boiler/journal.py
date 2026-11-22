@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
@@ -96,6 +97,7 @@ class Journal:
         self._failing = False
         # The page's save waiting for the settings' report: when, and what it changed.
         self._page_save: tuple[float, tuple[str, ...]] | None = None
+        self._coordinator: SmartBoilerCoordinator | None = None
 
     @property
     def entries(self) -> tuple[Entry, ...]:
@@ -116,6 +118,7 @@ class Journal:
     def async_follow(self, coordinator: SmartBoilerCoordinator) -> CALLBACK_TYPE:
         """Journal the start, then every change of the monitor's data and control's state, and
         the stop of Home Assistant; returns what stops following."""
+        self._coordinator = coordinator
         self._add([Entry(self._now(), Kind.STARTED)])
 
         @callback
@@ -132,7 +135,7 @@ class Journal:
 
         @callback
         def stopping(_event: Event) -> None:
-            self._add([Entry(self._now(), Kind.STOPPED)])
+            self._add([*self._handed_back_at_stop(), Entry(self._now(), Kind.STOPPED)])
 
         unsubs = [
             coordinator.async_add_listener(look),
@@ -168,8 +171,21 @@ class Journal:
 
     async def async_stop(self) -> None:
         """The entry unloads: the stop is journaled and everything written at once."""
-        self._add([Entry(self._now(), Kind.STOPPED)], save=False)
+        self._add([*self._handed_back_at_stop(), Entry(self._now(), Kind.STOPPED)], save=False)
         await self._store.async_save(self._stored())
+
+    def _handed_back_at_stop(self) -> list[Entry]:
+        """The stop's own hand-back — an unload, a reload, Home Assistant stopping — which
+        control makes before the stop is journaled, without a look of its own: journaled when
+        the last look saw control holding the boiler and nothing is owed (J4 I10.10, F18). One
+        still owed is not said to be made; its repair issue tells."""
+        last = self._state.last
+        coordinator = self._coordinator
+        control = None if coordinator is None else coordinator.control
+        if last is None or not last.controlling or control is None or control.hand_back_owed:
+            return []
+        self._state = JournalState(replace(last, controlling=False), None)
+        return [Entry(self._now(), Kind.HANDED_BACK)]
 
     def _add(self, entries: Iterable[Entry], *, save: bool = True) -> None:
         added = list(entries)
