@@ -291,7 +291,7 @@ async def R8(r: Run):
         r.check(True, f"refused where it is entered: {d['errors']}")
     else:
         t = time.time()
-        res = await r.switch(True)
+        res = await r.switch(True, refusal_ok=True)
         await r.ha.wait(60)
         r.check(
             await r.s("control") == "off" and relay_cmds(r, t) == [],
@@ -953,7 +953,7 @@ async def N3(r: Run):
             r.check(True, f"{write_type}: refused where it is entered: {d['errors']}")
             continue
         t = time.time()
-        res = await r.switch(True)
+        res = await r.switch(True, refusal_ok=True)
         await r.ha.wait(60)
         r.check(
             await r.s("control") == "off"
@@ -972,7 +972,7 @@ async def N4(r: Run):
         r.check(True, f"refused where it is entered: {d['errors']}")
     else:
         t = time.time()
-        res = await r.switch(True)
+        res = await r.switch(True, refusal_ok=True)
         await r.ha.wait(60)
         r.check(
             await r.s("control") == "off" and entity_cmds(r, t) == [],

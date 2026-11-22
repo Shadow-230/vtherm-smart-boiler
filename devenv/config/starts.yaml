@@ -66,3 +66,10 @@ automation:
             {% set hour = now().hour + now().minute / 60 %}
             {{ (states('input_number.j4_outdoor_mean') | float(8)
                 + 3 * cos(2 * pi * (hour - 15) / 24)) | round(2) }}
+
+# J4: this configuration's role, read by the runner before every scenario and by base.py
+# (devenv/j4/run.py ROLES): a scenario runs only on an instance of its role.
+input_text:
+  j4_role:
+    name: J4 role
+    initial: starts

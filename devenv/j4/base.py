@@ -12,7 +12,7 @@ import asyncio
 import sys
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from lib import HA
+from lib import HA, ROLE_ENTITY
 from options import BASE_GATEWAY, BASE_STARTS, GATEWAY_ITEMS
 from walk import save_options
 
@@ -28,6 +28,12 @@ async def main(argv: list[str]) -> int:
     if "--correction" in argv[1:]:
         changes["comfort_correction"] = True
     async with HA() as ha:
+        # The base of another role would break this instance's (the test session's review of
+        # 2026-11-22: base.py gateway on the stand-alone gateway set its topology).
+        role = (await ha.state(ROLE_ENTITY) or {}).get("state")
+        if role != name:
+            print(f"this instance's role is {role!r} ({ROLE_ENTITY}): not the {name} base")
+            return 1
         entities = await ha.entities()
         control = await ha.state(entities["control"]) if "control" in entities else None
         if control is not None and control.get("state") == "on":

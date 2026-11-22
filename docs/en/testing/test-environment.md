@@ -187,7 +187,14 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
    10 s before it refuses, as Home Assistant writes a save to disk a few seconds late; a refused
    scenario, or one whose precondition does not hold (Q5 with SmartPI still learning from
    scratch), reads NOT RUN with its reason. B6 restarts the instance's own directory
-   (`TEST_HA_DIR_N`).
+   (`TEST_HA_DIR_N`). Every configuration names its role in `input_text.j4_role` (gateway,
+   relay, entity, standalone, starts): a scenario runs only on an instance of its role, and
+   `base.py` walks only its own role's base. Control is switched through "Control mode",
+   "Control on", strictly: while the entry is not running yet the save is tried again for 30 s,
+   and a refusal fails the scenario unless it expects one (G2, G3, R8, N3, N4, K5). B1, B2, B3
+   and B6 also read the plugin's journal (`vtherm_smart_boiler/journal`): the hand-back before
+   "stopped" and the boiler taken again after "started" — after a kill, no hand-back. E4 and
+   Q1 check the comfort correction's limit written exactly (L12).
    - At the advanced level, the signal "Wired thermostat setpoint"
      `sensor.otgw_sim_thermostat_room_setpoint` (the wall thermostat's own setting, 21 °C 06:00–22:00
      and 17 °C otherwise, UTC).
@@ -227,7 +234,10 @@ replaced or removed as a crash, a lost file or another version leaves them, and 
 sent to the test Home Assistant only and is never part of the plugin's release. Instance 1's
 `configuration.yaml` also holds `input_boolean.j4_circuit_asks`, the switch through which E7's
 circuit run by other automation asks for heat; E7 adds that circuit through "Add circuit" and
-removes it at its end. Their results come
+removes it at its end. Its `input_boolean.j4_set_control` drives the automation "J4 set
+control", which calls `vtherm_smart_boiler.set_control`: I2 switches control through it, and
+checks the same action called with the runner's token — a person's — is refused; I1 ticks
+"Control on" together with another change in "Control mode" (I11). Their results come
 from entity states and the simulator's command counters (attributes of
 `sensor.boiler_sim_persistent_writes`: commands per path, `ch_writes`, `relay_commands`,
 `dhw_enable_writes`; its state counts only writes of type persistent). The starts criterion
