@@ -88,7 +88,10 @@ docs/                                     the documentation, one folder per lang
   (`translations/`), which Home Assistant hands it in the user's language
   (`hass.loadBackendTranslation("entity", …)`), so each is written once. `panel.py` serves the
   files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
-  "Page in the sidebar" takes it away and puts it back. While the entry runs, `panel.py` also
+  "Page in the sidebar" takes it away and puts it back. The page stays through a reload — taken
+  away, it would throw a user on it off with an error; the start registers it again in one step
+  — and goes with the entry disabled or removed, or that switch disabled (J4's F17). While the
+  entry runs, `panel.py` also
   has Home Assistant load the same module on every page (`frontend.add_extra_js_url`, taken
   back at unload, an older address replaced after an update), so the overview's parts are in the
   card picker as four cards — status and tiles, schematic and rooms, the curve, the last 24 h —
