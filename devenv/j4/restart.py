@@ -11,7 +11,7 @@ import traceback
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from lib import CONTAINER, DIR, HA, ssh
-from run import CODE, Run, append_result, base_problem
+from run import CODE, Run, append_result, base_problem, in_order
 
 
 async def wait_running(limit: float = 300) -> float | None:
@@ -47,12 +47,23 @@ async def B3(notes):
     async with HA() as ha:
         r = Run(ha, await ha.entities())
         await ha.wait(60)
-        ok = [held, ("setpoint", 0) in captured, await r.s("control") == "on", await r.override()]
+        kinds = await r.journal(t)
+        # F18 (#182): the stop's own hand-back before "stopped", the boiler taken again after
+        # "started".
+        journaled = in_order(kinds, ["handed_back", "stopped", "started", "took_over"])
+        ok = [
+            held,
+            ("setpoint", 0) in captured,
+            await r.s("control") == "on",
+            await r.override(),
+            journaled,
+        ]
         notes += [
             f"override held before: {held}",
             f"captured before the connection closed: {captured}",
             f"log: {log.strip()[:600]}",
-            f"up again in {up and round(up)} s; switch {await r.s('control')}, state {await r.s('control_state')}, override {await r.override()}",
+            f"up again in {up and round(up)} s; control {await r.s('control')}, state {await r.s('control_state')}, override {await r.override()}",
+            f"journal (F18): {kinds}",
         ]
         await r.reset()
     return all(ok[2:]) and (ok[1] or "hand" in log.lower())
@@ -83,6 +94,10 @@ async def B6(notes):
             f"docker logs --since {since} {CONTAINER} 2>&1 | grep -i 'vtherm_smart_boiler' | grep -i -E 'hand|owed|controll|crash|clean' | head -8"
         )
         sw, state, ovr = await r.s("control"), await r.s("control_state"), await r.override()
+        # F18 (#182): killed, no stop is journaled, nor its hand-back; the start takes the
+        # boiler again.
+        kinds = await r.journal(t)
+        journaled = in_order(kinds, ["started", "took_over"]) and "handed_back" not in kinds
         notes += [
             f"override held before the kill: {held}; kill/start: {out.strip()}",
             f"up again in {up and round(up)} s",
@@ -91,7 +106,8 @@ async def B6(notes):
         ]
         # docs/en/specification/scope.md §7: after a restart without a clean stop a hand-back is pending until
         # control resumes, and the control switch comes back as the user left it — on.
-        ok = held and sw == "on" and ovr and state in ("heating", "idle")
+        notes.append(f"journal (F18): {kinds}")
+        ok = held and sw == "on" and ovr and state in ("heating", "idle") and journaled
         await r.reset()
     return ok
 

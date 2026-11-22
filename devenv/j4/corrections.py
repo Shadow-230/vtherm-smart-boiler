@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from run import SCENARIOS, ZONES, NotRun, Run, main
+from run import SCENARIOS, ZONES, NotRun, Run, check_written_exactly, main
 
 FLAME = "binary_sensor.boiler_sim_flame"
 SMARTPI_ZONE = "climate.zone_bedroom"
@@ -71,6 +71,7 @@ async def Q1(r: Run):
         await r.ha.call("vtherm_smartpi", "reset_smartpi_learning", entity_id=SMARTPI_ZONE)
         for zone, value in ZONES:
             await r.sim("set_room_temperature", zone=zone, temperature=value - 0.2)
+        switched = time.time()
         await r.switch(True)
         await r.ha.wait(300)
         start = await target(r)
@@ -88,6 +89,8 @@ async def Q1(r: Run):
             issue is not None and issue.get("severity") == "warning",
             "the warning at the limit with a room short",
         )
+        if issue is not None and await r.s("alarm_correction_at_limit") == "on":
+            await check_written_exactly(r, switched)
     finally:
         await r.switch(False)
         await r.ha.wait(10)

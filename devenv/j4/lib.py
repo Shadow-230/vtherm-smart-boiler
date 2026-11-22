@@ -37,6 +37,8 @@ CONTAINER = "ha-test" if N == "1" else f"ha-test-{N}"
 # The instance's directory in the test LXC, as scripts/deploy_test.sh uses it (J4 of 2026-11-18:
 # B6 started instance 1's compose whatever the instance).
 DIR = CFG.get("TEST_HA_DIR" + SFX, "")
+# The configuration's role (devenv/config/*.yaml): gateway, relay, entity, standalone, starts.
+ROLE_ENTITY = "input_text.j4_role"
 SIGNALS = (
     "flame",
     "flow",
