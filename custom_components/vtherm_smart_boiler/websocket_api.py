@@ -344,15 +344,19 @@ NOT_AVAILABLE = "not_available"
 
 
 def _form_values(schema: Any) -> dict[str, Any]:
-    """The values a settings form shows: each field's default, which the form fills from the
-    stored options."""
+    """The values a settings form shows, filled from the stored options: each field's default,
+    or, where it has none, its suggested value — the exponent and the fallback setpoint are shown
+    so, and a save without them would drop what is stored (J4 I10.10, F16)."""
     values: dict[str, Any] = {}
     for marker in schema.schema:
+        value: Any = None
         default = getattr(marker, "default", None)
         if callable(default):
             value = default()
-            if value is not vol.UNDEFINED and value is not None and repr(value) != "...":
-                values[str(marker)] = value
+        if value is vol.UNDEFINED or value is None or repr(value) == "...":
+            value = (getattr(marker, "description", None) or {}).get("suggested_value")
+        if value is not None:
+            values[str(marker)] = value
     return values
 
 
