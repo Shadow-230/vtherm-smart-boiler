@@ -34,6 +34,7 @@ the same place under `docs/pl/`.
 | [Code reviews](development/reviews/) | history | no |
 | [Test report of 2026-10-11](testing/reports/2026-10-11-test-report.md) | history | no |
 | [Test report of 2026-10-14](testing/reports/2026-10-14-test-report.md) | history | no |
+| [Test report of 2026-11-22](testing/reports/2026-11-22-test-report.md) | history | no |
 
 **Current** documents change together with the code, in both languages in the same pull
 request. **History** is the record of how the plugin was built. It stays in English only and is

@@ -279,6 +279,41 @@ async def test_a_curve_saved_from_the_page_is_saved_as_the_settings_save_it(
     assert (view["curve"]["design_outdoor"], view["curve"]["design_flow"]) == (-12, 58)
 
 
+async def test_a_curve_saved_from_the_page_keeps_every_other_stored_setting(
+    rig: Rig, hass_ws_client: Any
+) -> None:
+    """J4 I10.10, F16: the form shows the exponent and the fallback setpoint as suggested values,
+    not defaults; the page's save answers with what the form shows, so a stored exponent and
+    fallback setpoint stay as they were — only the asked change is saved."""
+    await start(rig, fallback_setpoint=45.0)
+    entry = rig.entry
+    control = entry.options["control"]
+    rig.hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **entry.options,
+            "level": "advanced",
+            "control": {**control, "curve": {**control["curve"], "exponent": 1.0, "offset": 1.5}},
+        },
+    )
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    before = entry.options["control"]
+    client = await connect(rig.hass, hass_ws_client)
+
+    reply = await client.ask("curve/save", design_flow=56)
+    assert reply["result"] == {"saved": True, "errors": {}}
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    after = entry.options["control"]
+    # The form may add what it fills by default (the curve's room), as the settings' own save.
+    assert {key: after["curve"].get(key) for key in before["curve"]} == {
+        **before["curve"], "design_flow": 56,
+    }  # fmt: skip
+    assert {key: after.get(key) for key in before if key != "curve"} == {
+        key: value for key, value in before.items() if key != "curve"
+    }
+    assert after["fallback_setpoint"] == 45.0
+
+
 async def test_a_curve_the_settings_refuse_is_named_and_nothing_changes(
     rig: Rig, hass_ws_client: Any
 ) -> None:
