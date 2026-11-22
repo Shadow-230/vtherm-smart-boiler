@@ -1,7 +1,8 @@
 """A small async client for one test Home Assistant instance, for J4 (docs/en/development/plans/plan-0.2.md).
 
 Everything about where it goes comes from devenv/local.env (git-ignored): the instance is
-HA_INSTANCE (1 to 5, default 1), its URL TEST_HA_URL[_N] — refused unless it is TEST_HA_HOST on
+HA_INSTANCE (1 to 8, default 1), its directory TEST_HA_DIR[_N], its URL TEST_HA_URL[_N] — refused
+unless it is TEST_HA_HOST on
 port 8122 + N — and its token TEST_HA_TOKEN[_N], or TEST_HA_TOKEN where the instances share the
 first one's login (docs/en/testing/test-environment.md, section 6). It connects to nothing else.
 """
@@ -33,6 +34,9 @@ _parts = urlsplit(URL)
 if (_parts.scheme, _parts.hostname, _parts.port) != ("http", CFG["TEST_HA_HOST"], 8122 + int(N)):
     raise SystemExit(f"{URL} is not test instance {N} on TEST_HA_HOST: refused")
 CONTAINER = "ha-test" if N == "1" else f"ha-test-{N}"
+# The instance's directory in the test LXC, as scripts/deploy_test.sh uses it (J4 of 2026-11-18:
+# B6 started instance 1's compose whatever the instance).
+DIR = CFG.get("TEST_HA_DIR" + SFX, "")
 SIGNALS = (
     "flame",
     "flow",

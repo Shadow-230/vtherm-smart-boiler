@@ -182,7 +182,13 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
    **Krzywa grzewcza** — projektowa temperatura zasilania 55 °C. Program uruchamiający przywraca ten stan
    bazowy po każdym scenariuszu, który go zmienia (`devenv/j4/options.py`, zapisywany pozycja po pozycji
    w menu przez `devenv/j4/walk.py`; `tests/integration/test_j4_walk.py` przeprowadza ten sam stan
-   bazowy przez prawdziwy przepływ opcji).
+   bazowy przez prawdziwy przepływ opcji), także gdy scenariusz stanie w połowie, i włącza z
+   powrotem każdy wpis strefy VT, który scenariusz wyłączył. Przed każdym scenariuszem sprawdza
+   stan bazowy i rolę instancji — topologię bramki, której scenariusz potrzebuje, zapisaną krzywą
+   instancji kryterium startów — i czyta jeszcze raz po 10 s, zanim odmówi, bo Home Assistant
+   zapisuje zmianę na dysk kilka sekund później; scenariusz odrzucony albo taki, którego warunek
+   wstępny nie jest spełniony (Q5, gdy SmartPI dopiero się uczy), ma wynik NOT RUN z powodem. B6
+   restartuje katalog własnej instancji (`TEST_HA_DIR_N`).
    - Na poziomie zaawansowanym sygnał „Nastawa termostatu przewodowego”
      `sensor.otgw_sim_thermostat_room_setpoint` (własne ustawienie termostatu ściennego, 21 °C w godzinach 06:00–22:00
      i 17 °C poza tym czasem, UTC).
