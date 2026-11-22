@@ -4,8 +4,9 @@
 import { LitElement, css, html, nothing } from "lit";
 import { formatNumber, numberOf } from "./format";
 import { localize } from "./localize";
-import { causeBars, weekScale, type WeekUse } from "./use";
+import { homeZone } from "./time";
 import type { HomeAssistant, Installation } from "./types";
+import { causeBars, degreeDaysGap, weekGap, weekScale, type WeekGap, type WeekUse } from "./use";
 
 export const USE_TAG = "vtherm-smart-boiler-use";
 
@@ -83,7 +84,7 @@ export class SmartBoilerUse extends LitElement {
 
   private date(seconds: number): string {
     try {
-      return new Intl.DateTimeFormat(this.language, { day: "numeric", month: "short" }).format(seconds * 1000);
+      return new Intl.DateTimeFormat(this.language, { day: "numeric", month: "short", timeZone: homeZone(this.hass) }).format(seconds * 1000);
     } catch {
       return new Date(seconds * 1000).toISOString().slice(0, 10);
     }
@@ -92,15 +93,18 @@ export class SmartBoilerUse extends LitElement {
   render() {
     if (!this.hass || !this.installation) return nothing;
     const lang = this.language;
-    const tile = (key: string, digits: number) => {
+    const newest = this.weeks?.[this.weeks.length - 1];
+    const tile = (key: string, digits: number, gap: WeekGap | null) => {
       const entity = this.entity(key);
       if (!entity) return nothing;
       const value = numberOf(entity.state);
+      // Why there is no value, once the weeks that tell it are read.
+      const why = value == null && this.weeks && !this.error ? this.t(`use.why.${gap ?? "other"}`) : "";
       const unit = entity.attributes.unit_of_measurement;
       return html`<div class="card tile">
         <div class="tile-label">${this.t(`use.${key}`)}</div>
         <div class="tile-value">${value == null ? "—" : formatNumber(value, lang, digits)}${value != null && typeof unit === "string" ? html` <span class="unit">${unit}</span>` : nothing}</div>
-        <div class="muted small">${this.t(`use.${key}_detail`)}</div>
+        <div class="muted small">${why || this.t(`use.${key}_detail`)}</div>
       </div>`;
     };
     const perDegreeDay = this.entity("gas_per_degree_day");
@@ -115,7 +119,7 @@ export class SmartBoilerUse extends LitElement {
     const reportUnit = typeof attributes.unit === "string" ? attributes.unit : "";
     const percent = numberOf(report?.state);
     return html`
-      <section class="tiles">${tile("gas_per_degree_day", 2)}${tile("degree_days", 0)}</section>
+      <section class="tiles">${tile("gas_per_degree_day", 2, weekGap(newest))}${tile("degree_days", 0, degreeDaysGap(newest))}</section>
       <div class="row">
         <section class="card wide">
           <h3>${this.t("use.weeks")}</h3>
@@ -124,6 +128,8 @@ export class SmartBoilerUse extends LitElement {
             ? html`<p class="error" role="alert">${this.error}</p>`
             : !weeks.length
               ? html`<p class="muted">${this.t("use.weeks_none")}</p>`
+              : !weeks.some((w) => w.per_degree_day != null)
+                ? html`<p class="muted why">${this.t(`use.why.${weekGap(newest) ?? "other"}`)}</p>`
               : html`
                   <div class="bars" role="img" aria-label=${weeks.map((w) => this.weekText(w, unit)).join("; ")}>
                     ${weeks.map((w, i) => {
@@ -189,7 +195,7 @@ export class SmartBoilerUse extends LitElement {
   private weekText(week: WeekUse, unit: string): string {
     const date = this.date(week.start);
     return week.per_degree_day == null
-      ? this.t("use.week_none", { date })
+      ? this.t("use.week_none", { date, why: this.t(`use.why.${weekGap(week) ?? "other"}`) })
       : this.t("use.week", { date, value: `${formatNumber(week.per_degree_day, this.language, 2)} ${unit}`.trim() });
   }
 
@@ -210,6 +216,9 @@ export class SmartBoilerUse extends LitElement {
       padding: 16px;
       box-sizing: border-box;
       min-width: 0;
+    }
+    .why::first-letter {
+      text-transform: uppercase;
     }
     .tiles {
       display: grid;

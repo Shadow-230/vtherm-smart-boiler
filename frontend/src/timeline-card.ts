@@ -5,6 +5,7 @@
 import { LitElement, css, html, nothing, svg } from "lit";
 import { formatTemperature } from "./format";
 import { localize } from "./localize";
+import { profileZone } from "./time";
 import {
   clock,
   hourTicks,
@@ -133,7 +134,7 @@ export class SmartBoilerTimeline extends LitElement {
           <div class="muted small">${this.t(this.alone ? "timeline.hint_alone" : "timeline.hint")}</div>
         </div>
         <div class="controls">
-          <span class="time">${this.at == null ? "" : clock(this.at, lang)}</span>
+          <span class="time">${this.at == null ? "" : clock(this.at, lang, profileZone(this.hass))}</span>
           <button
             class="play"
             aria-label=${this.playing ? this.t("timeline.pause") : this.t("timeline.play")}
@@ -233,14 +234,14 @@ export class SmartBoilerTimeline extends LitElement {
             step="1"
             .value=${String(this.stepOf(this.at))}
             aria-label=${this.t("timeline.slider")}
-            aria-valuetext=${this.at == null ? this.t("timeline.now") : clock(this.at, lang)}
+            aria-valuetext=${this.at == null ? this.t("timeline.now") : clock(this.at, lang, profileZone(this.hass))}
             @input=${(e: Event) => {
               this.stop();
               this.emit(this.timeOf(Number((e.target as HTMLInputElement).value)));
             }}
           />
           <div class="xaxis" aria-hidden="true">
-            ${hourTicks(from, to, this.offsetWidth < 560 ? 8 : 4, lang).map(
+            ${hourTicks(from, to, this.offsetWidth < 560 ? 8 : 4, lang, profileZone(this.hass)).map(
               (tick) => html`<span style="left: ${share(tick.t)}">${tick.label}</span>`,
             )}
           </div>

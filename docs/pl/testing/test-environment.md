@@ -249,7 +249,8 @@ Jej `input_boolean.j4_set_control` steruje automatyzacją „J4 set control”, 
 `vtherm_smart_boiler.set_control`: I2 przełącza przez nią sterowanie i sprawdza, że ta sama akcja
 wywołana tokenem runnera — osoby — jest odrzucana; I1 zaznacza „Sterowanie włączone” razem z
 inną zmianą w „Trybie sterowania” (I11).
-Ich wyniki biorą się
+P2 czyta to, co czyta strona kotła: instalację, krzywą ze szkicem, który niczego nie zapisuje, dni
+i palenia (`devenv/j4/page_checks.py`). Ich wyniki biorą się
 ze stanów encji i liczników poleceń symulatora (atrybuty
 `sensor.boiler_sim_persistent_writes`: polecenia na ścieżkę, `ch_writes`, `relay_commands`,
 `dhw_enable_writes`; jego stan liczy tylko zapisy typu „zapisywany na stałe” (`persistent`)). Kryterium startów

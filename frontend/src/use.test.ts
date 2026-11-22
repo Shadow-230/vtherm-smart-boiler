@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { causeBars, weekScale, type WeekUse } from "./use";
+import { causeBars, degreeDaysGap, weekGap, weekScale, type WeekUse } from "./use";
 
 describe("the change against yesterday", () => {
   it("lays the report's causes around zero, scaled to the largest", () => {
@@ -31,5 +31,25 @@ describe("the weeks' scale", () => {
     expect(weekScale([week(0.21), week(null)])).toBeCloseTo(0.4);
     expect(weekScale([week(7.3)])).toBe(10);
     expect(weekScale([])).toBe(1);
+  });
+});
+
+describe("why a week has no value (F20)", () => {
+  const week = (changes: Partial<WeekUse>): WeekUse => ({
+    start: 0, end: 1, days: 7, gas: 10, degree_days: 20, per_degree_day: 0.5, ...changes,
+  });
+  it("names what is missing, by the rule that reckons the week", () => {
+    expect(weekGap(undefined)).toBe("no_week");
+    expect(weekGap(week({}))).toBeNull();
+    expect(weekGap(week({ days: 5, gas: null, degree_days: null, per_degree_day: null }))).toBe("days");
+    expect(weekGap(week({ gas: null, degree_days: null, per_degree_day: null }))).toBe("gas");
+    expect(weekGap(week({ degree_days: null, per_degree_day: null }))).toBe("degree_days");
+    expect(weekGap(week({ degree_days: 0.2, per_degree_day: null }))).toBe("mild");
+  });
+  it("says the same of the degree-days alone", () => {
+    expect(degreeDaysGap(undefined)).toBe("no_week");
+    expect(degreeDaysGap(week({ gas: null, per_degree_day: null }))).toBeNull();
+    expect(degreeDaysGap(week({ days: 3, degree_days: null }))).toBe("days");
+    expect(degreeDaysGap(week({ degree_days: null }))).toBe("degree_days");
   });
 });

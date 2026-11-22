@@ -6,6 +6,8 @@
 import { LitElement, css, html, nothing } from "lit";
 import { liveView, type LiveView } from "./live";
 import { localize } from "./localize";
+import { DOMAIN, entityText, type Localize } from "./status";
+import { profileZone } from "./time";
 import "./curve-card";
 import "./schematic-card";
 import "./timeline-card";
@@ -40,6 +42,7 @@ export class SmartBoilerOverview extends LitElement {
     history: { state: true },
     historyStatus: { state: true },
     at: { state: true },
+    texts: { state: true },
   };
 
   declare hass?: HomeAssistant;
@@ -50,6 +53,9 @@ export class SmartBoilerOverview extends LitElement {
   declare historyStatus: string;
   /** The moment shown: `null` for now. */
   declare at: number | null;
+  /** The plugin's own texts in the user's language: the reasons of the status. */
+  declare texts: Localize | null;
+  private textsFor = "";
   private window: [number, number] = [0, 0];
   private historyAsked = false;
 
@@ -59,9 +65,18 @@ export class SmartBoilerOverview extends LitElement {
     this.history = null;
     this.historyStatus = "loading";
     this.at = null;
+    this.texts = null;
   }
 
   protected willUpdate(): void {
+    const hass = this.hass;
+    if (hass?.loadBackendTranslation && this.textsFor !== hass.language) {
+      this.textsFor = hass.language;
+      hass.loadBackendTranslation("entity", DOMAIN).then(
+        (texts) => (this.texts = texts),
+        () => (this.texts = null),
+      );
+    }
     // The last 24 h are read only where they are shown: a card of another part does not ask.
     if (this.hass && this.installation && !this.historyAsked && this.parts.includes("timeline")) {
       this.historyAsked = true;
@@ -119,6 +134,8 @@ export class SmartBoilerOverview extends LitElement {
       language: hass.locale?.language ?? hass.language,
       t: (key, values) => this.t(key, values),
       stateText: (entity) => hass.formatEntityState?.(entity) ?? entity.state,
+      reasonText: (code) =>
+        entityText(this.texts, "sensor", "control_state", `state_attributes.reasons.state.${code}`, ""),
     });
   }
 
@@ -210,7 +227,7 @@ export class SmartBoilerOverview extends LitElement {
           <div class="words">
             <div class="title-row">
               <h2>${status.title}</h2>
-              ${replay ? html`<span class="chip">${this.t("control.replay", { time: clock(this.at as number, this.hass?.locale?.language ?? this.hass?.language ?? "en") })}</span>` : nothing}
+              ${replay ? html`<span class="chip">${this.t("control.replay", { time: clock(this.at as number, this.hass?.locale?.language ?? this.hass?.language ?? "en", profileZone(this.hass)) })}</span>` : nothing}
             </div>
             ${status.detail ? html`<p>${status.detail}</p>` : nothing}
           </div>

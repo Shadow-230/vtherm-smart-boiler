@@ -1,6 +1,7 @@
 // What the Journal tab draws from the plugin's journal (vtherm_smart_boiler/journal): each entry's
 // group, the spans the heat call, control and each alarm lasted, the water's steps and the time
 // axis. The entries are the plugin's own; nothing is decided here.
+import { dayOfMonth, nextMidnight } from "./time";
 import { clock } from "./timeline";
 
 export const HOUR_MS = 3600000;
@@ -166,32 +167,36 @@ export function shownEntries(entries: JournalEntry[], from: number, to: number, 
 }
 
 /** The time axis: every few hours within a day or so, else each day at midnight. */
-export function timeTicks(from: number, to: number, language: string, narrow = false): { t: number; label: string }[] {
+export function timeTicks(
+  from: number,
+  to: number,
+  language: string,
+  narrow = false,
+  timeZone?: string,
+): { t: number; label: string }[] {
   const span = to - from;
   if (span <= 36 * HOUR_MS) {
     const step = (span <= 12 * HOUR_MS ? 2 : narrow ? 6 : 3) * HOUR_MS;
     const out: { t: number; label: string }[] = [];
-    for (let t = Math.ceil(from / step) * step; t <= to; t += step) out.push({ t, label: clock(t, language) });
+    for (let t = Math.ceil(from / step) * step; t <= to; t += step) out.push({ t, label: clock(t, language, timeZone) });
     return out;
   }
   const days = span / DAY_MS;
   const every = days > 8 ? (narrow ? 4 : 2) : narrow && days > 4 ? 2 : 1;
   const out: { t: number; label: string }[] = [];
-  const first = new Date(from);
-  first.setHours(24, 0, 0, 0);
   let k = 0;
-  for (let d = new Date(first); d.getTime() <= to; d.setDate(d.getDate() + 1), k++) {
+  for (let t = nextMidnight(from, timeZone); t <= to; t = nextMidnight(t, timeZone), k++) {
     if (k % every) continue;
-    out.push({ t: d.getTime(), label: dayLabel(d.getTime(), language) });
+    out.push({ t, label: dayLabel(t, language, timeZone) });
   }
   return out;
 }
 
-export function dayLabel(t: number, language: string): string {
+export function dayLabel(t: number, language: string, timeZone?: string): string {
   try {
-    return new Intl.DateTimeFormat(language, { weekday: "short", day: "numeric" }).format(t);
+    return new Intl.DateTimeFormat(language, { weekday: "short", day: "numeric", timeZone }).format(t);
   } catch {
-    return String(new Date(t).getDate());
+    return String(dayOfMonth(t, timeZone));
   }
 }
 

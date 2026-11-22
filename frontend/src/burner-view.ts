@@ -5,6 +5,7 @@ import { LitElement, css, html, nothing } from "lit";
 import { histogram, minutesOf, recentBurns, type BurnInfo, type BurnsAnswer } from "./burner";
 import { formatNumber, numberOf } from "./format";
 import { localize } from "./localize";
+import { profileZone } from "./time";
 import { clock, hourTicks } from "./timeline";
 import type { HomeAssistant, Installation } from "./types";
 
@@ -100,8 +101,8 @@ export class SmartBoilerBurner extends LitElement {
 
   private burnText(burn: BurnInfo, lang: string): string {
     return this.t("burner.burn", {
-      from: clock(burn.start * 1000, lang),
-      to: clock(burn.end * 1000, lang),
+      from: clock(burn.start * 1000, lang, profileZone(this.hass)),
+      to: clock(burn.end * 1000, lang, profileZone(this.hass)),
       minutes: String(minutesOf(burn)),
       kind: this.t(`burner.${burn.kind === "ch" ? "heat" : burn.kind}`),
     });
@@ -159,14 +160,14 @@ export class SmartBoilerBurner extends LitElement {
                     )}
                   </div>
                   <div class="xaxis" aria-hidden="true">
-                    ${hourTicks(from * 1000, now * 1000, this.offsetWidth < 560 ? 8 : 4, lang).map(
+                    ${hourTicks(from * 1000, now * 1000, this.offsetWidth < 560 ? 8 : 4, lang, profileZone(this.hass)).map(
                       (tick) => html`<span style="left: ${share(tick.t / 1000)}">${tick.label}</span>`,
                     )}
                   </div>
                   <p class="muted small hover" aria-live="polite">
                     ${this.hovered ||
                     (burns.length
-                      ? this.t("burner.as_of", { time: clock(answer.at * 1000, lang) })
+                      ? this.t("burner.as_of", { time: clock(answer.at * 1000, lang, profileZone(this.hass)) })
                       : this.t("burner.none"))}
                   </p>
                 `}
