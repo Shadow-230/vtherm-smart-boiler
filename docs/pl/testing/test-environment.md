@@ -155,8 +155,8 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
    VT — zastępuje go wtyczka, a sterowanie odmawia uruchomienia, dopóki on istnieje.
 2. **Jeden termostat VT na każdą symulowaną strefę** (`zone_living`, `zone_bedroom`, `zone_bath`):
    typ „over switch”; przełącznik bazowy `switch.boiler_sim_<zone>_valve`; temperatura pokojowa
-   `sensor.boiler_sim_<zone>_temperature`; temperatura zewnętrzna `sensor.boiler_sim_outdoor`. W jednej
-   strefie użyj SmartPI, żeby sprawdzić wstrzymania nauki. W ustawieniach zaawansowanych każdej strefy
+   `sensor.boiler_sim_<zone>_temperature`; temperatura zewnętrzna `sensor.boiler_sim_outdoor`. W
+   sypialni użyj SmartPI, żeby sprawdzić wstrzymania nauki. W ustawieniach zaawansowanych każdej strefy
    ustaw jej własne opóźnienie bezpieczeństwa 1440 min: VT uznaje za martwy czujnik, którego stan nie był
    zapisany przez czas tego opóźnienia (domyślnie 60 min), i przełącza strefę w tryb bezpieczeństwa,
    a ustabilizowane pokoje symulatora albo stała temperatura zewnętrzna trzymają jedną wartość dłużej.
@@ -212,6 +212,15 @@ Inne ścieżki zapisu: ustaw `write_type: held` (lub `persistent`) i `ch_write_t
 `switch.boiler_sim_relay`, podając jego ustawienia tak, jak daje je blok, i zaznaczając „to jest osobny
 styk przekaźnika”. Ścieżka MQTT przez firmware bramki wymaga brokera w LXC i `mqtt_topic` w
 `configuration.yaml` — tylko jeśli droga przez atrapę zawiedzie.
+
+Symulowany dom, `average` we wszystkich konfiguracjach, reaguje na zmianę ze stałą czasową 22 h:
+pokój o temperaturze 20 °C przy +3 °C na zewnątrz i wyłączonym grzaniu stygnie o około 0.65 K w
+godzinę (L16; 40 h przed 2026-11-22). W `configuration.yaml` sypialnia, strefa ze SmartPI, jest
+lekka i ma grzejnik 2.5 raza większy od jej obliczeniowego zapotrzebowania (`zones:
+radiators_light_bedroom`). Nauka SmartPI od zera kończy się w niej po około 11 h w modelu
+symulatora. Sypialnia w tempie reszty domu zatrzymuje się na około 20.0 °C, na górnej granicy
+pasma nauki SmartPI, i nie kończy żadnej fazy (L15). Q5 ma wynik NOT RUN, dopóki ta nauka trwa.
+Q1 zaczyna ją od nowa: Q5 uruchamiaj przed Q1 albo pół dnia po nim.
 
 ## 5. Co działa w J4
 

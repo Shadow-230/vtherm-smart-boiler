@@ -5,7 +5,8 @@ Physics, deliberately simple:
 - The water loop is one mass at mean temperature ``T_w``. Flow reads ``T_w + P / (2k)`` and
   return ``T_w − Q / (2k)``, with ``P`` the burner power, ``Q`` the heat the emitters take from
   the water and ``k`` the pump's flow times heat capacity.
-- Each zone is a share of the house: its own heat capacity, loss to outdoors and internal gains.
+- Each zone is a share of the house: its loss to outdoors and internal gains, and its heat
+  capacity — its share of the house's, or its own (``ZoneProfile.capacity_kwh_per_k``).
 - Emitters take heat from the water by EN 442 — ``Q = opening · P_ref · (excess / reference
   excess)^n`` — while the pump circulates, and pass it on to their room with first-order inertia
   (``EMITTER_TAU_S``: a radiator about 20 minutes, underfloor heating about 2 hours; test-only
@@ -175,6 +176,12 @@ class Plant:
         self.references = [EMITTER_REFERENCE[z.emitter] for z in self.zones]
         self.ref_excess = [(r.flow + r.return_) / 2.0 - r.room for r in self.references]
         self.taus = [EMITTER_TAU_S[z.emitter] / HOUR for z in self.zones]  # hours
+        self.capacities = [
+            house.capacity_kwh_per_k * z.share
+            if z.capacity_kwh_per_k is None
+            else z.capacity_kwh_per_k
+            for z in self.zones
+        ]  # kWh/K
         self.water_capacity = boiler.water_volume_l * WATER_KWH_PER_L_K  # kWh/K
         self.room = [z.target for z in self.zones]
         self.targets = [z.target for z in self.zones]
@@ -382,7 +389,7 @@ class Plant:
             self.stored[i] = max(0.0, self.stored[i] + (taken[i] - given[i]) * dt_h)
             loss = house.loss_kw_per_k * z.share * (self.room[i] - outdoor)
             gains = house.gains_kw * z.share
-            self.room[i] += (given[i] + gains - loss) * dt_h / (house.capacity_kwh_per_k * z.share)
+            self.room[i] += (given[i] + gains - loss) * dt_h / self.capacities[i]
 
         return PlantOutput(
             flame=burner_now,

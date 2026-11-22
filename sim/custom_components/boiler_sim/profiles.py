@@ -78,9 +78,18 @@ class HouseProfile:
     def design_load_kw(self, indoor: float = 20.0, outdoor: float = -15.0) -> float:
         return self.loss_kw_per_k * (indoor - outdoor)
 
+    @property
+    def time_constant_h(self) -> float:
+        """How fast the house follows a change: its capacity over its loss coefficient."""
+        return self.capacity_kwh_per_k / self.loss_kw_per_k
+
 
 HOUSES: dict[str, HouseProfile] = {
-    "average": HouseProfile(0.25, 10.0, 0.5),
+    # A time constant of 22 h, about 0.65 K an hour of cooling at +3 °C with the heating off
+    # (L16, the user's decision of 2026-11-22: 10 kWh/K, 40 h, looked like a house that hardly
+    # loses heat). The capacity only sets how fast the rooms change: where they settle — the
+    # curves the scenarios use — depends on the loss, the gains and the emitters.
+    "average": HouseProfile(0.25, 5.5, 0.5),
     "well_insulated": HouseProfile(0.12, 12.0, 0.4),
     "leaky": HouseProfile(0.45, 8.0, 0.6),
 }
@@ -91,7 +100,9 @@ class ZoneProfile:
     """A zone: its share of the house, emitter, setpoint and valve band.
 
     ``reference_output_kw`` is the emitter output at the type's reference condition; ``None``
-    sizes it from the house design load times ``oversize``.
+    sizes it from the house design load times ``oversize``. ``capacity_kwh_per_k`` is the zone's
+    own heat capacity; ``None`` gives it its share of the house's, so that it follows a change
+    as fast as the house.
     """
 
     zone_id: str
@@ -101,12 +112,38 @@ class ZoneProfile:
     valve_band_k: float = 1.0
     reference_output_kw: float | None = None
     oversize: float = 1.6
+    capacity_kwh_per_k: float | None = None
 
 
 def radiator_zones() -> tuple[ZoneProfile, ...]:
     return (
         ZoneProfile("zone_living", 0.5),
         ZoneProfile("zone_bedroom", 0.3, target=19.5),
+        ZoneProfile("zone_bath", 0.2, target=22.0),
+    )
+
+
+# L15: the bedroom of the gateway's configuration, where SmartPI learns. Learning from scratch
+# it heats until the room is 0.5 K over its setpoint (20.0 °C) and stops heating until it is
+# 0.3 K under it, phase after phase; with its share of the house and a radiator sized like the
+# others' the default curve holds it at about 20.0 °C — the end of a heating phase is never
+# reached (J4 of 2026-11-21/22: 19.8 °C after 27 h). Light, with a radiator 2.5 times its design
+# load, it swings through a phase in about an hour (``tests/sim/test_plant.py``).
+LIGHT_BEDROOM_KWH_PER_K = 0.5
+LIGHT_BEDROOM_OVERSIZE = 2.5
+
+
+def light_bedroom_zones() -> tuple[ZoneProfile, ...]:
+    """The radiator zones with the bedroom light and its radiator large (``LIGHT_BEDROOM_…``)."""
+    return (
+        ZoneProfile("zone_living", 0.5),
+        ZoneProfile(
+            "zone_bedroom",
+            0.3,
+            target=19.5,
+            oversize=LIGHT_BEDROOM_OVERSIZE,
+            capacity_kwh_per_k=LIGHT_BEDROOM_KWH_PER_K,
+        ),
         ZoneProfile("zone_bath", 0.2, target=22.0),
     )
 

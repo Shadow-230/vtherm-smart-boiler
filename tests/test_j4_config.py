@@ -41,3 +41,13 @@ def test_the_gateway_configuration_switches_control_by_an_automation() -> None:
     (action,) = automation["actions"]
     assert action["action"] == "vtherm_smart_boiler.set_control"
     assert "enabled" in action["data"]
+
+
+def test_the_gateway_bedroom_is_light_and_the_starts_house_is_the_comparisons() -> None:
+    """L15: the gateway's configuration, where Q1 and Q5 run with SmartPI in the bedroom, has the
+    light bedroom; the starts criterion's keeps the radiator zones of the in-process comparison
+    (tests/sim/test_control_loop.py), and every role the recalibrated house (L16)."""
+    assert _load("configuration")["boiler_sim"]["zones"] == "radiators_light_bedroom"
+    assert _load("starts")["boiler_sim"]["zones"] == "radiators"
+    for name in ROLES:
+        assert _load(name)["boiler_sim"]["house"] == "average", name
