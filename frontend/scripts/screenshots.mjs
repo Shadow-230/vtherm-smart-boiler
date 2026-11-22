@@ -21,7 +21,7 @@ const FILES = {
   "/translations/pl.json": join(root, "custom_components/vtherm_smart_boiler/translations/pl.json"),
 };
 const VIEWS = [
-  { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, dialog: true, preview: true },
+  { name: "desktop-pl", width: 1280, height: 720, query: "", scale: 2, settings: true, preview: true },
   { name: "desktop-pl-day", width: 1280, height: 720, query: "", scale: 1, replay: 120 },
   { name: "desktop-pl-burner", width: 1280, height: 720, query: "#burner", scale: 1 },
   { name: "phone-en-burner-dark", width: 390, height: 844, query: "?lang=en&dark=1#burner", scale: 1 },
@@ -90,13 +90,11 @@ for (const view of VIEWS) {
     .waitFor();
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(out, `${view.name}.png`), fullPage: true });
-  if (view.dialog) {
-    await page.locator("vtherm-smart-boiler-overview button.switch").click();
-    await page.locator("vtherm-smart-boiler-overview dialog[open]").waitFor();
-    await page.screenshot({ path: join(out, `${view.name}-dialog.png`) });
-    await page.locator("vtherm-smart-boiler-overview dialog button.primary").click();
-    const call = await page.evaluate(() => window.lastCall);
-    console.log(`${view.name}: confirmed, the switch was called with`, JSON.stringify(call));
+  if (view.settings) {
+    // I11: control is switched in the plugin's settings; the page leads an administrator there.
+    await page.locator("vtherm-smart-boiler-overview button.text").click();
+    const path = await page.evaluate(() => window.location.pathname);
+    console.log(`${view.name}: "Change in settings" leads to`, path);
   }
   if (view.cards) {
     const listed = await page.evaluate(() => window.customCards.map((card) => `${card.type}: ${card.name}`));

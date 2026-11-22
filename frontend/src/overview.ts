@@ -1,8 +1,8 @@
 // The overview (docs/en/development/plans/plan-0.2-i10.md, I10.3): the status with its reasons
-// and the Control switch, the tiles, the schematic with the rooms beside the curve, and the last
-// 24 h, whose scrubber shows any moment of the day in every part above. Only an administrator can
-// switch control, only now and only after confirming; the switch's own checks still apply — a
-// refusal is shown as given.
+// and whether control is on, the tiles, the schematic with the rooms beside the curve, and the
+// last 24 h, whose scrubber shows any moment of the day in every part above. Control is switched
+// in the plugin's settings, by an administrator (plan-0.2-i11.md, the user's decisions of
+// 2026-11-22): the page shows its state and leads an administrator there.
 import { LitElement, css, html, nothing } from "lit";
 import { liveView, type LiveView } from "./live";
 import { localize } from "./localize";
@@ -22,6 +22,9 @@ import type { HomeAssistant, Installation } from "./types";
 
 export const OVERVIEW_TAG = "vtherm-smart-boiler-overview";
 
+/** The plugin's page in Home Assistant's settings: its "Configure" opens the options. */
+export const SETTINGS_PATH = "/config/integrations/integration/vtherm_smart_boiler";
+
 /** The overview's parts; a card shows one of them (I10.8). */
 export const PARTS = ["status", "schematic", "curve", "timeline"] as const;
 export type Part = (typeof PARTS)[number];
@@ -34,8 +37,6 @@ export class SmartBoilerOverview extends LitElement {
     hass: { attribute: false },
     installation: { attribute: false },
     parts: { attribute: false },
-    confirming: { state: true },
-    error: { state: true },
     history: { state: true },
     historyStatus: { state: true },
     at: { state: true },
@@ -45,8 +46,6 @@ export class SmartBoilerOverview extends LitElement {
   declare installation?: Installation;
   /** The parts shown: all of them on the page, one on a card. */
   declare parts: readonly Part[];
-  declare confirming: boolean;
-  declare error: string;
   declare history: History | null;
   declare historyStatus: string;
   /** The moment shown: `null` for now. */
@@ -57,8 +56,6 @@ export class SmartBoilerOverview extends LitElement {
   constructor() {
     super();
     this.parts = PARTS;
-    this.confirming = false;
-    this.error = "";
     this.history = null;
     this.historyStatus = "loading";
     this.at = null;
@@ -129,30 +126,11 @@ export class SmartBoilerOverview extends LitElement {
     return this.hass?.user?.is_admin === true;
   }
 
-  private ask(): void {
-    this.error = "";
-    this.confirming = true;
-  }
-
-  private async decide(go: boolean, view: LiveView): Promise<void> {
-    this.confirming = false;
-    const control = view.control;
-    if (!go || !control || !this.hass) return;
-    try {
-      await this.hass.callService("switch", control.on ? "turn_off" : "turn_on", {
-        entity_id: control.entityId,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String((err as { message?: unknown })?.message ?? err);
-      this.error = this.t("control.failed", { message });
-    }
-  }
-
-  updated(): void {
-    const dialog = this.renderRoot.querySelector("dialog");
-    if (!dialog) return;
-    if (this.confirming && !dialog.open) dialog.showModal();
-    if (!this.confirming && dialog.open) dialog.close();
+  /** The plugin's own page in Home Assistant's settings, where "Configure" opens its options:
+   * control is switched there ("Control mode", "Control on"). */
+  private openSettings(): void {
+    window.history.pushState(null, "", SETTINGS_PATH);
+    window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
   }
 
   render() {
@@ -160,24 +138,22 @@ export class SmartBoilerOverview extends LitElement {
     if (!view) return nothing;
     const { status, control, tiles } = view;
     const replay = this.at != null;
-    const canSwitch = control !== null && control.available && this.isAdmin && !replay;
+    const canChange = control !== null && this.isAdmin && !replay;
     const shown = this.shown();
     const hint = !control
       ? ""
       : replay
         ? this.t("control.replay_hint")
         : !control.available
-        ? this.t("control.unavailable")
-        : !this.isAdmin
-          ? this.t("control.admin_only")
-          : control.on
-            ? this.t("control.hint_on")
-            : this.t("control.hint_off");
+          ? this.t("control.unavailable")
+          : this.isAdmin
+            ? this.t("control.hint_settings")
+            : this.t("control.admin_only");
     const part = (name: Part) => this.parts.includes(name);
     const schematic = part("schematic");
     const curve = part("curve");
     return html`
-      ${part("status") ? this.statusPart(status, control, tiles, replay, canSwitch, hint) : nothing}
+      ${part("status") ? this.statusPart(status, control, tiles, replay, canChange, hint) : nothing}
       ${schematic || curve
         ? html`<div class="row ${schematic && curve ? "" : "single"}">
             ${schematic
@@ -209,20 +185,6 @@ export class SmartBoilerOverview extends LitElement {
             @at-change=${(e: CustomEvent<number | null>) => this.moveTo(e.detail)}
           ></vtherm-smart-boiler-timeline>`
         : nothing}
-      ${control && part("status")
-        ? html`<dialog aria-labelledby="confirm-title" @cancel=${() => (this.confirming = false)}>
-            <h2 id="confirm-title">
-              ${control.on ? this.t("control.confirm_off_title") : this.t("control.confirm_on_title")}
-            </h2>
-            <p>${control.on ? this.t("control.confirm_off_body") : this.t("control.confirm_on_body")}</p>
-            <div class="actions">
-              <button class="text" @click=${() => this.decide(false, view)}>${this.t("control.cancel")}</button>
-              <button class="primary" @click=${() => this.decide(true, view)}>
-                ${control.on ? this.t("control.confirm_off") : this.t("control.confirm_on")}
-              </button>
-            </div>
-          </dialog>`
-        : nothing}
     `;
   }
 
@@ -231,7 +193,7 @@ export class SmartBoilerOverview extends LitElement {
     control: LiveView["control"],
     tiles: LiveView["tiles"],
     replay: boolean,
-    canSwitch: boolean,
+    canChange: boolean,
     hint: string,
   ) {
     return html`
@@ -259,19 +221,16 @@ export class SmartBoilerOverview extends LitElement {
                 <div>${this.t("control.label")} <span class="muted">${this.t("control.experimental")}</span></div>
                 <div class="muted small">${hint}</div>
               </div>
-              <button
-                class="switch ${control.on ? "on" : ""}"
-                role="switch"
-                aria-checked=${control.on ? "true" : "false"}
-                aria-label=${this.t("control.label")}
-                ?disabled=${!canSwitch}
-                @click=${() => this.ask()}
-              >
-                <span class="knob"></span>
-              </button>
+              <span class="pill ${control.on ? "on" : ""}" role="status">
+                ${control.on ? this.t("control.on") : this.t("control.off")}
+              </span>
+              ${canChange
+                ? html`<button class="text" @click=${() => this.openSettings()}>
+                    ${this.t("control.settings")}
+                  </button>`
+                : nothing}
             </div>`
           : nothing}
-        ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
       </section>
 
       ${tiles.length
@@ -389,47 +348,33 @@ export class SmartBoilerOverview extends LitElement {
     .small {
       font-size: 12px;
     }
-    .switch {
-      appearance: none;
-      border: 0;
-      padding: 0;
-      width: 52px;
-      height: 32px;
-      border-radius: 16px;
-      background: var(--disabled-color, #bdbdbd);
-      position: relative;
-      cursor: pointer;
+    .pill {
       flex: none;
+      border-radius: 14px;
+      padding: 4px 12px;
+      font-weight: 600;
+      background: var(--disabled-color, #bdbdbd);
+      color: var(--text-primary-color, #fff);
     }
-    .switch.on {
+    .pill.on {
       background: var(--primary-color);
     }
-    .switch:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
+    button.text {
+      appearance: none;
+      border: 0;
+      border-radius: 10px;
+      min-height: 36px;
+      padding: 0 12px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      background: transparent;
+      color: var(--primary-color);
+      flex: none;
     }
-    .switch:focus-visible {
+    button.text:focus-visible {
       outline: 2px solid var(--primary-color);
-      outline-offset: 3px;
-    }
-    .knob {
-      position: absolute;
-      top: 4px;
-      left: 4px;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      background: #fff;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-      transition: left 0.15s;
-    }
-    .switch.on .knob {
-      left: 24px;
-    }
-    .error {
-      flex-basis: 100%;
-      margin: 0;
-      color: var(--error-color, #db4437);
+      outline-offset: 2px;
     }
     .row {
       display: flex;
@@ -468,50 +413,6 @@ export class SmartBoilerOverview extends LitElement {
       font-weight: 600;
       line-height: 1.1;
       font-variant-numeric: tabular-nums;
-    }
-    dialog {
-      border: 0;
-      border-radius: var(--ha-dialog-border-radius, 16px);
-      padding: 24px;
-      max-width: 440px;
-      width: calc(100% - 32px);
-      background: var(--card-background-color, #fff);
-      color: var(--primary-text-color);
-    }
-    dialog::backdrop {
-      background: rgba(0, 0, 0, 0.45);
-    }
-    dialog h2 {
-      font-size: 20px;
-      margin-bottom: 8px;
-    }
-    dialog p {
-      margin: 0;
-      color: var(--secondary-text-color);
-    }
-    .actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 20px;
-    }
-    .actions button {
-      appearance: none;
-      border: 0;
-      border-radius: 10px;
-      min-height: 40px;
-      padding: 0 16px;
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .actions .text {
-      background: transparent;
-      color: var(--primary-color);
-    }
-    .actions .primary {
-      background: var(--primary-color);
-      color: var(--text-primary-color, #fff);
     }
   `;
 }
