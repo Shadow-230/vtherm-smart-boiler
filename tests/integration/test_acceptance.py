@@ -181,14 +181,15 @@ class Rig:
         return state
 
     async def switch(self, on: bool) -> None:
-        """The user's switch, as the test's own call: tagged, not taken for the plugin's."""
+        """Control switched as an automation does it (I11.2: the action, no user), as the
+        test's own call: tagged, not taken for the plugin's."""
         assert self.spy is not None
         self.switch_error = None
         try:
             await self.hass.services.async_call(
-                "switch",
-                "turn_on" if on else "turn_off",
-                {"entity_id": self.entity("switch", "control")},
+                "vtherm_smart_boiler",
+                "set_control",
+                {"enabled": on},
                 blocking=True,
                 context=self.spy.own,
             )
@@ -712,7 +713,7 @@ async def test_control_is_refused_without_a_hand_back(rig: Rig) -> None:
 
 async def test_standalone_hand_back_stops_heating(rig: Rig) -> None:
     await start(rig, sim={"topology": "standalone"}, topology="gateway_standalone")
-    assert rig.state("switch", "control").attributes["hand_back_effect"] == "heating_stops"
+    assert rig.state("binary_sensor", "control").attributes["hand_back_effect"] == "heating_stops"
     await rig.switch(True)
     await rig.advance(120)
     assert rig.sim.last.demand
@@ -885,7 +886,7 @@ async def test_a_restart_without_a_clean_stop_hands_back_first(rig: Rig) -> None
     await start(rig, stored={"control": {"controlling": True, "last_command": LAST_COMMAND}})
     await rig.advance(30)
     assert [(k, v) for _t, k, v in rig.gateway()][:3] == SAFE_HAND_BACK
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     count = len(rig.gateway())
     await rig.advance(180)
     assert len(rig.gateway()) == count
@@ -900,7 +901,7 @@ async def test_a_store_that_cannot_be_read_hands_back_first(
     await rig.advance(30)
     assert "Could not read the stored data" in caplog.text
     assert [(k, v) for _t, k, v in rig.gateway()][:3] == SAFE_HAND_BACK
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
 
 
 async def test_a_stored_latch_and_an_owed_hand_back_both_hold(rig: Rig) -> None:
@@ -1780,7 +1781,7 @@ async def test_wall_thermostat_takes_over_after_hand_back_with_its_own_program(r
     plant = rig.sim.plant
     await rig.switch(True)
     await rig.advance(600, step=30.0)
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["wall_thermostat_setpoint"] == 21.0
     assert switch.attributes["wall_thermostat_warning"] is None
     plant.room[0] = 25.0  # its room warm: it does not call, yet control heats the others
@@ -1806,7 +1807,7 @@ async def test_wall_thermostat_takes_over_after_hand_back_with_its_own_program(r
     assert not rig.sim.wall.calling  # 19 °C is warm enough at night
     await rig.scenario("fail_signal", signal="thermostat_setpoint")
     await rig.advance(30)
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["wall_thermostat_setpoint"] is None
     assert switch.attributes["wall_thermostat_warning"] == "unknown"
 
@@ -2277,7 +2278,7 @@ async def test_relay_start_up_state_after_power_cut(
     assert relay_model(rig).own_changes == restarts + 1  # back in its own state, then...
     assert relay_commands(rig)[count:] == ([] if sent is None else [sent])
     assert relay_model(rig).on is commanded
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["confirmation"] == "without_heat_confirmation"
     assert rig.state("sensor", "control_state").state == ("heating" if commanded else "idle")
 
@@ -2290,7 +2291,7 @@ async def test_an_optimistic_relay_is_controlled_without_confirmation(rig: Rig) 
     await start_relay(rig, relay={"assumed_state": True})
     await relay_on_under_control(rig)
     assert rig.hass.states.get(RELAY).attributes.get("assumed_state") is True
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["confirmation"] == "controlled_without_confirmation"
     assert rig.state("sensor", "control_state").attributes["relay_check"] == "unverified"
     count = len(relay_commands(rig))
@@ -2432,7 +2433,7 @@ async def test_the_monitor_failing_hands_back_then_control_resumes_by_itself(
     state = rig.state("sensor", "control_state")
     assert state.state == "not_allowed"  # a blocker, not a latch
     assert state.attributes["latched_by"] == []
-    assert "monitor_failed" in rig.state("switch", "control").attributes["blockers"]
+    assert "monitor_failed" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert repair(rig, "monitor_failed").translation_key == "monitor_failed"
     count = len(rig.gateway())
     await rig.advance(120)
@@ -2442,7 +2443,7 @@ async def test_the_monitor_failing_hands_back_then_control_resumes_by_itself(
     assert not rig.sim.plant.override_active(rig.now())  # it must work for a minute first
     await rig.advance(150)
     assert rig.sim.plant.override_active(rig.now())  # resumed by itself
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert repair(rig, "monitor_failed").translation_key == "monitor_recovered"
 
 
@@ -2617,7 +2618,7 @@ async def test_a_boiler_ignoring_heating_off_from_the_start_is_blocked_and_hande
     state = rig.state("sensor", "control_state")
     assert state.state == "handed_back"
     assert state.attributes["latched_by"] == ["heating_off_ignored"]
-    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert "heating_off_ignored" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert recent_gateway(rig, 3) == SAFE_HAND_BACK
     assert repair(rig, "control_latched") is not None
     count = len(rig.gateway())
@@ -2649,7 +2650,7 @@ async def test_a_gateway_entry_without_the_terminals_answer_keeps_control_stoppe
     assert rig.sim.wall is not None
     assert rig.sim.last.demand  # the thermostat heats
     assert repair(rig, "thermostat_kind_missing") is not None
-    assert "thermostat_kind_unknown" in rig.state("switch", "control").attributes["blockers"]
+    assert "thermostat_kind_unknown" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.entry is not None
     control = dict(rig.entry.options["control"]) | {"thermostat_kind": "opentherm"}
     rig.hass.config_entries.async_update_entry(
@@ -2657,7 +2658,7 @@ async def test_a_gateway_entry_without_the_terminals_answer_keeps_control_stoppe
     )
     await rig.hass.async_block_till_done()
     assert repair(rig, "thermostat_kind_missing") is None
-    if rig.state("switch", "control").state != "on":
+    if rig.state("binary_sensor", "control").state != "on":
         await rig.switch(True)
     await rig.advance(60)
     assert rig.sim.plant.override_active(rig.now())
@@ -2677,7 +2678,7 @@ async def test_a_lost_or_truncated_control_store_hands_back_first(rig: Rig, stor
     )
     await rig.advance(30)
     assert recent_gateway(rig, len(rig.gateway()))[:3] == SAFE_HAND_BACK
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     count = len(rig.gateway())
     await rig.advance(180)
     assert len(rig.gateway()) == count
@@ -2738,11 +2739,11 @@ async def test_the_fault_injector_fails_the_monitor_as_the_patch_does(
     assert ("setpoint", 0.0) not in sent_since(rig, count)
     await rig.advance(90)
     assert sent_since(rig, count)[-3:] == SAFE_HAND_BACK
-    assert "monitor_failed" in rig.state("switch", "control").attributes["blockers"]
+    assert "monitor_failed" in rig.state("binary_sensor", "control").attributes["blockers"]
     await _faults(rig, "monitor", failing=False)
     await rig.advance(180)
     assert rig.sim.plant.override_active(rig.now())  # resumed by itself
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
 
 
 async def test_the_fault_injector_starts_the_plugin_on_a_crashed_runs_store(rig: Rig) -> None:
@@ -2760,7 +2761,7 @@ async def test_the_fault_injector_starts_the_plugin_on_a_crashed_runs_store(rig:
     )
     await rig.advance(30)
     assert sent_since(rig, count)[:3] == SAFE_HAND_BACK
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
 
 
 async def test_the_fault_injector_starts_the_plugin_on_another_versions_store(rig: Rig) -> None:
@@ -2781,7 +2782,7 @@ async def test_the_fault_injector_starts_the_plugin_on_another_versions_store(ri
     )
     await rig.advance(30)
     assert sent_since(rig, count)[:3] == SAFE_HAND_BACK
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
 
 
 async def test_the_fault_injector_removes_an_answer_from_the_options(rig: Rig) -> None:
@@ -2792,6 +2793,6 @@ async def test_the_fault_injector_removes_an_answer_from_the_options(rig: Rig) -
     await start(rig)
     await _faults(rig, "remove_options", section="control", keys=["thermostat_kind"])
     await rig.advance(60)
-    assert "thermostat_kind_unknown" in rig.state("switch", "control").attributes["blockers"]
+    assert "thermostat_kind_unknown" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert repair(rig, "thermostat_kind_missing") is not None
     assert rig.gateway() == []

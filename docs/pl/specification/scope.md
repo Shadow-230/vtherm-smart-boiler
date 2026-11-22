@@ -149,7 +149,7 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
 
 | Obszar | Zwykły użytkownik | Zaawansowany użytkownik |
 |---|---|---|
-| Kreator | najpierw sposób podłączenia kotła (z niego wynika klasa kotła), tryb sterowania (bez wartości domyślnej), źródło ciepła i typ kotła z kondensacją i priorytetem c.w.u. (I6, `docs/en/development/plans/plan-0.2-i6.md`); przy pełnym sterowaniu lub sterowaniu włącz/wyłącz także pozycje sterowania w konfiguracji — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, ochrona przed mrozem, reakcje alarmów, każda jako jeden formularz pokazywany tam, gdzie ma zastosowanie (I8 H) —, włącznik sterowania nadal wyłączony (decyzja 11 z I6); pozycja „Interfejs kotła” — tematy MQTT, bramka tam, gdzie skonfigurowano więcej niż jedną, topologia bramki i to, co jest podłączone do zacisków termostatu bramki (decyzja 1), wskaźnik restartu, tylko to, czego używa połączenie i tryb (I8 D2) —; odczyty zwrotne wśród sygnałów kotła (I8 D3); obiegi — każdy jako osobna pozycja menu, z nazwą, do czterech, usuwany zaznaczeniem pola, każdy z listą stref VT, które zasila, a spośród nich tych z ogrzewaniem podłogowym i konwektorami, a dla strefy, którą zasila tylko w części — urządzeniami tej strefy — strefa w dwóch obiegach należy do każdego przez swoje urządzenia (I8 F1, F2, F4; I8.8c) — i jedno pytanie o strefy: których zawory zamykają się po wyłączeniu (F5), temperatura zewnętrzna przy najsilniejszym mrozie (punkt krzywej, gdy jest krzywa; w innym razie z obciążeniem projektowym, I8 E3) i limity ciśnienia wody z instrukcji kotła; na drogach zapisu przez encję i przez przekaźnik pole wyboru „kocioł ma własny sterownik pokojowy” (odpowiedzi F, M); na drodze przez przekaźnik własne ustawienia przekaźnika i pole wyboru „to jest osobny styk przekaźnika, a nie ustawienie zapisane w pamięci kotła” (odpowiedź G); w ESPHome pole wyboru „bezpieczne wartości startowe i krótki `reboot_timeout` API” (decyzja 3 z I6) | każde pole profilu, wartości zmierzone, obciążenie budynku z własnych obliczeń |
+| Kreator | najpierw sposób podłączenia kotła (z niego wynika klasa kotła), tryb sterowania (bez wartości domyślnej), źródło ciepła i typ kotła z kondensacją i priorytetem c.w.u. (I6, `docs/en/development/plans/plan-0.2-i6.md`); przy pełnym sterowaniu lub sterowaniu włącz/wyłącz także pozycje sterowania w konfiguracji — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, ochrona przed mrozem, reakcje alarmów, każda jako jeden formularz pokazywany tam, gdzie ma zastosowanie (I8 H) —, sterowanie nadal wyłączone (decyzja 11 z I6; włączane potem w „Trybie sterowania”, I11); pozycja „Interfejs kotła” — tematy MQTT, bramka tam, gdzie skonfigurowano więcej niż jedną, topologia bramki i to, co jest podłączone do zacisków termostatu bramki (decyzja 1), wskaźnik restartu, tylko to, czego używa połączenie i tryb (I8 D2) —; odczyty zwrotne wśród sygnałów kotła (I8 D3); obiegi — każdy jako osobna pozycja menu, z nazwą, do czterech, usuwany zaznaczeniem pola, każdy z listą stref VT, które zasila, a spośród nich tych z ogrzewaniem podłogowym i konwektorami, a dla strefy, którą zasila tylko w części — urządzeniami tej strefy — strefa w dwóch obiegach należy do każdego przez swoje urządzenia (I8 F1, F2, F4; I8.8c) — i jedno pytanie o strefy: których zawory zamykają się po wyłączeniu (F5), temperatura zewnętrzna przy najsilniejszym mrozie (punkt krzywej, gdy jest krzywa; w innym razie z obciążeniem projektowym, I8 E3) i limity ciśnienia wody z instrukcji kotła; na drogach zapisu przez encję i przez przekaźnik pole wyboru „kocioł ma własny sterownik pokojowy” (odpowiedzi F, M); na drodze przez przekaźnik własne ustawienia przekaźnika i pole wyboru „to jest osobny styk przekaźnika, a nie ustawienie zapisane w pamięci kotła” (odpowiedź G); w ESPHome pole wyboru „bezpieczne wartości startowe i krótki `reboot_timeout` API” (decyzja 3 z I6) | każde pole profilu, wartości zmierzone, obciążenie budynku z własnych obliczeń |
 | Ocena | werdykt: warto włączyć sterowanie albo nie, i dlaczego | wszystkie metryki, na zakres temperatury zewnętrznej, surowe dane cykli |
 | Sterowanie | domyślnie wyłączone; po włączeniu sterowanie działa automatycznie w wybranym trybie; zmiany krzywej: podpowiedzi (domyślnie) albo automatycznie w ustawionym paśmie (Niskie / Średnie / Wysokie) | pasmo własne, nadpisania pojedynczych parametrów, ręczna edycja wyuczonych wartości, reset do profilu |
 | Alarmy | rozsądne reakcje domyślne | progi dla każdego alarmu; reakcja tylko tam, gdzie pozwala na nią decyzja 7 (§7) |
@@ -450,7 +450,7 @@ się wiarygodnie odczytać przez Home Assistant (tryb jest odczytywany tylko wte
 - Tryby sterowania, na które topologia nie pozwala, są niedostępne, z pokazaną przyczyną.
 - Oddanie sterowania zatrzymuje zapotrzebowanie wtyczki na grzanie. Bez termostatu grzanie stoi,
   dopóki wtyczka albo użytkownik czegoś nie zrobi; kreator konfiguracji mówi o tym ryzyku, a po
-  oddaniu sterowania w pracy samodzielnej przełącznik sterowania mówi, że ochrona przed mrozem
+  oddaniu sterowania w pracy samodzielnej stan „Sterowanie” mówi, że ochrona przed mrozem
   opiera się teraz na własnej ochronie kotła, jeśli ją ma; alarm „oddane przy mrozie” włącza się,
   gdy obserwowana strefa pokazuje poniżej granicy mrozu, i gaśnie na poziomie zwolnienia albo
   powyżej (S-57; tymczasowe, K4). Utrata łączności z kotłem nie jest wyjątkiem: w każdej topologii
@@ -470,7 +470,7 @@ się wiarygodnie odczytać przez Home Assistant (tryb jest odczytywany tylko wte
   ilekroć pali się płomień. Synchronizacja, z VT jako nadrzędnym i domyślnie wyłączona, pojawi się
   najwcześniej w 0.3.
 - Bez termostatu awaria HA dłuższa niż około minuty zatrzymuje grzanie: `CS` wygasa (F3); kreator
-  konfiguracji i przełącznik sterowania o tym mówią.
+  konfiguracji i stan „Sterowanie” o tym mówią.
 - Emulowany termostat OpenTherm wewnątrz wtyczki zostaje na później (§9).
 
 ### Topologia
@@ -635,14 +635,14 @@ wersja podrzędna 14), co właśnie robił.
 - **C.w.u.** jest wykrywane na każdym etapie; pod sterowaniem wstrzymuje naukę — w strefach
   wołających o ciepło (§5) — i przy każdym poborze trzyma korektę komfortu wtyczki w miejscu (S-61).
 - **Strona „Kocioł”** (I10, `docs/en/development/plans/plan-0.2-i10.md`) pokazuje, co wtyczka wie
-  i decyduje, na każdym etapie, i nic poza tym: przegląd (stan i przełącznik sterowania, kafelki,
+  i decyduje, na każdym etapie, i nic poza tym: przegląd (stan i to, czy sterowanie jest włączone, z drogą do ustawień, kafelki,
   schemat instalacji z pokojami, krzywa z „gdzie jesteśmy”, ostatnie 24 h do odtworzenia), Palnik,
   Zużycie, Analizy (sygnatura energetyczna, starty według godzin), Dziennik (co wtyczka
   zdecydowała i dlaczego, 14 dni) oraz Stan i alarmy; części przeglądu są też kartami. Każde
   prawo, które pokazuje, jest własnym prawem wtyczki, przysłanym do strony — strona nie trzyma
-  jego kopii. Zmiany z niej (przełącznik sterowania, krzywa, zapomnienie zmierzonej wartości
-  budynku) idą przez własny przełącznik, ustawienia i przyciski wtyczki, tylko dla
-  administratora, po potwierdzeniu.
+  jego kopii. Zmiany z niej (krzywa, zapomnienie zmierzonej wartości budynku) idą przez własne
+  ustawienia i przyciski wtyczki, tylko dla administratora, po potwierdzeniu; sterowanie
+  przełącza się w ustawieniach, dokąd strona prowadzi administratora (I11).
 
 **Podstawa sterowania — od pierwszego wydania ze sterowaniem**
 
@@ -718,7 +718,7 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   są znane — najwyżej 10 min. W tym czasie nie zapada żadna nowa decyzja. Jeśli wtyczka sterowała
   kotłem przed restartem — także po czystym restarcie, który oddał sterowanie — jej ostatnie
   polecenie jest zachowane albo od razu przywrócone, razem z podtrzymaniami, gdy zapamiętane
-  życzenie to „sterowanie włączone”, encja przełącznika sterowania nie jest wyłączona,
+  życzenie to „sterowanie włączone”,
   nie trzyma się żaden zatrzask ani błąd wewnętrzny, opcje sterowania są takie same jak te, z którymi
   przejęto sterowanie, i nie trzyma się żadna inna blokada; dopóki cel zapisu i łączność z kotłem
   nie są dostępne, nic się nie zapisuje, a przywrócenie czeka, i łączność, która jeszcze się nie
@@ -940,8 +940,8 @@ c.o., ograniczenie modulacji, wartości trybu działającego jak termostat (0.3)
   (0.2 nie czyta takich wartości).
 - Utrata łączności z kotłem — płomień lub temperatura zasilania nieświeże przez 5 min w ciągu
   ostatnich 10 min, więc łączność świeża w jednym kroku z pięciu nadal jest utracona — zatrzymuje
-  każdy zapis; alarm „utracona łączność z kotłem” pojawia się zawsze, gdy przełącznik sterowania jest
-  włączony, a łączność utracona, niezależnie od tego, co pokazują blokady lub zatrzask, i następuje
+  każdy zapis; alarm „utracona łączność z kotłem” pojawia się zawsze, gdy sterowanie jest
+  włączone, a łączność utracona, niezależnie od tego, co pokazują blokady lub zatrzask, i następuje
   oddanie sterowania: przy termostacie przejmuje je termostat; przy pracy samodzielnej grzanie się
   zatrzymuje. Sterowanie wznawia się, gdy łączność jest świeża przez 60 s bez przerwy (tymczasowo,
   K4). Przekaźnik poza zasięgiem wywołuje zamiast tego własny alarm po 5 min, bez oddania sterowania
@@ -1017,10 +1017,11 @@ c.o., ograniczenie modulacji, wartości trybu działającego jak termostat (0.3)
   (atomowo), a odczytywany ostrożnie. Utrata, uszkodzenie lub nieczytelność zapisu stanu dla wpisu,
   który wcześniej działał, oznacza „sterował”: najpierw pełne oddanie sterowania (odpowiedź K). Po
   restarcie bez czystego zatrzymania oddanie sterowania czeka do wznowienia sterowania; po każdym
-  restarcie przełącznik sterowania wraca w takim stanie, w jakim zostawił go użytkownik, a encja
-  przełącznika sterowania wyłączona w Home Assistant oznacza sterowanie wyłączone (odpowiedź K).
-- Przełącznik sterowania działa, cokolwiek innego jest zepsute: jego dostępność idzie za jednostką
-  sterowania, nie za monitorem. Jeśli własny monitor wtyczki zawodzi przez 5 min, sterowanie zostaje
+  restarcie sterowanie wraca w takim stanie, w jakim zostawił je użytkownik, z zapamiętanego
+  życzenia (I11: przywraca je start wtyczki; wyłączona encja przełącznika z odpowiedzi K odeszła
+  razem z przełącznikiem).
+- Stan sterowania i jego przełączanie działają, cokolwiek innego jest zepsute: dostępność stanu
+  idzie za jednostką sterowania, nie za monitorem. Jeśli własny monitor wtyczki zawodzi przez 5 min, sterowanie zostaje
   oddane i wznawia się samo, gdy monitor znów działa, z informacyjną uwagą (odpowiedź I).
 - Sterowanie tylko ze znanym oddaniem sterowania i, przy sterowaniu nastawą, ze źródłem potwierdzonej
   nastawy.
@@ -1160,7 +1161,7 @@ Jak sterowanie wznawia się po zatrzymaniu:
 | Alarm ustawiony na oddanie sterowania (decyzja 7) | gdy użytkownik wyłączy i włączy sterowanie — zatrzask: przetrwa restart, pokazuje swoją przyczynę w jednym zgłoszeniu naprawy i sam nigdy nie wygasa |
 | Inny sterownik (ustąpienie) | gdy użytkownik wyłączy i włączy sterowanie, albo samo po 60 min bez obcej wartości, gdy ta opcja jest włączona — nie dla przekaźników ani po oddaniu sterowania przez włącznik sterowania zewnętrznego bez jego własnej opcji |
 | Przekaźnik znaleziony w zadeklarowanym stanie po zaniku zasilania (albo, przy „ostatni” lub „nie wiem”, zmieniony, gdy był dostępny) | ponowne wysłanie polecenia (odpowiedź D); czwarty taki przypadek w ciągu 24 h to inny sterownik: zatrzask ustąpienia do wyłączenia i włączenia (odpowiedź N) |
-| Błąd wewnętrzny | przy każdej zmianie włącznika sterowania; zatrzask przetrwa restart |
+| Błąd wewnętrzny | przy każdej zmianie życzenia użytkownika (wyłączenie albo włączenie sterowania); zatrzask przetrwa restart |
 | „Wyłączone” lub „włączone” dla włącznika grzania zignorowane od początku, albo przekaźnik, który przestaje przyjmować „wyłączone” | blokada, dopóki użytkownik nie wyłączy i nie włączy sterowania (odpowiedź O; decyzje 4 i 6 z 0.2.3) |
 | Każde inne polecenie zignorowane od początku | przy następnej sesji |
 | Utrata łączności z kotłem | samo, gdy dane są świeże przez 60 s |
@@ -1168,7 +1169,7 @@ Jak sterowanie wznawia się po zatrzymaniu:
 | Własna usterka kotła | samo, w kroku, w którym każda zmapowana usterka pokazuje wyłączone, nieznane lub niedostępne |
 | Wszystkie strefy nieznane | samo, gdy któraś strefa znów odpowie |
 | Awaria własnego monitora wtyczki | samo, gdy znów działa, z notatką informacyjną (odpowiedź I) |
-| Alarm z reakcją oddania sterowania, już aktywny w chwili włączenia sterowania | blokuje sterowanie od razu; mówi o tym tekst włącznika |
+| Alarm z reakcją oddania sterowania, już aktywny w chwili włączenia sterowania | blokuje sterowanie od razu; mówi o tym tekst odmowy |
 | Blokada — brakujące ustawienie, skonfigurowany centralny kocioł VT, uruchamianie się Home Assistanta | samo, gdy blokada zniknie; „Centralny kocioł VT aktywny” dopiero po restarcie Home Assistanta, o który prosi jej tekst |
 
 W trybie na wzór termostatu (0.3) kocioł działa według własnej regulacji: opcje krzywej, rampy,
@@ -1194,7 +1195,7 @@ Które alarmy mogą oddać sterowanie (decyzja 7):
   potem pokazuje „nieznane”. Powiadomienie zamyka się po 60 min z powrotem w normalnym zakresie
   (tymczasowe, K4).
 - Alarm z reakcją oddania sterowania, który jest już aktywny w chwili włączenia sterowania,
-  blokuje sterowanie od razu, a tekst włącznika o tym mówi.
+  blokuje sterowanie od razu, a tekst odmowy o tym mówi.
 - Dozwolone reakcje to lista dozwolonych w kodzie: nowy alarm domyślnie informuje, a zapisana
   reakcja, która nie jest już dozwolona, jest unieszkodliwiana. Każde oddanie sterowania
   spowodowane przez alarm tworzy zgłoszenie naprawy, a każdy zatrzask, z jakiejkolwiek przyczyny,
@@ -1381,7 +1382,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | „Reszta” zmiany z dnia na dzień w granicach 15 % dnia poprzedniego pokazywana jako normalna zmienność | `core/report.py` | K4 (użytkownik, 2026-11-17): dzienne liczby to głównie szum i bezwładność cieplna; 15 % tymczasowe — brak opublikowanej liczby, regresja z 0.4 da rozrzut własny domu |
 | Limit czasu wywołania prognozy 30 s | prognozy (Y4) | tymczasowe, K4 (powód do potwierdzenia) |
 | Alarmy startów i zapłonu nieznane, gdy ostatnia analiza jest starsza niż 15 min; zapis ostatniego przebiegu co 10 min | monitor (Y2) | tymczasowe, K4 (powód do potwierdzenia) |
-| Zgłoszenie „zamknięta strefa” z ochrony przed mrozem aktualizowane przy zmianie o 1 K; czekanie 60 s na odtworzenie stanu włącznika sterowania | sterowanie (X4, V3) | tymczasowe, K4 (powód do potwierdzenia) |
+| Zgłoszenie „zamknięta strefa” z ochrony przed mrozem aktualizowane przy zmianie o 1 K; czekanie 60 s na odtworzenie życzenia (od I11 przywraca je start wtyczki) | sterowanie (X4, V3) | tymczasowe, K4 (powód do potwierdzenia) |
 | Limit czasu zapisu 10 s; krok sterowania liczy najwyżej 60 s | sterowanie | tymczasowe, K4 (powód do potwierdzenia) |
 | Próg „dolej wody” przyjmowany w granicach 0.1–2.0 bar | opcje (Y1) | tymczasowe, K4 (powód do potwierdzenia) |
 | Wywołania nauki SmartPI przekraczają limit czasu po 5 s, w ramach 15-sekundowego budżetu zatrzymania | `control.py` | tymczasowe, K4 (powód do potwierdzenia) |
@@ -1514,7 +1515,7 @@ domyślnie wyłączona, a włączona dodaje najwyżej swój limit (domyślnie 3 
 nie chroni. Werdykt potrzebuje określonej liczby dni danych: domyślnie 7, co najmniej 7, najwyżej
 60, liczonych w dniach kalendarzowych od utworzenia wpisu, więc utrata magazynu danych nie zaczyna
 ich liczenia od nowa (odpowiedź K). Do tego czasu, a poza sezonem także wtedy, gdy dni mijają bez
-dość danych, przełącznik sterowania pokazuje „za mało danych” i mówi, że sterowanie zacznie się bez
+dość danych, stan „Sterowanie” pokazuje „za mało danych” i mówi, że sterowanie zacznie się bez
 werdyktu (S-43). Werdykt jest radą; decyduje użytkownik.
 
 Werdykt opiera się na tym, co zmierzono, i na tym, co zmienia wydane sterowanie:
@@ -1665,7 +1666,7 @@ liczone po godzinach, w których było ogrzewanie.
   grzanie ustaje; G — pole „osobny styk” przekaźnika; H — wycofanie się to pełne bezpieczne oddanie
   sterowania; I — awaria własnego monitora wtyczki trwająca 5 min oddaje sterowanie i sterowanie
   wznawia się samo; J — przycisk „Zresetuj korektę komfortu”; K — utracony magazyn danych oznacza
-  „sterował”, przełącznik wraca tak, jak zostawił go użytkownik, werdykt liczy tylko to, co zmienia
+  „sterował”, sterowanie wraca tak, jak zostawił je użytkownik, werdykt liczy tylko to, co zmienia
   0.2.2, zdjęcie blokad czeka do K4, wpis bramki bez odpowiedzi o zaciskach zostaje zatrzymany; L —
   przekaźnik raz ustawiony w stan spoczynku przy wycofaniu się; M — pole „własny regulator
   pokojowy” liczy się na ścieżce przekaźnika tylko ze stanem spoczynku „włączony” i nie jest
@@ -1700,14 +1701,14 @@ liczone po godzinach, w których było ogrzewanie.
   Oddanie sterowania przez upływ czasu wymaga zapisów wygasających. Nieudane oddanie sterowania jest
   pokazywane i ponawiane co minutę, aż zostanie potwierdzone; przy zatrzymaniu Home Assistanta
   oddanie sterowania następuje, zanim integracje się zatrzymają. Zatrzaski przeżywają restart;
-  przełącznik sterowania wraca po restarcie tak, jak zostawił go użytkownik, a jego życzenie jest
-  zapisywane od razu; wyłączona encja przełącznika oznacza wyłączone sterowanie (odpowiedź K);
+  sterowanie wraca po restarcie tak, jak zostawił je użytkownik, a życzenie jest zapisywane od
+  razu (I11: z magazynu, przywrócone przez start wtyczki);
   sterowanie czeka na swoje blokady. Awaria własnego monitora wtyczki trwająca 5 min oddaje
   sterowanie, a sterowanie wznawia się samo, gdy monitor znów działa (odpowiedź I).
 - Odpowiedzi na pytania z przeglądu (tymczasowe, K4): 3 — „ciepło płynie” to płomień, gdy jest
   znany, w przeciwnym razie komenda; 5 — uszkodzony albo utracony magazyn danych jest nieczytelny:
-  najpierw pełne oddanie sterowania, a dni werdyktu liczą się od utworzenia wpisu; 6 — przełącznik
-  wraca tak, jak zostawił go użytkownik, życzenie zapisane od razu; 8 — „ciśnienie 0 = nieznane”
+  najpierw pełne oddanie sterowania, a dni werdyktu liczą się od utworzenia wpisu; 6 — sterowanie
+  wraca tak, jak zostawił je użytkownik, życzenie zapisane od razu; 8 — „ciśnienie 0 = nieznane”
   tylko dla źródeł bramki; 9 — alarm z nieznanym wejściem trzyma swój stan 60 min, potem pokazuje
   „nieznane”; 10 — każdy zapis opcji oprócz poziomu przeładowuje wpis, co oddaje sterowanie, a
   sterowanie potem przywraca kocioł; opcje o tym mówią (tak jak zbudowano; K4 może to zawęzić do

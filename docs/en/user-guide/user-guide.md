@@ -125,8 +125,9 @@ Only one entry of the integration can exist: it runs one boiler.
    Untick it to switch control off: the boiler is handed back at once. Until you switch it on, the
    plugin writes nothing to the boiler. An automation switches control with the action
    `vtherm_smart_boiler.set_control` (`enabled`: on or off), with the same checks; called by a
-   person — from a dashboard, a script you start, the developer tools — it is refused. (The switch **Control (experimental)** of the
-   integration's device still switches it too, until it becomes a state shown only.)
+   person — from a dashboard, a script you start, the developer tools — it is refused. The
+   entity **Control (experimental)** of the integration's device shows whether control is on; it
+   switches nothing.
 
 **Changing settings later.** The integration's options open the same menu, with **Save and
 finish** in place of **Create**. Nothing is saved until you choose it: it checks everything,
@@ -165,7 +166,7 @@ Then the sensor **Control verdict** shows one of:
 | Not enough data yet | too little was measured to judge |
 
 The verdict is advice. You decide. Before it comes, and outside the heating season when the days
-pass without enough data, the control switch says that control starts without a verdict.
+pass without enough data, **Control (experimental)** says that control starts without a verdict.
 
 What the verdict and the building values mean:
 
@@ -183,11 +184,13 @@ What the verdict and the building values mean:
 
 ### 4.2 Control is opt-in
 
-Control is **off by default**. It is the switch **Control (experimental)**. You can switch it on
-from the first day, once every required setting is filled in, for example:
+Control is **off by default**. You switch it on in the integration's options (**Control mode**,
+**Control on**, then **Save and finish**); the entity **Control (experimental)** shows whether it
+is on. You can switch it on from the first day, once every required setting is filled in, for
+example:
 
-- the control mode "full control" or "on/off" (monitoring only keeps control off, and the
-  switch says so);
+- the control mode "full control" or "on/off" (monitoring only keeps control off, and
+  **Control (experimental)** says so);
 - a way to write to the boiler and a way to hand it back (see
   [Connecting the boiler](#5-connecting-the-boiler)), fitting the boiler's connection;
 - the heating curve's design flow temperature (it has no default);
@@ -198,7 +201,7 @@ from the first day, once every required setting is filled in, for example:
   controllers never drive the same boiler. A VT central configuration created or changed after
   Home Assistant started, even without a central boiler, needs that one restart too.
 
-When something is missing, the control switch says what. The monitor keeps running, and the
+When something is missing, **Control (experimental)** says what. The monitor keeps running, and the
 boiler stays with its own control or its thermostat.
 
 ### 4.3 When heating goes on and off
@@ -584,7 +587,7 @@ After a hand-back, or while Home Assistant is down, the boiler's (or the wall th
 maximum water temperature applies, not the plugin's: an unmixed underfloor circuit then rests on
 that limit.
 
-The control switch shows what a hand-back does in your installation ("On hand-back").
+**Control (experimental)** shows what a hand-back does in your installation ("On hand-back").
 
 ### 5.3 The gateway topology
 
@@ -789,7 +792,8 @@ into one of four kinds:
   back once; a second change within 24 hours makes it step aside.
 
 **The plugin never fights another controller.** When it steps aside, it makes the full safe
-hand-back and stays off (a "latch") until you switch control off and on. An optional "return
+hand-back and stays off (a "latch") until you switch control off and on — in the options:
+untick **Control on** and save, then tick it and save again. An optional "return
 by itself" (off by default, not for relays) takes the boiler back after 60 minutes without a
 foreign value.
 
@@ -981,7 +985,7 @@ Repair issues about control:
 | The heating curve looks too low for … | the correction as high as it may go for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
 | … stays short of its setpoint | the correction as high as it may go for 3 h, one room short: check its radiator, valve and window first, then the curve |
 
-The control switch also names the setup answers that keep control off: monitoring only, a
+**Control (experimental)** also names the setup answers that keep control off: monitoring only, a
 control or a topology that does not fit the boiler's connection, and on ESPHome the safe start
 not confirmed.
 
@@ -1257,8 +1261,8 @@ target:
 
 ## 14. Troubleshooting
 
-- **Control does not switch on, or the control state says "Not allowed".** The switch's
-  attributes (`blockers_text`, `blocked_by_text`) say what is missing; a repair issue usually says
+- **Control does not switch on, or the control state says "Not allowed".** The attributes of
+  **Control (experimental)** (`blockers_text`, `blocked_by_text`) say what is missing; a repair issue usually says
   what to do.
 - **The control state stays "Handed back".** The plugin stepped aside — another controller, the
   boiler ignoring "heating off", an alarm set to hand back. Fix the cause, then switch control off
@@ -1306,8 +1310,8 @@ target:
 
 ## 16. Removal
 
-1. Optionally switch **Control (experimental)** off first and check the boiler is back under its
-   own control.
+1. Optionally switch control off first (**Control mode**, untick **Control on**) and check the
+   boiler is back under its own control.
 2. Delete the entry: Settings → Devices & services → Smart Boiler for Versatile Thermostat →
    Delete. The plugin hands the boiler back, resumes SmartPI learning it had paused, and deletes
    its stored state, its journal and its forecasts. If the hand-back could not be confirmed, a repair issue stays

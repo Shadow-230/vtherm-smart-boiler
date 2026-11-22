@@ -202,7 +202,7 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         mode.value for mode in ControlMode
     }
     assert "name" in SOURCE["entity"]["sensor"]["control_setpoint"]
-    assert "name" in SOURCE["entity"]["switch"]["control"]
+    assert "name" in SOURCE["entity"]["binary_sensor"]["control"]
     for key in ("auto_tpi_blocked", "learning_not_paused"):
         issue = SOURCE["issues"][key]
         assert "{zones}" in issue["description"]
@@ -267,7 +267,7 @@ def test_coded_states_and_attributes_are_translated() -> None:
     assert _values(sensors["control_state"], "hand_back_confirmation") == {
         c.value for c in HandBackConfirmation
     }
-    assert _values(SOURCE["entity"]["switch"]["control"], "off_by") == {
+    assert _values(SOURCE["entity"]["binary_sensor"]["control"], "off_by") == {
         "heating_switch",
         "low_setpoint",
         "relay",
@@ -277,14 +277,16 @@ def test_coded_states_and_attributes_are_translated() -> None:
         HandBackEffect,
     )
 
-    assert _values(SOURCE["entity"]["switch"]["control"], "frost_protection_by") == {
+    assert _values(SOURCE["entity"]["binary_sensor"]["control"], "frost_protection_by") == {
         who.value for who in FrostProtection
     }
-    assert _values(SOURCE["entity"]["switch"]["control"], "hand_back_effect") == {
+    assert _values(SOURCE["entity"]["binary_sensor"]["control"], "hand_back_effect") == {
         effect.value for effect in HandBackEffect
     }
     # SB-16: a stand-alone gateway's setpoint lapses within about a minute of an outage.
-    assert _values(SOURCE["entity"]["switch"]["control"], "outage_effect") == {"heating_stops"}
+    assert _values(SOURCE["entity"]["binary_sensor"]["control"], "outage_effect") == {
+        "heating_stops"
+    }
     # 2026-10-14: why the boiler is not called, and what the count counts, wherever shown.
     from custom_components.vtherm_smart_boiler.core.boiler_call import CallReason
     from custom_components.vtherm_smart_boiler.core.demand import CountBy
@@ -329,7 +331,7 @@ def test_x6_texts_are_translated() -> None:
     kind = SOURCE["issues"]["thermostat_kind_missing"]
     assert kind["title"]
     assert not PLACEHOLDER.findall(kind["description"])
-    switch = SOURCE["entity"]["switch"]["control"]
+    switch = SOURCE["entity"]["binary_sensor"]["control"]
     assert switch["state_attributes"]["wall_thermostat_setpoint"]["name"]
     assert _values(switch, "wall_thermostat_warning") == {w.value for w in WallWarning}
     wall = SOURCE["issues"]["wall_thermostat_fallback"]
@@ -422,7 +424,7 @@ def test_x8_texts_are_translated() -> None:
     assert _values(state, "relay_state") == {"on", "off", "other", "unreachable"}
     assert _values(state, "relay_check") == {c.value for c in RelayCheck}
     assert _values(state, "boiler_heats") == {h.value for h in HeatEvidence}
-    switch = SOURCE["entity"]["switch"]["control"]
+    switch = SOURCE["entity"]["binary_sensor"]["control"]
     assert _values(switch, "confirmation") == {
         "controlled_without_confirmation",
         "without_heat_confirmation",
@@ -505,7 +507,7 @@ def test_y1_texts_are_translated() -> None:
     assert HOT_WATER_UNKNOWN in _values(binary["alarm_low_flow"], "reason")
     assert NO_ZONE_DATA in _values(binary["alarm_hysteresis_drift"], "reason")
     assert SOURCE["entity"]["sensor"]["control_state"]["state"][ControlMode.BOILER_FAULT.value]
-    switch = SOURCE["entity"]["switch"]["control"]
+    switch = SOURCE["entity"]["binary_sensor"]["control"]
     assert _values(switch, "blocked_by") == {"boiler_link_lost"}
     for flow in ("config", "options"):
         steps = SOURCE[flow]["step"]
@@ -566,7 +568,7 @@ def test_y3_texts_are_translated() -> None:
         assert codes <= _values(verdict, "reasons"), language
         assert _values(verdict, "changed_by_control") == {"true", "false"}, language
         assert _values(verdict, "detail") == {ESTIMATE_ONLY, WATER_NOT_CONTROLLED}, language
-        switch = texts["entity"]["switch"]["control"]
+        switch = texts["entity"]["binary_sensor"]["control"]
         assert _values(switch, "verdict") == {v.value for v in Verdict}, language
         for key in ("reset_heating_threshold", "reset_loss_coefficient"):
             assert texts["entity"]["button"][key]["name"], (language, key)
@@ -600,7 +602,7 @@ def test_y3_texts_are_translated() -> None:
         assert curve == "Outdoor temperature at the hardest frost (curve point)"
         monitoring = SOURCE[flow]["step"]["monitor"]["data_description"]["monitoring_days"]
         assert "even without a verdict" in monitoring
-    switch = SOURCE["entity"]["switch"]["control"]["state_attributes"]["verdict"]["state"]
+    switch = SOURCE["entity"]["binary_sensor"]["control"]["state_attributes"]["verdict"]["state"]
     assert "without a verdict" in switch["not_enough_data"]
 
 
@@ -931,7 +933,7 @@ def test_coded_lists_have_translated_text(language: str) -> None:
 
     entity = _texts(language)["entity"]
     state = entity["sensor"]["control_state"]
-    switch = entity["switch"]["control"]
+    switch = entity["binary_sensor"]["control"]
     verdict = entity["sensor"]["verdict"]
     blockers = {*CONFIG_BLOCKERS, *RUNTIME_BLOCKERS}
     latches = {ControlAlarm.OUTSIDE_CHANGE.value, ControlAlarm.WRITE_IGNORED.value}
@@ -1025,7 +1027,7 @@ def test_entity_names_do_not_repeat_the_device(language: str) -> None:
     assert not [name for name in names if name.split()[0].lower() in ("boiler", "kocioł")]
     entity = _texts(language)["entity"]
     assert entity["binary_sensor"]["connection"]["name"] in ("Signals", "Sygnały")
-    assert entity["switch"]["control"]["name"] in (
+    assert entity["binary_sensor"]["control"]["name"] in (
         "Control (experimental)",
         "Sterowanie (eksperymentalne)",
     )
@@ -1318,7 +1320,7 @@ CELSIUS_ATTRIBUTES = (
     ("sensor", "lowest_water_suggestion", "estimate_from_power"),
     ("binary_sensor", "alarm_flue_gas_high", "limit"),
     ("binary_sensor", "alarm_circuit_too_hot", "limit"),
-    ("switch", "control", "wall_thermostat_setpoint"),
+    ("binary_sensor", "control", "wall_thermostat_setpoint"),
 )
 
 
@@ -1341,8 +1343,8 @@ JOINED_LISTS = (
     ("sensor", "verdict", "detail"),
     ("sensor", "verdict", "changed_by_control"),
     ("sensor", "lowest_water_suggestion", "missing"),
-    ("switch", "control", "blockers"),
-    ("switch", "control", "blocked_by"),
+    ("binary_sensor", "control", "blockers"),
+    ("binary_sensor", "control", "blocked_by"),
     ("binary_sensor", "connection", "problems"),
     ("binary_sensor", "alarm_demand_criterion_no_data", "criteria"),
 )

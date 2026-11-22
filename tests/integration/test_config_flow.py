@@ -457,9 +457,10 @@ async def test_switching_to_simple_can_restore_advanced_defaults(
 
 
 def control_switch(hass: HomeAssistant, entry_id: str) -> str | None:
+    """Control's state (I11.3: a binary sensor, the switch's place)."""
     from homeassistant.helpers import entity_registry as er
 
-    return er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry_id}_control")
+    return er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, f"{entry_id}_control")
 
 
 # I8 (decision D2): what the control step's answer held before the "Boiler interface" item, and
@@ -5939,7 +5940,6 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     """Decision 11: with full control chosen, the setup goes through the "Boiler interface"
     item and the control steps; the entry is made with its control section, the control switch
     off, and its first start writes nothing and raises no "state cannot be read" notice."""
-    from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers import issue_registry as ir
 
     loaded_gateway(hass, "living_room_gw")
@@ -5982,7 +5982,7 @@ async def test_full_control_is_set_up_in_the_setup_and_starts_off(
     assert entry.options["control"]["topology"] == "gateway_with_thermostat"
     assert entry.options["control"]["curve"] == {"design_flow": 52}
     assert entry.options["parameters"]["design_outdoor"] == -18  # the building's (I6)
-    switch = er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_control")
+    switch = control_switch(hass, entry.entry_id)
     assert switch is not None
     assert hass.states.get(switch).state == "off"
     assert called == []  # nothing held, nothing handed back

@@ -275,15 +275,15 @@ class Rig:
         return state
 
     async def switch(self, on: bool) -> None:
-        """The user's switch, as the test's own call: tagged, so it is not taken for the
-        plugin's (P-118)."""
+        """Control switched on or off, as an automation does it (I11.2: the action, no user),
+        as the test's own call: tagged, so it is not taken for the plugin's (P-118)."""
         assert self.spy is not None
         self.switch_error = None
         try:
             await self.hass.services.async_call(
-                "switch",
-                "turn_on" if on else "turn_off",
-                {"entity_id": self.entity("switch", "control")},
+                "vtherm_smart_boiler",
+                "set_control",
+                {"enabled": on},
                 blocking=True,
                 context=self.spy.own,
             )
@@ -578,7 +578,7 @@ async def test_a_setup_that_fails_late_leaves_nothing_running(
 
 async def test_control_is_off_by_default(rig: Rig) -> None:
     await start(rig)
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     await rig.advance(60)
     assert rig.gateway.calls == []
 
@@ -591,7 +591,7 @@ async def test_control_is_not_held_back_on_the_first_day(rig: Rig) -> None:
     await set_up(rig, add_entry(rig, options(rig.zones) | {"monitor": {"monitoring_days": 7}}))
     await rig.switch(True)
     await rig.advance(30)
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.state == "on"
     assert switch.attributes["blockers"] == []
     assert switch.attributes["verdict"] == "not_enough_data"
@@ -730,7 +730,7 @@ async def test_unload_and_reload_hand_back_and_leave_no_loop(rig: Rig) -> None:
     assert await hass.config_entries.async_reload(rig.entry.entry_id)
     await hass.async_block_till_done()
     await rig.advance(30)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert plugin_shutdown_jobs(hass) == jobs
     assert state_trackers(hass) == trackers
     assert await hass.config_entries.async_unload(rig.entry.entry_id)
@@ -751,7 +751,7 @@ async def test_reload_resumes_control_as_it_was(rig: Rig) -> None:
     await rig.hass.async_block_till_done()
     handed = rig.gateway.calls.index(("setpoint", 0.0))
     await rig.advance(20)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert ("setpoint", EXPECTED) in rig.gateway.calls[handed:]
 
 
@@ -776,7 +776,7 @@ async def test_an_internal_error_hands_back_and_blocks_until_switched_off(
     await rig.advance(10)
     assert rig.gateway.calls[-1] == ("setpoint", 0.0)
     assert rig.state("binary_sensor", "alarm_control_error").state == "on"
-    assert "control_error" in rig.state("switch", "control").attributes["blockers"]
+    assert "control_error" in rig.state("binary_sensor", "control").attributes["blockers"]
     count = len(rig.gateway.calls)
     monkeypatch.setattr(control_module, "loop_step", original)
     await rig.advance(60)
@@ -1093,7 +1093,7 @@ async def test_an_outside_change_always_steps_aside(
     await rig.hass.async_block_till_done()
     await rig.advance(60)
     assert len(rig.gateway.calls) == count  # still latched: nothing written
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert rig.state("sensor", "control_state").attributes["latched_by"] == ["outside_change"]
     found = issue(rig, "control_latched")
     assert found is not None
@@ -1124,7 +1124,7 @@ async def test_vt_central_boiler_blocks_control(rig: Rig) -> None:
     hass.states.async_set(boiler.entity_id, "off", {"is_central_boiler_configured": True})
     await rig.advance(10)
     assert rig.gateway.calls[-1] == ("setpoint", 0.0)
-    blockers = rig.state("switch", "control").attributes["blockers"]
+    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
     assert "vt_central_boiler_active" in blockers
     await rig.switch(False)
     with pytest.raises(ServiceValidationError) as err:
@@ -1153,7 +1153,7 @@ async def test_a_monitor_alarm_set_to_hand_back_no_longer_hands_back(rig: Rig) -
     assert rig.state("binary_sensor", "alarm_pressure_low").state == "on"
     assert ("setpoint", 0.0) not in rig.gateway.calls
     assert rig.state("sensor", "control_state").state == "heating"
-    assert rig.state("switch", "control").attributes["blocked_by"] == []
+    assert rig.state("binary_sensor", "control").attributes["blocked_by"] == []
     assert unit_of(rig).status.latched_by == ()
 
 
@@ -1441,10 +1441,13 @@ async def test_only_allowed_services_are_called(rig: Rig) -> None:
     }
 
 
-async def test_the_switch_comes_back_after_a_restart(hass: HomeAssistant, rig: Rig) -> None:
-    mock_restore_cache(hass, [State("switch.boiler_control_experimental", "on")])
-    await start(rig)
-    assert rig.state("switch", "control").state == "on"
+async def test_control_comes_back_after_a_restart(
+    hass: HomeAssistant, rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """The stored wish "on" brings control back after a restart (I11.3: from the store, the
+    control switch's restored state aside)."""
+    await start_with_stored(rig, hass_storage, {"enabled": True}, "0.2.2")
+    assert rig.state("binary_sensor", "control").state == "on"
     await rig.advance(10)
     assert ("setpoint", EXPECTED) in rig.gateway.calls
 
@@ -2068,7 +2071,7 @@ async def test_a_latch_survives_a_reload(rig: Rig) -> None:
     await rig.hass.async_block_till_done()
     count = len(rig.gateway.setpoints())
     await rig.advance(60)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert len(rig.gateway.setpoints()) == count  # still handed back: no fight after reload
     assert rig.state("binary_sensor", "alarm_outside_change").state == "on"
     rig.gateway.forced = None
@@ -2247,7 +2250,7 @@ async def test_an_unclean_restart_hands_back_when_control_does_not_resume(
     await rig.hass.async_block_till_done()
     rig.entry = entry
     await rig.advance(20)
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     assert rig.gateway.setpoints() == [LOWEST, 0.0]  # handed back, though control is off
     await rig.advance(20)
     assert rig.gateway.setpoints() == [LOWEST, 0.0]  # once
@@ -2260,14 +2263,13 @@ async def test_an_unclean_restart_with_control_on_hands_back_first_then_resumes(
 ) -> None:
     """The last run held the boiler and ended without a hand-back, and control is to stay on:
     what that run left is given back in full first, then control takes the boiler afresh."""
-    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
-    await start_with_stored(rig, hass_storage, {"controlling": True}, layout)
+    await start_with_stored(rig, hass_storage, {"controlling": True, "enabled": True}, layout)
     await rig.advance(20)
     calls = rig.gateway.calls
     back = calls.index(("setpoint", 0.0))
     assert calls[back - 1] == ("ch", True)  # CH=1, then CS=0
     assert rig.gateway.setpoints()[-1] == EXPECTED  # then control again
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
 
 
 async def test_a_write_reported_failed_is_still_handed_back(rig: Rig) -> None:
@@ -3395,7 +3397,7 @@ async def test_a_setup_that_fails_after_its_platforms_keeps_the_registry(
     """PB-07: a setup that fails after its platforms were set up — here telling VT of the
     plugin — unloads them: their entities go, their registry entries stay. Home Assistant's
     reload then sets them up again for the new run, and the user's names and disabled flags —
-    the control switch's included — are kept, not removed as stale. Negative: an unload that
+    control's state's included — are kept, not removed as stale. Negative: an unload that
     raises is logged and the setup still fails cleanly; the platforms left set up then do not
     set up again, so they say nothing is stale: the registry entries are kept all the same."""
     from custom_components.vtherm_smart_boiler import feature_manager
@@ -3404,7 +3406,7 @@ async def test_a_setup_that_fails_after_its_platforms_keeps_the_registry(
     assert rig.entry is not None
     entry = rig.entry
     registry = er.async_get(rig.hass)
-    switch_id = rig.entity("switch", "control")
+    switch_id = rig.entity("binary_sensor", "control")
     state_id = rig.entity("sensor", "control_state")
     registry.async_update_entity(state_id, name="Boiler control")
     registry.async_update_entity(switch_id, disabled_by=er.RegistryEntryDisabler.USER)
@@ -3459,7 +3461,7 @@ async def test_a_platform_that_fails_its_setup_keeps_its_registry_entries(
 
     await start(rig)
     assert rig.entry is not None
-    switch_id = rig.entity("switch", "control")
+    switch_id = rig.entity("switch", "sidebar_page")
 
     async def fail(*_args: Any) -> None:
         raise RuntimeError("the switch could not be set up")
@@ -3686,7 +3688,7 @@ async def test_an_outer_cancellation_propagates_and_cancels_the_step(rig: Rig) -
     await rig.advance(30)
     assert rig.gateway.calls[calls:] == [("setpoint", EXPECTED), ("ch", True)]
     assert rig.state("binary_sensor", "alarm_write_failed").state == "off"
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
 
 
 async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:
@@ -3718,7 +3720,7 @@ async def test_a_slow_smartpi_call_does_not_hold_up_control(rig: Rig) -> None:
     assert learning == [(rig.zones.entities["living"], False)]
     off = asyncio.ensure_future(
         hass.services.async_call(
-            "switch", "turn_off", {"entity_id": rig.entity("switch", "control")}, blocking=True
+            "vtherm_smart_boiler", "set_control", {"enabled": False}, blocking=True
         )
     )
     done = await settle(off)
@@ -3820,8 +3822,7 @@ async def test_the_one_rewrite_is_remembered_across_a_restart(
     """An outside change was rewritten an hour before the restart: within the day another one is
     not fought, even in the new run."""
     now = START.timestamp()
-    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
-    await start_with_stored(rig, hass_storage, {"rewritten_at": now - 3600.0})
+    await start_with_stored(rig, hass_storage, {"rewritten_at": now - 3600.0, "enabled": True})
     await rig.advance(20)
     assert rig.gateway.setpoints()[-1] == EXPECTED
     rig.gateway.forced = 60.0  # another controller writes its own value
@@ -3836,8 +3837,7 @@ async def test_a_day_after_the_one_rewrite_another_outside_change_is_rewritten(
     """The one rewrite is per day: more than a day after it, an outside change is rewritten
     once again before it counts as another controller."""
     now = START.timestamp()
-    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
-    await start_with_stored(rig, hass_storage, {"rewritten_at": now - 25 * 3600.0})
+    await start_with_stored(rig, hass_storage, {"rewritten_at": now - 25 * 3600.0, "enabled": True})
     await rig.advance(20)
     rig.gateway.forced = 60.0
     await rig.advance(20)
@@ -3880,7 +3880,7 @@ async def test_a_lost_boiler_link_raises_an_alarm_and_hands_back(rig: Rig, topol
     goes, once the data has been back for a minute (X2)."""
     await start(rig, topology=topology)
     await rig.switch(True)
-    attributes = rig.state("switch", "control").attributes
+    attributes = rig.state("binary_sensor", "control").attributes
     effect = attributes["hand_back_effect"]
     standalone = topology == "gateway_standalone"
     assert effect == ("heating_stops" if standalone else "thermostat_takes_over")
@@ -3973,14 +3973,14 @@ async def test_the_switch_says_how_off_is_sent(rig: Rig) -> None:
     """Through the heating switch (on an OpenTherm Gateway, CH=0) where there is one; else as a
     low setpoint, which may leave the CH pump running."""
     await start(rig)
-    assert rig.state("switch", "control").attributes["off_by"] == "heating_switch"
+    assert rig.state("binary_sensor", "control").attributes["off_by"] == "heating_switch"
 
 
 async def test_without_a_heating_switch_off_is_a_low_setpoint(rig: Rig) -> None:
     number = FakeNumber(rig.hass)
     number.register()
     await start(rig, **held_entity(number))
-    assert rig.state("switch", "control").attributes["off_by"] == "low_setpoint"
+    assert rig.state("binary_sensor", "control").attributes["off_by"] == "low_setpoint"
 
 
 async def test_a_steady_outdoor_reading_is_not_a_stale_one(rig: Rig) -> None:
@@ -4404,7 +4404,7 @@ async def test_a_fahrenheit_setpoint_entity_gets_fahrenheit(rig: Rig) -> None:
     number.register()
     await start(rig, **held_entity(number))
     await rig.switch(True)
-    assert rig.state("switch", "control").attributes["blockers"] == []
+    assert rig.state("binary_sensor", "control").attributes["blockers"] == []
     assert number.writes == [round(EXPECTED * 9 / 5 + 32)]  # on its 1 °F step
     await rig.advance(130)
     setpoint = rig.state("sensor", "control_setpoint")
@@ -4474,7 +4474,7 @@ async def test_a_lasting_hand_back_failure_is_logged_once(
     rig.hass.services.async_remove("opentherm_gw", "set_control_setpoint")
     await rig.switch(False)  # the hand-back fails, and is retried every minute
     assert rig.switch_error == "hand_back_failed"  # PB-39: the user is told, not success
-    assert rig.state("switch", "control").state == "off"  # control is off all the same
+    assert rig.state("binary_sensor", "control").state == "off"  # control is off all the same
     await rig.advance(300)
     assert _logged(caplog, logging.ERROR, "Handing control back failed") == 1
     rig.gateway.register()
@@ -4663,7 +4663,6 @@ async def test_a_corrupt_store_file_hands_back_first(
 
 async def _corrupt_store_file_hands_back_first(rig: Rig, storage: Path) -> None:
     hass = rig.hass
-    mock_restore_cache(hass, [State("switch.boiler_control_experimental", "on")])
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
     entry.add_to_hass(hass)
     main = {
@@ -4698,7 +4697,9 @@ async def _corrupt_store_file_hands_back_first(rig: Rig, storage: Path) -> None:
         for domain, issue_id in registry.issues
     )
     assert rig.gateway.calls[:3] == HAND_BACK  # the first step hands back in full
-    assert rig.gateway.setpoints()[-1] == EXPECTED  # then control takes the boiler afresh
+    # The wish was in the damaged file: control stays off, the cautious side (I11.3; the
+    # control switch's restored state brought it back on before).
+    assert rig.gateway.calls == HAND_BACK
     assert issue(rig, "control_state_unreadable") is None  # SB-39: the hand-back confirmed
     assert entry.runtime_data.monitoring_since == entry.created_at.timestamp()
 
@@ -4736,7 +4737,7 @@ async def test_a_new_entry_with_control_set_up_hands_nothing_back(
     assert rig.gateway.calls == []
     assert issue(rig, "control_state_unreadable") is None
     assert "cannot be read (missing or damaged)" not in caplog.text
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     stored = stored_control(hass_storage, rig)
     assert (stored["controlling"], stored["hand_back_pending"]) == (False, False)
 
@@ -5518,7 +5519,7 @@ async def test_options_changed_without_a_running_entry_reload_it(
 
 
 async def test_a_failure_after_the_platforms_still_stops_everything(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, hass_storage: dict[str, Any]
 ) -> None:
     """P-57: the last step of setup fails, after control has started and taken the boiler: the
     failure path hands back, stops the control clock and lets go of VT; no update listener is
@@ -5535,8 +5536,8 @@ async def test_a_failure_after_the_platforms_still_stops_everything(
         raise RuntimeError("the background jobs could not start")
 
     monkeypatch.setattr(SmartBoilerCoordinator, "async_start_background", fail)
-    mock_restore_cache(rig.hass, [State("switch.boiler_control_experimental", "on")])
     entry = add_entry(rig, options(rig.zones))
+    seed_stores(hass_storage, entry, {"enabled": True}, "0.2.2")  # control was on
     assert not await rig.hass.config_entries.async_setup(entry.entry_id)
     await rig.hass.async_block_till_done()
     assert entry.state is ConfigEntryState.SETUP_ERROR
@@ -5757,27 +5758,18 @@ async def test_a_smartpi_pause_is_stored_before_the_call(
 
 
 @pytest.mark.parametrize("disabled", [True, False], ids=["disabled", "enabled"])
-async def test_control_waits_for_the_switch_to_restore_then_counts_as_off(
-    rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch, disabled: bool
+async def test_the_stored_wish_comes_back_at_setup(
+    rig: Rig, hass_storage: dict[str, Any], disabled: bool
 ) -> None:
-    """T-31 (answer K): a control switch disabled in Home Assistant is never added, so it cannot
-    restore the wish. The owed hand-back goes at once; nothing is decided for a minute; then
-    control counts as off, whatever the stored wish, and nothing more is written. Negative: the
-    same switch enabled restores the wish "on"."""
-    steps = 0
-    original = control_module.loop_step
-
-    def counted(*args: Any, **kwargs: Any) -> Any:
-        nonlocal steps
-        steps += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(control_module, "loop_step", counted)
+    """I11.3: the setup gives the stored wish back at once, where the control switch did when
+    added (T-31, answer K, was: a switch disabled in Home Assistant counted as off). Control's
+    state is only shown: disabled in Home Assistant, it changes nothing. The owed hand-back goes
+    at once, then control takes the boiler again."""
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
     entry.add_to_hass(rig.hass)
     if disabled:
         er.async_get(rig.hass).async_get_or_create(
-            "switch",
+            "binary_sensor",
             DOMAIN,
             f"{entry.entry_id}_control",
             config_entry=entry,
@@ -5786,22 +5778,9 @@ async def test_control_waits_for_the_switch_to_restore_then_counts_as_off(
     seed_stores(hass_storage, entry, {"controlling": True, "enabled": True}, "0.2.2")
     await set_up(rig, entry)
     assert rig.gateway.calls[:3] == HAND_BACK  # the owed hand-back, at once
-    unit = entry.runtime_data.control
-    if not disabled:
-        assert unit.enabled
-        await rig.advance(10)
-        assert rig.gateway.setpoints()[-1] == EXPECTED
-        return
-    await rig.advance(50)
-    assert steps == 0  # no decision while the switch may still restore
-    assert not unit.enabled
-    await rig.advance(20)
-    assert steps > 0
-    assert not unit.enabled  # counts as off
-    assert rig.gateway.calls == HAND_BACK  # nothing more written
-    assert stored_control(hass_storage, rig)["enabled"] is False
-    await rig.advance(60)
-    assert rig.gateway.calls == HAND_BACK
+    assert entry.runtime_data.control.enabled
+    await rig.advance(10)
+    assert rig.gateway.setpoints()[-1] == EXPECTED
 
 
 @pytest.mark.parametrize("wish", [False, True], ids=["off", "on"])
@@ -5814,7 +5793,7 @@ async def test_the_switch_off_survives_an_unclean_restart(
     mock_restore_cache(rig.hass, [State(SWITCH, "on")])
     await start_with_stored(rig, hass_storage, {"controlling": True, "enabled": wish}, "0.2.2")
     await rig.advance(70)
-    assert rig.state("switch", "control").state == ("on" if wish else "off")
+    assert rig.state("binary_sensor", "control").state == ("on" if wish else "off")
     if wish:
         assert rig.gateway.setpoints()[-1] == EXPECTED
     else:
@@ -5838,19 +5817,19 @@ async def test_the_wish_is_stored_at_once(
 
 
 @pytest.mark.parametrize("restored", ["on", "off", None], ids=["on", "off", "none"])
-async def test_a_first_start_without_a_stored_wish_uses_the_restored_switch(
+async def test_a_start_without_a_stored_wish_is_off(
     rig: Rig, hass_storage: dict[str, Any], restored: str | None
 ) -> None:
-    """The first start of 0.2.2 has no stored wish: the switch's restored state decides once,
-    and is stored from then on. Negative: without a restored state control is off."""
+    """I11.3: without a stored wish control is off — the cautious side — whatever an old
+    control switch's restored state says (it decided once at 0.2.2's first start, when the
+    switch still restored it)."""
     if restored is not None:
         mock_restore_cache(rig.hass, [State(SWITCH, restored)])
     await start(rig)
-    on = restored == "on"
-    assert rig.state("switch", "control").state == ("on" if on else "off")
+    assert rig.state("binary_sensor", "control").state == "off"
     await rig.advance(10)
-    assert (EXPECTED in rig.gateway.setpoints()) is on
-    assert stored_control(hass_storage, rig)["enabled"] is on
+    assert EXPECTED not in rig.gateway.setpoints()
+    assert stored_control(hass_storage, rig)["enabled"] is False
 
 
 @pytest.mark.parametrize("raw", ["yes", 1, [], {"on": True}])
@@ -5861,7 +5840,7 @@ async def test_an_unreadable_stored_wish_counts_as_off(
     mock_restore_cache(rig.hass, [State(SWITCH, "on")])
     await start_with_stored(rig, hass_storage, {"enabled": raw}, "0.2.2")
     await rig.advance(70)
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     assert rig.gateway.calls == []
     assert _logged(caplog, logging.WARNING, "unreadable stored control data: enabled") == 1
 
@@ -5876,11 +5855,11 @@ async def test_an_internal_error_outlives_a_restart(
     stored = {"enabled": True, "failed": failed, "alarms": ["control_error"] if failed else []}
     await start_with_stored(rig, hass_storage, stored, "0.2.2")
     await rig.advance(30)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     if not failed:
         assert rig.gateway.setpoints()[-1] == EXPECTED
         return
-    assert "control_error" in rig.state("switch", "control").attributes["blockers"]
+    assert "control_error" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.state("binary_sensor", "alarm_control_error").state == "on"
     assert rig.gateway.calls == []
     assert stored_control(hass_storage, rig)["failed"] is True
@@ -6179,7 +6158,7 @@ async def test_control_added_back_after_removal_starts_off(
     hass.config_entries.async_update_entry(entry, options=with_control)
     await hass.async_block_till_done()
     await rig.advance(70)
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     assert len(rig.gateway.calls) == count
 
 
@@ -8034,12 +8013,13 @@ async def refresh(rig: Rig) -> None:
 
 
 def control_entities() -> list[tuple[str, str]]:
-    """The switch, control's state and setpoint, the "Reset comfort correction" button and
+    """Control (its state, the switch's place since I11.3), control's state and setpoint, the
+    "Reset comfort correction" button and
     every control alarm the rig has: the gateway path's — the relay's exist on the relay path
     only (X8, R15) — without the outdoor sensor's, whose check needs a weather entity the rig
     does not have (the missing-data rule, Y4)."""
     return [
-        ("switch", "control"),
+        ("binary_sensor", "control"),
         ("sensor", "control_state"),
         ("sensor", "control_setpoint"),
         ("button", "reset_comfort_correction"),
@@ -8053,7 +8033,7 @@ def control_entities() -> list[tuple[str, str]]:
 
 
 def blockers(rig: Rig) -> list[str]:
-    return list(rig.state("switch", "control").attributes["blockers"])
+    return list(rig.state("binary_sensor", "control").attributes["blockers"])
 
 
 def local_minute(t: float) -> str:
@@ -8083,7 +8063,7 @@ async def test_control_switch_stays_usable_when_the_monitor_refresh_fails(
     count = len(rig.gateway.calls)
     await rig.switch(False)
     assert rig.gateway.calls[count:] == HAND_BACK
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     for domain, key in control_entities():
         assert rig.state(domain, key).state != "unavailable", key
 
@@ -8398,7 +8378,7 @@ async def test_a_monitor_failing_before_control_holds_the_boiler_raises_no_issue
     assert rig.state("binary_sensor", "alarm_monitor_failed").state == "on"
     await rig.switch(True)  # not refused: the blocker passes on its own
     await rig.advance(60)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert rig.gateway.calls == []
     assert issue(rig, "monitor_failed") is None
     breaker.failing = False
@@ -8595,7 +8575,9 @@ async def test_no_stopped_heating_issue_where_the_blocker_has_its_own_or_heating
     else:
         vt_central_boiler(rig, True)
         await rig.advance(10)
-    assert rig.state("switch", "control").attributes["frost_protection_by"] != "plugin"  # handed
+    assert (
+        rig.state("binary_sensor", "control").attributes["frost_protection_by"] != "plugin"
+    )  # handed
     if case == "cleared_within_a_minute":
         await rig.advance(40)
         assert stopped_heating(rig) is None
@@ -8688,13 +8670,13 @@ async def test_the_switch_says_the_plugin_keeps_frost_protection_only_while_it_c
     """S-57, stand-alone: the plugin while its session controls; after the hand-back — and
     before control ever took the boiler — the boiler's own, if it has one."""
     await start(rig, topology="gateway_standalone")
-    assert rig.state("switch", "control").attributes["frost_protection_by"] == "boiler"
+    assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] == "boiler"
     await rig.switch(True)
-    assert rig.state("switch", "control").attributes["frost_protection_by"] == "plugin"
+    assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] == "plugin"
     await rig.advance(20)
-    assert rig.state("switch", "control").attributes["frost_protection_by"] == "plugin"
+    assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] == "plugin"
     await rig.switch(False)
-    assert rig.state("switch", "control").attributes["frost_protection_by"] == "boiler"
+    assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] == "boiler"
 
 
 @pytest.mark.parametrize(
@@ -8722,14 +8704,14 @@ async def test_the_switch_says_who_keeps_frost_protection(
         await start(rig, **held_entity(number, write_type="expiring", hand_back="timeout"))
     else:
         await start(rig, **held_entity(number, hand_back_value_effect=installation))
-    shown = rig.state("switch", "control").attributes
+    shown = rig.state("binary_sensor", "control").attributes
     assert shown["frost_protection_by"] == handed_back  # control has not taken the boiler
     await rig.switch(True)
     await rig.advance(10)
-    assert rig.state("switch", "control").attributes["frost_protection_by"] == "plugin"
+    assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] == "plugin"
     await rig.switch(False)
     await rig.advance(10)
-    assert rig.state("switch", "control").attributes["frost_protection_by"] == handed_back
+    assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] == handed_back
 
 
 def room(rig: Rig, temperature: float | None, zone: str = "living") -> None:
@@ -8753,7 +8735,7 @@ async def test_handed_back_in_frost_raises_an_alarm(
     room(rig, 4.0)
     await rig.advance(10)
     assert in_frost(rig) == "on"
-    assert rig.state("switch", "control").attributes["frost_protection_by"] == "boiler"
+    assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] == "boiler"
     assert _logged(caplog, logging.WARNING, "near freezing") == 1
     room(rig, 6.0)  # above the limit, below the release
     await rig.advance(10)
@@ -8813,7 +8795,7 @@ async def test_handed_back_in_frost_negatives(rig: Rig, case: str) -> None:
         assert in_frost(rig) == "off"
     if case == "no_topology":
         assert "no_topology" in blockers(rig)
-        assert rig.state("switch", "control").attributes["frost_protection_by"] is None
+        assert rig.state("binary_sensor", "control").attributes["frost_protection_by"] is None
 
 
 @pytest.mark.parametrize("latched_by", [["outside_change"], ["pressure_low"], None])
@@ -9052,7 +9034,7 @@ async def test_an_ignored_heating_switch_raises_write_ignored(
     assert alarm.attributes["targets"] == ["heating"]
     await rig.advance(10)
     state = rig.state("sensor", "control_state")
-    blockers = rig.state("switch", "control").attributes["blockers"]
+    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
     assert state.state == "handed_back"
     assert state.attributes["latched_by"] == [cause]
     assert rig.gateway.calls[-3:] == HAND_BACK
@@ -9077,7 +9059,7 @@ async def test_an_ignored_heating_switch_raises_write_ignored(
     await rig.hass.async_block_till_done()
     await rig.advance(30)
     assert rig.state("sensor", "control_state").attributes["latched_by"] == [cause]
-    assert cause in rig.state("switch", "control").attributes["blockers"]
+    assert cause in rig.state("binary_sensor", "control").attributes["blockers"]
     assert issue(rig, "control_latched") is not None
     alarm = rig.state("binary_sensor", "alarm_write_ignored")
     assert alarm.state == "on"  # the alarm with the latch, through the reload
@@ -9088,7 +9070,7 @@ async def test_an_ignored_heating_switch_raises_write_ignored(
     await rig.switch(False)
     assert issue(rig, "control_latched") is None
     await rig.switch(True)  # the user's off and on: a new session tries the switch again
-    assert cause not in rig.state("switch", "control").attributes["blockers"]
+    assert cause not in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.state("sensor", "control_state").attributes["latched_by"] == []
 
 
@@ -9168,14 +9150,17 @@ async def test_heating_off_ignored_from_the_start_blocks_and_hands_back(
         switch.stuck_on = True  # from now on it will not go off
         rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
     await rig.advance(400)
-    blockers = rig.state("switch", "control").attributes["blockers"]
+    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
     if case == "ignored":
         assert rig.state("sensor", "control_state").state == "handed_back"
         assert "heating_off_ignored" in blockers
         assert switch.on  # the hand-back left heating on: the device's own control resumes
         await rig.switch(False)
         await rig.switch(True)
-        assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+        assert (
+            "heating_off_ignored"
+            not in rig.state("binary_sensor", "control").attributes["blockers"]
+        )
         assert switch.writes[-1] is False  # tried again
         return
     assert "heating_off_ignored" not in blockers
@@ -9183,7 +9168,7 @@ async def test_heating_off_ignored_from_the_start_blocks_and_hands_back(
     if case == "outage":
         await rig.advance(400)  # three counted attempts after the trace
         assert rig.state("sensor", "control_state").state == "handed_back"
-        assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+        assert "heating_off_ignored" in rig.state("binary_sensor", "control").attributes["blockers"]
 
 
 @pytest.mark.parametrize("case", ["frozen", "unknown", "unavailable", "once_taken"])
@@ -9218,7 +9203,7 @@ async def test_heating_on_ignored_from_the_start_blocks_and_hands_back(rig: Rig,
         switch.publish()
     await rig.advance(400)
     state = rig.state("sensor", "control_state")
-    blockers = rig.state("switch", "control").attributes["blockers"]
+    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
     if case != "frozen":
         assert "heating_on_ignored" not in blockers
         assert "heating_on_ignored" not in state.attributes["latched_by"]
@@ -9242,7 +9227,7 @@ async def test_heating_on_ignored_from_the_start_blocks_and_hands_back(rig: Rig,
     assert len(switch.writes) == count  # VT's "off": nothing written but the hand-back
     await rig.switch(False)
     await rig.switch(True)
-    assert "heating_on_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert "heating_on_ignored" not in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.state("sensor", "control_state").attributes["latched_by"] == []
 
 
@@ -9975,7 +9960,7 @@ async def test_a_lost_link_after_a_restart_raises_boiler_link_lost(
         "0.2.2",
         topology="gateway_standalone",
     )
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     await rig.advance(290)
     assert link_alarm(rig) == "off"
     await rig.advance(20)
@@ -9999,7 +9984,7 @@ async def test_boiler_link_lost_rises_while_a_latch_holds(
     entry.add_to_hass(rig.hass)
     seed_stores(hass_storage, entry, stored, "0.2.2")
     await set_up(rig, entry)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert rig.state("sensor", "control_state").state == "handed_back"
     rig.flow = None
     await rig.advance(290)
@@ -10266,28 +10251,28 @@ async def test_a_renamed_entity_carries_what_control_stored_for_it(
     assert {"entity_id": "climate.lounge", "learning_enabled": True} in learning
 
 
-async def test_the_control_switch_renamed_while_controlling_keeps_control(rig: Rig) -> None:
-    """The user renames the control switch's entity ID while control holds the boiler: Home
+async def test_control_renamed_while_controlling_keeps_control(rig: Rig) -> None:
+    """The user renames the entity ID of control's state while control holds the boiler: Home
     Assistant 2026.11 onward changes it in place (the plugin opts in; the only way from
-    2027.11), older versions remove the switch and add it again. Either way control stays on and
-    holds the boiler, the switch shows under its new ID only, and it still switches control
-    off."""
+    2027.11), older versions remove the entity and add it again. Either way control stays on and
+    holds the boiler, the state shows under its new ID only, and control still switches off
+    (I11.3: the state was the control switch)."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(10)
     assert rig.gateway.setpoints()
-    old = rig.entity("switch", "control")
-    new = "switch.renamed_boiler_control"
+    old = rig.entity("binary_sensor", "control")
+    new = "binary_sensor.renamed_boiler_control"
     er.async_get(rig.hass).async_update_entity(old, new_entity_id=new)
     await rig.hass.async_block_till_done()
     rig.gateway.calls.clear()
     await rig.advance(60)
-    assert rig.entity("switch", "control") == new
+    assert rig.entity("binary_sensor", "control") == new
     assert rig.hass.states.get(old) is None
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert rig.gateway.setpoints()  # still controlling: the setpoint is repeated
     await rig.switch(False)
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
 
 
 @pytest.mark.parametrize("home_assistant_has_it", [True, False])
@@ -10309,11 +10294,11 @@ async def test_the_rename_hook_passes_on_to_home_assistants_own(
         monkeypatch.setattr(Entity, "async_entity_id_changed", own, raising=False)
     else:
         monkeypatch.delattr(Entity, "async_entity_id_changed", raising=False)
-    switch_id = rig.entity("switch", "control")
-    switch = rig.hass.data["switch"].get_entity(switch_id)
-    assert switch is not None
-    switch.async_entity_id_changed("switch.before")
-    assert calls == ([(switch_id, "switch.before")] if home_assistant_has_it else [])
+    state_id = rig.entity("binary_sensor", "control")
+    state = rig.hass.data["binary_sensor"].get_entity(state_id)
+    assert state is not None
+    state.async_entity_id_changed("binary_sensor.before")
+    assert calls == ([(state_id, "binary_sensor.before")] if home_assistant_has_it else [])
 
 
 def no_zone_issue(rig: Rig) -> ir.IssueEntry | None:
@@ -10337,7 +10322,7 @@ async def test_the_last_command_is_restored_at_once_after_a_restart(
     await start_with_stored(rig, hass_storage, restorable(rig, **changes), "0.2.2")
     await rig.advance(10)
     assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     attributes = rig.state("sensor", "control_state").attributes
     assert attributes["reasons"] == ["zones_recognition"]
     assert "ha_starting" in attributes["blockers"]
@@ -10421,7 +10406,6 @@ OWED = "hand_back_owed"
         "no_setpoint",
         "no_options_stored",
         "wish_off",
-        "switch_disabled",
         "latch",
         "internal_error",
         "options_differ",
@@ -10435,7 +10419,7 @@ async def test_a_restore_whose_conditions_fail_hands_back_first(
     rig: Rig, hass_storage: dict[str, Any], case: str
 ) -> None:
     """Negatives, each: the owed hand-back comes first, as before — no stored command (or one
-    without a setpoint), the wish off or the switch entity disabled (answer K), a stored latch
+    without a setpoint), the wish off, a stored latch
     or internal error, options other than those the boiler was taken with, a blocker other than
     Home Assistant starting — VT's central boiler, or the thermostat-terminals question not
     answered by an entry from before 0.2.2 (X6, answer K) — a store that could not be read
@@ -10468,13 +10452,6 @@ async def test_a_restore_whose_conditions_fail_hands_back_first(
         seed_main(hass_storage, entry)  # the entry store, its control store gone
     else:
         seed_stores(hass_storage, entry, restorable(rig, **changes), "0.2.2")
-    if case == "switch_disabled":
-        er.async_get(rig.hass).async_get_or_create(
-            "switch",
-            DOMAIN,
-            f"{entry.entry_id}_control",
-            disabled_by=er.RegistryEntryDisabler.USER,
-        )
     if case == "blocker":
         vt_central_boiler(rig, True)
     await set_up(rig, entry)
@@ -11041,7 +11018,7 @@ async def test_the_switch_shows_the_boilers_own_room_controller(rig: Rig) -> Non
     number.register()
     control = held_entity(number, hand_back="timeout", write_type="expiring")
     await start(rig, **control, own_room_controller=True)
-    attributes = rig.state("switch", "control").attributes
+    attributes = rig.state("binary_sensor", "control").attributes
     assert attributes["hand_back_effect"] == "own_control_resumes"
     assert attributes["frost_protection_by"] == "device"
 
@@ -11620,7 +11597,7 @@ async def test_a_press_with_control_off_changes_nothing(rig: Rig) -> None:
     await press_reset(rig)
     assert correction(rig) == 0.0
     assert rig.gateway.calls == []
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
 
 
 async def test_the_activation_delay_holds_a_new_start_and_says_when(rig: Rig) -> None:
@@ -11680,7 +11657,7 @@ async def test_the_circuit_too_hot_alarm_is_information_on_the_measured_flow(rig
     assert alarm.attributes["limit"] == 45.0
     assert entry.runtime_data.data.alarms[AlarmKind.CIRCUIT_TOO_HOT].value == 46.0  # P-72
     assert 0.0 not in rig.gateway.setpoints()  # information only: no hand-back
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     rig.flow = 44.0
     await rig.advance(60, step=30)
     assert rig.state("binary_sensor", "alarm_circuit_too_hot").state == "on"
@@ -11819,7 +11796,7 @@ async def test_a_pauses_causes_come_back_after_a_restart(
     rig.flow = 25.0  # far below the setpoint
     await set_up(rig, entry)
     await rig.advance(20)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     assert ((zone, True) in calls) is resumed
 
 
@@ -11949,7 +11926,7 @@ async def test_a_boiler_ignoring_heating_off_shows_the_blocker_until_off_and_on(
     stored = {"latched": True, "latched_by": ["heating_off_ignored"], "enabled": True}
     await start_with_stored(rig, hass_storage, stored, layout)
     await rig.advance(120)
-    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert "heating_off_ignored" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.state("sensor", "control_state").attributes["latched_by"] == ["heating_off_ignored"]
     with pytest.raises(ServiceValidationError) as err:
         await rig.switch(True)  # on already: refused, with the reason
@@ -11958,7 +11935,7 @@ async def test_a_boiler_ignoring_heating_off_shows_the_blocker_until_off_and_on(
     assert rig.gateway.setpoints() == []  # nothing written
     await rig.switch(False)
     await rig.switch(True)
-    assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert "heating_off_ignored" not in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.gateway.setpoints() == [EXPECTED]
 
 
@@ -11971,10 +11948,10 @@ async def test_a_latch_stored_with_control_off_can_still_be_cleared(
     stored = {"latched": True, "latched_by": ["heating_off_ignored"], "enabled": False}
     await start_with_stored(rig, hass_storage, stored, layout)
     await rig.advance(120)
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     await rig.switch(True)  # not refused
     await rig.advance(20)
-    assert "heating_off_ignored" in rig.state("switch", "control").attributes["blockers"]
+    assert "heating_off_ignored" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.gateway.setpoints() == []
     await rig.switch(False)
     await rig.switch(True)
@@ -11992,7 +11969,7 @@ async def test_a_stored_latch_without_its_cause_is_no_heating_off_blocker(
         stored["latched_by"] = latched_by
     await start_with_stored(rig, hass_storage, stored, "0.2.2")
     await rig.advance(120)
-    assert "heating_off_ignored" not in rig.state("switch", "control").attributes["blockers"]
+    assert "heating_off_ignored" not in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.state("sensor", "control_state").state == "handed_back"
     assert rig.gateway.setpoints() == []
     await rig.switch(False)
@@ -12027,19 +12004,27 @@ async def test_a_zone_reconfigured_onto_the_boilers_thermostat_blocks_control(ri
     assert rig.gateway.setpoints() == [EXPECTED]
     rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": [thermostat]})
     await rig.advance(20)
-    assert "zone_on_boiler_thermostat" in rig.state("switch", "control").attributes["blockers"]
+    assert (
+        "zone_on_boiler_thermostat" in rig.state("binary_sensor", "control").attributes["blockers"]
+    )
     assert rig.gateway.calls[-3:] == HAND_BACK
     count = len(rig.gateway.calls)
     await rig.advance(60)
     assert len(rig.gateway.calls) == count  # nothing written while it holds
     rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": []})
     await rig.advance(20)
-    assert "zone_on_boiler_thermostat" not in rig.state("switch", "control").attributes["blockers"]
+    assert (
+        "zone_on_boiler_thermostat"
+        not in rig.state("binary_sensor", "control").attributes["blockers"]
+    )
     assert rig.gateway.setpoints()[-1] == EXPECTED  # resumed by itself
     registry.async_update_entity(rig.zones.entities["living"], config_entry_id=None)
     rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": [thermostat]})
     await rig.advance(20)
-    assert "zone_on_boiler_thermostat" not in rig.state("switch", "control").attributes["blockers"]
+    assert (
+        "zone_on_boiler_thermostat"
+        not in rig.state("binary_sensor", "control").attributes["blockers"]
+    )
 
 
 async def test_a_zone_that_is_not_a_vt_climate_blocks_control(rig: Rig) -> None:
@@ -12059,7 +12044,7 @@ async def test_a_zone_that_is_not_a_vt_climate_blocks_control(rig: Rig) -> None:
     await rig.hass.async_block_till_done()
     rig.entry = entry
     await rig.advance(10)
-    assert "zone_not_vt" in rig.state("switch", "control").attributes["blockers"]
+    assert "zone_not_vt" in rig.state("binary_sensor", "control").attributes["blockers"]
     with pytest.raises(ServiceValidationError):
         await rig.switch(True)
     ghost = options(rig.zones)
@@ -12067,7 +12052,7 @@ async def test_a_zone_that_is_not_a_vt_climate_blocks_control(rig: Rig) -> None:
     rig.hass.config_entries.async_update_entry(entry, options=ghost)
     await rig.hass.async_block_till_done()
     await rig.advance(10)
-    assert "zone_not_vt" not in rig.state("switch", "control").attributes["blockers"]
+    assert "zone_not_vt" not in rig.state("binary_sensor", "control").attributes["blockers"]
 
 
 async def test_a_gateway_entry_removed_or_disabled_blocks_control(rig: Rig) -> None:
@@ -12083,14 +12068,14 @@ async def test_a_gateway_entry_removed_or_disabled_blocks_control(rig: Rig) -> N
     assert rig.gateway.setpoints() == [EXPECTED]
     gateway = rig.hass.config_entries.async_entries("opentherm_gw")[0]
     assert gateway.state is ConfigEntryState.NOT_LOADED  # not running: no blocker
-    assert "gateway_not_set_up" not in rig.state("switch", "control").attributes["blockers"]
+    assert "gateway_not_set_up" not in rig.state("binary_sensor", "control").attributes["blockers"]
     await rig.hass.config_entries.async_set_disabled_by(gateway.entry_id, ConfigEntryDisabler.USER)
     await rig.advance(20)
-    assert "gateway_not_set_up" in rig.state("switch", "control").attributes["blockers"]
+    assert "gateway_not_set_up" in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.gateway.calls[-3:] == HAND_BACK
     await rig.hass.config_entries.async_set_disabled_by(gateway.entry_id, None)
     await rig.advance(20)
-    assert "gateway_not_set_up" not in rig.state("switch", "control").attributes["blockers"]
+    assert "gateway_not_set_up" not in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.gateway.setpoints()[-1] == EXPECTED
     assert rig.entry is not None
     control = dict(rig.entry.options["control"]) | {"gateway_id": "another_gw"}
@@ -12099,7 +12084,7 @@ async def test_a_gateway_entry_removed_or_disabled_blocks_control(rig: Rig) -> N
     )
     await rig.hass.async_block_till_done()
     await rig.advance(10)
-    assert "gateway_not_set_up" in rig.state("switch", "control").attributes["blockers"]
+    assert "gateway_not_set_up" in rig.state("binary_sensor", "control").attributes["blockers"]
 
 
 @pytest.mark.parametrize("mqtt", ["missing", "disabled", "set_up"])
@@ -12116,7 +12101,7 @@ async def test_the_mqtt_path_needs_the_mqtt_integration(rig: Rig, mqtt: str) -> 
         MockConfigEntry(domain="mqtt").add_to_hass(rig.hass)
     await start(rig, write_path="otgw_mqtt", mqtt_top="OTGW", mqtt_node="otgw-1", gateway_id=None)
     await rig.advance(10)
-    blockers = rig.state("switch", "control").attributes["blockers"]
+    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
     assert ("mqtt_not_set_up" in blockers) is (mqtt != "set_up")
 
 
@@ -12149,7 +12134,7 @@ async def test_an_entity_writer_refuses_one_switch_in_two_roles(
     assert issue(rig, "hand_back_owed") is not None
     assert (
         "hand_back_switch_is_heating_switch"
-        in (rig.state("switch", "control").attributes["blockers"])
+        in (rig.state("binary_sensor", "control").attributes["blockers"])
     )
 
 
@@ -12180,7 +12165,7 @@ async def test_a_gateway_entry_without_a_kind_is_blocked_and_told(
     await set_up(rig, entry)
     await rig.advance(10)
     assert rig.gateway.calls[:3] == HAND_BACK
-    assert "thermostat_kind_unknown" in rig.state("switch", "control").attributes["blockers"]
+    assert "thermostat_kind_unknown" in rig.state("binary_sensor", "control").attributes["blockers"]
     found = issue(rig, KIND_ISSUE)
     assert found is not None
     assert found.severity is ir.IssueSeverity.ERROR
@@ -12220,7 +12205,7 @@ async def test_the_kind_issue_is_raised_only_for_a_gateway_without_an_answer(
     await start(rig, **extra)
     await rig.advance(10)
     assert (issue(rig, KIND_ISSUE) is not None) is raised
-    blockers = rig.state("switch", "control").attributes["blockers"]
+    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
     blocked = {"unknown": "thermostat_kind_dont_know", "on_off": "thermostat_on_off"}.get(
         str(changes.get("thermostat_kind"))
     )
@@ -12336,12 +12321,12 @@ async def test_the_switch_shows_the_wall_thermostat_fallback(rig: Rig) -> None:
     entry = add_entry(rig, with_room_setpoint(rig))
     await set_up(rig, entry)
     await rig.advance(10)
-    attributes = rig.state("switch", "control").attributes
+    attributes = rig.state("binary_sensor", "control").attributes
     assert attributes["wall_thermostat_setpoint"] == 20.0
     assert attributes["wall_thermostat_warning"] is None
     wall_setpoint(rig, 12.0)
     await rig.advance(30)
-    attributes = rig.state("switch", "control").attributes
+    attributes = rig.state("binary_sensor", "control").attributes
     assert attributes["wall_thermostat_setpoint"] == 12.0
     assert attributes["wall_thermostat_warning"] == "low"
     await rig.advance(29 * 60)
@@ -12355,7 +12340,7 @@ async def test_the_switch_shows_the_wall_thermostat_fallback(rig: Rig) -> None:
     assert not found.is_fixable
     wall_setpoint(rig, None)  # low, then unknown: one stretch
     await rig.advance(30)
-    attributes = rig.state("switch", "control").attributes
+    attributes = rig.state("binary_sensor", "control").attributes
     assert attributes["wall_thermostat_setpoint"] is None
     assert attributes["wall_thermostat_warning"] == "unknown"
     found = issue(rig, WALL_ISSUE)
@@ -12364,27 +12349,27 @@ async def test_the_switch_shows_the_wall_thermostat_fallback(rig: Rig) -> None:
     wall_setpoint(rig, 21.0)
     await rig.advance(30)
     assert issue(rig, WALL_ISSUE) is None
-    assert rig.state("switch", "control").attributes["wall_thermostat_warning"] is None
+    assert rig.state("binary_sensor", "control").attributes["wall_thermostat_warning"] is None
 
 
 async def test_an_unmapped_wall_thermostat_is_shown_as_not_known_without_an_issue(
     rig: Rig,
 ) -> None:
-    """The missing-data rule: the signal not mapped — the switch says so, and no issue is
+    """The missing-data rule: the signal not mapped — control's state says so, and no issue is
     raised, however long (nothing is known to warn about)."""
     await start(rig)
     await rig.advance(31 * 60)
-    attributes = rig.state("switch", "control").attributes
+    attributes = rig.state("binary_sensor", "control").attributes
     assert attributes["wall_thermostat_setpoint"] is None
     assert attributes["wall_thermostat_warning"] == "not_mapped"
     assert issue(rig, WALL_ISSUE) is None
-    from custom_components.vtherm_smart_boiler.switch import ControlSwitch
+    from custom_components.vtherm_smart_boiler.binary_sensor import ControlStateSensor
 
     assert rig.entry is not None
     coordinator = rig.entry.runtime_data
     data, coordinator.data = coordinator.data, None  # no monitor data yet: nothing known
     try:
-        shown = ControlSwitch(coordinator).extra_state_attributes
+        shown = ControlStateSensor(coordinator).extra_state_attributes
     finally:
         coordinator.data = data
     assert shown["wall_thermostat_setpoint"] is None
@@ -12415,7 +12400,7 @@ async def test_no_wall_thermostat_is_shown_without_an_opentherm_one(
     entry = add_entry(rig, with_room_setpoint(rig, **control))
     await set_up(rig, entry)
     await rig.advance(31 * 60)
-    attributes = rig.state("switch", "control").attributes
+    attributes = rig.state("binary_sensor", "control").attributes
     assert "wall_thermostat_setpoint" not in attributes
     assert "wall_thermostat_warning" not in attributes
     assert issue(rig, WALL_ISSUE) is None
@@ -12798,7 +12783,7 @@ async def test_relay_control_follows_vt_both_ways(rig: Rig, relay: FakeRelay) ->
     assert state.state == "heating"
     assert state.attributes["relay_state"] == "on"
     assert state.attributes["relay_check"] == "confirmed"
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["off_by"] == "relay"
     assert switch.attributes["hand_back_effect"] == "relay_rests_off"
     assert switch.attributes["confirmation"] is None
@@ -13149,7 +13134,7 @@ async def test_controlled_without_confirmation_is_shown(
     relay.publish()
     await start_relay(rig, signals, relay_reports_state=reports)
     await rig.switch(True)
-    assert rig.state("switch", "control").attributes["confirmation"] == shown
+    assert rig.state("binary_sensor", "control").attributes["confirmation"] == shown
     check = rig.state("sensor", "control_state").attributes["relay_check"]
     assert (check == "unverified") is (shown == "controlled_without_confirmation")
 
@@ -13183,7 +13168,7 @@ async def test_no_heat_alarm_without_a_proof_input(rig: Rig, relay: FakeRelay) -
     key = f"{rig.entry.entry_id}_alarm_boiler_not_responding"
     assert er.async_get(rig.hass).async_get_entity_id("binary_sensor", DOMAIN, key) is None
     assert rig.state("sensor", "control_state").attributes["boiler_heats"] == "unverified"
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["confirmation"] == "without_heat_confirmation"
 
 
@@ -13278,14 +13263,13 @@ async def test_only_the_relays_services_are_called(rig: Rig, relay: FakeRelay) -
     calling(rig, False)
     await rig.advance(30)
     await rig.switch(False)
-    control = rig.entity("switch", "control")
     made = {
         (domain, service)
-        for domain, service, data in rig.services
-        if data.get("entity_id") != control
+        for domain, service, _data in rig.services
+        if (domain, service) != ("vtherm_smart_boiler", "set_control")  # the test's own
     }
     assert made == {("switch", "turn_on"), ("switch", "turn_off")}
-    allowed = rig.state("switch", "control").attributes["allowed_services"]
+    allowed = rig.state("binary_sensor", "control").attributes["allowed_services"]
     assert set(allowed) <= {
         "switch.turn_on",
         "switch.turn_off",
@@ -13354,7 +13338,7 @@ async def test_a_relay_that_never_takes_the_command_raises_relay_ignored(
     # hand-back, though it cannot be relied on (answer O; decision 4 of 0.2.3).
     assert relay.calls == [command] * 4
     cause = "heating_on_ignored" if command else "heating_off_ignored"
-    assert cause in rig.state("switch", "control").attributes["blockers"]
+    assert cause in rig.state("binary_sensor", "control").attributes["blockers"]
     assert rig.state("sensor", "control_state").attributes["latched_by"] == [cause]
     latch = issue(rig, "control_latched")
     assert latch is not None
@@ -13545,7 +13529,7 @@ async def test_a_relay_that_stops_taking_off_mid_session_blocks_control(
     assert state.attributes["relay_check"] == "not_taken"
     assert relay.calls == [True, False, False, False, False]  # the rest state, once
     assert relay.on  # the boiler may keep heating
-    blockers = rig.state("switch", "control").attributes["blockers"]
+    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
     assert "relay_off_not_taken" in blockers
     latch = issue(rig, "control_latched")
     assert latch is not None
@@ -13562,7 +13546,7 @@ async def test_a_relay_that_stops_taking_off_mid_session_blocks_control(
     await rig.advance(60)
     assert len(relay.calls) == 5  # the latch outlives a restart
     assert rig.state("sensor", "control_state").state == "handed_back"
-    assert "relay_off_not_taken" in rig.state("switch", "control").attributes["blockers"]
+    assert "relay_off_not_taken" in rig.state("binary_sensor", "control").attributes["blockers"]
     latch = issue(rig, "control_latched")
     assert latch is not None
     assert latch.translation_key == "control_latched_relay_off_not_taken"
@@ -13574,7 +13558,7 @@ async def test_a_relay_that_stops_taking_off_mid_session_blocks_control(
     await rig.switch(True)
     assert issue(rig, "control_latched") is None
     assert issue(rig, "relay_not_taking") is None
-    assert "relay_off_not_taken" not in rig.state("switch", "control").attributes["blockers"]
+    assert "relay_off_not_taken" not in rig.state("binary_sensor", "control").attributes["blockers"]
 
 
 @pytest.mark.parametrize("outage", [False, True], ids=["reachable", "out_of_reach_meanwhile"])
@@ -13878,15 +13862,12 @@ async def test_the_relay_restore_goes_out_before_the_switch_restores(
     rig: Rig, relay: FakeRelay, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """R11: V3 knows the wish from the store — the stored command is written at the first
-    step, before the control switch has restored the user's wish."""
-    from homeassistant.helpers.restore_state import RestoreEntity
+    step, before the wish is restored (by the setup since I11.3; here held back)."""
 
-    from custom_components.vtherm_smart_boiler import switch as switch_module
+    async def not_restored(self: Any, _on: bool) -> None:
+        return None
 
-    async def added_without_restore(self: Any) -> None:
-        await RestoreEntity.async_added_to_hass(self)
-
-    monkeypatch.setattr(switch_module.ControlSwitch, "async_added_to_hass", added_without_restore)
+    monkeypatch.setattr(control_module.ControlUnit, "async_restore_enabled", not_restored)
     await start_relay_with_stored(rig, hass_storage, relay_restorable(rig))
     assert relay.calls == []
     await rig.advance(10)
@@ -14141,10 +14122,10 @@ async def test_blocked_switch_error_counts_the_others(rig: Rig) -> None:
     assert err.value.translation_key == "blocked_curve_not_entered"
     assert err.value.translation_placeholders == {"count": "1"}
     await rig.advance(10)  # the next step shows them
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["blockers"] == ["curve_not_entered", "count_threshold_above_zones"]
     expected = ", ".join(
-        _attribute_text("switch", "control", "blockers", code)
+        _attribute_text("binary_sensor", "control", "blockers", code)
         for code in ("curve_not_entered", "count_threshold_above_zones")
     )
     assert switch.attributes["blockers_text"] == expected
@@ -14265,19 +14246,20 @@ async def _owed_then_command(rig: Rig, hass_storage: dict[str, Any]) -> None:
     await rig.advance(10)
 
 
-async def _switch_never_restored(rig: Rig, hass_storage: dict[str, Any]) -> None:
+async def _wish_never_restored(rig: Rig, hass_storage: dict[str, Any]) -> None:
+    """The wish never given back — the setup gives it since I11.3; held back here: the unit's
+    own guard decides nothing for a minute, then counts control as off."""
+    from unittest.mock import patch
+
+    async def not_restored(self: Any, _on: bool) -> None:
+        return None
+
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options(rig.zones))
     entry.add_to_hass(rig.hass)
-    er.async_get(rig.hass).async_get_or_create(
-        "switch",
-        DOMAIN,
-        f"{entry.entry_id}_control",
-        config_entry=entry,
-        disabled_by=er.RegistryEntryDisabler.USER,
-    )
     seed_stores(hass_storage, entry, {"controlling": True, "enabled": True}, "0.2.2")
-    await set_up(rig, entry)
-    await rig.advance(120)
+    with patch.object(control_module.ControlUnit, "async_restore_enabled", not_restored):
+        await set_up(rig, entry)
+        await rig.advance(120)
 
 
 async def _hand_back_only(rig: Rig, hass_storage: dict[str, Any]) -> None:
@@ -14325,8 +14307,8 @@ STEP_PRECEDENCE = [
         "heating",
     ),
     (
-        "the switch never restored: nothing decided, then off",
-        _switch_never_restored,
+        "the wish never restored: nothing decided, then off",
+        _wish_never_restored,
         HAND_BACK,
         "disabled",
     ),

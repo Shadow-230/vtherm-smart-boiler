@@ -208,7 +208,7 @@ async def test_monitoring_only_refuses_the_control_switch(rig: Rig, hass_client:
     assert rig.entry.options["boiler"]["control_mode"] == "monitor"
     with pytest.raises(HomeAssistantError):
         await rig.switch(True)
-    assert rig.state("switch", "control").state == "off"
+    assert rig.state("binary_sensor", "control").state == "off"
     await walk.save_options(
         rest, _entry_id(rig), {"control_mode": "full"}, ("mode",), required=["control_mode"]
     )
