@@ -48,29 +48,37 @@ def reading_from_state(
     return Reading(value, reported_at(state), changed_at(state))
 
 
+# What stands for the OTGW firmware on MQTT, after the setpoint read-back: signals only a boiler
+# interface carries, the first one mapped and registered by MQTT.
+MQTT_GATEWAY_SIGNALS = (Signal.CH_SETPOINT, Signal.FLAME, Signal.FLOW)
+
+
 def gateway_signals(
     hass: HomeAssistant,
     mapping: Mapping[Signal, str],
-    write_path: str | None = None,
+    over_mqtt: bool = False,
     read_back: str | None = None,
 ) -> frozenset[Signal]:
     """The mapped signals whose entity the OpenTherm Gateway reports (P-17, Q3.9): registered by
-    ``opentherm_gw``, or by ``mqtt`` on the Home Assistant device of the OTGW firmware's setpoint
-    read-back where the write path is ``otgw_mqtt`` — the firmware's discovery puts a gateway's
-    entities on one device (assumed, supported by its source:
-    ``research/2026-09-28-y1-otgw-discovery-device.md``; provisional, K4). An entity not in the
-    registry counts as none, and so does every MQTT entity on another path: its 0 bar is a
-    reading. Their fault flags count only with the boiler's fault indication on — except
-    ``opentherm_gw``'s boiler "Fault indication" itself (OpenTherm ID 0, in every status
-    report), which is that indication and needs no gate. Read at setup, in the event loop."""
+    ``opentherm_gw``, or, on a gateway connected through its firmware's MQTT (``over_mqtt``, also
+    while only monitoring), by ``mqtt`` on the same Home Assistant device as the setpoint
+    read-back, else the first of ``MQTT_GATEWAY_SIGNALS``. No device on both counts as the same:
+    entities written by hand in YAML have none, and an entity on a device of its own, as
+    Zigbee2MQTT's, is never the gateway's. A sensor of something else written by hand reads as
+    the gateway's: the cautious side, as its 0 is unknown and its fault flag needs the fault
+    indication (provisional, K4). An entity not in the registry counts as none, and so does
+    every MQTT entity on another connection: its 0 bar is a reading. The gateway's fault flags
+    count only with the boiler's fault indication on — except ``opentherm_gw``'s boiler "Fault
+    indication" itself (OpenTherm ID 0, in every status report), which is that indication and
+    needs no gate. Read at setup, in the event loop."""
     from homeassistant.helpers import entity_registry as er
 
     registry = er.async_get(hass)
-    device: str | None = None
-    if write_path == "otgw_mqtt" and read_back:
-        found = registry.async_get(read_back)
-        if found is not None and found.platform == MQTT_DOMAIN:
-            device = found.device_id
+    reference = None
+    if over_mqtt:
+        candidates = (read_back, *(mapping.get(signal) for signal in MQTT_GATEWAY_SIGNALS))
+        found = (registry.async_get(entity) for entity in candidates if entity)
+        reference = next((e for e in found if e is not None and e.platform == MQTT_DOMAIN), None)
     result: set[Signal] = set()
     for signal, entity_id in mapping.items():
         entry = registry.async_get(entity_id)
@@ -79,7 +87,11 @@ def gateway_signals(
         if entry.platform == OPENTHERM_GW_DOMAIN:
             if not entry.unique_id.endswith(OTGW_FAULT_INDICATION):
                 result.add(signal)
-        elif device is not None and entry.platform == MQTT_DOMAIN and entry.device_id == device:
+        elif (
+            reference is not None
+            and entry.platform == MQTT_DOMAIN
+            and entry.device_id == reference.device_id
+        ):
             result.add(signal)
     return frozenset(result)
 

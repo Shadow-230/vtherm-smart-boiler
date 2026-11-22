@@ -110,7 +110,7 @@ def alarm_state(rig: Rig, kind: str) -> str:
 # --- P-17, question 8: 0.0 bar unknown only from the gateway ----------------------------------
 
 
-@pytest.mark.parametrize("source", ["zigbee", "ems_esp_over_mqtt"])
+@pytest.mark.parametrize("source", ["zigbee", "ems_esp_over_mqtt", "beside_a_handwritten_gateway"])
 async def test_zero_pressure_from_a_non_gateway_sensor_raises_add_water(
     rig: Rig, source: str
 ) -> None:
@@ -124,7 +124,8 @@ async def test_zero_pressure_from_a_non_gateway_sensor_raises_add_water(
         register(rig, PRESSURE, "zha")
     else:
         control = {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"}
-        register(rig, CONFIRMED, "mqtt", mqtt_device(rig, "otgw-1"))
+        written_by_hand = source == "beside_a_handwritten_gateway"
+        register(rig, CONFIRMED, "mqtt", None if written_by_hand else mqtt_device(rig, "otgw-1"))
         register(rig, PRESSURE, "mqtt", mqtt_device(rig, "ems-esp"))
     entry_options = with_pressure(rig, 1.5, add_water_below=0.8)
     entry_options["control"] |= control
@@ -150,17 +151,19 @@ async def test_zero_pressure_from_a_non_gateway_sensor_raises_add_water(
     assert unit_of(rig).status.alarms == frozenset()  # it changes nothing in control
 
 
-@pytest.mark.parametrize("source", ["opentherm_gw", "otgw_firmware_over_mqtt"])
+@pytest.mark.parametrize(
+    "source", ["opentherm_gw", "otgw_firmware_over_mqtt", "otgw_mqtt_written_by_hand"]
+)
 async def test_zero_pressure_from_the_gateway_is_unknown(rig: Rig, source: str) -> None:
     """P-17: the OpenTherm Gateway reports 0 bar after a reset until a real reading — from its
     entity (registered by ``opentherm_gw``, or by ``mqtt`` on the device of the ``otgw_mqtt``
-    path's read-back) 0.0 is unknown: the alarm holds its state an hour, then shows unknown;
-    never "add water"."""
+    path's read-back, or like it on none: entities written by hand in YAML) 0.0 is unknown: the
+    alarm holds its state an hour, then shows unknown; never "add water"."""
     control: dict[str, Any] = {}
     if source == "opentherm_gw":
         register(rig, PRESSURE, "opentherm_gw")
     else:
-        device = mqtt_device(rig, "otgw-1")
+        device = None if source == "otgw_mqtt_written_by_hand" else mqtt_device(rig, "otgw-1")
         control = {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"}
         register(rig, CONFIRMED, "mqtt", device)
         register(rig, PRESSURE, "mqtt", device)
@@ -426,6 +429,29 @@ async def test_a_gateway_fault_flag_counts_only_with_the_fault_indication_on(
     stopped = ("ch", False) in rig.gateway.calls
     assert stopped is (gate == "on")
     assert ("setpoint", 0.0) not in rig.gateway.calls
+    assert (issue(rig, "boiler_fault") is not None) is (gate == "on")
+
+
+@pytest.mark.parametrize("gate", ["off", "on"])
+async def test_monitoring_a_gateway_over_mqtt_gates_its_fault_flags(rig: Rig, gate: str) -> None:
+    """Monitoring only, no write path: the OTGW firmware's entities, written by hand in YAML and
+    so on no device, are still the gateway's. A stale fault flag opens no notification while the
+    fault indication is off."""
+    for entity in (CONFIRMED, LOW_WATER, FAULT_INDICATION):
+        register(rig, entity, "mqtt")
+    rig.hass.states.async_set(FAULT_INDICATION, gate)
+    entry_options = with_fault(
+        rig,
+        **{
+            Signal.FAULT_INDICATION.value: FAULT_INDICATION,
+            Signal.CH_SETPOINT.value: CONFIRMED,
+        },
+    )
+    del entry_options["control"]
+    entry_options["boiler"] |= {"connection": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "n1"}
+    await set_up(rig, add_entry(rig, entry_options))
+    rig.hass.states.async_set(LOW_WATER, "on")
+    await rig.advance(6 * MINUTE)
     assert (issue(rig, "boiler_fault") is not None) is (gate == "on")
 
 

@@ -833,7 +833,9 @@ A failed outdoor sensor is not a lost link: the plugin uses a fallback setpoint,
 
 You may map the boiler's own fault signals: its low-water-pressure fault, and another fault that
 stops it. On an OTGW a fault counts only while the boiler's "Fault indication" is on as well, and
-that signal must be mapped too.
+that signal must be mapped too. With the OTGW firmware over MQTT, the gateway's entities are those
+on the same Home Assistant device as its setpoint. Entities written by hand in YAML have no device:
+they count as the gateway's when the setpoint has none either.
 
 While such a fault reads "on" for 5 minutes, the plugin keeps heating off — frost heating
 included — with no hand-back and no latch. It heats again by itself as soon as every mapped fault
