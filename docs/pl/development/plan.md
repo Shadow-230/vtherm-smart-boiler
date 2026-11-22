@@ -188,3 +188,6 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
 - 0.2, krok I10 — `docs/en/development/plans/plan-0.2-i10.md`: strona „Kocioł” w menu bocznym i te
   same części jako karty, zmiana krzywej ze strony z tymi samymi sprawdzeniami co w ustawieniach
   (decyzje użytkownika z 2026-11-18)
+- 0.2, krok I11 — `docs/en/development/plans/plan-0.2-i11.md`: sterowanie włącza i wyłącza tylko
+  administrator w ustawieniach wtyczki, oraz automatyzacje; przełącznik „Sterowanie” staje się
+  samym pokazaniem stanu (decyzje użytkownika z 2026-11-22, po F19 z J4)

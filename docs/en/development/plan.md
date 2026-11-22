@@ -187,3 +187,6 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
 - 0.2, step I10 — `docs/en/development/plans/plan-0.2-i10.md`: the Boiler page in the sidebar and
   the same parts as cards, changing the curve from the page with the settings' checks (the user's
   decisions of 2026-11-18)
+- 0.2, step I11 — `docs/en/development/plans/plan-0.2-i11.md`: control switched on and off only
+  by an administrator in the plugin's settings, and by automations; the Control switch becomes a
+  state shown (the user's decisions of 2026-11-22, after J4's F19)

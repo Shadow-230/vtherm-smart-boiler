@@ -14,7 +14,9 @@ G11, I7, I8 and I9 are planned step by step in [`plan-0.2-i6.md`][plan-0.2-i6],
 and [`plan-0.2-i9.md`][plan-0.2-i9]; step I10, the Boiler page in the sidebar and its cards (the
 user's decisions of 2026-11-18, before the first release), is planned in
 [`plan-0.2-i10.md`][plan-0.2-i10] and listed in the development plan, since `plan-0.2.md` is
-history; phases run in order. A 🔒 step whose plan says it holds nothing
+history; step I11, control switched only in the plugin's settings (the user's decisions of
+2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; phases run in
+order. A 🔒 step whose plan says it holds nothing
 up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
 go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decision 16; provisionally
 0.2.3b1).
@@ -28,6 +30,7 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2-i8]: docs/en/development/plans/plan-0.2-i8.md
 [plan-0.2-i9]: docs/en/development/plans/plan-0.2-i9.md
 [plan-0.2-i10]: docs/en/development/plans/plan-0.2-i10.md
+[plan-0.2-i11]: docs/en/development/plans/plan-0.2-i11.md
 [plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
 [plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
 [plan-0.2.2-details]: docs/en/development/plans/plan-0.2.2-details.md
