@@ -370,7 +370,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         gateway = gateway_signals(
             hass,
             config.signals,
-            None if control.write_path is None else control.write_path.value,
+            config.panel.connection is Connection.OTGW_MQTT
+            or control.write_path is WritePath.OTGW_MQTT,
             control.confirmed_entity,
         )
         self.transport = EntityTransport(hass, config.signals, gateway)

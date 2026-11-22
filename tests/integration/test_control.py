@@ -1891,6 +1891,40 @@ async def test_mqtt_path_calls_only_its_publish(mqtt_rig: Rig, mqtt_client_mock:
     assert not unit_of(rig).hand_back_owed
 
 
+@pytest.mark.parametrize("indication", ["off", "on"])
+async def test_a_stale_fault_flag_on_mqtt_without_a_device_leaves_the_heating_on(
+    mqtt_rig: Rig, mqtt_client_mock: Any, indication: str
+) -> None:
+    """The OTGW firmware's entities written by hand in YAML have no device. The gateway reads a
+    fault's details once and never after it clears (Q3.9), so a flag left on must not stop the
+    heating: it counts only while the boiler's fault indication is on too."""
+    rig = mqtt_rig
+    read_back = await OtgwFirmware(rig.hass).start()
+    assert er.async_get(rig.hass).async_get(read_back).device_id is None
+    registry = er.async_get(rig.hass)
+    low, fault = (
+        registry.async_get_or_create(
+            "binary_sensor", "mqtt", name, suggested_object_id=name
+        ).entity_id
+        for name in ("otgw_low_water", "otgw_fault")
+    )
+    rig.hass.states.async_set(low, "off")
+    rig.hass.states.async_set(fault, indication)
+    entry_options = options(rig.zones, **MQTT_PATH, gateway_id=None, confirmed_entity=read_back)
+    entry_options["signals"] |= {
+        Signal.LOW_PRESSURE_FAULT.value: low,
+        Signal.FAULT_INDICATION.value: fault,
+    }
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.hass.states.async_set(low, "on")
+    await rig.advance(6 * 60.0)
+    off = (f"{OTGW_TOP}/set/{OTGW_NODE}/chenable", "0")
+    assert (off in published(mqtt_client_mock)) is (indication == "on")
+    assert (rig.state("sensor", "control_state").state == "boiler_fault") is (indication == "on")
+
+
 @pytest.mark.parametrize("asked", ["lowest", "last_setpoint"])
 async def test_an_mqtt_hand_back_is_confirmed_by_the_thermostats_own_request(
     mqtt_rig: Rig, mqtt_client_mock: Any, asked: str

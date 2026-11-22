@@ -871,7 +871,9 @@ zerowego grzania.
 
 Możesz wskazać własne sygnały usterek kotła: usterkę niskiego ciśnienia wody i inną usterkę,
 która go zatrzymuje. Na OTGW usterka liczy się tylko wtedy, gdy jednocześnie włączona jest
-„Fault indication” kotła, i ten sygnał też musi być wskazany.
+„Fault indication” kotła, i ten sygnał też musi być wskazany. Przy firmware OTGW przez MQTT encje
+bramki to te na tym samym urządzeniu Home Assistanta co jej nastawa. Encje napisane ręcznie w YAML
+nie mają urządzenia: liczą się jako encje bramki, gdy nastawa też go nie ma.
 
 Dopóki taka usterka pokazuje „włączony” przez 5 minut, wtyczka trzyma grzanie wyłączone — razem
 z grzaniem przeciwmrozowym — bez oddania sterowania i bez zatrzasku. Grzeje znowu sama, gdy

@@ -6,10 +6,16 @@ import inspect
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.vtherm_smart_boiler import transport
 from custom_components.vtherm_smart_boiler.core.signals import GatewayOutdoor, Signal
-from custom_components.vtherm_smart_boiler.transport.entities import EntityTransport
+from custom_components.vtherm_smart_boiler.transport.entities import (
+    EntityTransport,
+    gateway_signals,
+)
 
 from .harness import BOILER_ENTITIES, FakeBoiler
 
@@ -42,6 +48,104 @@ async def test_implausible_and_unavailable_states_are_unknown(
     snapshot = link.snapshot(now=1e10)
     assert snapshot.number(Signal.FLOW) is None
     assert snapshot.flag(Signal.FLAME) is None
+
+
+def _registered(
+    hass: HomeAssistant, object_id: str, device_id: str | None = None, platform: str = "mqtt"
+) -> str:
+    """A sensor in the entity registry, as ``platform`` registers it."""
+    return (
+        er.async_get(hass)
+        .async_get_or_create(
+            "sensor",
+            platform,
+            f"test_{object_id}",
+            suggested_object_id=object_id,
+            device_id=device_id,
+        )
+        .entity_id
+    )
+
+
+def _device(hass: HomeAssistant, name: str) -> str:
+    entry = MockConfigEntry(domain="mqtt")
+    entry.add_to_hass(hass)
+    return (
+        dr.async_get(hass)
+        .async_get_or_create(config_entry_id=entry.entry_id, identifiers={("mqtt", name)})
+        .id
+    )
+
+
+async def test_a_gateway_over_mqtt_on_no_device_is_recognised(hass: HomeAssistant) -> None:
+    """MQTT entities written by hand in YAML have no Home Assistant device: with the read-back
+    on none, the others on none are the gateway's too. A sensor on a device of its own, as
+    Zigbee2MQTT's, never is."""
+    read_back = _registered(hass, "tset")
+    mapping = {
+        Signal.CH_SETPOINT: read_back,
+        Signal.FLOW: _registered(hass, "flow"),
+        Signal.PRESSURE: _registered(hass, "pressure"),
+        Signal.OUTDOOR: _registered(hass, "zigbee_outdoor", _device(hass, "zigbee2mqtt")),
+    }
+    assert gateway_signals(hass, mapping, over_mqtt=True, read_back=read_back) == {
+        Signal.CH_SETPOINT,
+        Signal.FLOW,
+        Signal.PRESSURE,
+    }
+
+
+async def test_a_gateway_over_mqtt_on_a_device_keeps_to_that_device(hass: HomeAssistant) -> None:
+    """The firmware's discovery puts its entities on one device: an entity on another, or on
+    none, is not the gateway's."""
+    device = _device(hass, "otgw")
+    read_back = _registered(hass, "tset", device)
+    mapping = {
+        Signal.CH_SETPOINT: read_back,
+        Signal.FLOW: _registered(hass, "flow", device),
+        Signal.PRESSURE: _registered(hass, "pressure"),
+        Signal.OUTDOOR: _registered(hass, "other", _device(hass, "ems-esp")),
+    }
+    assert gateway_signals(hass, mapping, over_mqtt=True, read_back=read_back) == {
+        Signal.CH_SETPOINT,
+        Signal.FLOW,
+    }
+
+
+@pytest.mark.parametrize("known", [Signal.CH_SETPOINT, Signal.FLAME, Signal.FLOW])
+async def test_monitoring_only_tells_the_gateway_by_a_signal_it_carries(
+    hass: HomeAssistant, known: Signal
+) -> None:
+    """With monitoring only there is no read-back: the boiler's setpoint, else the flame, else
+    the flow stands for the gateway."""
+    mapping = {known: _registered(hass, "known"), Signal.PRESSURE: _registered(hass, "pressure")}
+    assert gateway_signals(hass, mapping, over_mqtt=True) == {known, Signal.PRESSURE}
+
+
+async def test_the_first_mqtt_signal_decides_the_gateways_device(hass: HomeAssistant) -> None:
+    """The read-back first, then the setpoint, the flame and the flow; one not on MQTT is
+    passed over."""
+    device = _device(hass, "otgw")
+    read_back = _registered(hass, "tset", platform="template")
+    mapping = {
+        Signal.CH_SETPOINT: _registered(hass, "ch_setpoint", device),
+        Signal.FLAME: _registered(hass, "flame"),
+        Signal.PRESSURE: _registered(hass, "pressure", device),
+    }
+    assert gateway_signals(hass, mapping, over_mqtt=True, read_back=read_back) == {
+        Signal.CH_SETPOINT,
+        Signal.PRESSURE,
+    }
+
+
+async def test_no_mqtt_entity_is_the_gateways_elsewhere(hass: HomeAssistant) -> None:
+    """On another connection nothing on MQTT counts. Nor on this one without a signal that
+    can stand for the gateway: a pressure sensor alone says nothing about where it comes from."""
+    read_back = _registered(hass, "tset")
+    pressure = _registered(hass, "pressure")
+    mapping = {Signal.CH_SETPOINT: read_back, Signal.PRESSURE: pressure}
+    assert gateway_signals(hass, mapping, over_mqtt=False, read_back=read_back) == frozenset()
+    assert gateway_signals(hass, {Signal.PRESSURE: pressure}, over_mqtt=True) == frozenset()
 
 
 async def test_a_gateway_outdoor_zero_follows_the_last_reading(hass: HomeAssistant) -> None:
