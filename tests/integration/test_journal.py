@@ -18,6 +18,7 @@ from custom_components.vtherm_smart_boiler.const import DOMAIN
 
 from .test_control import (  # the rig fixture comes with them
     EXPECTED,
+    HAND_BACK,
     Rig,
     rig,  # noqa: F401
     start,
@@ -114,6 +115,58 @@ async def test_a_hand_back_still_owed_at_the_stop_is_not_journaled(rig: Rig) -> 
     await rig.hass.async_block_till_done()
     assert [e.kind for e in journal.entries][-1] == Kind.STOPPED
     assert Kind.HANDED_BACK not in [e.kind for e in journal.entries]
+
+
+async def test_a_journal_that_cannot_be_written_at_the_unload_stops_nothing(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I10.10's scope check, gap 2 (a): the journal written at the unload fails — a store that
+    cannot be saved — and the unload goes on: the hand-back made first, the platforms unloaded,
+    nothing left running."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(60)
+    entry = rig.entry
+    assert entry is not None
+
+    async def fail() -> None:
+        raise OSError("the store cannot be written")
+
+    monkeypatch.setattr(entry.runtime_data.journal, "async_stop", fail)
+    assert await rig.hass.config_entries.async_unload(entry.entry_id)
+    await rig.hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert rig.gateway.calls[-3:] == HAND_BACK
+    count = len(rig.gateway.calls)
+    await rig.advance(300)
+    assert len(rig.gateway.calls) == count  # no control clock left running
+
+
+async def test_a_journal_failing_at_a_settings_save_does_not_stop_the_save(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap 2 (d): the journal's note of a settings save fails; the save reloads the entry all
+    the same, with what was saved."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    await start(rig)
+    entry = rig.entry
+    assert entry is not None
+    old = entry.runtime_data
+
+    def fail(_changed: Any) -> None:
+        raise RuntimeError("the journal failed")
+
+    monkeypatch.setattr(old.journal, "settings_saved", fail)
+    control = dict(entry.options["control"])
+    control["curve"] = {**control["curve"], "design_flow": 57}
+    rig.hass.config_entries.async_update_entry(entry, options={**entry.options, "control": control})
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data is not old  # reloaded
+    assert entry.runtime_data.options["control"]["curve"]["design_flow"] == 57
 
 
 async def test_an_alarm_raised_is_journaled(rig: Rig, hass_ws_client: Any) -> None:

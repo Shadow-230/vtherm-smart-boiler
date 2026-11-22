@@ -431,3 +431,23 @@ async def test_the_burns_are_the_monitors_own(hass: HomeAssistant, hass_ws_clien
             {"start": 2000.0, "end": 2300.0, "kind": "dhw", "start_seen": True, "end_seen": False},
         ],
     }
+
+
+async def test_the_pages_commands_failing_to_register_stop_nothing(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I10.10's scope check, gap 2 (c): registering the page's commands fails; the entry starts
+    all the same — the monitor and control run — only the page has nothing to read."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.vtherm_smart_boiler import websocket_api
+
+    def fail(_hass: HomeAssistant) -> None:
+        raise RuntimeError("the commands cannot be registered")
+
+    monkeypatch.setattr(websocket_api, "async_setup_websocket", fail)
+    await start(rig)
+    assert rig.entry is not None
+    assert rig.entry.state is ConfigEntryState.LOADED
+    await rig.switch(True)
+    assert rig.gateway.calls  # control writes
