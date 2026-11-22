@@ -528,18 +528,13 @@ var F = {
 		control: {
 			label: "Control",
 			experimental: "(experimental)",
-			hint_on: "Switching off hands the boiler back to its own settings.",
-			hint_off: "Switching on asks for confirmation.",
-			admin_only: "Only an administrator can change this.",
+			on: "On",
+			off: "Off",
+			settings: "Change in settings",
+			hint_settings: "Switched in the plugin's settings: Control mode, Control on.",
+			admin_only: "Only an administrator changes this, in the plugin's settings.",
 			unavailable: "Not available now.",
-			confirm_off_title: "Switch control off?",
-			confirm_off_body: "The plugin stops setting the water temperature and hands the boiler back to its own settings. It keeps watching and counting.",
-			confirm_off: "Switch off",
-			confirm_on_title: "Switch control on?",
-			confirm_on_body: "Control is experimental. The plugin starts setting the boiler's water temperature from the heating curve. You can switch it off at any time, and the boiler returns to its own settings.",
-			confirm_on: "Switch on",
 			cancel: "Cancel",
-			failed: "The switch did not change: {message}",
 			replay: "replay · {time}",
 			replay_hint: "A past moment: nothing can be changed."
 		},
@@ -875,18 +870,13 @@ var F = {
 		control: {
 			label: "Sterowanie",
 			experimental: "(eksperymentalne)",
-			hint_on: "Wyłączenie oddaje kocioł jego własnym ustawieniom.",
-			hint_off: "Włączenie wymaga potwierdzenia.",
-			admin_only: "Zmienić to może tylko administrator.",
+			on: "Włączone",
+			off: "Wyłączone",
+			settings: "Zmień w ustawieniach",
+			hint_settings: "Przełącza się w ustawieniach wtyczki: Tryb sterowania, Sterowanie włączone.",
+			admin_only: "Zmienić to może tylko administrator, w ustawieniach wtyczki.",
 			unavailable: "Teraz niedostępne.",
-			confirm_off_title: "Wyłączyć sterowanie?",
-			confirm_off_body: "Wtyczka przestanie ustawiać temperaturę wody i odda kocioł jego własnym ustawieniom. Dalej będzie obserwować i liczyć.",
-			confirm_off: "Wyłącz",
-			confirm_on_title: "Włączyć sterowanie?",
-			confirm_on_body: "Sterowanie jest eksperymentalne. Wtyczka zacznie ustawiać temperaturę wody w kotle według krzywej grzewczej. W każdej chwili możesz je wyłączyć, a kocioł wróci do swoich ustawień.",
-			confirm_on: "Włącz",
 			cancel: "Anuluj",
-			failed: "Przełącznik się nie zmienił: {message}",
 			replay: "odtwarzanie · {time}",
 			replay_hint: "Chwila z przeszłości: nic nie da się zmienić."
 		},
@@ -4246,26 +4236,24 @@ var hn = "vtherm-smart-boiler-timeline", gn = 1e3, _n = 170, Q = 720, vn = 100, 
 };
 customElements.get("vtherm-smart-boiler-timeline") || customElements.define(hn, yn);
 // src/overview.ts
-var bn = "vtherm-smart-boiler-overview", xn = [
+var bn = "vtherm-smart-boiler-overview", xn = "/config/integrations/integration/vtherm_smart_boiler", Sn = [
 	"status",
 	"schematic",
 	"curve",
 	"timeline"
-], Sn = "M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1-3.6 2.2-4.8.3 1.6 1 2.6 2 3.1C11 9 11.3 6 12 3z", Cn = class extends P {
+], Cn = "M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1-3.6 2.2-4.8.3 1.6 1 2.6 2 3.1C11 9 11.3 6 12 3z", wn = class extends P {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
 			installation: { attribute: !1 },
 			parts: { attribute: !1 },
-			confirming: { state: !0 },
-			error: { state: !0 },
 			history: { state: !0 },
 			historyStatus: { state: !0 },
 			at: { state: !0 }
 		};
 	}
 	constructor() {
-		super(), this.window = [0, 0], this.historyAsked = !1, this.parts = xn, this.confirming = !1, this.error = "", this.history = null, this.historyStatus = "loading", this.at = null;
+		super(), this.window = [0, 0], this.historyAsked = !1, this.parts = Sn, this.history = null, this.historyStatus = "loading", this.at = null;
 	}
 	willUpdate() {
 		this.hass && this.installation && !this.historyAsked && this.parts.includes("timeline") && (this.historyAsked = !0, this.askHistory());
@@ -4316,27 +4304,13 @@ var bn = "vtherm-smart-boiler-overview", xn = [
 	get isAdmin() {
 		return this.hass?.user?.is_admin === !0;
 	}
-	ask() {
-		this.error = "", this.confirming = !0;
-	}
-	async decide(e, t) {
-		this.confirming = !1;
-		let n = t.control;
-		if (e && n && this.hass) try {
-			await this.hass.callService("switch", n.on ? "turn_off" : "turn_on", { entity_id: n.entityId });
-		} catch (e) {
-			let t = e instanceof Error ? e.message : String(e?.message ?? e);
-			this.error = this.t("control.failed", { message: t });
-		}
-	}
-	updated() {
-		let e = this.renderRoot.querySelector("dialog");
-		e && (this.confirming && !e.open && e.showModal(), !this.confirming && e.open && e.close());
+	openSettings() {
+		window.history.pushState(null, "", xn), window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: !1 } }));
 	}
 	render() {
 		let e = this.view();
 		if (!e) return j;
-		let { status: t, control: n, tiles: r } = e, i = this.at != null, a = n !== null && n.available && this.isAdmin && !i, o = this.shown(), s = n ? i ? this.t("control.replay_hint") : n.available ? this.isAdmin ? n.on ? this.t("control.hint_on") : this.t("control.hint_off") : this.t("control.admin_only") : this.t("control.unavailable") : "", c = (e) => this.parts.includes(e), l = c("schematic"), u = c("curve");
+		let { status: t, control: n, tiles: r } = e, i = this.at != null, a = n !== null && this.isAdmin && !i, o = this.shown(), s = n ? i ? this.t("control.replay_hint") : n.available ? this.isAdmin ? this.t("control.hint_settings") : this.t("control.admin_only") : this.t("control.unavailable") : "", c = (e) => this.parts.includes(e), l = c("schematic"), u = c("curve");
 		return O`
       ${c("status") ? this.statusPart(t, n, r, i, a, s) : j}
       ${l || u ? O`<div class="row ${l && u ? "" : "single"}">
@@ -4362,18 +4336,6 @@ var bn = "vtherm-smart-boiler-overview", xn = [
             .alone=${this.parts.length === 1}
             @at-change=${(e) => this.moveTo(e.detail)}
           ></vtherm-smart-boiler-timeline>` : j}
-      ${n && c("status") ? O`<dialog aria-labelledby="confirm-title" @cancel=${() => this.confirming = !1}>
-            <h2 id="confirm-title">
-              ${n.on ? this.t("control.confirm_off_title") : this.t("control.confirm_on_title")}
-            </h2>
-            <p>${n.on ? this.t("control.confirm_off_body") : this.t("control.confirm_on_body")}</p>
-            <div class="actions">
-              <button class="text" @click=${() => this.decide(!1, e)}>${this.t("control.cancel")}</button>
-              <button class="primary" @click=${() => this.decide(!0, e)}>
-                ${n.on ? this.t("control.confirm_off") : this.t("control.confirm_on")}
-              </button>
-            </div>
-          </dialog>` : j}
     `;
 	}
 	statusPart(e, t, n, r, i, a) {
@@ -4386,7 +4348,7 @@ var bn = "vtherm-smart-boiler-overview", xn = [
             aria-label=${this.t(`status.heat_${e.heat}`)}
             title=${this.t(`status.heat_${e.heat}`)}
           >
-            <svg viewBox="0 0 24 24"><path d=${Sn}></path></svg>
+            <svg viewBox="0 0 24 24"><path d=${Cn}></path></svg>
           </div>
           <div class="words">
             <div class="title-row">
@@ -4401,18 +4363,13 @@ var bn = "vtherm-smart-boiler-overview", xn = [
                 <div>${this.t("control.label")} <span class="muted">${this.t("control.experimental")}</span></div>
                 <div class="muted small">${a}</div>
               </div>
-              <button
-                class="switch ${t.on ? "on" : ""}"
-                role="switch"
-                aria-checked=${t.on ? "true" : "false"}
-                aria-label=${this.t("control.label")}
-                ?disabled=${!i}
-                @click=${() => this.ask()}
-              >
-                <span class="knob"></span>
-              </button>
+              <span class="pill ${t.on ? "on" : ""}" role="status">
+                ${t.on ? this.t("control.on") : this.t("control.off")}
+              </span>
+              ${i ? O`<button class="text" @click=${() => this.openSettings()}>
+                    ${this.t("control.settings")}
+                  </button>` : j}
             </div>` : j}
-        ${this.error ? O`<p class="error" role="alert">${this.error}</p>` : j}
       </section>
 
       ${n.length ? O`<section class="tiles" aria-label=${this.t("panel.title")}>
@@ -4526,47 +4483,33 @@ var bn = "vtherm-smart-boiler-overview", xn = [
     .small {
       font-size: 12px;
     }
-    .switch {
-      appearance: none;
-      border: 0;
-      padding: 0;
-      width: 52px;
-      height: 32px;
-      border-radius: 16px;
-      background: var(--disabled-color, #bdbdbd);
-      position: relative;
-      cursor: pointer;
+    .pill {
       flex: none;
+      border-radius: 14px;
+      padding: 4px 12px;
+      font-weight: 600;
+      background: var(--disabled-color, #bdbdbd);
+      color: var(--text-primary-color, #fff);
     }
-    .switch.on {
+    .pill.on {
       background: var(--primary-color);
     }
-    .switch:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
+    button.text {
+      appearance: none;
+      border: 0;
+      border-radius: 10px;
+      min-height: 36px;
+      padding: 0 12px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      background: transparent;
+      color: var(--primary-color);
+      flex: none;
     }
-    .switch:focus-visible {
+    button.text:focus-visible {
       outline: 2px solid var(--primary-color);
-      outline-offset: 3px;
-    }
-    .knob {
-      position: absolute;
-      top: 4px;
-      left: 4px;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      background: #fff;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-      transition: left 0.15s;
-    }
-    .switch.on .knob {
-      left: 24px;
-    }
-    .error {
-      flex-basis: 100%;
-      margin: 0;
-      color: var(--error-color, #db4437);
+      outline-offset: 2px;
     }
     .row {
       display: flex;
@@ -4606,56 +4549,12 @@ var bn = "vtherm-smart-boiler-overview", xn = [
       line-height: 1.1;
       font-variant-numeric: tabular-nums;
     }
-    dialog {
-      border: 0;
-      border-radius: var(--ha-dialog-border-radius, 16px);
-      padding: 24px;
-      max-width: 440px;
-      width: calc(100% - 32px);
-      background: var(--card-background-color, #fff);
-      color: var(--primary-text-color);
-    }
-    dialog::backdrop {
-      background: rgba(0, 0, 0, 0.45);
-    }
-    dialog h2 {
-      font-size: 20px;
-      margin-bottom: 8px;
-    }
-    dialog p {
-      margin: 0;
-      color: var(--secondary-text-color);
-    }
-    .actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 20px;
-    }
-    .actions button {
-      appearance: none;
-      border: 0;
-      border-radius: 10px;
-      min-height: 40px;
-      padding: 0 16px;
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .actions .text {
-      background: transparent;
-      color: var(--primary-color);
-    }
-    .actions .primary {
-      background: var(--primary-color);
-      color: var(--text-primary-color, #fff);
-    }
   `;
 	}
 };
-customElements.get("vtherm-smart-boiler-overview") || customElements.define(bn, Cn);
+customElements.get("vtherm-smart-boiler-overview") || customElements.define(bn, wn);
 // src/cards.ts
-var wn = [
+var Tn = [
 	{
 		part: "status",
 		tag: "vtherm-smart-boiler-status-card",
@@ -4680,7 +4579,7 @@ var wn = [
 		size: 6,
 		columns: 12
 	}
-], Tn = class extends P {
+], En = class extends P {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -4688,7 +4587,7 @@ var wn = [
 		};
 	}
 	constructor() {
-		super(), this.kind = wn[0], this.requested = !1, this.load = { kind: "loading" };
+		super(), this.kind = Tn[0], this.requested = !1, this.load = { kind: "loading" };
 	}
 	setConfig(e) {}
 	getCardSize() {
@@ -4758,8 +4657,8 @@ var wn = [
   `;
 	}
 };
-function En(e) {
-	for (let e of wn) customElements.get(e.tag) || customElements.define(e.tag, class extends Tn {
+function Dn(e) {
+	for (let e of Tn) customElements.get(e.tag) || customElements.define(e.tag, class extends En {
 		constructor(...t) {
 			super(...t), this.kind = e;
 		}
@@ -4769,7 +4668,7 @@ function En(e) {
 	});
 	let t = window;
 	t.customCards = t.customCards ?? [];
-	for (let n of wn) {
+	for (let n of Tn) {
 		if (t.customCards.some((e) => e.type === n.tag)) continue;
 		let r = {
 			type: n.tag,
@@ -4787,18 +4686,18 @@ function En(e) {
 		}), t.customCards.push(r);
 	}
 }
-En(() => document.documentElement.lang || navigator.language);
+Dn(() => document.documentElement.lang || navigator.language);
 // src/status.ts
-var Dn = "vtherm_smart_boiler";
+var On = "vtherm_smart_boiler";
 function $(e, t, n, r, i) {
 	return e?.(`component.vtherm_smart_boiler.entity.${t}.${n}.${r}`) || i;
 }
-var On = [
+var kn = [
 	"problem",
 	"missing",
 	"data",
 	"fine"
-], kn = {
+], An = {
 	monitored_days: "days",
 	heating_burns: "count",
 	criteria_judged: "count",
@@ -4811,13 +4710,13 @@ var On = [
 	load_often_below_min_power: "share",
 	load_rarely_below_min_power: "share"
 };
-function An(e) {
+function jn(e) {
 	let t = e?.attributes.reasons;
 	if (!Array.isArray(t)) return [];
 	let n = t.flatMap((e) => {
 		if (typeof e != "object" || !e) return [];
 		let t = e;
-		return typeof t.code != "string" || !On.includes(t.kind) ? [] : [{
+		return typeof t.code != "string" || !kn.includes(t.kind) ? [] : [{
 			code: t.code,
 			kind: t.kind,
 			value: typeof t.value == "number" ? t.value : null,
@@ -4826,69 +4725,69 @@ function An(e) {
 			...typeof t.detail == "string" ? { detail: t.detail } : {}
 		}];
 	});
-	return On.flatMap((e) => n.filter((t) => t.kind === e));
+	return kn.flatMap((e) => n.filter((t) => t.kind === e));
 }
-var jn = [
+var Mn = [
 	"connection",
 	"long_burn",
 	"outdoor_sensor_problem"
-], Mn = [
+], Nn = [
 	"alarm",
 	"warning",
 	"unknown",
 	"clear"
 ];
-function Nn(e, t) {
+function Pn(e, t) {
 	let n = t.state;
 	return n === "unavailable" || n === "unknown" ? "unknown" : e === "connection" ? n === "off" ? "alarm" : "clear" : n === "on" ? t.attributes.level === "warning" || e === "long_burn" || e === "outdoor_sensor_problem" ? "warning" : "alarm" : "clear";
 }
-function Pn(e, t) {
-	return Object.keys(e).filter((e) => e.startsWith("alarm_") || jn.includes(e)).flatMap((n) => {
+function Fn(e, t) {
+	return Object.keys(e).filter((e) => e.startsWith("alarm_") || Mn.includes(e)).flatMap((n) => {
 		let r = t[e[n]];
 		if (!r) return [];
 		let i = r.attributes, a = typeof i.reason == "string" ? i.reason : n === "outdoor_sensor_problem" && typeof i.status == "string" ? i.status : null;
 		return [{
 			key: n,
 			entityId: r.entity_id,
-			severity: Nn(n, r),
+			severity: Pn(n, r),
 			reason: a,
 			limit: typeof i.limit == "number" ? i.limit : null
 		}];
-	}).sort((e, t) => Mn.indexOf(e.severity) - Mn.indexOf(t.severity) || e.key.localeCompare(t.key));
+	}).sort((e, t) => Nn.indexOf(e.severity) - Nn.indexOf(t.severity) || e.key.localeCompare(t.key));
 }
-var Fn = [
+var In = [
 	"unavailable",
 	"stale",
 	"ok",
 	"not_mapped"
 ];
-function In(e) {
+function Ln(e) {
 	let t = e?.attributes.signals;
 	if (typeof t != "object" || !t || Array.isArray(t)) return [];
-	let n = Object.entries(t).flatMap(([e, t]) => Fn.includes(t) ? [{
+	let n = Object.entries(t).flatMap(([e, t]) => In.includes(t) ? [{
 		signal: e,
 		status: t
 	}] : []);
-	return Fn.flatMap((e) => n.filter((t) => t.status === e));
+	return In.flatMap((e) => n.filter((t) => t.status === e));
 }
-var Ln = (e) => typeof e == "number" ? e : null;
-function Rn(e) {
+var Rn = (e) => typeof e == "number" ? e : null;
+function zn(e) {
 	if (!e) return null;
 	let t = e.attributes, n = t.measured_range;
 	return {
 		value: L(e.state),
 		unit: typeof t.unit_of_measurement == "string" ? t.unit_of_measurement : "",
 		source: typeof t.source == "string" ? t.source : null,
-		confidence: Ln(t.confidence),
-		entered: Ln(t.entered),
-		measured: Ln(t.measured),
-		measuredConfidence: Ln(t.measured_confidence),
+		confidence: Rn(t.confidence),
+		entered: Rn(t.entered),
+		measured: Rn(t.measured),
+		measuredConfidence: Rn(t.measured_confidence),
 		measuredRange: Array.isArray(n) && n.length === 2 && n.every((e) => typeof e == "number") ? [n[0], n[1]] : null,
 		mismatch: t.mismatch === !0
 	};
 }
 // src/journal-view.ts
-var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, Wn = class extends P {
+var Bn = "vtherm-smart-boiler-journal", Vn = 6e4, Hn = 100, Un = 1e3, Wn = 64, Gn = class extends P {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -4905,10 +4804,10 @@ var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, W
 		};
 	}
 	constructor() {
-		super(), this.now = Date.now(), this.texts = null, this.answer = null, this.error = "", this.days = 1, this.zoom = null, this.groups = new Set(mt), this.hovered = "", this.selection = null, this.limit = Vn;
+		super(), this.now = Date.now(), this.texts = null, this.answer = null, this.error = "", this.days = 1, this.zoom = null, this.groups = new Set(mt), this.hovered = "", this.selection = null, this.limit = Hn;
 	}
 	connectedCallback() {
-		super.connectedCallback(), this.timer = window.setInterval(() => void this.fetchJournal(), Bn);
+		super.connectedCallback(), this.timer = window.setInterval(() => void this.fetchJournal(), Vn);
 	}
 	disconnectedCallback() {
 		super.disconnectedCallback(), window.clearInterval(this.timer);
@@ -4937,11 +4836,11 @@ var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, W
 		return this.zoom ?? [this.now - this.days * 864e5, this.now];
 	}
 	choose(e) {
-		this.days = e, this.zoom = null, this.limit = Vn, this.now = Date.now();
+		this.days = e, this.zoom = null, this.limit = Hn, this.now = Date.now();
 	}
 	toggle(e) {
 		let t = new Set(this.groups);
-		t.has(e) ? t.delete(e) : t.add(e), this.groups = t, this.limit = Vn;
+		t.has(e) ? t.delete(e) : t.add(e), this.groups = t, this.limit = Hn;
 	}
 	reasons(e) {
 		return (e ?? []).map((e) => $(this.texts, "sensor", "control_state", `state_attributes.reasons.state.${e}`, e)).join(", ");
@@ -5043,10 +4942,10 @@ var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, W
 		let t = this.selection;
 		if (this.selection = null, !t) return;
 		let [n, r] = [Math.min(...t), Math.max(...t)], i = e[0] + n * (e[1] - e[0]), a = e[0] + r * (e[1] - e[0]);
-		r - n >= .02 && a - i >= 6e5 && (this.zoom = [i, a], this.limit = Vn);
+		r - n >= .02 && a - i >= 6e5 && (this.zoom = [i, a], this.limit = Hn);
 	}
 	lanes(e, t) {
-		let [n, r] = t, i = e.filter((e) => e.at * 1e3 >= n && e.at * 1e3 <= r), a = yt(e, n, r), o = vt(e, n, r), s = bt(e, n, r), c = [...new Set(s.map((e) => e.subject))].sort(), l = Math.max(1, Math.min(4, c.length)), u = xt(e, n, r), [d, f] = wt(u), p = (e) => (e - n) / (r - n) * Hn, m = (e) => 60 - (e - d) / (f - d) * 56, h = "", g = null;
+		let [n, r] = t, i = e.filter((e) => e.at * 1e3 >= n && e.at * 1e3 <= r), a = yt(e, n, r), o = vt(e, n, r), s = bt(e, n, r), c = [...new Set(s.map((e) => e.subject))].sort(), l = Math.max(1, Math.min(4, c.length)), u = xt(e, n, r), [d, f] = wt(u), p = (e) => (e - n) / (r - n) * Un, m = (e) => 60 - (e - d) / (f - d) * 56, h = "", g = null;
 		for (let [e, t] of u) t == null ? g = null : (h += g == null ? `M${p(e).toFixed(1)},${m(t).toFixed(1)}` : `H${p(e).toFixed(1)}V${m(t).toFixed(1)}`, g = t);
 		let _ = this.offsetWidth > 0 && this.offsetWidth < 600, v = Ct(n, r, this.language, _), y = this.selection, b = i.filter((e) => this.groups.has(W(e)));
 		return O`<div class="chart">
@@ -5083,7 +4982,7 @@ var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, W
           ${o.map((e) => O`<span class="span call" style=${this.spanStyle(e, t)}></span>`)}
         </div>
         <div class="track lane-water">
-          <svg viewBox="0 0 ${Hn} ${Un}" preserveAspectRatio="none" aria-hidden="true">
+          <svg viewBox="0 0 ${Un} ${Wn}" preserveAspectRatio="none" aria-hidden="true">
             ${h ? k`<path class="water" d=${h}></path>` : j}
           </svg>
           ${this.groups.has("water") ? i.filter((e) => e.kind === "circuit_need").map((e) => this.marker(e, t, "need")) : j}
@@ -5173,7 +5072,7 @@ var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, W
                   </li>`;
 		})}
               </ol>
-              ${r.length > this.limit ? O`<button class="more" @click=${() => this.limit += Vn}>
+              ${r.length > this.limit ? O`<button class="more" @click=${() => this.limit += Hn}>
                     ${this.t("journal.more", { count: String(r.length - this.limit) })}
                   </button>` : j}` : j}
       </section>
@@ -5332,7 +5231,7 @@ var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, W
       height: 28px;
     }
     .lane-water {
-      height: ${Un}px;
+      height: ${Wn}px;
     }
     .tracks {
       position: relative;
@@ -5523,9 +5422,9 @@ var zn = "vtherm-smart-boiler-journal", Bn = 6e4, Vn = 100, Hn = 1e3, Un = 64, W
   `;
 	}
 };
-customElements.get("vtherm-smart-boiler-journal") || customElements.define(zn, Wn);
+customElements.get("vtherm-smart-boiler-journal") || customElements.define(Bn, Gn);
 // src/status-view.ts
-var Gn = "vtherm-smart-boiler-status", Kn = [[
+var Kn = "vtherm-smart-boiler-status", qn = [[
 	"loss_coefficient",
 	"reset_loss_coefficient",
 	3
@@ -5533,7 +5432,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
 	"heating_threshold",
 	"reset_heating_threshold",
 	1
-]], qn = {
+]], Jn = {
 	alarm: "!",
 	warning: "!",
 	unknown: "?",
@@ -5546,7 +5445,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
 	missing: "?",
 	data: "…",
 	fine: "✓"
-}, Jn = class extends P {
+}, Yn = class extends P {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -5594,7 +5493,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
 		return R(e, this.language, t);
 	}
 	reasonValue(e) {
-		let t = kn[e.code];
+		let t = An[e.code];
 		if (!t || e.value == null) return "";
 		let n = (e) => t === "share" ? `${this.number(e * 100, 0)} %` : t === "per_hour" ? `${this.number(e, 1)} /h` : t === "days" ? this.t("checks.days", { value: this.number(e, 1) }) : this.number(e, 0), r = n(e.value);
 		return e.limit == null ? r : this.t("checks.against", {
@@ -5615,7 +5514,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
 			"worth_it",
 			"not_worth_it",
 			"not_enough_data"
-		].includes(t), r = n ? $(this.texts, "sensor", "verdict", `state.${t}`, this.hass?.formatEntityState?.(e) ?? t) : this.t("checks.not_known"), i = An(e), a = e.attributes.monitoring_since, o = e.attributes.days_left_out, s = typeof a == "string" ? new Date(a) : null;
+		].includes(t), r = n ? $(this.texts, "sensor", "verdict", `state.${t}`, this.hass?.formatEntityState?.(e) ?? t) : this.t("checks.not_known"), i = jn(e), a = e.attributes.monitoring_since, o = e.attributes.days_left_out, s = typeof a == "string" ? new Date(a) : null;
 		return O`<section class="card">
       <div class="head">
         <h3>${this.nameOf("sensor", "verdict")}</h3>
@@ -5635,7 +5534,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
             ${i.map((e) => {
 			let t = this.reasonValue(e), n = this.reasonNote(e);
 			return O`<li class="row">
-                <span class="mark ${e.kind}" aria-hidden="true">${qn[e.kind]}</span>
+                <span class="mark ${e.kind}" aria-hidden="true">${Jn[e.kind]}</span>
                 <span class="what">
                   <span>${$(this.texts, "sensor", "verdict", `state_attributes.reasons.state.${e.code}`, e.code)}</span>
                   ${t ? O`<span class="muted small value">${t}</span>` : j}
@@ -5656,7 +5555,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
 		let t = e.severity === "clear" ? "" : this.alarmReason(e), n = $(this.texts, "binary_sensor", e.key, "state_attributes.limit.name", ""), r = [t, e.limit != null && e.severity !== "clear" && n ? `${n}: ${this.number(e.limit, e.limit % 1 == 0 ? 0 : 1)}` : ""].filter(Boolean).join(" · ");
 		return O`<li>
       <button class="row action" @click=${() => this.moreInfo(e.entityId)}>
-        <span class="mark ${e.severity}" aria-hidden="true">${qn[e.severity]}</span>
+        <span class="mark ${e.severity}" aria-hidden="true">${Jn[e.severity]}</span>
         <span class="what">
           <span>${this.nameOf("binary_sensor", e.key)}</span>
           ${r ? O`<span class="muted small">${r}</span>` : j}
@@ -5666,7 +5565,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
     </li>`;
 	}
 	alarmsCard() {
-		let e = Pn(this.installation?.entities ?? {}, this.hass?.states ?? {}), t = e.filter((e) => e.severity !== "clear"), n = e.filter((e) => e.severity === "clear"), r = t.filter((e) => e.severity === "alarm" || e.severity === "warning").length;
+		let e = Fn(this.installation?.entities ?? {}, this.hass?.states ?? {}), t = e.filter((e) => e.severity !== "clear"), n = e.filter((e) => e.severity === "clear"), r = t.filter((e) => e.severity === "alarm" || e.severity === "warning").length;
 		return O`<section class="card">
       <div class="head">
         <h3>${this.t("checks.alarms")}</h3>
@@ -5687,7 +5586,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
 	signalsCard() {
 		let e = this.entity("signal_problems");
 		if (!e) return j;
-		let t = In(e), n = t.filter((e) => e.status !== "not_mapped"), r = t.filter((e) => e.status === "not_mapped"), i = (e) => $(this.texts, "binary_sensor", "connection", `state_attributes.problems.state.${e}`, e), a = this.entity("connection");
+		let t = Ln(e), n = t.filter((e) => e.status !== "not_mapped"), r = t.filter((e) => e.status === "not_mapped"), i = (e) => $(this.texts, "binary_sensor", "connection", `state_attributes.problems.state.${e}`, e), a = this.entity("connection");
 		return O`<section class="card">
       <div class="head">
         <h3>${this.t("checks.signals")}</h3>
@@ -5698,7 +5597,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
       ${n.length ? O`<ul class="rows">
             ${n.map((e) => O`<li>
                 <button class="row action" @click=${() => this.moreInfo(this.installation?.signals[e.signal])}>
-                  <span class="mark ${e.status}" aria-hidden="true">${qn[e.status]}</span>
+                  <span class="mark ${e.status}" aria-hidden="true">${Jn[e.status]}</span>
                   <span class="what"><span>${i(e.signal)}</span></span>
                   <span class="chip ${e.status}">${this.t(`checks.signal_${e.status}`)}</span>
                 </button>
@@ -5708,7 +5607,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
     </section>`;
 	}
 	buildingRow([e, t, n]) {
-		let r = this.entity(e), i = Rn(r);
+		let r = this.entity(e), i = zn(r);
 		if (!r || !i) return j;
 		let a = i.unit ? ` ${i.unit}` : "", o = i.source ? $(this.texts, "sensor", e, `state_attributes.source.state.${i.source}`, i.source) : "", s = [];
 		if (i.entered != null && s.push(this.t("checks.entered", { value: `${this.number(i.entered, n)}${a}` })), i.measured != null) {
@@ -5743,7 +5642,7 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
 		return O`<section class="card">
       <div class="head"><h3>${this.t("checks.building")}</h3></div>
       <p class="muted small">${this.t("checks.building_hint")}</p>
-      <div class="buildings">${Kn.map((e) => this.buildingRow(e))}</div>
+      <div class="buildings">${qn.map((e) => this.buildingRow(e))}</div>
       ${this.isAdmin ? j : O`<p class="muted small">${this.t("checks.admin_only")}</p>`}
       ${this.error ? O`<p class="error" role="alert">${this.error}</p>` : j}
     </section>`;
@@ -6085,20 +5984,20 @@ var Gn = "vtherm-smart-boiler-status", Kn = [[
   `;
 	}
 };
-customElements.get("vtherm-smart-boiler-status") || customElements.define(Gn, Jn);
+customElements.get("vtherm-smart-boiler-status") || customElements.define(Kn, Yn);
 // src/use.ts
-var Yn = [
+var Xn = [
 	"weather",
 	"dhw",
 	"settings",
 	"other"
 ];
-function Xn(e) {
-	let t = e.contributions ?? {}, n = Array.isArray(e.not_judged) ? e.not_judged : [], r = Yn.map((e) => {
+function Zn(e) {
+	let t = e.contributions ?? {}, n = Array.isArray(e.not_judged) ? e.not_judged : [], r = Xn.map((e) => {
 		let n = t[e];
 		return typeof n == "number" && Number.isFinite(n) ? n : null;
 	}), i = Math.max(0, ...r.map((e) => Math.abs(e ?? 0)));
-	return Yn.map((t, a) => {
+	return Xn.map((t, a) => {
 		let o = r[a];
 		return {
 			cause: t,
@@ -6110,18 +6009,18 @@ function Xn(e) {
 		};
 	});
 }
-function Zn(e) {
+function Qn(e) {
 	let t = Math.max(0, ...e.map((e) => e.per_degree_day ?? 0));
 	if (t <= 0) return 1;
 	let n = t > 5 ? 2 : t > 1 ? 1 : .2;
 	return Math.ceil(t * 1.1 / n) * n;
 }
 // src/use-view.ts
-var Qn = "vtherm-smart-boiler-use";
-function $n(e) {
+var $n = "vtherm-smart-boiler-use";
+function er(e) {
 	return Math.abs(e) < 1 ? 2 : 1;
 }
-var er = 18e5, tr = class extends P {
+var tr = 18e5, nr = class extends P {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -6135,7 +6034,7 @@ var er = 18e5, tr = class extends P {
 		super(), this.weeks = null, this.error = "", this.hovered = "";
 	}
 	connectedCallback() {
-		super.connectedCallback(), this.timer = window.setInterval(() => void this.fetchWeeks(), er);
+		super.connectedCallback(), this.timer = window.setInterval(() => void this.fetchWeeks(), tr);
 	}
 	disconnectedCallback() {
 		super.disconnectedCallback(), window.clearInterval(this.timer);
@@ -6185,7 +6084,7 @@ var er = 18e5, tr = class extends P {
         <div class="tile-value">${i == null ? "—" : R(i, e, n)}${i != null && typeof a == "string" ? O` <span class="unit">${a}</span>` : j}</div>
         <div class="muted small">${this.t(`use.${t}_detail`)}</div>
       </div>`;
-		}, n = this.entity("gas_per_degree_day"), r = typeof n?.attributes.unit_of_measurement == "string" ? n.attributes.unit_of_measurement : "", i = this.weeks ?? [], a = Zn(i), o = this.entity("change_report"), s = o?.attributes ?? {}, c = Xn(s), l = typeof s.previous == "number" ? s.previous : null, u = typeof s.current == "number" ? s.current : null, d = typeof s.unit == "string" ? s.unit : "", f = L(o?.state);
+		}, n = this.entity("gas_per_degree_day"), r = typeof n?.attributes.unit_of_measurement == "string" ? n.attributes.unit_of_measurement : "", i = this.weeks ?? [], a = Qn(i), o = this.entity("change_report"), s = o?.attributes ?? {}, c = Zn(s), l = typeof s.previous == "number" ? s.previous : null, u = typeof s.current == "number" ? s.current : null, d = typeof s.unit == "string" ? s.unit : "", f = L(o?.state);
 		return O`
       <section class="tiles">${t("gas_per_degree_day", 2)}${t("degree_days", 0)}</section>
       <div class="row">
@@ -6218,7 +6117,7 @@ var er = 18e5, tr = class extends P {
                 <p class="big">
                   ${this.t("use.total", {
 			sign: u - l > 0 ? "+" : u - l < 0 ? "−" : "±",
-			value: R(Math.abs(u - l), e, $n(u - l)),
+			value: R(Math.abs(u - l), e, er(u - l)),
 			unit: d,
 			percent: f == null ? "—" : `${f > 0 ? "+" : ""}${R(f, e, 0)} %`
 		})}
@@ -6230,7 +6129,7 @@ var er = 18e5, tr = class extends P {
                       <span>${this.t(`use.${t.cause}`)}
                         ${t.normal ? O`<span class="muted small"> · ${this.t("use.normal")}</span>` : j}
                         ${t.judged ? j : O`<span class="muted small"> · ${this.t("use.not_judged")}</span>`}</span>
-                      <b>${t.amount == null ? "—" : `${t.amount > 0 ? "+" : t.amount < 0 ? "−" : "±"}${R(Math.abs(t.amount), e, $n(t.amount))} ${d}`}</b>
+                      <b>${t.amount == null ? "—" : `${t.amount > 0 ? "+" : t.amount < 0 ? "−" : "±"}${R(Math.abs(t.amount), e, er(t.amount))} ${d}`}</b>
                     </div>
                     <div class="track">
                       <span class="zero"></span>
@@ -6460,9 +6359,9 @@ var er = 18e5, tr = class extends P {
   `;
 	}
 };
-customElements.get("vtherm-smart-boiler-use") || customElements.define(Qn, tr);
+customElements.get("vtherm-smart-boiler-use") || customElements.define($n, nr);
 // src/panel.ts
-var nr = "vtherm-smart-boiler-panel", rr = [
+var rr = "vtherm-smart-boiler-panel", ir = [
 	"overview",
 	"burner",
 	"use",
@@ -6470,11 +6369,11 @@ var nr = "vtherm-smart-boiler-panel", rr = [
 	"journal",
 	"status"
 ];
-function ir(e) {
+function ar(e) {
 	let t = e.replace(/^#/, "");
-	return rr.includes(t) ? t : "overview";
+	return ir.includes(t) ? t : "overview";
 }
-var ar = class extends P {
+var or = class extends P {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -6486,7 +6385,7 @@ var ar = class extends P {
 		};
 	}
 	constructor() {
-		super(), this.requested = !1, this.textsFor = "", this.narrow = !1, this.load = { kind: "loading" }, this.tab = ir(location.hash), this.texts = null;
+		super(), this.requested = !1, this.textsFor = "", this.narrow = !1, this.load = { kind: "loading" }, this.tab = ar(location.hash), this.texts = null;
 	}
 	choose(e) {
 		this.tab = e, history.replaceState(history.state, "", e === "overview" ? location.pathname : `#${e}`);
@@ -6497,7 +6396,7 @@ var ar = class extends P {
 	willUpdate() {
 		this.hass && !this.requested && (this.requested = !0, this.fetchInstallation());
 		let e = this.hass;
-		e?.loadBackendTranslation && this.textsFor !== e.language && (this.textsFor = e.language, e.loadBackendTranslation("entity", Dn).then((e) => this.texts = e, () => this.texts = null));
+		e?.loadBackendTranslation && this.textsFor !== e.language && (this.textsFor = e.language, e.loadBackendTranslation("entity", On).then((e) => this.texts = e, () => this.texts = null));
 	}
 	async fetchInstallation(e = !0) {
 		if (this.hass) {
@@ -6569,7 +6468,7 @@ var ar = class extends P {
         <h1>${this.t("panel.title")}</h1>
       </header>
       <nav class="tabs" aria-label=${this.t("tabs.label")}>
-        ${rr.map((e) => O`<button
+        ${ir.map((e) => O`<button
             class="tab ${this.tab === e ? "on" : ""}"
             aria-current=${this.tab === e ? "page" : "false"}
             @click=${() => this.choose(e)}
@@ -6650,5 +6549,5 @@ var ar = class extends P {
   `;
 	}
 };
-customElements.get("vtherm-smart-boiler-panel") || customElements.define(nr, ar);
-export { nr as PANEL_TAG, ar as SmartBoilerPanel };
+customElements.get("vtherm-smart-boiler-panel") || customElements.define(rr, or);
+export { rr as PANEL_TAG, or as SmartBoilerPanel };

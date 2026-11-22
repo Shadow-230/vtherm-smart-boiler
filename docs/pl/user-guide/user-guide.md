@@ -478,7 +478,7 @@ potwierdzenie.
 
 | Zakładka | Co pokazuje |
 |---|---|
-| Przegląd | Stan z przyczynami i przełącznik **Sterowanie**; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i wołającymi pokojami. Instalację narysowaną z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat, pokoje i krzywa ją pokażą |
+| Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i wołającymi pokojami. Instalację narysowaną z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat, pokoje i krzywa ją pokażą |
 | Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
 | Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn |
 | Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze. Starty grzania palnika według godzin z ostatnich 4 tygodni |
@@ -487,13 +487,15 @@ potwierdzenie.
 
 **Zmiany ze strony.** Administrator, po potwierdzeniu:
 
-- włącza albo wyłącza **Sterowanie** — ten sam przełącznik co encja, z jej sprawdzeniami;
 - zapisuje punkt krzywej grzewczej przy największym mrozie (i jej przesunięcie, na poziomie
   zaawansowanym ustawień) **przez własne ustawienia wtyczki**: obowiązuje każde ich sprawdzenie,
   wtyczka przeładowuje się jak po każdym zapisie ustawień, a dziennik to odnotowuje. Zapisu, przy
   którym ustawienia by się zatrzymały (potwierdzenie, inna sekcja), strona nie robi: dokończ go w
   ustawieniach;
 - zapomina zmierzoną wartość budynku własnymi przyciskami wtyczki.
+
+Sterowania nie przełącza się ze strony: przełącza się je w ustawieniach wtyczki (**Tryb
+sterowania**, **Sterowanie włączone**), dokąd strona prowadzi administratora.
 
 **Co pokazuje, a czego nie.** Strona pokazuje tylko to, co wtyczka i Home Assistant już wiedzą.
 Punkty krzywej, palenia, tygodnie, sygnatura i dziennik pochodzą z wtyczki, a nie z drugiej kopii
