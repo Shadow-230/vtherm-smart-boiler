@@ -45,7 +45,7 @@ version is decided then.
   power against the thresholds, and an event when the call changes.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
-  connected is the setup's first question.
+  connected is the setup's first question. Control never writes through a cloud service.
 - Frost protection; a fallback setpoint when no outdoor temperature is known; the comfort
   correction; SmartPI's learning paused while hot water or large swings disturb the rooms.
 - On each VT thermostat the plugin serves, the attribute `smart_boiler`: `heat_available` and

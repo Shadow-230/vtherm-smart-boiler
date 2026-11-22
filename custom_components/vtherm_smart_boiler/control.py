@@ -287,6 +287,7 @@ from .transport.entities import (
     restart_reading,
     temperature_from_state,
     temperature_unit_of,
+    through_cloud,
 )
 from .transport.writers import (
     HandBackCheck,
@@ -295,6 +296,7 @@ from .transport.writers import (
     WriteError,
     Writer,
     make_writer,
+    writer_entities,
     writer_services,
 )
 from .units import parse_binary
@@ -476,6 +478,8 @@ RUNTIME_BLOCKERS = (
     # climate (X5.7); a zone VT built on the boiler's own thermostat (X5.19).
     "gateway_not_set_up",
     "mqtt_not_set_up",
+    # A write target of an integration that works through a cloud service: monitoring only.
+    "write_through_cloud",
     "zone_not_vt",
     "zone_on_boiler_thermostat",
     # X8 (R2): a relay a VT zone drives, one of the boiler's gateway integration or of VT, and a
@@ -1671,6 +1675,8 @@ class ControlUnit:
         if (missing := self._integration_missing()) is not None:
             found.append(missing)
         found += self._relay_blockers()
+        if any(through_cloud(self._hass, entity) for entity in writer_entities(self.options)):
+            found.append("write_through_cloud")
         if self._targets_used_by_zone():
             found.append("entity_used_by_zone")
         found += self._vt_blockers(now)

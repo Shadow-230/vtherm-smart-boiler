@@ -96,6 +96,28 @@ def gateway_signals(
     return frozenset(result)
 
 
+# How an integration reaches its device, in its manifest's ``iot_class``: through a cloud service.
+CLOUD_IOT_CLASSES = frozenset({"cloud_polling", "cloud_push"})
+
+
+def through_cloud(hass: HomeAssistant, entity_id: str) -> bool:
+    """Whether the entity's integration works through a cloud service, as its manifest says. An
+    entity not in the registry, of an integration not loaded or that does not say, counts as
+    local: nothing is known of it. Wi-Fi alone says nothing, and a helper or an MQTT bridge in
+    front of a cloud does not show here."""
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.loader import IntegrationNotLoaded, async_get_loaded_integration
+
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return False
+    try:
+        integration = async_get_loaded_integration(hass, entry.platform)
+    except IntegrationNotLoaded:
+        return False
+    return integration.iot_class in CLOUD_IOT_CLASSES
+
+
 # ``opentherm_gw``'s boiler "Fault indication": its unique ID ends so — the boiler device
 # (``OpenThermDeviceIdentifier.BOILER``) and pyotgw's ``DATA_SLAVE_FAULT_IND`` (pyotgw 2.2.3,
 # Home Assistant 2026.9.3).

@@ -314,6 +314,23 @@ def writer_services(options: ControlOptions) -> frozenset[tuple[str, str]]:
     return frozenset(found)
 
 
+def writer_entities(options: ControlOptions) -> tuple[str, ...]:
+    """Every entity a writer for these options writes to: the relay, or the setpoint with a
+    heating switch in use and an external-control switch. None on a gateway path, which goes
+    through the gateway's own commands."""
+    path = options.write_path
+    if path is WritePath.RELAY:
+        return (options.relay.entity,) if options.relay.entity else ()
+    if path is not WritePath.ENTITY or not options.setpoint_entity:
+        return ()
+    found = [options.setpoint_entity]
+    if options.ch_entity and options.loop.ch_writes:
+        found.append(options.ch_entity)
+    if options.hand_back_entity and options.hand_back is HandBack.SWITCH:
+        found.append(options.hand_back_entity)
+    return tuple(found)
+
+
 class EntityWriter(_ServiceWriter):
     """A setpoint entity (number, input_number) and optionally a heating switch.
 

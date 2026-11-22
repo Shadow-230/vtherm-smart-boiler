@@ -517,6 +517,7 @@
       "hand_back_switch_is_heating_switch": "The external control switch must not be the heating switch or the setpoint entity: handing back would switch it on and off for ever.",
       "gateway_not_set_up": "This gateway's OpenTherm Gateway integration is not set up, not running or disabled.",
       "mqtt_not_set_up": "The MQTT integration is not set up: the commands would go nowhere.",
+      "write_through_cloud": "This entity works through a cloud service. Control needs a local connection: without internet the plugin could not hand the boiler back, and cloud services limit how often it may write. Use it for monitoring.",
       "design_flow_too_low": "The design flow temperature must be at least 5 K above the curve's room temperature.",
       "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature, so the curve would be cut off in frost. Raise the highest water temperature or lower the design flow.",
       "design_outdoor_too_warm": "The outdoor temperature at the hardest frost must be at least 10 K below the curve's room temperature.",
@@ -1128,6 +1129,7 @@
       "hand_back_switch_is_heating_switch": "The external control switch must not be the heating switch or the setpoint entity: handing back would switch it on and off for ever.",
       "gateway_not_set_up": "This gateway's OpenTherm Gateway integration is not set up, not running or disabled.",
       "mqtt_not_set_up": "The MQTT integration is not set up: the commands would go nowhere.",
+      "write_through_cloud": "This entity works through a cloud service. Control needs a local connection: without internet the plugin could not hand the boiler back, and cloud services limit how often it may write. Use it for monitoring.",
       "design_flow_too_low": "The design flow temperature must be at least 5 K above the curve's room temperature.",
       "design_flow_above_hard_max": "The design flow temperature is above the highest water temperature, so the curve would be cut off in frost. Raise the highest water temperature or lower the design flow.",
       "design_outdoor_too_warm": "The outdoor temperature at the hardest frost must be at least 10 K below the curve's room temperature.",
@@ -1766,6 +1768,7 @@
               "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
+              "write_through_cloud": "Control would write through a cloud service: monitoring only",
               "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
               "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
               "relay_used_by_zone": "A zone already switches the relay",
@@ -2450,6 +2453,7 @@
               "relay_off_not_taken": "The relay stopped taking \"off\": switch control off and on",
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
+              "write_through_cloud": "Control would write through a cloud service: monitoring only",
               "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
               "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
               "relay_used_by_zone": "A zone already switches the relay",
@@ -3043,6 +3047,9 @@
     },
     "blocked_mqtt_not_set_up": {
       "message": "The MQTT integration is removed or disabled: the commands would go nowhere. Set it up or enable it. Other reasons: {count} (all are listed on the control state)."
+    },
+    "blocked_write_through_cloud": {
+      "message": "This entity works through a cloud service. Control needs a local connection: without internet the plugin could not hand the boiler back, and cloud services limit how often it may write. Use it for monitoring. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_zone_not_vt": {
       "message": "A zone is not a Versatile Thermostat thermostat, and only those can be zones: remove it in the options. Other reasons: {count} (all are listed on the control state)."

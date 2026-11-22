@@ -517,6 +517,7 @@
       "hand_back_switch_is_heating_switch": "Przełącznik sterowania zewnętrznego nie może być przełącznikiem ogrzewania ani encją nastawy: oddawanie sterowania przełączałoby go bez końca.",
       "gateway_not_set_up": "Integracja OpenTherm Gateway tej bramki nie jest skonfigurowana, nie działa albo jest wyłączona.",
       "mqtt_not_set_up": "Integracja MQTT nie jest skonfigurowana: polecenia nie trafiłyby nigdzie.",
+      "write_through_cloud": "Ta encja działa przez usługę w chmurze. Sterowanie wymaga połączenia lokalnego: bez internetu wtyczka nie mogłaby oddać kotła, a usługi w chmurze ograniczają liczbę zapisów. Użyj jej do monitorowania.",
       "design_flow_too_low": "Projektowa temperatura zasilania musi być co najmniej 5 K wyższa od temperatury pokojowej krzywej.",
       "design_flow_above_hard_max": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś najwyższą temperaturę wody albo obniż temperaturę projektową.",
       "design_outdoor_too_warm": "Temperatura przy najsilniejszym mrozie musi być co najmniej 10 K niższa od temperatury pokojowej krzywej.",
@@ -1128,6 +1129,7 @@
       "hand_back_switch_is_heating_switch": "Przełącznik sterowania zewnętrznego nie może być przełącznikiem ogrzewania ani encją nastawy: oddawanie sterowania przełączałoby go bez końca.",
       "gateway_not_set_up": "Integracja OpenTherm Gateway tej bramki nie jest skonfigurowana, nie działa albo jest wyłączona.",
       "mqtt_not_set_up": "Integracja MQTT nie jest skonfigurowana: polecenia nie trafiłyby nigdzie.",
+      "write_through_cloud": "Ta encja działa przez usługę w chmurze. Sterowanie wymaga połączenia lokalnego: bez internetu wtyczka nie mogłaby oddać kotła, a usługi w chmurze ograniczają liczbę zapisów. Użyj jej do monitorowania.",
       "design_flow_too_low": "Projektowa temperatura zasilania musi być co najmniej 5 K wyższa od temperatury pokojowej krzywej.",
       "design_flow_above_hard_max": "Projektowa temperatura zasilania jest wyższa od najwyższej temperatury wody, więc w mróz krzywa zostałaby obcięta. Podnieś najwyższą temperaturę wody albo obniż temperaturę projektową.",
       "design_outdoor_too_warm": "Temperatura przy najsilniejszym mrozie musi być co najmniej 10 K niższa od temperatury pokojowej krzywej.",
@@ -1766,6 +1768,7 @@
               "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
               "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
               "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
+              "write_through_cloud": "Sterowanie zapisywałoby przez chmurę: tylko monitorowanie",
               "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
               "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
               "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
@@ -2450,6 +2453,7 @@
               "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
               "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
               "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
+              "write_through_cloud": "Sterowanie zapisywałoby przez chmurę: tylko monitorowanie",
               "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
               "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
               "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
@@ -3043,6 +3047,9 @@
     },
     "blocked_mqtt_not_set_up": {
       "message": "Integracja MQTT jest usunięta albo wyłączona: polecenia nie trafiłyby nigdzie. Skonfiguruj ją lub włącz. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_write_through_cloud": {
+      "message": "Ta encja działa przez usługę w chmurze. Sterowanie wymaga połączenia lokalnego: bez internetu wtyczka nie mogłaby oddać kotła, a usługi w chmurze ograniczają liczbę zapisów. Użyj jej do monitorowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_zone_not_vt": {
       "message": "Jedna ze stref nie jest termostatem Versatile Thermostat, a tylko one mogą być strefami: usuń ją w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."

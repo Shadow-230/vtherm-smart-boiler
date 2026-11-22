@@ -28,6 +28,7 @@ from custom_components.vtherm_smart_boiler.transport.writers import (
     OtgwMqttWriter,
     WriteError,
     make_writer,
+    writer_entities,
     writer_services,
 )
 
@@ -222,6 +223,28 @@ async def test_a_heating_switch_the_boiler_may_store_is_left_alone(
         "hand_back_value": 0,
     }
     assert writer_services(options(**data)) == {("number", "set_value")}
+
+
+def test_writer_entities_are_what_a_path_writes_to() -> None:
+    """The setpoint, a heating switch in use and an external-control switch; the relay; nothing
+    on a gateway, which writes through its own commands."""
+    entity = {
+        "write_path": "entity",
+        "setpoint_entity": "number.flow",
+        "write_type": "expiring",
+        "ch_entity": "switch.ch",
+        "ch_write_type": "held",
+        "hand_back": "switch",
+        "hand_back_entity": "switch.external",
+        "hand_back_entity_write_type": "held",
+    }
+    assert writer_entities(options(**entity)) == ("number.flow", "switch.ch", "switch.external")
+    by_value = entity | {"hand_back": "value", "hand_back_value": 0}
+    assert writer_entities(options(**by_value)) == ("number.flow", "switch.ch")
+    assert writer_entities(options(**by_value | {"ch_write_type": "unknown"})) == ("number.flow",)
+    relay = {"write_path": "relay", "relay_entity": "switch.relay"}
+    assert writer_entities(options(**relay)) == ("switch.relay",)
+    assert writer_entities(options()) == ()
 
 
 async def test_entity_writer_switch_and_timeout_hand_back(hass: HomeAssistant) -> None:
