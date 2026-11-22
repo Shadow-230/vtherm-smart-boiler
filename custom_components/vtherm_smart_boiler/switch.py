@@ -20,21 +20,6 @@ from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 from .entity import ControlEntity, SmartBoilerEntity, coded_text
 from .panel import async_hide_panel, async_show_panel
 
-# Blockers that pass on their own; control switched on waits for them instead of refusing — the
-# control store that cannot be written (PB-16) too, once it has written for a while again.
-TRANSIENT_BLOCKERS = frozenset(
-    {"ha_starting", "vt_central_boiler_unknown", "monitor_failed", "control_state_not_saved"}
-)
-# Blockers the switch change itself clears.
-CLEARED_BY_SWITCHING = frozenset({"control_error"})
-# Latches that switching control off and on clears (answer O; decisions 4 and 6 of 0.2.3):
-# switching on is refused, with their text, only while control is on — with control off, on is
-# the second half of "off and on", and the next off and on clears the latch as for any other.
-CLEARED_BY_OFF_AND_ON = frozenset(
-    {"heating_off_ignored", "heating_on_ignored", "relay_off_not_taken"}
-)
-
-
 PARALLEL_UPDATES = 1  # one switch action at a time
 
 
@@ -213,12 +198,7 @@ class ControlSwitch(ControlEntity, SwitchEntity, RestoreEntity):
         super().async_entity_id_changed(old_entity_id)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        passing = TRANSIENT_BLOCKERS | CLEARED_BY_SWITCHING
-        if not self.control.enabled:
-            passing |= CLEARED_BY_OFF_AND_ON
-        blockers = [
-            b for b in self.control.blockers(dt_util.utcnow().timestamp()) if b not in passing
-        ]
+        blockers = self.control.blockers_for_on(dt_util.utcnow().timestamp())
         if blockers:
             # P-74: the first blocker's own text, and how many more — each named, translated,
             # on the switch's and the control state's ``blockers_text``.

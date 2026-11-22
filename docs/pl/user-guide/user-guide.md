@@ -128,9 +128,12 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
      [Sterowanie włączasz sam](#42-sterowanie-włączasz-sam)).
 4. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie ([4.1](#41-monitorowanie-i-werdykt)). Decyzja należy do ciebie.
-5. **Włącz sterowanie** przełącznikiem **Sterowanie (eksperymentalne)** na urządzeniu
-   integracji, od pierwszego dnia albo później. Jeśli czegoś brakuje, przełącznik mówi czego, a
-   monitor dalej działa. Dopóki go nie włączysz, wtyczka nic nie zapisuje do kotła.
+5. **Włącz sterowanie** w opcjach integracji: **Tryb sterowania**, zaznacz **Sterowanie
+   włączone**, potem **Zapisz i zakończ** — od pierwszego dnia albo później. Opcje otwiera tylko
+   administrator. Jeśli czegoś brakuje, okno mówi czego, nic się nie zmienia, a monitor dalej
+   działa. Odznacz, żeby wyłączyć sterowanie: kocioł zostaje od razu oddany. Dopóki go nie
+   włączysz, wtyczka nic nie zapisuje do kotła. (Przełącznik **Sterowanie (eksperymentalne)** na
+   urządzeniu integracji też je jeszcze przełącza, dopóki nie stanie się samym pokazaniem stanu.)
 
 **Późniejsze zmiany ustawień.** Opcje integracji otwierają to samo menu, z **Zapisz i zakończ**
 zamiast **Utwórz**. Nic nie jest zapisywane, dopóki tego nie wybierzesz: sprawdza wszystko,

@@ -90,6 +90,8 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "monitor": flow.monitor_schema(options),
     }
     options_only = {
+        # I11.1: the tick where control runs, in the options only.
+        "mode": flow.mode_schema(options, control_on=False),
         "level": flow.level_schema(options),
         "freshness": flow.freshness_schema(
             options
@@ -716,7 +718,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             options["control"] = control
             schemas = {
                 "connection": flow.connection_schema(options),
-                "mode": flow.mode_schema(options),
+                "mode": flow.mode_schema(options, control_on=False),  # I11.1
                 "name": flow.user_schema({}),
                 "level": flow.level_schema(options),
                 "signals": flow.signals_schema(options),
