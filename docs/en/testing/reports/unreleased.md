@@ -22,7 +22,8 @@ the Boiler page's check I10.10 on `dev` 98d135e on 2026-11-20/21 (code f, sectio
   - F17: a reload throws the user off the open page;
   - F18: the journal misses the hand-back at a reload or restart under control, and the takeover after it.
 
-  One decision for the user: F19, any Home Assistant user can switch control on.
+  One decision for the user: F19, any Home Assistant user can switch control on (decided on
+  2026-11-22, section 7).
 
 `dev` d84242f (#178), merged after the check, is not tested here. This update is in English only
 for now (the user's decision of 2026-11-21); the Polish twin follows.
@@ -548,6 +549,11 @@ suggested).
   gap): no bench fault can make them fail; in-process tests are proposed.
 - Code f, the entry's removal (the journal's store removed with it): covered in-process only.
 - Code e, B6 on an instance other than 1: the runner is bound to instance 1's directory.
+- Code e, the in-place change of the Control switch's entity ID on Home Assistant 2026.11 (#147), a
+  check by hand in the run's plan: not made. Covered in-process only (`async_entity_id_changed`).
+- Code e, an entry stored by an older version taken to counting VT's devices (#136, "Count: Zones"
+  kept for it), a check in the run's plan: not seen. Every instance was set up afresh, and instance
+  4's update in place kept the same entry version, so no migration ran. Covered in-process only.
 
 ## 7. Findings and known limits
 
@@ -584,9 +590,9 @@ Status on the morning of 2026-10-11: N2 passed again (code c); N8 running again 
 | F16 | code f, D: a curve saved from the Boiler page drops the stored exponent at the advanced level (and, by the code, `fallback_setpoint`): 55 → 56 °C asked, `exponent: 1.0` gone, the water 47.9 → 50.2 °C after the reload. The confirmation names only the point and the offset (`websocket_api.py` `_form_values` sends fields with a default only; those two are suggested values) | medium — a silent change of the water | send what the form shows, as J4's walk does; an in-process test with a stored exponent; D again |
 | F17 | code f: every reload takes the page out of the sidebar for a moment (the sidebar switch hides it at unload, `switch.py`), so a user on the page — after saving the curve from it, or during any settings save — lands on the default dashboard, with a browser error (`Cannot read properties of null (reading '_panel_custom')`) | low to medium — the save's result unseen | keep the page through a reload |
 | F18 | code f: the journal records neither the hand-back at a reload or restart under control nor the takeover after it, nor a change of the water across it — a reload under control reads "stopped, started" (B1, B3, a page save; the gateway got [20, CH on, 0]). The journal's first look after a start is a silent baseline (`core/journal.py` `follow`) | low to medium — the journal's account incomplete | journal the hand-back at unload and the state found at start; an in-process test under control |
-| F19 | code f: control can be switched on by any Home Assistant user. The page allows only an administrator, but the Control switch is an ordinary entity: a user without administrator rights switched it on with `switch.turn_on` | to decide | whether the switch itself refuses other users |
+| F19 | code f: control can be switched on by any Home Assistant user. The page allows only an administrator, but the Control switch is an ordinary entity: a user without administrator rights switched it on with `switch.turn_on` | to decide | decided 2026-11-22: control switched only by an administrator, and only from the plugin's own configuration, not from a dashboard |
 | F20 | code f, display: the status detail is the server-side `reasons_text`, in the server's language for a user who chose another; the page shows times in the browser's time zone, not by the profile's setting (a browser in another zone than the server sees days and hours shifted); Use shows "—" and an empty chart without a reason; the schematic card is cut on the right in a narrow dashboard column | low, display | to fix with the page |
-| L12 | code e: at its 3-K limit the comfort correction reaches the boiler as +2.53 K: it climbs in steps under 0.5 K, and the last 0.47 K stays inside F14's write deadband | by design, under 0.5 K | to decide: write the correction's limit exactly, as a bound |
+| L12 | code e: at its 3-K limit the comfort correction reaches the boiler as +2.53 K: it climbs in steps under 0.5 K, and the last 0.47 K stays inside F14's write deadband | by design, under 0.5 K | decided 2026-11-22: the correction's limit written exactly, as a bound |
 | L13 | code e: Q1's first run, the correction stalled at about 2.9 K with no warning; not reproduced (second run: 3.0 K and the warning after 3 h). Fits a rule-3 step back after the edge with the day's 3 K already spent | open | an in-process test: the edge reached, one starts rise, whether the correction returns to the edge and the warning comes within the day |
 | L14 | code e, the runner: V1's positive case waits for a flame that may never burn; R2 and R3 restart the relay before it is on for good; Q5 assumes a SmartPI past its bootstrap; E4 is shorter than the edge notice; L1's bounds (rooms within 1.5 K, 3 switchings an hour) do not fit the default curve at −2 °C; the base check reads `.storage` before Home Assistant writes a save; no scenario's role is checked against the instance's (`Run.options` writes the gateway base on a starts or stand-alone instance); B6 is bound to instance 1; scenarios without a restore after an abort (H1, S2, N5, R17, E2, R6, D4, T1); no setup script and no starts analyser in the test pack | the runner | for the development session |
 

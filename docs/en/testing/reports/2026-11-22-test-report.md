@@ -27,8 +27,9 @@ section 5, the findings F15–F20 and L12–L14 in section 7.
 - **Four faults in the plugin**, none of which loses control of the boiler or leaves it unsafe:
   1. When the heating curve is too low and the boiler runs steadily at its minimum, the plugin
      does not say "the water is too cool".
-  2. Saving the heating curve from the new Boiler page quietly resets one of its settings (the
-     radiators' exponent), so the water ends up warmer than the user asked.
+  2. Saving the heating curve from the new Boiler page quietly resets two of its settings: the
+     radiators' exponent, so the water ends up warmer than the user asked, and the water
+     temperature used when no outdoor reading is left.
   3. After saving from the page, the user is thrown back to the main dashboard.
   4. The page's journal does not mention the moments when the plugin hands the boiler back during
      a restart and takes it again.
@@ -86,7 +87,9 @@ section 5, the findings F15–F20 and L12–L14 in section 7.
 2. **Saving the curve from the page resets the radiators' exponent.** We moved the curve's point
    by 1 °C, and the saved exponent (1.0) quietly went back to the default (1.3). The water then
    rose by 2.3 °C (47.9 to 50.2 °C), where the change asked for adds well under 1 °C at that
-   outdoor temperature, and the confirmation window did not mention it.
+   outdoor temperature, and the confirmation window did not mention it. By the code, the same
+   save also drops the water temperature the user set for when no outdoor reading is left, so
+   the default is used instead (the test installation had none set, so this was not seen).
 3. **After saving from the page, the page closes.** The save works, but while the plugin reloads,
    the page is removed for a moment and the browser jumps to the main dashboard, so the user does
    not see the result. The same happens whenever the plugin reloads with the page open.
@@ -117,6 +120,10 @@ The development session will fix the tools.
 - Should only administrators be able to switch the plugin's control on, also outside the page?
 - Should the comfort correction's limit reach the boiler exactly (3 K instead of 2.53 K)?
 
+The user's answers, on 2026-11-22: control is switched only by an administrator, and only from
+the plugin's own configuration, not from a dashboard; the correction's limit reaches the boiler
+exactly.
+
 ## Not tested, and why
 
 - The "Forget" buttons for measured building values: the simulator never runs for the three weeks
@@ -124,3 +131,7 @@ The development session will fix the tools.
 - Saving the curve's offset at the simple settings level: all test installations use the advanced
   level.
 - The newest change on `dev` (#178), which came after these tests.
+- Renaming the Control switch's entity ID on Home Assistant 2026.11, and an installation made by an
+  older version of the plugin taken to the new way of counting VT's devices: both were in the
+  plan, neither was done (every test installation was set up afresh). The automatic tests cover
+  both.
