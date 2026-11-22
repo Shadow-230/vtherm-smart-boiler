@@ -5,8 +5,10 @@ Each look at control and the alarms is compared with the one before: the heat ca
 the water setpoint from its first value while control holds the boiler and then each change of at
 least ``WATER_STEP_K`` from the value last journaled (so a ramp's small steps add up), a circuit's
 need holding the water, control handed back and taken again, an alarm raised — or its level
-raised — and cleared; each with the reasons control gave. The first look after a start only sets
-the baseline: the start itself is journaled, not what was already so. An alarm that cannot be
+raised — and cleared; each with the reasons control gave. The first look after a start journals
+control taking the boiler again — a restart's or a reload's takeover, the heat call, the water
+and a circuit's need, as it takes them (J4 I10.10, F18); the alarms already raised are its
+baseline, journaled when they were raised. An alarm that cannot be
 judged now stays as it was. Kept ``JOURNAL_DAYS`` days and ``JOURNAL_MAX`` entries at most, the
 oldest dropped first (provisional, K4). The journal only watches: it changes nothing.
 """
@@ -77,7 +79,7 @@ def follow(state: JournalState, now: Observed, at: float) -> tuple[JournalState,
     alarms = _alarms(now.alarms, None if previous is None else previous.alarms)
     seen = Observed(now.controlling, now.called, now.call_reason, now.water, now.reasons, alarms)
     if previous is None:
-        return JournalState(seen, now.water if now.controlling else None), ()
+        return _start(seen, now, at)
     entries: list[Entry] = []
     if previous.controlling and not now.controlling:
         entries.append(Entry(at, Kind.HANDED_BACK, now.reasons))
@@ -110,6 +112,20 @@ def follow(state: JournalState, now: Observed, at: float) -> tuple[JournalState,
         if key not in alarms
     )
     return JournalState(seen, water), tuple(entries)
+
+
+def _start(seen: Observed, now: Observed, at: float) -> tuple[JournalState, tuple[Entry, ...]]:
+    """The first look after a start: control holding the boiler took it again."""
+    if not now.controlling:
+        return JournalState(seen, None), ()
+    entries = [Entry(at, Kind.TOOK_OVER, now.reasons)]
+    if now.called is True:
+        entries.append(Entry(at, Kind.CALL_ON, now.reasons))
+    if now.water is not None:
+        entries.append(Entry(at, Kind.WATER, now.reasons, value=now.water))
+    if CIRCUIT_NEED in now.reasons:
+        entries.append(Entry(at, Kind.CIRCUIT_NEED, now.reasons, value=now.water))
+    return JournalState(seen, now.water), tuple(entries)
 
 
 def _alarms(
