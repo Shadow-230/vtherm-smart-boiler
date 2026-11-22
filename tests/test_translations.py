@@ -828,6 +828,7 @@ def _unused_keys(texts: dict) -> list[str]:
 
     literals, patterns = _code_mentions()
     fields, selectors = _flow_fields()
+    actions = _described_actions()
     flows = {"config": SmartBoilerConfigFlow, "options": SmartBoilerOptionsFlow}
     unused: list[str] = []
     for key in flatten(texts):
@@ -855,9 +856,25 @@ def _unused_keys(texts: dict) -> list[str]:
         elif section in ("exceptions", "issues", "device"):
             if not _mentioned(parts[1], literals, patterns):
                 unused.append(key)
+        elif section == "services":
+            # I11.2: an action and its fields as ``services.yaml`` describes them.
+            described = actions.get(parts[1])
+            if described is None or (parts[2] == "fields" and parts[3] not in described):
+                unused.append(key)
         else:
             unused.append(key)
     return unused
+
+
+def _described_actions() -> dict[str, set[str]]:
+    """The actions ``services.yaml`` describes, each with its fields."""
+    import yaml
+
+    path = (
+        Path(__file__).resolve().parents[1] / "custom_components/vtherm_smart_boiler/services.yaml"
+    )
+    described = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {name: set((spec or {}).get("fields", {})) for name, spec in described.items()}
 
 
 def test_every_key_is_used() -> None:

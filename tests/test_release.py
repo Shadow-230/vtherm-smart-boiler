@@ -384,7 +384,10 @@ SLUG = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 REFERENCE = re.compile(r"\[%key:[^%\]]+%\]")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://|\bwww\.", re.IGNORECASE)
 
-TOP_KEYS = {"title", "config", "options", "selector", "device", "entity", "exceptions", "issues"}
+TOP_KEYS = {
+    "title", "config", "options", "selector", "device", "entity", "exceptions", "issues",
+    "services",  # I11.2: the action for automations
+}  # fmt: skip
 FLOW_KEYS = {"step", "error", "abort", "progress", "create_entry"}
 STEP_KEYS = {
     "title",
@@ -517,6 +520,20 @@ class _Checker:
             device = self.keys(f"device.{key}", device, {"name"})
             if "name" in device:
                 self.text(f"device.{key}.name", device["name"], placeholders=False)
+        for key, action in strings.get("services", {}).items():
+            # hassfest: an action's name and description, and each field's (I11.2).
+            self.key("services", key, SLUG)
+            action = self.keys(f"services.{key}", action, {"name", "description", "fields"})
+            for part in ("name", "description"):
+                if part in action:
+                    self.text(f"services.{key}.{part}", action[part], placeholders=False)
+            for field, texts in action.get("fields", {}).items():
+                where = f"services.{key}.fields.{field}"
+                self.key(f"services.{key}.fields", field, SLUG)
+                texts = self.keys(where, texts, {"name", "description", "example"})
+                for part in ("name", "description"):
+                    if part in texts:
+                        self.text(f"{where}.{part}", texts[part], placeholders=False)
         for key, exception in strings.get("exceptions", {}).items():
             self.key("exceptions", key, SLUG)
             exception = self.keys(f"exceptions.{key}", exception, {"message"})

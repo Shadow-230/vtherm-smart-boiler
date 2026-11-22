@@ -123,7 +123,9 @@ Only one entry of the integration can exist: it runs one boiler.
    then **Save and finish** — on the first day or later. Only an administrator opens the options.
    If something is missing, a window says what, nothing changes, and the monitor keeps running.
    Untick it to switch control off: the boiler is handed back at once. Until you switch it on, the
-   plugin writes nothing to the boiler. (The switch **Control (experimental)** of the
+   plugin writes nothing to the boiler. An automation switches control with the action
+   `vtherm_smart_boiler.set_control` (`enabled`: on or off), with the same checks; called by a
+   person — from a dashboard, a script you start, the developer tools — it is refused. (The switch **Control (experimental)** of the
    integration's device still switches it too, until it becomes a state shown only.)
 
 **Changing settings later.** The integration's options open the same menu, with **Save and

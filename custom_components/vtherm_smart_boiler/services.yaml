@@ -1,0 +1,8 @@
+# I11.2: switching control from automations (docs/en/development/plans/plan-0.2-i11.md).
+set_control:
+  fields:
+    enabled:
+      required: true
+      example: false
+      selector:
+        boolean:
