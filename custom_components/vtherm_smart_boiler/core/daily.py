@@ -2,8 +2,9 @@
 
 A day's summary holds only amounts that add up across days — known time, heating starts and
 burns, the hours with heating, the condensing share as its parts, degree-days, heating gas and
-the gas other consumers used, the time under control, and the seconds per whole °C of outdoor
-temperature — so the verdict over any window is built from its days. The load share is not
+the gas other consumers used, the time under control, the seconds per whole °C of outdoor
+temperature and the heating starts hour by hour — so the verdict over any window is built from
+its days, and the Boiler page draws the starts by hour (I10.7). The load share is not
 kept: it is computed from the days' outdoor temperatures with the building model of now (P-91),
 so stored days never mix load models. The raw history is kept for a few days only; the
 summaries outlive it (``docs/en/specification/scope.md`` §10).
@@ -26,7 +27,7 @@ from typing import Any
 
 from .building import DayPoint, LoadFit, fit_daily_load
 from .controller import ControlMode
-from .cycles import find_burns
+from .cycles import ClassifiedBurn, find_burns
 from .history import History
 from .metrics import CH_KINDS, CycleStats, Share
 from .monitor import MonitorOptions, summarize
@@ -99,6 +100,9 @@ class DaySummary:
     # the temperatures known that day in order; ``None``: stored before it was kept — left out
     # of the load criterion.
     outdoor_s: OutdoorSeconds | None = None
+    # I10.7: the heating starts in each hour from the day's start — as many as the day has hours,
+    # 23 or 25 at a clock change — adding up to ``starts``; ``None``: stored before they were kept.
+    hourly_starts: tuple[int, ...] | None = None
 
     @classmethod
     def empty(cls, start: float, end: float) -> DaySummary:
@@ -129,6 +133,8 @@ class DaySummary:
         data = asdict(self)
         if self.outdoor_s is not None:
             data["outdoor_s"] = [[temperature, seconds] for temperature, seconds in self.outdoor_s]
+        if self.hourly_starts is not None:
+            data["hourly_starts"] = list(self.hourly_starts)
         return data
 
     @classmethod
@@ -146,6 +152,10 @@ class DaySummary:
             if raw is None:
                 return None
             return tuple((int(temperature), float(seconds)) for temperature, seconds in raw)
+
+        def hourly() -> tuple[int, ...] | None:
+            raw = data.get("hourly_starts")
+            return None if raw is None else tuple(int(count) for count in raw)
 
         return cls(
             start=number("start"),
@@ -166,6 +176,7 @@ class DaySummary:
             other_gas=optional("other_gas"),
             controlled_s=optional("controlled_s"),
             outdoor_s=outdoor(),
+            hourly_starts=hourly(),
         )
 
 
@@ -229,7 +240,19 @@ def summarize_day(
         other_gas=summary.other_gas,
         controlled_s=duration_where(history.control_state, start, end, _controlled),
         outdoor_s=outdoor_distribution(outdoor_series, start, end),
+        hourly_starts=hourly_starts(summary.burns, start, end),
     )
+
+
+def hourly_starts(burns: Sequence[ClassifiedBurn], start: float, end: float) -> tuple[int, ...]:
+    """I10.7: the heating burns whose start was seen in ``[start, end)``, counted in each hour
+    from ``start`` — the starts the day counts (``cycle_stats``), hour by hour."""
+    counts = [0] * max(1, round((end - start) / HOUR))
+    for classified in burns:
+        burn = classified.burn
+        if classified.kind in CH_KINDS and burn.start_seen and start <= burn.start < end:
+            counts[min(len(counts) - 1, int((burn.start - start) // HOUR))] += 1
+    return tuple(counts)
 
 
 def _controlled(state: str) -> bool:

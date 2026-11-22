@@ -54,7 +54,9 @@ Szczegóły: [`docs/pl/specification/scope.md`, §2](../specification/scope.md#2
 custom_components/vtherm_smart_boiler/   integracja (strona HA)
 ├── core/                                 czysta logika, bez importów HA
 ├── transport/                            odczyt encji kotła i moduły zapisu
-└── translations/                         en.json (źródło) i inne języki
+├── translations/                         en.json (źródło) i inne języki
+└── frontend/                             zbudowana strona „Kocioł” i karty, licencje, teksty
+frontend/                                 źródło strony „Kocioł” (TypeScript, Lit, Vite)
 tests/                                    testy: core/, integration/, sim/, tools/ i reszta
 sim/                                      symulator fizyki i jego komponenty HA tylko do testów
 tools/                                    import historii z recordera do analizy offline
@@ -75,6 +77,59 @@ docs/                                     dokumentacja, osobny katalog na każdy
   zastępczy `opentherm_gw`, oba tylko do testów.
 - `tools/import_history.py` zamienia kopię bazy recordera HA na historię rdzenia, żeby analizę
   monitora można było sprawdzić na zapisanych danych.
+- Strona „Kocioł” ([`plan-0.2-i10.md`](../../en/development/plans/plan-0.2-i10.md)):
+  `frontend/` to jej źródło; `npm run build` w tym katalogu zapisuje moduł, który wtyczka
+  udostępnia, do `custom_components/vtherm_smart_boiler/frontend/`, razem z licencjami pakietów w
+  nim zawartych. Te pliki są w repozytorium, więc HACS je instaluje; CI buduje je ponownie i
+  zgłasza błąd, gdy się różnią. Są tam też teksty strony (`frontend/translations/`, angielski to
+  źródło): czyta je strona, a `panel.py` bierze z nich nazwę w menu bocznym. To, co mówią już
+  encje wtyczki — nazwy alarmów i sygnałów, powody werdyktu, skąd pochodzi wartość budynku —
+  strona bierze z własnych tłumaczeń wtyczki (`translations/`), które Home Assistant podaje jej
+  w języku użytkownika (`hass.loadBackendTranslation("entity", …)`), więc każde jest zapisane
+  raz. `panel.py`
+  udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
+  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Strona zostaje na czas
+  przeładowania — zabrana, wyrzuciłaby oglądającego ją użytkownika z błędem; start rejestruje ją
+  ponownie w jednym kroku — i znika z wyłączonym albo usuniętym wpisem albo z wyłączonym tym
+  przełącznikiem (F17 z J4). Póki wpis działa, `panel.py` każe
+  też Home Assistantowi wczytywać ten sam moduł na każdej stronie (`frontend.add_extra_js_url`,
+  zabierane przy wyładowaniu, starszy adres zastępowany po aktualizacji), więc części przeglądu
+  są w wyborze kart jako cztery karty — stan i kafelki, schemat i pokoje, krzywa, ostatnie 24 h —
+  każda to własna część strony (`frontend/src/cards.ts`), bez ustawień: każda sama znajduje
+  działający wpis przez `vtherm_smart_boiler/installation`. Gdy frontend Home Assistanta nie
+  działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
+  `.tools/node/`. `websocket_api.py` to to, co strona czyta: pięć poleceń WebSocket tylko do
+  odczytu, dla każdego zalogowanego użytkownika, każde odpowiada z działającego wpisu (inaczej
+  błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich strefami i
+  grzejnikami, encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
+  krzywej; `vtherm_smart_boiler/curve` — punkty krzywej dla ustawień w użyciu albo dla wartości
+  roboczych, bez zapisu, z `core/curve_view.py` (krzywa przy temperaturze pokojowej w użyciu,
+  potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze
+  sprawdzeniami z ustawień według ich kluczy tłumaczeń; `vtherm_smart_boiler/days` — podsumowania
+  dni w zapisanej postaci, razem z gazem na stopniodzień z ostatnich 12 tygodni liczonym przez
+  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora), sygnaturą
+  energetyczną dopasowaną przez `core/signature.py` — gaz na grzanie każdego dnia na 24 h wobec
+  jego średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, linia
+  każdej grupy przez jej dni grzania (zimniejsze niż próg grzania w użyciu, z gazem na grzanie)
+  według zasad dopasowania budynku (`core/building.py`: liczba dni, rozrzut temperatur, więcej
+  gazu w zimniejsze dni, R²) albo powód jej braku, i obie porównane w środku temperatur, które
+  obie obejmują — oraz z jednostką licznika gazu (bez licznika żadną: gaz jest wtedy szacowany w
+  jednostce danych gazu kotła); każdy dzień zapisany od I10.7 trzyma swoje starty grzania
+  godzina po godzinie od swojego początku (`hourly_starts`, 23 albo 25 godzin przy zmianie
+  czasu), które strona umieszcza na ich godzinach zegarowych; dni zapisane wcześniej ich nie mają
+  i nadal są czytane;
+  `vtherm_smart_boiler/burns` — palenia z ostatniej analizy monitora tak,
+  jak je sklasyfikował (ogrzewanie, ciepła woda, nieznane), więc strona rysuje palenia samego
+  monitora; `vtherm_smart_boiler/journal` — dziennik (zob. [Stan trwały](#6-stan-trwały)), od
+  podanej chwili, jeśli ją podano; oraz jeden zapis, tylko dla administratora:
+  `vtherm_smart_boiler/curve/save` zapisuje punkt krzywej przy największym mrozie i, na poziomie
+  zaawansowanym, jej przesunięcie **przez własne ustawienia wtyczki** — ich formularz „Krzywa
+  grzewcza” wypełniony zapisanymi wartościami i zmianami, potem „Zapisz i zakończ” — więc każde
+  sprawdzenie i sam zapis z przeładowaniem są tych ustawień; odmowa wraca z polem i kluczem
+  tłumaczenia, a zapisu, przy którym ustawienia by się zatrzymały (potwierdzenie, inna sekcja),
+  się nie robi. Ich schematy używają `probatio`, jak własne polecenia Home Assistanta od 2026.10.
+  Zakładka „Stan i alarmy” zapomina zmierzoną wartość budynku własnymi przyciskami wtyczki
+  (`button.press`), dostępnymi tylko dla administratora, po potwierdzeniu.
 
 ## 3. Zadania komponentów
 
@@ -259,6 +314,25 @@ wpisu, który trzyma historię monitora i podsumowania dni.
   jest uszkodzony albo ma inny kształt), a opcje zawierają część sterowania, oddanie kotła liczy
   się jako zaległe, a kocioł jako trzymany, więc wtyczka dla bezpieczeństwa oddaje kocioł.
 
+**Dziennik** (`journal.py`, jego zasady w `core/journal.py`) też ma własny magazyn,
+`<domain>.<entry_id>.journal`, więc główny magazyn wpisu i jego wersja zostają bez zmian. Trzyma
+to, co wtyczka zdecydowała i dlaczego, dla strony „Kocioł”: starty i zatrzymania wtyczki,
+przejęcie kotła przez sterowanie i jego oddanie, włączenie i wyłączenie wezwania ciepła,
+zapisaną nastawę wody — jej pierwszą wartość, potem każdą zmianę o co najmniej 1 K od wartości
+ostatnio zapisanej w dzienniku — potrzebę obiegu, która trzyma wodę, alarm podniesiony (albo z
+podniesionym poziomem) i ustąpiony oraz każdy zapis ustawień, ze strony (z tym, co zmienił) albo
+z ustawień (z sekcjami, które się zmieniły); każde z powodami, które podało sterowanie. Tylko
+obserwuje — słucha stanu sterowania i odświeżeń monitora i niczego nie zmienia; jego błąd jest
+logowany raz. Pierwsze spojrzenie po starcie zapisuje ponowne przejęcie kotła przez sterowanie
+— po restarcie albo przeładowaniu, z wezwaniem ciepła, wodą i potrzebą obiegu — a zatrzymanie
+zapisuje oddanie kotła, które sterowanie zrobiło tuż przed nim, chyba że oddanie jest jeszcze
+należne (F18 z J4); alarmy już podniesione są punktem wyjścia startu; alarm, którego nie da się
+teraz ocenić, zostaje taki, jaki był. Trzyma 14
+dni i najwyżej 2000 wpisów, najstarsze wypadają pierwsze (tymczasowo, K4); zapisywany minutę po
+zmianie, od razu przy wyładowaniu wpisu i przez Home Assistanta przy jego zatrzymaniu; magazyn,
+którego nie da się odczytać, zaczyna pusty dziennik. Znika razem z innymi magazynami wpisu, gdy
+wpis jest usuwany.
+
 ## 7. Testowanie
 
 Trzy warstwy ([`docs/pl/development/plan.md`, „Test environment”](../development/plan.md#środowisko-testowe)):
@@ -286,6 +360,14 @@ scripts/env.sh ruff check .
 scripts/env.sh ruff format --check .
 scripts/env.sh mypy
 ```
+
+Strona „Kocioł”, w `frontend/`: `../scripts/env.sh npm test` i `../scripts/env.sh npm run build`
+(najpierw sprawdzenie typów); zbudowane pliki trafiają do repozytorium.
+`../scripts/env.sh npm run screenshots` rysuje zbudowaną stronę na przykładowych danych
+(`frontend/preview/index.html`) w Chromium bez okna — jasny i ciemny motyw, komputer i telefon,
+administrator i zwykły użytkownik — do `.tmp/screenshots/` i zgłasza błąd przy każdym błędzie na
+stronie; `scripts/bootstrap_browser.sh` umieszcza to Chromium i potrzebne mu biblioteki systemowe
+w `.tools/`.
 
 ## 8. Dane o wodzie dla algorytmów stref
 

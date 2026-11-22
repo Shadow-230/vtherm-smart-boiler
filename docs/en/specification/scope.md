@@ -149,11 +149,12 @@ a heat pump controller (excluded), or anything that sends data outside.
 
 | Area | Regular user | Power user |
 |---|---|---|
-| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/en/development/plans/plan-0.2-i6.md`); with full or on/off control the control items in the setup too — the control device, the heating curve, the control behaviour, frost protection, the alarm reactions, each one form shown where it applies (I8 H) —, the control switch still off (decision 11 of I6); the "Boiler interface" item — the MQTT topics, the gateway where more than one is set up, the gateway topology and what is wired to the gateway's thermostat terminals (decision 1), the restart indicator, only what the connection and the mode use (I8 D2) —; the read-backs among the boiler signals (I8 D3); circuits — each its own menu item, named, up to four, removed by a tick, each listing the VT zones it feeds and of them those with underfloor and convectors, and of a zone it feeds only in part that zone's devices — a zone in two circuits is in each by its devices (I8 F1, F2, F4; I8.8c) — and the zones' one question, whose valves close when off (F5), the outdoor temperature at the hardest frost (the curve's point with a curve; with the design load otherwise, I8 E3) and the water-pressure limits from the boiler's manual; on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
+| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/en/development/plans/plan-0.2-i6.md`); with full or on/off control the control items in the setup too — the control device, the heating curve, the control behaviour, frost protection, the alarm reactions, each one form shown where it applies (I8 H) —, control still off (decision 11 of I6; switched later in "Control mode", I11); the "Boiler interface" item — the MQTT topics, the gateway where more than one is set up, the gateway topology and what is wired to the gateway's thermostat terminals (decision 1), the restart indicator, only what the connection and the mode use (I8 D2) —; the read-backs among the boiler signals (I8 D3); circuits — each its own menu item, named, up to four, removed by a tick, each listing the VT zones it feeds and of them those with underfloor and convectors, and of a zone it feeds only in part that zone's devices — a zone in two circuits is in each by its devices (I8 F1, F2, F4; I8.8c) — and the zones' one question, whose valves close when off (F5), the outdoor temperature at the hardest frost (the curve's point with a curve; with the design load otherwise, I8 E3) and the water-pressure limits from the boiler's manual; on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
 | Assessment | a verdict: control is worth enabling or not, and why | all metrics, per outdoor-temperature range, raw cycle data |
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
 | Diagnostics | hidden | model parameters, confidence, sample rejection reasons |
+| The Boiler page and cards | the page in the sidebar (on by default, a switch hides it) and four cards — status, schematic, curve, the last 24 h; everyone sees them, only an administrator changes anything there, after confirming, through the settings' own checks (I10, the user's decisions of 2026-11-18) | the same; the curve's offset is saved from the page at the advanced level only |
 | Learning | the comfort correction, so far the only learning under control, is off by default and shown at both levels (K4, the user's decision of 2026-11-17, reversing that of 2026-10-10 — an entry keeps what it stored; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
 
 Switching advanced → simple offers "restore advanced settings to defaults" (unchecked by
@@ -427,7 +428,7 @@ no presence entity).
 - Control modes the topology does not allow are unavailable, with the reason shown.
 - Hand-back stops the plugin's heating demand. Without a thermostat heating stops until the plugin
   or the user acts; the config flow states this risk, and after a stand-alone hand-back the
-  control switch says that frost protection now rests on the boiler's own, if it has one; the
+  Control state says that frost protection now rests on the boiler's own, if it has one; the
   alarm "handed back in frost" rises while a watched zone reads below the frost limit, and clears
   at or above the release (S-57; provisional, K4). A lost boiler link is no exception: in every
   gateway topology it raises an alarm and control hands back — stand-alone, heating stops (the
@@ -445,7 +446,7 @@ no presence entity).
   gateway's own thermostat entity is refused: it would call for heat whenever the flame burns.
   Synchronisation, VT leading and off by default, comes in 0.3 at the earliest.
 - Without a thermostat, an HA outage longer than about a minute stops heating: `CS` lapses
-  (F3); the config flow and the control switch say so.
+  (F3); the config flow and the Control state say so.
 - An emulated OpenTherm thermostat inside the plugin stays for later (§9).
 
 ### Topology
@@ -602,6 +603,15 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
   2026-10-10). A room it warms does not ask for heat.
 - **DHW** is detected in every stage; under control it pauses learning — in zones calling for
   heat (§5), and it holds the plugin's comfort correction at every draw (S-61).
+- **The Boiler page** (I10, `docs/en/development/plans/plan-0.2-i10.md`) shows what the plugin
+  knows and decides, in every stage, and nothing it does not: the overview (status and the
+  Control state with a way to the settings, tiles, the installation's schematic with its rooms, the curve with "where we
+  are", the last 24 h replayable), Burner, Use, Analyses (the energy signature, the starts by
+  hour), Journal (what the plugin decided and why, 14 days) and Status and alarms; the
+  overview's parts are also cards. Every law it shows is the plugin's own, sent to it — the page
+  keeps no copy. Changes from it (the curve, forgetting a measured building value) go through
+  the plugin's own settings and buttons, an administrator only, after confirming; control is
+  switched in the settings, where the page leads an administrator (I11).
 
 **Control base — from the first control release**
 
@@ -673,8 +683,8 @@ How control decides (principle 12):
   configured zone has reported — VT shows it started and its mode and demand are known — at most
   10 min. No new decision is taken meanwhile. If the plugin controlled the boiler before the
   restart — a clean restart that handed it back included — its last command is kept, or restored
-  at once, with its keep-alives, where the stored wish is "control on", the control switch entity
-  is not disabled, no latch or internal error holds, the control options equal those the control
+  at once, with its keep-alives, where the stored wish is "control on", no latch or internal
+  error holds, the control options equal those the control
   was taken with, and no other blocker holds; until the write target and the boiler link are
   available nothing is written and the restore waits, and a link not yet reported never turns the
   restore into a hand-back. When a condition fails, the owed hand-back goes first; where control
@@ -793,7 +803,9 @@ How control decides (principle 12):
   it is reset at
   hand-back and at the end of a session; one room short counts like any other — the curve must
   hold every room — within these bounds, never higher for one room's sake (additions 2 and 3 of
-  2026-10-10); at its limit for 3 h with a room still short, it holds there, and the
+  2026-10-10); as high as it may go for 3 h — at its limit, or with the day's 3 K spent, so that
+  one step back after the limit does not hide it for a day (J4's L13, the user's decision of
+  2026-11-22) — with a room still short, it holds there, and the
   information alarm and a warning repair issue name the room and the possible causes — the
   heating curve too low, the room's radiator too small, the room losing heat; the curve first
   when most rooms are short, the radiator and the heat loss first when one is — gone once the
@@ -877,7 +889,7 @@ the thermostat-like mode's values (0.3) and a relay:
   values).
 - A lost boiler link — flame or flow not fresh for 5 min within the last 10 min, so a link fresh
   one step in five is still lost — stops every write; the alarm "boiler link lost" rises whenever
-  the control switch is on and the link is lost, whatever blockers or a latch show, and control
+  control is on and the link is lost, whatever blockers or a latch show, and control
   hands back: with a thermostat, the thermostat takes over; stand-alone, heating stops. It
   resumes once the link has been fresh for 60 s without a break (provisional, K4). A relay out of
   reach instead raises its own alarm after 5 min, with no hand-back (§5 class 3). A failed
@@ -945,10 +957,10 @@ the thermostat-like mode's values (0.3) and a relay:
   the plugin paused — is saved at once and atomically, and read cautiously. A store lost, damaged
   or unreadable for an entry that ran before means "was controlling": a full hand-back first
   (answer K). After a restart without a clean stop, a hand-back is pending until control resumes;
-  after any restart the control switch comes back as the user left it, and a control switch
-  entity disabled in Home Assistant means control off (answer K).
-- The control switch works whatever else is broken: its availability follows the control unit,
-  not the monitor. If the plugin's own monitor fails for 5 min, control hands back, and resumes by
+  after any restart control comes back as the user left it, from the stored wish (I11: the
+  setup gives it back; answer K's disabled switch entity is gone with the switch).
+- Control's state and its switching work whatever else is broken: the state's availability
+  follows the control unit, not the monitor. If the plugin's own monitor fails for 5 min, control hands back, and resumes by
   itself once the monitor works again, with an information note (answer I).
 - Control only with a known hand-back and, for setpoint control, a source for the confirmed
   setpoint.
@@ -1076,7 +1088,7 @@ How control resumes after it stopped:
 | An alarm set to hand back (decision 7) | when the user switches control off and on — a latch: it survives a restart, shows its cause in one repair issue and never expires on its own |
 | Another controller (a step aside) | when the user switches control off and on, or by itself after 60 min without a foreign value where that option is on — not for relays, nor after an external-control switch's hand-back without its own option |
 | A relay found in its declared power-cut state (or, with "last" or "I don't know", changed while available) | the command again (answer D); the fourth within 24 h is another controller: the step-aside latch until off and on (answer N) |
-| An internal error | at any change of the control switch; the latch outlives a restart |
+| An internal error | at any change of the user's wish (control off or on); the latch outlives a restart |
 | The heating switch's "off" or "on" ignored from the start, or a relay that stops taking "off" | blocked until the user switches control off and on (answer O; decisions 4 and 6 of 0.2.3) |
 | Any other command ignored from the start | at the next session |
 | A lost boiler link | on its own, once the data has been fresh for 60 s |
@@ -1084,7 +1096,7 @@ How control resumes after it stopped:
 | The boiler's own fault | on its own, in the step where every mapped fault reads off, unknown or unavailable |
 | Every zone unknown | on its own, when a zone answers again |
 | The plugin's own monitor failing | on its own, once it works again, with an information note (answer I) |
-| An alarm with a hand-back reaction already active when control is switched on | blocks control at once; the switch's text says so |
+| An alarm with a hand-back reaction already active when control is switched on | blocks control at once; the refusal's text says so |
 | A blocker — a missing setting, VT's central boiler configured, Home Assistant starting | on its own, once the blocker is gone; "VT central boiler active" only after the Home Assistant restart its text asks for |
 
 In the thermostat-like mode (0.3) the boiler runs its own regulation: the curve, ramp,
@@ -1106,7 +1118,7 @@ Which alarms may hand back (decision 7):
   alarm whose input is unknown or cannot be judged holds its state for 60 min, then shows
   unknown. A notification closes after 60 min back in the normal range (provisional, K4).
 - An alarm with a hand-back reaction that is already active when control is switched on blocks
-  control at once, and the switch's text says so.
+  control at once, and the refusal's text says so.
 - The allowed reactions are an allow-list in the code: a new alarm informs by default, and a
   stored reaction no longer allowed is neutralised. Every hand-back an alarm causes raises a
   repair issue, and every latch, whatever its cause, the entry's one latch issue, naming its
@@ -1223,7 +1235,7 @@ reviews every provisional value at K4.
 | Control step 10 s | `const.py` | heating follows the zones at once |
 | Keep-alive 30 s | `control_config.py` | OTGW needs `CS` at least once a minute |
 | Lowest OTGW `CS` 8 °C | `transport/writers.py` | below 8 °C an override never lapses |
-| Confirmation timeout 120 s; tolerance 0.5 K — also a deadband on the curve's small changes, which keeps the starts down (the simulation: x1.20 at +8 °C with it, x1.36 without); a bound the water is held at (the lowest or highest water, a circuit's maximum or need, the boiler's maximum) is written exactly once the ramp has reached it, beyond 0.05 K (F14, J4 of 2026-10-14) | `core/guards.py`, `core/loop.py` | provisional, K4 (reason to confirm) |
+| Confirmation timeout 120 s; tolerance 0.5 K — also a deadband on the curve's small changes, which keeps the starts down (the simulation: x1.20 at +8 °C with it, x1.36 without); a bound the water is held at (the lowest or highest water, a circuit's maximum or need, the boiler's maximum, and the comfort correction at its limit) is written exactly once the ramp has reached it, beyond 0.05 K (F14, J4 of 2026-10-14; the correction's limit: L12, the user's decision of 2026-11-22) | `core/guards.py`, `core/loop.py` | provisional, K4 (reason to confirm) |
 | Write interval at least 5 s | `core/guards.py` | one write per step |
 | The plugin's own lapse after 60 s of silence | `core/guards.py` | an OTGW override lapses after about a minute |
 | Rewrite window 24 h | `core/guards.py` | decided 2026-09-25 |
@@ -1234,7 +1246,7 @@ reviews every provisional value at K4.
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
 | Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
 | Frost not warming: 2 h, 0.5 K | `core/controller.py` | provisional, K4 (reason to confirm) |
-| Long burn without warming: a run of 3 h, the flame's gaps up to 30 min kept; a room rising under 0.2 K is not warming; the flow within 1 K of its setpoint holds it (a cycling boiler: reached it); 90 % is high modulation, with the flame on throughout for the power limit; every room 0.3 K over for 1 h is too hot; 30-min averages | `core/long_run.py` | the gaps decided at K4 (the user, 2026-11-17, J4's F10: a boiler cycling at its minimum with the rooms short is the same case); the rest provisional (G11 E) |
+| Long burn without warming: a run of 3 h, the flame's gaps up to 30 min kept; a room rising under 0.2 K is not warming; the water has reached its setpoint when the flow, at some moment of the last 30 min, is under it by at most 1 K or above it, the burner stopping or not (J4's F15: a boiler at its minimum above a setpoint too low; the user's note of 2026-11-22: the boiler's own hysteresis and delays); 90 % is high modulation, with the flame on throughout for the power limit; every room 0.3 K over for 1 h is too hot; 30-min averages | `core/long_run.py` | the gaps decided at K4 (the user, 2026-11-17, J4's F10: a boiler cycling at its minimum with the rooms short is the same case); the rest provisional (G11 E) |
 | A zone takes heat above 5 % open, saturated at 95 % — for the learning, the alarms and the history; whether a zone calls follows VT's rule instead (above 0, 2026-10-14) | `core/readings.py` | existing |
 | Heat available: the flow 2 K above the return, or 3 K above the room without a return; 1 K hysteresis | `core/heat.py` | provisional, K4 (I8, decision C1) |
 | Plausible room reading −30 to 45 °C, one rule for every room reading | `core/limits.py` | a narrower range would hide a cold room from frost protection (S-06; provisional, K4) |
@@ -1289,7 +1301,7 @@ reviews every provisional value at K4.
 | "The rest" of the day-to-day change within 15 % of the day before shown as normal variation | `core/report.py` | K4 (the user, 2026-11-17): daily figures are mostly noise and thermal lag; the 15 % provisional — no published number, 0.4's regression gives the house's own scatter |
 | Forecast call timeout 30 s | forecasts (Y4) | provisional, K4 (reason to confirm) |
 | Starts and ignition alarms unknown when the last analysis is older than 15 min; the last-run record written every 10 min | monitor (Y2) | provisional, K4 (reason to confirm) |
-| The frost "closed zone" issue updated on a 1 K move; the control switch's restore waited for 60 s | control (X4, V3) | provisional, K4 (reason to confirm) |
+| The frost "closed zone" issue updated on a 1 K move; the wish's restore waited for 60 s (given back by the setup since I11) | control (X4, V3) | provisional, K4 (reason to confirm) |
 | A write's timeout 10 s; a control step counts 60 s at most | control | provisional, K4 (reason to confirm) |
 | The "add water" threshold accepted within 0.1–2.0 bar | options (Y1) | provisional, K4 (reason to confirm) |
 | SmartPI's learning calls time out after 5 s, inside the stop's 15-s budget | `control.py` | provisional, K4 (reason to confirm) |
@@ -1421,7 +1433,7 @@ switched on, adds at most its limit, 3 K by default, rising at most 3 K a day (p
 the tuning band comes later) — so a week's wait protects
 nothing. The verdict needs a number of days of data: default 7, at least 7, up to 60, counted in
 calendar days from the entry's creation, so a lost store does not restart them (answer K). Until
-then, and off-season when the days pass without enough data, the control switch shows "not
+then, and off-season when the days pass without enough data, the Control state shows "not
 enough data" and says that control starts without a verdict (S-43). The verdict is advice; the
 user decides.
 
@@ -1566,7 +1578,7 @@ Starts per hour count the hours with heating.
   VT's answer the boiler goes to a working thermostat, else no heating; G — the relay's "separate
   contact" tick; H — stepping aside is the full safe hand-back; I — the plugin's own monitor
   failing for 5 min hands back and resumes by itself; J — a "Reset comfort correction" button; K —
-  a lost store means "was controlling", the switch returns as the user left it, the verdict counts
+  a lost store means "was controlling", control returns as the user left it, the verdict counts
   only what 0.2.2 changes, lifting blocks waits for K4, a gateway entry without the terminals
   answer stays stopped; L — a relay set once to its rest state at a step aside; M — the "own room
   controller" tick counts on the relay path only with the rest state "on", and is not offered on a
@@ -1596,13 +1608,13 @@ Starts per hour count the hours with heating.
   off and on (answer O). A heating switch is turned on at hand-back only where the boiler returns
   to a thermostat or its own control. A timeout hand-back needs expiring writes. A failed
   hand-back is shown and retried every minute until it is confirmed; at Home Assistant's stop the
-  hand-back runs before integrations stop. Latches survive a restart; the control switch comes
-  back after a restart as the user left it, the wish saved at once, and a disabled switch entity
-  means control off (answer K); control waits for its blockers. The plugin's own monitor failing
+  hand-back runs before integrations stop. Latches survive a restart; control comes back after
+  a restart as the user left it, the wish saved at once (I11: from the store, given back by the
+  setup); control waits for its blockers. The plugin's own monitor failing
   for 5 min hands back, and control resumes by itself once it works again (answer I).
 - Answers to the review's questions (provisional, K4): 3 — "heat flows" is the flame when known,
   else the command; 5 — a corrupt or lost store is unreadable: a full hand-back first, and the
-  verdict's days count from the entry's creation; 6 — the switch comes back as the user left
+  verdict's days count from the entry's creation; 6 — control comes back as the user left
   it, the wish saved at once; 8 — "pressure 0 = unknown" only for the gateway's sources; 9 — an
   alarm with an unknown input holds its state 60 min, then shows unknown; 10 — every options save
   but the level reloads the entry, which hands back, and control then restores the boiler; the

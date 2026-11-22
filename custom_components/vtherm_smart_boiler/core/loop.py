@@ -224,10 +224,21 @@ _BOUNDS = frozenset(
 )
 
 
-def at_bound(decision: ControlDecision) -> bool:
-    """The setpoint is a bound the water is held at, the ramp having reached it (F14)."""
+def at_bound(decision: ControlDecision, correction_max_k: float | None = None) -> bool:
+    """The setpoint is a bound the water is held at, the ramp having reached it (F14) — the
+    comfort correction at its limit too, ``correction_max_k``: it climbs in steps under the
+    read-back's tolerance, and its last one stayed inside the deadband (the boiler got the curve
+    + 2.53 K for + 3 K: J4's L12, the user's decision of 2026-11-22)."""
     reasons = decision.reasons
-    return Reason.RAMP not in reasons and not _BOUNDS.isdisjoint(reasons)
+    if Reason.RAMP in reasons:
+        return False
+    if not _BOUNDS.isdisjoint(reasons):
+        return True
+    return (
+        correction_max_k is not None
+        and Reason.COMFORT_CORRECTION in reasons
+        and decision.correction >= correction_max_k
+    )
 
 
 def loop_step(
@@ -312,7 +323,7 @@ def loop_step(
         desired = off_value if off else heating_value
     if config.ch_writes and desired is not None:
         desired = _gridded(desired, grid, config, False)
-    if not off and at_bound(decision):
+    if not off and at_bound(decision, config.control.correction_max_k):
         setpoint_context = replace(setpoint_context, exact=True)  # F14: met exactly
     planned = plan_write(
         state.setpoint, desired, confirmed_setpoint, now, config.setpoint_guard, setpoint_context

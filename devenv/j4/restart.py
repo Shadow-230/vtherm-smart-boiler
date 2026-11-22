@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import shlex
 import sys
 import time
 import traceback
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from lib import CONTAINER, HA, ssh
+from lib import CONTAINER, DIR, HA, ssh
 from run import CODE, Run, append_result, base_problem
 
 
@@ -58,6 +59,9 @@ async def B3(notes):
 
 
 async def B6(notes):
+    if not DIR:
+        notes.append("NOT RUN — TEST_HA_DIR for this instance is not in devenv/local.env")
+        return None
     async with HA() as ha:
         r = Run(ha, await ha.entities())
         await r.reset()
@@ -67,7 +71,8 @@ async def B6(notes):
     t = time.time()
     since = dt.datetime.fromtimestamp(t, dt.UTC).strftime("%Y-%m-%dT%H:%M:%S")
     out = ssh(
-        f"docker kill {CONTAINER}; sleep 5; cd /opt/ha-test && docker compose start homeassistant 2>&1 | tail -1"
+        f"docker kill {CONTAINER}; sleep 5; cd {shlex.quote(DIR)} "
+        "&& docker compose start homeassistant 2>&1 | tail -1"
     )
     up = await wait_running()
     async with HA() as ha:
@@ -103,7 +108,7 @@ async def main(ids):
         # The instance's base first, as every runner scenario (J4 of 2026-10-14).
         async with HA() as ha:
             r = Run(ha, await ha.entities())
-            problem = await base_problem(r)
+            problem = await base_problem(r, sid)
         notes += [n.strip() for n in r.notes]
         if problem is not None:
             ok = None

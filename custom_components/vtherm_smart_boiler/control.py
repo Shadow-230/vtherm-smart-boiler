@@ -435,7 +435,9 @@ WRITE_IGNORED_ISSUE = "write_ignored_no_heat"
 # 5 minutes — "confirmation missing", and a repair issue: a warning, an error where a hand-back
 # stops heating. Never a step aside by itself.
 NOT_SHOWN_ISSUE = "setpoint_not_shown"
-RESTORE_WAIT_S = 60.0  # without the switch restoring its state by then, control counts as off
+# Without the wish restored by then, control counts as off — the setup gives it back at once
+# since I11.3, so this only guards a step that runs before it.
+RESTORE_WAIT_S = 60.0
 # X8's repair issues: the relay out of reach for five minutes (one text per declared state after
 # a power cut), the relay never taking the command this session, and a relay resting "off" while
 # control does not hold it and a room asks for heat or is near freezing.
@@ -756,6 +758,21 @@ _LATCHING = (ControlAlarm.OUTSIDE_CHANGE, ControlAlarm.WRITE_IGNORED)
 _KEPT_ALARMS = frozenset({ControlAlarm.OUTSIDE_CHANGE, ControlAlarm.CONTROL_ERROR})
 
 
+# Blockers that pass on their own; control switched on waits for them instead of refusing — the
+# control store that cannot be written (PB-16) too, once it has written for a while again.
+TRANSIENT_BLOCKERS = frozenset(
+    {"ha_starting", "vt_central_boiler_unknown", "monitor_failed", "control_state_not_saved"}
+)
+# Blockers the change of the user's wish itself clears.
+CLEARED_BY_SWITCHING = frozenset({"control_error"})
+# Latches that switching control off and on clears (answer O; decisions 4 and 6 of 0.2.3):
+# switching on is refused, with their text, only while control is on — with control off, on is
+# the second half of "off and on", and the next off and on clears the latch as for any other.
+CLEARED_BY_OFF_AND_ON = frozenset(
+    {"heating_off_ignored", "heating_on_ignored", "relay_off_not_taken"}
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ControlStatus:
     """What the entities show about control."""
@@ -790,6 +807,8 @@ class ControlStatus:
     zones_without_data: tuple[str, ...] = ()  # calling zones that feed no criterion (PB-23)
     correction: float = 0.0  # the comfort correction now, K (P-38)
     curve_room: float | None = None  # the curve's room temperature now, °C (G11 D)
+    # The outdoor temperature the water was decided with, as the curve reads it (I10.3c), °C.
+    curve_outdoor: float | None = None
     activation_at: float | None = None  # when a start waiting VT's activation delay is due
     frost_closed_zones: tuple[str, ...] = ()  # watched rooms below the frost limit VT keeps closed
     # X8, the relay path (R15): the relay as seen ("on", "off", "other", "unreachable"), where
@@ -945,6 +964,9 @@ class ControlUnit:
         # The wish as the last run stored it: ``None`` when none was stored (the first start of
         # 0.2.2). Stored as it is until the switch restores it.
         self._stored_enabled: bool | None = None
+        # The user's wish for the next run, from the settings saved with other changes: the
+        # reload's run takes it, this one does not act on it (I11.1).
+        self._next_wish: bool | None = None
         # The last command given to the boiler, and the one last stored at once (V3).
         self._last_command: LastCommand | None = None
         self._command_stored: LastCommand | None = None
@@ -1179,6 +1201,8 @@ class ControlUnit:
         owed = self._holding or self._hand_back_pending
         if self.hand_back_only:
             enabled: bool | None = False  # control is not in the options: it is off
+        elif self._next_wish is not None:
+            enabled = self._next_wish  # for the run after the reload (I11.1)
         elif self._restored:
             enabled = self.enabled
         else:
@@ -1387,7 +1411,6 @@ class ControlUnit:
         refused = (
             not self._coordinator.control_readable
             or self._stored_enabled is not True
-            or self._switch_disabled()
             or control.latched
             or self._session.failed
             or self._taken_with != self._raw
@@ -1441,14 +1464,6 @@ class ControlUnit:
             and self._stored_enabled is True
         )
 
-    def _switch_disabled(self) -> bool:
-        """The control switch entity is disabled in Home Assistant: control is off (answer K)."""
-        registry = er.async_get(self._hass)
-        unique_id = f"{self._coordinator.config_entry.entry_id}_control"
-        entity_id = registry.async_get_entity_id("switch", DOMAIN, unique_id)
-        entry = registry.async_get(entity_id) if entity_id is not None else None
-        return entry is not None and entry.disabled
-
     # --- lifecycle ------------------------------------------------------------------------
 
     async def async_hand_back_owed(self, now: float) -> None:
@@ -1497,10 +1512,9 @@ class ControlUnit:
         )
 
     async def async_restore_enabled(self, on: bool) -> None:
-        """The switch, once added, gives the user's wish back after a restart (the stored wish,
-        or its own restored state when none was stored): control steps may run. Unlike a change
-        made by the user, it does not clear an internal error (C10). A switch that is never
-        added (disabled) leaves control off once ``RESTORE_WAIT_S`` has passed."""
+        """The setup gives the user's wish back after a restart — the stored wish, off when none
+        was stored (I11.3; the control switch did it when added): control steps may run. Unlike
+        a change made by the user, it does not clear an internal error (C10)."""
         async with self._lock:
             if self._restored or self._stopped or self._stopping:
                 return
@@ -1882,6 +1896,25 @@ class ControlUnit:
             grid.put(value, below, above) is None for value, below, above in values
         )
 
+    def blockers_for_on(self, now: float) -> list[str]:
+        """The blockers that refuse switching control on — in the settings, by an automation,
+        by the switch: those that pass on their own are waited for instead, the change itself
+        clears an internal error, and with control off, on is the second half of "off and on"."""
+        passing = TRANSIENT_BLOCKERS | CLEARED_BY_SWITCHING
+        if not self.enabled:
+            passing |= CLEARED_BY_OFF_AND_ON
+        return [blocker for blocker in self.blockers(now) if blocker not in passing]
+
+    async def async_keep_wish(self, enabled: bool) -> None:
+        """The settings saved with other changes switch control: the reload that follows starts
+        a new run, which takes the wish from the store and waits for its blockers as after a
+        restart; this run, on the options being replaced, does not act on it (I11.1)."""
+        async with self._lock:
+            if self._stopped or self._stopping:
+                return
+            self._next_wish = enabled
+            await self._coordinator.async_save_control_now()
+
     async def async_set_enabled(self, enabled: bool, now: float | None = None) -> bool:
         """Switch control on or off; switching off hands back at once. ``False`` where switching
         off made a hand-back attempt that did not get through (PB-39): it stays owed and is
@@ -2107,6 +2140,7 @@ class ControlUnit:
             zones_without_data=out.decision.zones_without_data,
             correction=out.decision.correction,
             curve_room=out.decision.curve_room,
+            curve_outdoor=out.decision.effective_outdoor,
             activation_at=out.decision.activation_at,
             frost_closed_zones=tuple(self._frost_issue_shown),
             relay_state=relay_state,

@@ -49,6 +49,10 @@ def fields(form: Mapping[str, Any]) -> set[str]:
     return {field["name"] for field in form.get("data_schema") or []}
 
 
+# I11.1: the window "Control not switched on" after "Save and finish" with "Control on" ticked.
+CONTROL_BLOCKED = "control_blocked"
+
+
 async def save_options(
     rest: Rest,
     entry_id: str,
@@ -86,6 +90,10 @@ async def save_options(
             step = str(d["step_id"])
             if d.get("errors"):
                 return d
+            if step == CONTROL_BLOCKED:
+                # I11.1: control not switched on — a blocker that needs the user; its text and
+                # count in the form's placeholders. A refusal: nothing is saved.
+                return {**d, "errors": {"control_on": CONTROL_BLOCKED}}
             showings[step] = showings.get(step, 0) + 1
             if showings[step] > MAX_SHOWINGS:
                 return {**d, "errors": {"base": f"{step} shown again and again"}}

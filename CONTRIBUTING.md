@@ -41,6 +41,8 @@ Every pull request runs these checks on GitHub Actions:
   Then they check the coverage floor over the four: every module at least 95 % with branches,
   the config and options flows 100 %. The Home Assistant version tested is in each part's
   summary.
+- The Boiler page has its own job, "The Boiler page": its tests, its types, and its built files
+  checked against its source. The two test checks pass only when it did.
 - A pull request that changes documentation only (Markdown files, `docs/`, `LICENSE`; not `CLAUDE.md`, nothing under `.github/`) passes the two test checks without running
   the tests, as no test reads those files; anything else runs them in full.
 - An early warning tests this integration against the newest releases of the projects it works
@@ -60,7 +62,9 @@ Every pull request runs these checks on GitHub Actions:
 - Run, as CI does: `ruff check .`, `ruff format --check .`, `mypy`, the core tests
   (`python -m pytest -q -p no:homeassistant --disable-socket --allow-unix-socket tests/core`)
   and the others (`python -m pytest -q --ignore=tests/core`); add `-n auto` to run them on every
-  CPU (pytest-xdist), as CI does.
+  CPU (pytest-xdist), as CI does. A change to the Boiler page (`frontend/`): `npm test` and
+  `npm run build` there, and commit the built files under
+  `custom_components/vtherm_smart_boiler/frontend/`.
 - Every user-visible text goes through `translations/en.json`, with the same keys in every other
   language.
 - No installation-specific data (entity IDs, device names, one house's values) in code, defaults,

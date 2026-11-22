@@ -1,0 +1,380 @@
+<!doctype html>
+<!--
+  The Boiler page on sample data, for screenshots (frontend/scripts/screenshots.mjs): a stand-in
+  for Home Assistant's `hass` object and theme. Sample values only — no real installation.
+  ?lang=en|pl, ?dark=1, ?user=1 (a user who is not an administrator), ?dhw=1 (hot water),
+  ?combi=1 (a combi boiler), ?flame=0 (called for heat, the burner between burns).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boiler page preview</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--primary-background-color); color: var(--primary-text-color); }
+  .dashboard { display: grid; gap: 12px; padding: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); align-items: start; }
+  body {
+    --primary-color: #03a9f4; --primary-background-color: #fafafa; --secondary-background-color: #e5e5e5;
+    --card-background-color: #fff; --primary-text-color: #212121; --secondary-text-color: #727272;
+    --divider-color: rgba(0, 0, 0, 0.12); --app-header-background-color: #03a9f4;
+    --app-header-text-color: #fff; --text-primary-color: #fff; --disabled-color: #bdbdbd;
+    font-family: Roboto, system-ui, sans-serif;
+  }
+  body.dark {
+    --primary-background-color: #111; --secondary-background-color: #282828;
+    --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
+    --divider-color: rgba(225, 225, 225, 0.12); --app-header-background-color: #1c1c1c;
+    --disabled-color: #6f6f6f;
+  }
+</style>
+</head>
+<body>
+<vtherm-smart-boiler-panel></vtherm-smart-boiler-panel>
+<script type="module">
+  import "/vtherm-smart-boiler-panel.js";
+
+  const query = new URLSearchParams(location.search);
+  const lang = query.get("lang") || "pl";
+  if (query.get("dark")) document.body.classList.add("dark");
+  const entity = (id, state, attributes = {}) =>
+    [id, { entity_id: id, state, attributes, last_changed: "", last_updated: "" }];
+  const zones = ["climate.living_room", "climate.bedroom", "climate.kids_room", "climate.kitchen", "climate.bathroom"];
+  const names = {
+    pl: ["Salon", "Sypialnia", "Pokój dziecka", "Kuchnia", "Łazienka"],
+    en: ["Living room", "Bedroom", "Kids' room", "Kitchen", "Bathroom"],
+  }[lang];
+  const rooms = [[20.6, 21, 0.64], [18.7, 19, 0.38], [20.8, 21, 0.12], [21.2, 21, 0], [22.1, 22, 0]];
+  const states = Object.fromEntries([
+    entity("sensor.control_state", "heating", {
+      reasons_text: lang === "pl" ? "pokoje wołają o ciepło, woda według krzywej" : "rooms call for heat, water from the curve",
+      target: 41.1, curve_outdoor: 3.8, curve_room: 21,
+    }),
+    entity("switch.control", "on"),
+    entity("sensor.control_setpoint", "41.0", { requested: 41.0, read_back: 41.0 }),
+    entity("binary_sensor.boiler_called", "on"),
+    entity("sensor.flow", "40.6"),
+    entity("sensor.return", "34.2"),
+    entity("sensor.outdoor", "3.8"),
+    entity("sensor.pressure", "1.6"),
+    entity("binary_sensor.flame", query.get("flame") === "0" ? "off" : "on"),
+    entity("sensor.modulation", "34"),
+    entity("binary_sensor.dhw", query.get("dhw") ? "on" : "off"),
+    entity("sensor.calling", "2", { calling_zones: [zones[0], zones[1]] }),
+    entity("sensor.starts_per_hour", "1.6", { unit_of_measurement: "/h" }),
+    entity("sensor.median_burn", "17", { unit_of_measurement: "min" }),
+    entity("sensor.short_burn_share", "9", { unit_of_measurement: "%" }),
+    entity("sensor.burner_hours", "8.7", { unit_of_measurement: "h" }),
+    entity("sensor.condensing_share", "96", { unit_of_measurement: "%" }),
+    entity("sensor.gas_per_degree_day", "0.44", { unit_of_measurement: "m³/K·d" }),
+    entity("sensor.degree_days", "96", { unit_of_measurement: "K·d" }),
+    entity("sensor.change_report", "7", {
+      unit_of_measurement: "%", unit: "m³", previous: 6.1, current: 6.56,
+      contributions: { weather: 0.41, dhw: -0.08, settings: 0.09, other: 0.04 },
+      not_judged: [], other_within_normal: true,
+    }),
+    entity("sensor.verdict", "worth_it", {
+      monitoring_since: "2026-10-02T06:00:00+00:00", days_left_out: 3,
+      reasons: [
+        { code: "good_condensing", kind: "fine", value: 0.96, limit: 0.5 },
+        { code: "frequent_starts", kind: "problem", value: 3.4, limit: 3, changed_by_control: true },
+        { code: "short_burns", kind: "problem", value: 0.46, limit: 0.3, changed_by_control: false },
+        { code: "load_unknown", kind: "missing", value: null, limit: null, detail: "estimate_only" },
+      ],
+    }),
+    entity("sensor.signal_problems", "1", {
+      signals: {
+        flame: "ok", flow: "ok", return: "ok", modulation: "ok", ch_setpoint: "not_mapped",
+        dhw_active: "ok", pressure: "stale", flue_gas: "not_mapped", outdoor: "ok", gas_meter: "not_mapped",
+      },
+    }),
+    entity("binary_sensor.signals", "on", { problems: [] }),
+    entity("binary_sensor.frequent_starts", "on", { level: "warning", limit: 3 }),
+    entity("binary_sensor.pressure_low", "off", { level: null, limit: 0.8 }),
+    entity("binary_sensor.flue_gas_high", "unknown", { reason: "unknown_input" }),
+    entity("binary_sensor.write_failed", "off"),
+    entity("binary_sensor.link_lost", "off"),
+    entity("binary_sensor.long_burn", "off", { reason: null }),
+    entity("binary_sensor.outdoor_problem", "off", { status: "ok" }),
+    entity("sensor.loss", "0.182", {
+      unit_of_measurement: "kW/K", source: "entered", confidence: 1, entered: 0.182, measured: 0.214,
+      measured_confidence: 0.71, measured_range: [0.171, 0.257], mismatch: true,
+    }),
+    entity("sensor.threshold", "15.5", {
+      unit_of_measurement: "°C", source: "measured", confidence: 0.82, entered: null, measured: 15.5,
+      measured_confidence: 0.82, mismatch: false,
+    }),
+    entity("sensor.lowest_water", "38", {
+      unit_of_measurement: "°C", state: "suggestion", counted_burns: 64, short_share: 46, reference: 41.2,
+      source: "ch_setpoint", window_days: 14, missing: [], estimate_from_power: 36,
+    }),
+    entity("button.reset_loss", "unknown"),
+    entity("button.reset_threshold", "unknown"),
+    ...zones.map((z, i) => entity(z, "heat", {
+      friendly_name: names[i], current_temperature: rooms[i][0], temperature: rooms[i][1], on_percent: rooms[i][2],
+    })),
+  ]);
+  const combi = query.get("combi");
+  const installation = {
+    entry_id: "sample", title: "Boiler",
+    boiler: combi ? { type: "combi", dhw: "combi", condensing: true } : { type: "single_tank", dhw: "storage", condensing: true },
+    circuits: [
+      {
+        id: "radiators", name: lang === "pl" ? "Grzejniki" : "Radiators", control: "unmixed_shared",
+        fixed_temperature: null, max_flow: null, needed: null,
+        zones: [zones[1], zones[2], zones[4]].map((z) => ({ entity_id: z, emitter: "radiator" })),
+      },
+      {
+        id: "floor", name: lang === "pl" ? "Podłogówka" : "Underfloor", control: "passive_fixed",
+        fixed_temperature: 35, max_flow: 45, needed: null,
+        zones: [zones[0], zones[3]].map((z) => ({ entity_id: z, emitter: "underfloor" })),
+      },
+    ],
+    signals: {
+      flame: "binary_sensor.flame", flow: "sensor.flow", return: "sensor.return", outdoor: "sensor.outdoor",
+      modulation: "sensor.modulation", dhw_active: "binary_sensor.dhw", pressure: "sensor.pressure",
+    },
+    weather: null,
+    entities: {
+      control: "switch.control", control_state: "sensor.control_state",
+      control_setpoint: "sensor.control_setpoint", demand_count: "sensor.calling",
+      boiler_called: "binary_sensor.boiler_called",
+      starts_per_hour: "sensor.starts_per_hour", median_burn: "sensor.median_burn",
+      short_burn_share: "sensor.short_burn_share", burner_hours: "sensor.burner_hours",
+      condensing_share: "sensor.condensing_share",
+      gas_per_degree_day: "sensor.gas_per_degree_day", degree_days: "sensor.degree_days",
+      change_report: "sensor.change_report",
+      verdict: "sensor.verdict", signal_problems: "sensor.signal_problems", connection: "binary_sensor.signals",
+      alarm_frequent_starts: "binary_sensor.frequent_starts", alarm_pressure_low: "binary_sensor.pressure_low",
+      alarm_flue_gas_high: "binary_sensor.flue_gas_high", alarm_write_failed: "binary_sensor.write_failed",
+      alarm_boiler_link_lost: "binary_sensor.link_lost", long_burn: "binary_sensor.long_burn",
+      outdoor_sensor_problem: "binary_sensor.outdoor_problem",
+      loss_coefficient: "sensor.loss", heating_threshold: "sensor.threshold",
+      lowest_water_suggestion: "sensor.lowest_water",
+      reset_loss_coefficient: "button.reset_loss", reset_heating_threshold: "button.reset_threshold",
+    },
+    short_burn_min: 10,
+    curve: {
+      entered: true, design_outdoor: -15, design_flow: 55, room: 20, exponent: 1.3, offset: 0,
+      hard_min: 20, hard_max: 70, circuit_max: null, boiler_max: null, room_auto: true,
+      comfort_correction: false, correction_max_k: 3, advanced: true,
+    },
+  };
+  // Stand-ins for the plugin's curve and the recorder's history — sample arithmetic only.
+  const sampleCurve = (m) => {
+    const room = m.room ?? 20, dOut = m.design_outdoor ?? -15, dFlow = m.design_flow ?? 55;
+    const offset = m.offset ?? 0;
+    const points = [];
+    for (let o = m.outdoor_from; o <= m.outdoor_to + 1e-9; o += m.step) {
+      const load = Math.max(0, (room - o) / (room - dOut));
+      const water = room + (dFlow - room) * Math.pow(load, 1 / 1.3) + offset;
+      points.push([o, Math.min(70, Math.max(20, water))]);
+    }
+    const problems = dFlow < room + 5 ? ["design_flow_too_low"] : [];
+    return { points, problems };
+  };
+  const sampleHistory = () => {
+    const out = [];
+    const now = Date.now() / 1000;
+    for (let h = 168; h > 0; h -= 2) {
+      const outdoor = 1.5 + 3.5 * Math.cos((2 * Math.PI * ((h % 24) - 9)) / 24) - 2 * Math.sin(h / 30);
+      const room = h % 24 < 7 ? 19 : 21;
+      out.push({ s: "heating", lu: now - h * 3600, a: { curve_outdoor: outdoor, target: sampleCurve({ room, outdoor_from: outdoor, outdoor_to: outdoor, step: 1 }).points[0][1] + (Math.sin(h) - 0.5) } });
+    }
+    return { "sensor.control_state": out };
+  };
+  // A sample day for the last 24 h, every 10 minutes — stand-in arithmetic, not a real house.
+  const sampleDay = (m) => {
+    const end = Date.parse(m.end_time) / 1000;
+    const out = Object.fromEntries(m.entity_ids.map((id) => [id, []]));
+    const push = (id, s, a, lu) => out[id] && out[id].push(a ? { s, a, lu } : { s, lu });
+    for (let k = 144; k >= 0; k--) {
+      const lu = end - k * 600;
+      const c = new Date(lu * 1000).getHours() + new Date(lu * 1000).getMinutes() / 60;
+      const o = 1.5 + 3.5 * Math.cos((2 * Math.PI * (c - 15)) / 24);
+      const night = c >= 22 || c < 6;
+      const room = night ? 19 : 21;
+      const calls = night ? [] : (c >= 6 && c < 9) || (c >= 17 && c < 22) ? [zones[0], zones[1]] : [zones[0]];
+      const dhw = (c >= 6.8 && c < 7.0) || (c >= 19.5 && c < 19.7);
+      const on = dhw || (calls.length > 0 && k % 4 < 2);
+      const sp = sampleCurve({ room, outdoor_from: o, outdoor_to: o, step: 1 }).points[0][1];
+      const flow = dhw ? 60 : on ? sp + 1 : room + 6;
+      const ret = flow - (on ? 6.5 : 2);
+      push("sensor.flow", flow.toFixed(1), null, lu);
+      push("sensor.return", ret.toFixed(1), null, lu);
+      push("sensor.outdoor", o.toFixed(1), null, lu);
+      push("binary_sensor.flame", on ? "on" : "off", null, lu);
+      push("binary_sensor.dhw", dhw ? "on" : "off", null, lu);
+      push("sensor.modulation", on ? "34" : "0", null, lu);
+      push("binary_sensor.boiler_called", calls.length ? "on" : "off", null, lu);
+      push("sensor.calling", String(calls.length), { calling_zones: calls }, lu);
+      push("sensor.control_setpoint", calls.length ? sp.toFixed(1) : "unknown", { requested: calls.length ? sp : null, read_back: calls.length ? sp : null }, lu);
+      push("sensor.control_state", calls.length ? "heating" : "idle", {
+        reasons_text: calls.length ? (lang === "pl" ? "pokoje wołają o ciepło" : "rooms call for heat") : (lang === "pl" ? "żaden pokój nie woła" : "no room calls"),
+        target: calls.length ? sp : null, curve_outdoor: o, curve_room: room,
+      }, lu);
+      zones.forEach((z, i) => push(z, "heat", {
+        friendly_name: names[i], current_temperature: rooms[i][1] - (calls.includes(z) ? 0.6 : 0.1),
+        temperature: night ? rooms[i][1] - 2 : rooms[i][1], on_percent: calls.includes(z) ? 0.6 : 0,
+      }, lu));
+    }
+    return out;
+  };
+  // The monitor's burns of a sample day: heating every 40 minutes by day, hot water twice.
+  const sampleBurns = () => {
+    const now = Date.now() / 1000;
+    const burns = [];
+    let t = now - 86400 + 600;
+    let k = 0;
+    while (t < now) {
+      const c = new Date(t * 1000).getHours();
+      const night = c >= 22 || c < 6;
+      const minutes = night ? 0 : [22, 18, 7, 25, 14, 9, 31, 16][k % 8];
+      if (minutes) burns.push({ start: t, end: t + minutes * 60, kind: "ch", start_seen: true, end_seen: true });
+      if (c === 7 && k % 3 === 0) burns.push({ start: t + 1500, end: t + 1500 + 600, kind: "dhw", start_seen: true, end_seen: true });
+      t += 2400;
+      k += 1;
+    }
+    return { at: now - 120, burns };
+  };
+  // Twelve sample weeks of gas per degree-day; one without a value (gas missing on a day).
+  const sampleWeeks = () => {
+    const end = Date.now() / 1000;
+    const values = [0.51, 0.49, 0.53, 0.47, null, 0.45, 0.49, 0.46, 0.44, 0.43, 0.46, 0.44];
+    // 40 sample days: starts by hour from day 31 back; before it, days kept without their hours.
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Array.from({ length: 40 }, (_, k) => {
+      const start = today.getTime() / 1000 - (40 - k) * 86400;
+      const hourly = Array.from({ length: 24 }, (_, h) =>
+        h < 5 ? 0 : h < 9 ? 2 + ((k + h) % 3) : h < 16 ? (k % 4 === 0 ? 3 : 1) : h < 22 ? 2 + ((k * h) % 2) : 0);
+      const kept = k >= 30;
+      return { start, end: start + 86400, starts: hourly.reduce((a, b) => a + b, 0), hourly_starts: kept ? hourly : null };
+    });
+    // The signature: sample days around two lines, the last 12 under control — arithmetic only.
+    const wobble = (k) => Math.sin(k * 2.3) * 0.9;
+    const sigDays = Array.from({ length: 40 }, (_, k) => {
+      const outdoor = Math.round((9 - 14 * Math.abs(Math.sin(k / 7)) + Math.cos(k) * 2) * 10) / 10;
+      const controlled = k >= 28;
+      const base = controlled ? 10.6 - 0.66 * outdoor : 12 - 0.78 * outdoor;
+      const gas = Math.max(0, Math.round((base + wobble(k)) * 100) / 100);
+      return { start: days[k].start, outdoor, gas, controlled, fitted: outdoor < 15 && gas > 0 };
+    });
+    const line = (pts) => {
+      const n = pts.length, mx = pts.reduce((a, d) => a + d.outdoor, 0) / n, my = pts.reduce((a, d) => a + d.gas, 0) / n;
+      const sxx = pts.reduce((a, d) => a + (d.outdoor - mx) ** 2, 0), sxy = pts.reduce((a, d) => a + (d.outdoor - mx) * (d.gas - my), 0);
+      const slope = sxy / sxx, intercept = my - slope * mx;
+      const xs = pts.map((d) => d.outdoor);
+      return { slope, intercept, low: Math.min(...xs), high: Math.max(...xs), days: n, r_squared: 0.91, balance: -intercept / slope };
+    };
+    const watched = line(sigDays.filter((d) => d.fitted && !d.controlled));
+    const control = line(sigDays.filter((d) => d.fitted && d.controlled));
+    const at = (Math.max(watched.low, control.low) + Math.min(watched.high, control.high)) / 2;
+    const w = watched.intercept + watched.slope * at, c = control.intercept + control.slope * at;
+    const signature = {
+      days: sigDays,
+      observing: { line: watched, reason: null },
+      control: query.get("user") === "1" ? { line: null, reason: "too_few_days" } : { line: control, reason: null },
+      comparison: query.get("user") === "1" ? null : { outdoor: at, observing: w, control: c, change: c / w - 1 },
+      min_days: 7, min_spread_k: 8,
+    };
+    return {
+      signature, gas_unit: "m³",
+      days,
+      weeks: values.map((v, i) => ({
+        start: end - (12 - i) * 7 * 86400, end: end - (11 - i) * 7 * 86400, days: 7,
+        gas: v == null ? null : v * 96, degree_days: 96, per_degree_day: v,
+      })),
+    };
+  };
+  // A sample journal of 14 days: heat calls by day, the water following the outdoor temperature,
+  // a restart, a warning raised and cleared, the curve saved from the page — sample arithmetic.
+  const sampleJournal = () => {
+    const now = Date.now() / 1000;
+    const entries = [];
+    const add = (at, kind, extra = {}) => at <= now && entries.push({ at, kind, ...extra });
+    const start = now - 14 * 86400;
+    add(start, "started");
+    add(start + 60, "took_over", { reasons: ["no_demand"] });
+    let water = null;
+    for (let t = start + 3600; t < now; t += 1800) {
+      const h = new Date(t * 1000).getHours();
+      const day = Math.floor((t - start) / 86400);
+      if (day === 9 && h === 3 && t % 3600 < 1800) {
+        add(t, "stopped"); add(t + 120, "started"); add(t + 180, "took_over", { reasons: ["no_demand"] });
+        water = null;
+        continue;
+      }
+      const calling = h >= 6 && h < 22 && (h % 3 !== 2);
+      const wasCalling = entries.findLast((e) => e.kind === "call_on" || e.kind === "call_off")?.kind === "call_on";
+      if (calling && !wasCalling) {
+        add(t, "call_on", { reasons: ["demand", "outdoor_sensor"] });
+      } else if (!calling && wasCalling) {
+        add(t, "call_off", { reasons: [h >= 22 || h < 6 ? "no_demand" : "below_threshold"] });
+      }
+      if (calling) {
+        const outdoor = 2 + 4 * Math.cos((2 * Math.PI * (h - 15)) / 24) - day * 0.2;
+        const value = Math.round(sampleCurve({ room: 21, outdoor_from: outdoor, outdoor_to: outdoor, step: 1 }).points[0][1] * 10) / 10;
+        if (water == null || Math.abs(value - water) >= 1) {
+          add(t + 30, "water", water == null ? { value, reasons: ["demand", "outdoor_sensor"] } : { value, previous: water, reasons: ["demand", "outdoor_sensor"] });
+          water = value;
+        }
+      }
+    }
+    add(now - 5.2 * 86400, "alarm_on", { subject: "alarm_frequent_starts", level: "warning" });
+    add(now - 4.9 * 86400, "alarm_off", { subject: "alarm_frequent_starts" });
+    add(now - 2.1 * 86400, "settings", { subject: "page", reasons: ["curve"] });
+    add(now - 2.1 * 86400 + 5, "stopped"); add(now - 2.1 * 86400 + 20, "started");
+    add(now - 2.1 * 86400 + 25, "took_over", { reasons: ["no_demand"] });
+    add(now - 6.5 * 86400, "settings", { subject: "settings", reasons: ["signals", "monitor"] });
+    add(now - 3 * 3600, "alarm_on", { subject: "alarm_frequent_starts", level: "warning" });
+    add(now - 9 * 3600, "circuit_need", { value: 52, reasons: ["circuit_asks", "limit_circuit_need"] });
+    add(now - 8 * 3600, "circuit_need_end", { value: 44, reasons: ["demand"] });
+    entries.sort((a, b) => a.at - b.at);
+    return { entries, days: 14, max: 2000 };
+  };
+  const stateText = { heating: { pl: "Grzanie", en: "Heating" }, idle: { pl: "Postój", en: "Idle" } };
+  const hass = {
+    language: lang, locale: { language: lang }, user: { is_admin: query.get("user") !== "1" }, states,
+    themes: { darkMode: Boolean(query.get("dark")) },
+    callWS: async (m) =>
+      m.type === "vtherm_smart_boiler/burns" ? sampleBurns()
+      : m.type === "vtherm_smart_boiler/journal" ? sampleJournal()
+      : m.type === "vtherm_smart_boiler/days" ? sampleWeeks()
+      : m.type === "vtherm_smart_boiler/curve/save" ? ((window.lastSave = m), { saved: true, errors: {} })
+      : m.type === "vtherm_smart_boiler/curve" ? sampleCurve(m)
+      : m.type === "history/history_during_period"
+        ? (m.entity_ids.length > 1 ? sampleDay(m) : sampleHistory())
+      : installation,
+    callService: async (domain, service, data) => { window.lastCall = [domain, service, data]; },
+    formatEntityState: (e) => stateText[e.state]?.[lang] ?? e.state,
+    // The plugin's own translations (translations/*.json), as Home Assistant hands them out.
+    loadBackendTranslation: async (category, domain) => {
+      const data = await (await fetch(`/translations/${lang}.json`)).json();
+      const flat = {};
+      const walk = (node, path) => Object.entries(node).forEach(([k, v]) =>
+        v && typeof v === "object" ? walk(v, `${path}.${k}`) : (flat[`${path}.${k}`] = v));
+      walk(data, `component.${domain}`);
+      return (key) => flat[key] ?? "";
+    },
+  };
+  const panel = document.querySelector("vtherm-smart-boiler-panel");
+  if (query.get("cards")) {
+    // ?cards=1: the four cards on a dashboard-like grid instead of the page.
+    panel.remove();
+    document.documentElement.lang = lang;
+    const grid = document.createElement("div");
+    grid.className = "dashboard";
+    for (const tag of ["status", "schematic", "curve", "day"].map((p) => `vtherm-smart-boiler-${p}-card`)) {
+      const card = document.createElement(tag);
+      card.setConfig({});
+      card.hass = hass;
+      grid.append(card);
+    }
+    document.body.append(grid);
+  } else {
+    panel.narrow = innerWidth < 600;
+    panel.hass = hass;
+  }
+</script>
+</body>
+</html>

@@ -11,7 +11,12 @@ opens with "Start here"), then in [`plan-0.2.3.md`][plan-0.2.3] (corrections aft
 then in [`plan-0.2.md`][plan-0.2], whose status line says where the build stands — its steps I6,
 G11, I7, I8 and I9 are planned step by step in [`plan-0.2-i6.md`][plan-0.2-i6],
 [`plan-0.2-g11.md`][plan-0.2-g11], [`plan-0.2-i7.md`][plan-0.2-i7], [`plan-0.2-i8.md`][plan-0.2-i8]
-and [`plan-0.2-i9.md`][plan-0.2-i9]; phases run in order. A 🔒 step whose plan says it holds nothing
+and [`plan-0.2-i9.md`][plan-0.2-i9]; step I10, the Boiler page in the sidebar and its cards (the
+user's decisions of 2026-11-18, before the first release), is planned in
+[`plan-0.2-i10.md`][plan-0.2-i10] and listed in the development plan, since `plan-0.2.md` is
+history; step I11, control switched only in the plugin's settings (the user's decisions of
+2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; phases run in
+order. A 🔒 step whose plan says it holds nothing
 up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
 go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decision 16; provisionally
 0.2.3b1).
@@ -24,6 +29,8 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2-i7]: docs/en/development/plans/plan-0.2-i7.md
 [plan-0.2-i8]: docs/en/development/plans/plan-0.2-i8.md
 [plan-0.2-i9]: docs/en/development/plans/plan-0.2-i9.md
+[plan-0.2-i10]: docs/en/development/plans/plan-0.2-i10.md
+[plan-0.2-i11]: docs/en/development/plans/plan-0.2-i11.md
 [plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
 [plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
 [plan-0.2.2-details]: docs/en/development/plans/plan-0.2.2-details.md
@@ -75,7 +82,13 @@ Each topic lives only in its file; do not copy it here.
   consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/en/development/plans/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
   and SmartPI 0.4.0 sources in `vendor/` (A5; VT 10.5.1 there since 2026-10-13, put in by the
-  user). Sources and documents of typical DIY boiler
+  user). Consented 2026-11-18 for the Boiler page (`plan-0.2-i10.md`): Node.js (LTS) from
+  nodejs.org into `.tools/node/`, checked against its published SHA-256, and the npm packages
+  `lit`, `typescript`, `vite`, `vitest` with what they depend on into `frontend/node_modules/`;
+  for the page's screenshots, `playwright` likewise, its Chromium into `.tools/ms-playwright/`,
+  and the system libraries Chromium needs as Debian packages fetched with `apt-get download`
+  (no root) and unpacked into `.tools/chromium-libs/` (`scripts/bootstrap_browser.sh`); any
+  other package needs the user's consent first. Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
@@ -102,7 +115,11 @@ Each topic lives only in its file; do not copy it here.
   Claude pushes only to its own working branches (`claude/<topic>`, from `dev`), opens a pull
   request from it to `dev` and merges it itself once the checks pass, deleting the working branch
   on GitHub and locally as it merges (`gh pr merge --delete-branch`; the user's rule,
-  2026-10-08); it never pushes to `dev`,
+  2026-10-08). One pull request open at a time: the next is opened only once the one before is
+  merged — `dev` must be current to merge, so one opened beside another runs its checks again
+  after that one's merge (the user's rule, 2026-11-22); meanwhile the next change waits on its
+  branch, locally. Auto-merge is off in the repository: Claude merges by hand once the checks
+  pass. It never pushes to `dev`,
   `qas` or `main` directly (the one exception: their first creation on 2026-10-07, before the
   rulesets), never force-pushes or deletes them, never makes a tag or a GitHub release, and never
   merges anyone else's pull request. A pull request from `dev` to `qas`, or from `qas` to `main`, is

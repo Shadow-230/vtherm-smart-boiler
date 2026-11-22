@@ -22,6 +22,7 @@
       "control_setpoint": { "default": "mdi:thermometer-water" }
     },
     "binary_sensor": {
+      "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } },
       "boiler_called": { "default": "mdi:fire", "state": { "off": "mdi:fire-off" } },
       "connection": { "default": "mdi:lan-connect", "state": { "off": "mdi:lan-disconnect" } },
       "alarm_frequent_starts": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
@@ -55,7 +56,7 @@
       "alarm_boiler_not_responding": { "default": "mdi:fire-off", "state": { "off": "mdi:check-circle-outline" } }
     },
     "switch": {
-      "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } }
+      "sidebar_page": { "default": "mdi:water-boiler", "state": { "off": "mdi:water-boiler-off" } }
     },
     "button": {
       "reset_comfort_correction": { "default": "mdi:restore" },

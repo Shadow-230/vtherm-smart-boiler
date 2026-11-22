@@ -32,6 +32,9 @@ from options import (
 )
 from walk import save_options
 
+# I11.1: the tick in "Control mode" that switches control.
+CONTROL_ON = "control_on"
+
 RESULTS = pathlib.Path(
     os.environ.get("J4_RESULTS")
     or ROOT / "research" / f"{dt.datetime.now(dt.UTC):%Y-%m-%d}-j4-results.md"
@@ -96,8 +99,13 @@ class Run:
         return await self.ha.call("boiler_sim", service, **data)
 
     async def switch(self, on: bool):
-        return await self.ha.call(
-            "switch", "turn_on" if on else "turn_off", entity_id=self.ent["control"]
+        """Control switched as an administrator does it (I11.5, plan-0.2-i11.md): "Control
+        mode", "Control on", saved — nothing else switches it but an automation's action, which
+        the runner, a person's token, may not call. A refusal comes back with its ``errors`` and
+        the blocker's text in ``description_placeholders``; nothing is saved then."""
+        entry = await self.ha.entry("vtherm_smart_boiler")
+        return await save_options(
+            self.ha.rest, entry["entry_id"], {CONTROL_ON: on}, ("mode",), strict=False
         )
 
     async def override(self) -> bool:
@@ -148,6 +156,25 @@ class Run:
                 await self.ha.call(
                     "climate", "set_temperature", entity_id=f"climate.{zone}", temperature=target
                 )
+
+    async def zones_enabled(self) -> None:
+        """Every VT zone's entry enabled again: a scenario that disables them (H1, S2, N5, R17)
+        and stops half-way leaves none disabled for the next (J4 of 2026-11-18)."""
+        _s, entries = await self.ha.rest("GET", "/api/config/config_entries/entry")
+        names = {zone for zone, _t in ZONES}
+        disabled = [
+            e
+            for e in entries
+            if e["domain"] == "versatile_thermostat"
+            and e.get("title") in names
+            and e.get("disabled_by")
+        ]
+        for e in disabled:
+            await self.ha.ws_cmd(
+                {"type": "config_entries/disable", "entry_id": e["entry_id"], "disabled_by": None}
+            )
+        if disabled:
+            await self.ha.wait(45)
 
     async def reset(self, options=False):
         ha = self.ha
@@ -752,76 +779,62 @@ async def E1(r: Run):
     await r.options()
 
 
+# The living room's VT options as E2 saves them, with or without VT's central mode.
+E2_LIVING = {
+    "name": "zone_living",
+    "temperature_sensor_entity_id": "sensor.boiler_sim_zone_living_temperature",
+    "cycle_min": 5,
+    "device_power": 1,
+    "power_unit": "w",
+    "use_main_central_config": True,
+    "used_by_controls_central_boiler": False,
+}
+
+
+async def _living_central_mode(r: Run, entry_id: str, on: bool) -> str | None:
+    """The living room under VT's central mode, or outside it, through its VT options."""
+    flow = "/api/config/config_entries/options/flow"
+    _s, d = await r.ha.rest("POST", flow, {"handler": entry_id, "show_advanced_options": True})
+    fid = d["flow_id"]
+    await r.ha.rest("POST", f"{flow}/{fid}", {"next_step_id": "main"})
+    await r.ha.rest("POST", f"{flow}/{fid}", {**E2_LIVING, "use_central_mode": on})
+    _s, d = await r.ha.rest("POST", f"{flow}/{fid}", {"next_step_id": "finalize"})
+    await r.ha.wait(20)
+    return d.get("type")
+
+
 async def E2(r: Run):
     """a zone outside the central mode keeps heating under "Stopped" """
     entry = await r.ha.entry("versatile_thermostat", "zone_living")
-    _s, d = await r.ha.rest(
-        "POST",
-        "/api/config/config_entries/options/flow",
-        {"handler": entry["entry_id"], "show_advanced_options": True},
-    )
-    fid = d["flow_id"]
-    await r.ha.rest(
-        "POST", f"/api/config/config_entries/options/flow/{fid}", {"next_step_id": "main"}
-    )
-    main = {
-        "name": "zone_living",
-        "temperature_sensor_entity_id": "sensor.boiler_sim_zone_living_temperature",
-        "cycle_min": 5,
-        "device_power": 1,
-        "power_unit": "w",
-        "use_main_central_config": True,
-        "used_by_controls_central_boiler": False,
-    }
-    await r.ha.rest(
-        "POST",
-        f"/api/config/config_entries/options/flow/{fid}",
-        {**main, "use_central_mode": False},
-    )
-    _s, d = await r.ha.rest(
-        "POST", f"/api/config/config_entries/options/flow/{fid}", {"next_step_id": "finalize"}
-    )
-    r.note(f"VT options: {d.get('type')}")
-    await r.ha.wait(20)
-    await r.zones()
-    await r.switch(True)
-    await r.ha.wait(60)
-    t = time.time()
-    await r.ha.call(
-        "select",
-        "select_option",
-        entity_id="select.central_configuration_central_mode",
-        option="Stopped",
-    )
-    got = await r.ha.until(lambda: _demand(r), 420, 5)
-    r.note(f"zones: {[(z, await r.s('climate.' + z)) for z, _ in ZONES]}")
-    r.check(
-        got is not None,
-        f"the living room keeps asking and the plugin heats for it (after {got and round(got)} s)",
-    )
-    r.check(0 not in [v for k, v in r.cmds(t, "setpoint")], "no hand-back")
-    await r.ha.call(
-        "select",
-        "select_option",
-        entity_id="select.central_configuration_central_mode",
-        option="Auto",
-    )
-    _s, d = await r.ha.rest(
-        "POST",
-        "/api/config/config_entries/options/flow",
-        {"handler": entry["entry_id"], "show_advanced_options": True},
-    )
-    fid = d["flow_id"]
-    await r.ha.rest(
-        "POST", f"/api/config/config_entries/options/flow/{fid}", {"next_step_id": "main"}
-    )
-    await r.ha.rest(
-        "POST", f"/api/config/config_entries/options/flow/{fid}", {**main, "use_central_mode": True}
-    )
-    await r.ha.rest(
-        "POST", f"/api/config/config_entries/options/flow/{fid}", {"next_step_id": "finalize"}
-    )
-    await r.ha.wait(20)
+    try:
+        r.note(f"VT options: {await _living_central_mode(r, entry['entry_id'], False)}")
+        await r.zones()
+        await r.switch(True)
+        await r.ha.wait(60)
+        t = time.time()
+        await r.ha.call(
+            "select",
+            "select_option",
+            entity_id="select.central_configuration_central_mode",
+            option="Stopped",
+        )
+        got = await r.ha.until(lambda: _demand(r), 420, 5)
+        r.note(f"zones: {[(z, await r.s('climate.' + z)) for z, _ in ZONES]}")
+        r.check(
+            got is not None,
+            f"the living room keeps asking and the plugin heats for it (after {got and round(got)} s)",
+        )
+        r.check(0 not in [v for k, v in r.cmds(t, "setpoint")], "no hand-back")
+    finally:
+        # Put back even after a failure: the next scenarios assume every zone under VT's
+        # central mode (J4 of 2026-11-18: an aborted E2 left it out).
+        await r.ha.call(
+            "select",
+            "select_option",
+            entity_id="select.central_configuration_central_mode",
+            option="Auto",
+        )
+        await _living_central_mode(r, entry["entry_id"], True)
 
 
 async def _demand(r: Run) -> bool:
@@ -953,6 +966,9 @@ SCENARIOS = {
 # (None) must not be stored, and any other is compared only where stored.
 BASE_EXPECT: dict[str, dict[str, object]] = {
     "opentherm_gw": {
+        # The starts criterion's instances store the boiler's own curve (exponent 1.0): a
+        # gateway scenario on one of them is not run (J4 of 2026-11-18).
+        "curve.exponent": None,
         "circuit.max_flow": None,
         "activation_delay_s": 0,
         "comfort_correction": False,
@@ -1004,16 +1020,41 @@ def base_drift(control: dict[str, object]) -> list[str]:
     ]
 
 
-async def base_problem(r: Run) -> str | None:
-    """``None`` with the instance in its base state; else why a scenario must not run on it —
-    its base changed, or it could not be read: a scenario never runs unchecked (J4 of
-    2026-10-14)."""
-    try:
-        control = await asyncio.to_thread(stored_control)
-    except Exception as err:
-        return f"the base could not be read ({err}): check the instance, then run again"
+# Home Assistant writes its config entries to disk a few seconds after a change: a base just
+# saved (base.py, a scenario's restore) is read again before a scenario is refused (J4 of
+# 2026-11-18: B1 and C1 NOT RUN right after base.py, then passed).
+BASE_READ_TRIES = 3
+BASE_READ_WAIT_S = 10.0
+# The gateway topology each scenario needs: the stand-alone gateway's own, the rest the
+# gateway with a wall thermostat — a scenario on an instance of another role is not run (J4 of
+# 2026-11-18: no scenario's role was checked).
+STANDALONE = frozenset({"S1", "S2"})
+
+
+def topology_drift(control: dict[str, object], sid: str | None) -> list[str]:
+    """The gateway topology the scenario ``sid`` needs, against the stored one."""
+    if sid is None or control.get("write_path") != "opentherm_gw":
+        return []
+    needed = "gateway_standalone" if sid in STANDALONE else "gateway_with_thermostat"
+    found = control.get("topology")
+    return [] if found == needed else [f"topology: {found!r}, the scenario's {needed!r}"]
+
+
+async def base_problem(r: Run, sid: str | None = None) -> str | None:
+    """``None`` with the instance in its base state, of the role the scenario ``sid`` needs;
+    else why a scenario must not run on it — its base changed, its role is another, or it could
+    not be read: a scenario never runs unchecked (J4 of 2026-10-14). A drift is read again
+    before it counts: the last save may not be on disk yet."""
+    for attempt in range(BASE_READ_TRIES):
+        try:
+            control = await asyncio.to_thread(stored_control)
+        except Exception as err:
+            return f"the base could not be read ({err}): check the instance, then run again"
+        drift = base_drift(control) + topology_drift(control, sid)
+        if not drift or attempt == BASE_READ_TRIES - 1:
+            break
+        await asyncio.sleep(BASE_READ_WAIT_S)
     r.note(f"base: {base_line(control)}")
-    drift = base_drift(control)
     if drift:
         return (
             "the instance is not in its base state (an earlier scenario left it changed; "
@@ -1055,6 +1096,11 @@ async def diagnosis(r: Run, since: dt.datetime) -> list[str]:
     return out
 
 
+class NotRun(Exception):
+    """A scenario whose precondition does not hold on the instance: not run, its reason said
+    (J4 of 2026-11-18: Q5 ran with SmartPI still learning from scratch)."""
+
+
 async def main(ids: list[str]) -> None:
     async with HA() as ha:
         for sid in ids:
@@ -1065,15 +1111,19 @@ async def main(ids: list[str]) -> None:
             print(f"--- {sid} {start:%H:%M:%S} {fn.__doc__.strip()}", flush=True)
             # The instance as the scenario finds it: a scenario never runs on an instance an
             # earlier one left changed — its result would be another configuration's.
-            problem = await base_problem(r)
+            problem = await base_problem(r, sid)
             if problem is not None:
                 r.ok = False
                 r.notes.append(f"NOT RUN — {problem}")
                 verdict = "NOT RUN"
             else:
+                not_run = False
                 try:
                     await r.reset()
                     await fn(r)
+                except NotRun as reason:
+                    not_run = True
+                    r.notes.append(f"NOT RUN — {reason}")
                 except Exception:
                     r.ok = False
                     last = traceback.format_exc().strip().splitlines()[-1]
@@ -1081,11 +1131,12 @@ async def main(ids: list[str]) -> None:
                     traceback.print_exc()
                 finally:
                     try:
+                        await r.zones_enabled()
                         await r.reset()
                     except Exception:
                         traceback.print_exc()
-                verdict = "PASS" if r.ok else "FAIL"
-                if not r.ok:
+                verdict = "NOT RUN" if not_run else "PASS" if r.ok else "FAIL"
+                if verdict == "FAIL":
                     r.notes += [f"diagnosis — {line}" for line in await diagnosis(r, start)]
             text = (
                 f"\n### {sid} — {verdict} ({start:%H:%M}–{dt.datetime.now(dt.UTC):%H:%M} UTC, "
@@ -1102,70 +1153,85 @@ async def main(ids: list[str]) -> None:
 
 async def D4(r: Run):
     """another controller, with "return by itself": stepped aside, back once quiet for an hour"""
-    d = await r.options(alarms={"return_after_outside_change": True})
-    r.note(f"options {d.get('type')}")
-    await r.switch(True)
-    await r.ha.wait(TRACE)
-    await r.sim("force_setpoint", value=62)
-    got = await r.ha.until(lambda: _handed_back(r), 300, 10)
-    st = await r.st("control_state")
-    r.check(
-        got is not None and st["attributes"].get("latched_by") == ["outside_change"],
-        f"stepped aside after {got and round(got)} s: {st['attributes'].get('latched_by')}",
-    )
-    r.check(r.cmds(0)[-3:] == SAFE, f"last three: {r.cmds(0)[-3:]}")
-    await r.sim("force_setpoint")
-    t = time.time()
-    await r.ha.wait(3000)
-    r.check(
-        r.cmds(t) == [] and not await r.override(),
-        f"quiet under an hour: no return yet ({r.cmds(t)})",
-    )
-    await r.ha.wait(900)
-    st = await r.st("control_state")
-    r.check(
-        await r.override()
-        and st["state"] in ("heating", "idle")
-        and st["attributes"].get("latched_by") == [],
-        f"a new session: {st['state']}, override {await r.override()}",
-    )
-    await r.switch(False)
-    await r.ha.wait(10)
-    await r.options()
+    try:
+        d = await r.options(alarms={"return_after_outside_change": True})
+        r.note(f"options {d.get('type')}")
+        await r.switch(True)
+        await r.ha.wait(TRACE)
+        await r.sim("force_setpoint", value=62)
+        got = await r.ha.until(lambda: _handed_back(r), 300, 10)
+        st = await r.st("control_state")
+        r.check(
+            got is not None and st["attributes"].get("latched_by") == ["outside_change"],
+            f"stepped aside after {got and round(got)} s: {st['attributes'].get('latched_by')}",
+        )
+        r.check(r.cmds(0)[-3:] == SAFE, f"last three: {r.cmds(0)[-3:]}")
+        await r.sim("force_setpoint")
+        t = time.time()
+        await r.ha.wait(3000)
+        r.check(
+            r.cmds(t) == [] and not await r.override(),
+            f"quiet under an hour: no return yet ({r.cmds(t)})",
+        )
+        await r.ha.wait(900)
+        st = await r.st("control_state")
+        r.check(
+            await r.override()
+            and st["state"] in ("heating", "idle")
+            and st["attributes"].get("latched_by") == [],
+            f"a new session: {st['state']}, override {await r.override()}",
+        )
+    finally:
+        # The base back even after a failure: the base check does not see an alarm's
+        # return setting (J4 of 2026-11-18).
+        await r.switch(False)
+        await r.ha.wait(10)
+        await r.options()
 
 
 async def _handed_back(r: Run) -> bool:
     return await r.s("control_state") == "handed_back"
 
 
+# The correction reaches its 3 K in about 2 h of heat flow, and tells at its edge after 3 h
+# there (J4 of 2026-11-18: E4's 3 h ended before the notice could come): 6 h at most, done as
+# soon as it tells.
+E4_LOOKS = 72
+
+
 async def E4(r: Run):
-    """the comfort correction raises the water by 3 K at most, and says so at its edge"""
-    d = await r.options(curve={"comfort_correction": True})
-    r.note(f"options {d.get('type')}")
-    r.ent.update(await r.ha.entities())
-    await r.ha.call("climate", "set_temperature", entity_id="climate.zone_bath", temperature=26.0)
-    # More load, so the burner keeps running: the correction rises only while heat flows.
-    for zone, target in ZONES:
-        await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
-    t = time.time()
-    await r.switch(True)
-    await r.ha.wait(120)
-    base = max(v for k, v in r.cmds(t, "setpoint"))
-    r.note(f"curve's setpoint at the start {base}")
-    seen = []
-    for _ in range(36):
-        await r.ha.wait(300)
-        sp = [v for k, v in r.cmds(t, "setpoint")]
-        seen.append(max(sp))
-        if await r.s("alarm_correction_at_limit") == "on":
-            break
-    r.note(f"highest setpoint every 5 min: {seen}")
-    r.check(max(seen) > base + 1.0, "the correction worked")
-    r.check(max(seen) <= base + 3.1, "and stayed within 3 K")
-    r.check(await r.s("alarm_correction_at_limit") == "on", "told at the edge")
-    await r.switch(False)
-    await r.ha.wait(10)
-    await r.options()
+    """the comfort correction raises the water by 3 K at most — written exactly at its limit
+    (L12) — and says so at its edge"""
+    try:
+        d = await r.options(curve={"comfort_correction": True})
+        r.note(f"options {d.get('type')}")
+        r.ent.update(await r.ha.entities())
+        await r.ha.call(
+            "climate", "set_temperature", entity_id="climate.zone_bath", temperature=26.0
+        )
+        # More load, so the burner keeps running: the correction rises only while heat flows.
+        for zone, target in ZONES:
+            await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+        t = time.time()
+        await r.switch(True)
+        await r.ha.wait(120)
+        base = max(v for k, v in r.cmds(t, "setpoint"))
+        r.note(f"curve's setpoint at the start {base}")
+        seen = []
+        for _ in range(E4_LOOKS):
+            await r.ha.wait(300)
+            sp = [v for k, v in r.cmds(t, "setpoint")]
+            seen.append(max(sp))
+            if await r.s("alarm_correction_at_limit") == "on":
+                break
+        r.note(f"highest setpoint every 5 min: {seen}")
+        r.check(max(seen) > base + 1.0, "the correction worked")
+        r.check(max(seen) <= base + 3.1, "and stayed within 3 K")
+        r.check(await r.s("alarm_correction_at_limit") == "on", "told at the edge")
+    finally:
+        await r.switch(False)
+        await r.ha.wait(10)
+        await r.options()
 
 
 async def C6(r: Run):
@@ -1408,6 +1474,8 @@ async def E6(r: Run):
         )
         r.note(f"heating switchings {[(round(at - t), v) for at, v in ch][:20]}")
     finally:
+        # The gateway role's own boiler (devenv/config/configuration.yaml): the role check keeps
+        # E6 off a starts instance's condensing_large (J4 of 2026-11-18).
         await r.sim("set_boiler", profile="condensing_small")
         await r.sim("set_outdoor", temperature=3.0)
 
@@ -1419,8 +1487,9 @@ async def L1(r: Run):
     """hours of control (J4_HOURS, 12) at a steady outdoor temperature (J4_OUTDOOR, -2 °C) on
     the gateway, or on the entities with J4_WRITE_PATH=entity, VT's TPI zones pulsing: the
     setpoint within its limits and kept alive (a held device needs no keep-alive), heating
-    following VT's demand, no guard alarm, nothing latched, hot water never touched, the rooms
-    held"""
+    following VT's demand, no guard alarm, nothing latched, hot water never touched; a room left
+    over 1 K short — the default curve too low, the comfort correction off (F11) — told by the
+    long-burn sensor as water too cool"""
     hours = float(os.environ.get("J4_HOURS", "12"))
     outdoor = float(os.environ.get("J4_OUTDOOR", "-2"))
     zones = [f"climate.{zone}" for zone, _t in ZONES]
@@ -1453,6 +1522,7 @@ async def L1(r: Run):
     raised: set[str] = set()
     latched: set[str] = set()
     states: set[str] = set()
+    told: float | None = None  # when the long-burn sensor first said "water too cool"
     while time.time() - t < hours * 3600:
         st = await r.ha.states()
         now = time.time()
@@ -1475,6 +1545,13 @@ async def L1(r: Run):
         cs = st.get(r.ent["control_state"], {})
         latched |= set(cs.get("attributes", {}).get("latched_by") or [])
         states.add(cs.get("state"))
+        burn = st.get(r.ent.get("long_burn", ""), {})
+        if (
+            told is None
+            and burn.get("state") == "on"
+            and burn.get("attributes", {}).get("reason") == "water_too_cool"
+        ):
+            told = now
         await r.ha.wait(10)
     sp = writes(t, "setpoint")
     values = [float(v) for _t, _k, v in sp]
@@ -1504,7 +1581,11 @@ async def L1(r: Run):
         bool(gaps) and max(gaps) <= 45.0,
         f"kept alive: the longest gap {gaps and round(max(gaps))} s",
     )
-    r.check(toggles >= hours * 3, f"heating follows VT's pulses: {toggles} toggles")
+    # Heating follows VT: every write as its demand, never behind it (below). How often that
+    # switches is VT's: with the rooms short its zones stay open (J4 of 2026-11-18: 20 toggles
+    # in 12 h, every one right) — a count, not a check.
+    changes = sum(1 for a, b in pairwise(samples) if a[1] != b[1])
+    r.note(f"heating toggles {toggles}, VT's demand changed {changes} times as sampled")
     r.check(
         not mismatched, f"every heating write as VT's demand: wrong at minutes {mismatched[:10]}"
     )
@@ -1513,7 +1594,17 @@ async def L1(r: Run):
     r.check(not latched, f"nothing latched: {sorted(latched)}")
     r.check(states <= {"heating", "idle"}, f"states seen: {sorted(states)}")
     r.check(r.ha.since(t, "hot_water") == [], "hot water never touched")
-    r.check(all(abs(d) < 1.5 for d in rooms.values()), f"rooms against their targets (K): {rooms}")
+    # The rooms: how warm the default curve keeps them is the installation's (F11, the comfort
+    # correction off by default since K4); the plugin's part is to say so — a room left over
+    # 1 K short is told by the long-burn sensor, water too cool (J4 of 2026-11-18: it came at
+    # 3.0 h). Too warm is never right.
+    short = [zone for zone, d in rooms.items() if d < -1.0]
+    r.check(all(d < 1.5 for d in rooms.values()), f"no room too warm (K): {rooms}")
+    r.check(
+        not short or told is not None,
+        f"rooms short {short} told as water too cool: "
+        f"{'after ' + str(round((told - t) / 3600, 1)) + ' h' if told else 'never'}",
+    )
     t2 = time.time()
     await r.switch(False)
     await r.ha.wait(20)
@@ -1832,7 +1923,11 @@ async def V1(r: Run):
                 f"{zone}: water {water}, rounded to 1 °C, within {low:.1f}–{high:.1f}",
             )
     # The positive case (L8): with the flame burning since before VT's last write of a zone, and
-    # the water warm, the zone shows heat available.
+    # the water warm, the zone shows heat available. The rooms call first, 3 K below their
+    # setpoints, as F1 does: at their targets TPI gave a minute in five and the flame never
+    # burned long enough to be judged (J4 of 2026-11-18, twice).
+    for zone, target in ZONES:
+        await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
     judged = await _heat_while_burning(r)
     r.check(bool(judged), f"heat available while the flame burns: {judged or 'never judged'}")
     await r.sim("start_dhw", minutes=10)

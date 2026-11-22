@@ -276,7 +276,7 @@ def test_ci_runs_the_core_tests_on_their_own_then_the_rest_in_parts() -> None:
         assert '"${coverage[@]}"' in part(name), name
         assert "-p no:homeassistant" not in part(name) or name == "core"
     required = workflow["jobs"]["tests"]
-    assert required["needs"] == ["changes", "parts"]
+    assert required["needs"] == ["changes", "parts", "page"]  # the Boiler page's job too (I10.1)
     labels = [entry["label"] for entry in required["strategy"]["matrix"]["include"]]
     assert labels == [
         "Tests – supported Home Assistant version",
@@ -284,6 +284,7 @@ def test_ci_runs_the_core_tests_on_their_own_then_the_rest_in_parts() -> None:
     ]
     checks = "\n".join(step.get("run", "") for step in required["steps"])
     assert "for part in core acceptance control rest" in checks
+    assert '"$PAGE" != success' in checks
     assert "coverage combine" in checks
     assert "floors = {" in checks
 
@@ -383,7 +384,10 @@ SLUG = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 REFERENCE = re.compile(r"\[%key:[^%\]]+%\]")
 URL = re.compile(r"\b[a-z][a-z0-9+.-]*://|\bwww\.", re.IGNORECASE)
 
-TOP_KEYS = {"title", "config", "options", "selector", "device", "entity", "exceptions", "issues"}
+TOP_KEYS = {
+    "title", "config", "options", "selector", "device", "entity", "exceptions", "issues",
+    "services",  # I11.2: the action for automations
+}  # fmt: skip
 FLOW_KEYS = {"step", "error", "abort", "progress", "create_entry"}
 STEP_KEYS = {
     "title",
@@ -516,6 +520,20 @@ class _Checker:
             device = self.keys(f"device.{key}", device, {"name"})
             if "name" in device:
                 self.text(f"device.{key}.name", device["name"], placeholders=False)
+        for key, action in strings.get("services", {}).items():
+            # hassfest: an action's name and description, and each field's (I11.2).
+            self.key("services", key, SLUG)
+            action = self.keys(f"services.{key}", action, {"name", "description", "fields"})
+            for part in ("name", "description"):
+                if part in action:
+                    self.text(f"services.{key}.{part}", action[part], placeholders=False)
+            for field, texts in action.get("fields", {}).items():
+                where = f"services.{key}.fields.{field}"
+                self.key(f"services.{key}.fields", field, SLUG)
+                texts = self.keys(where, texts, {"name", "description", "example"})
+                for part in ("name", "description"):
+                    if part in texts:
+                        self.text(f"{where}.{part}", texts[part], placeholders=False)
         for key, exception in strings.get("exceptions", {}).items():
             self.key("exceptions", key, SLUG)
             exception = self.keys(f"exceptions.{key}", exception, {"message"})
@@ -607,3 +625,27 @@ def test_icons_follow_hassfest_rules() -> None:
                 if value == entry.get("default"):
                     checker.problems.append(f"{at}.state.{state}: the same as the default")
     assert checker.problems == []
+
+
+def test_ci_builds_the_boiler_page_as_committed() -> None:
+    """I10.1 (``docs/en/development/plans/plan-0.2-i10.md``): CI installs the page's packages
+    from the lock file, runs its tests, builds it — its types checked first — and fails where
+    the files committed beside the plugin differ from what the source builds; with the Node.js
+    version ``scripts/bootstrap_node.sh`` puts on the developer's machine."""
+    import re
+
+    workflow = _workflow("tests.yml")
+    page = workflow["jobs"]["page"]
+    assert page["needs"] == "changes"
+    assert page["if"] == "needs.changes.outputs.only != 'true'"
+    assert page["defaults"]["run"]["working-directory"] == "frontend"
+    setup = next(s for s in page["steps"] if s.get("uses", "").startswith("actions/setup-node@"))
+    script = (ROOT / "scripts" / "bootstrap_node.sh").read_text(encoding="utf-8")
+    pinned = re.search(r'^VERSION="v([0-9.]+)"', script, re.MULTILINE)
+    assert pinned is not None
+    assert str(setup["with"]["node-version"]) == pinned.group(1)
+    runs = [s.get("run", "") for s in page["steps"]]
+    assert runs[2:5] == ["npm ci", "npm test", "npm run build"]
+    assert "git status --porcelain -- ../custom_components/vtherm_smart_boiler/frontend" in runs[5]
+    package = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    assert package["scripts"]["build"] == "tsc --noEmit && vite build"

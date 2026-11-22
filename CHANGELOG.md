@@ -29,6 +29,11 @@ version is decided then.
 
 **Control (experimental, opt-in)**
 
+- Switched on and off only by an administrator in the plugin's settings ("Control mode",
+  "Control on"), as a feature in VT's, and by automations with the action
+  `vtherm_smart_boiler.set_control`; a person calling the action is refused. The entity
+  **Control (experimental)** shows whether control is on, with what blocks it; it switches
+  nothing. After a restart control comes back as the user left it.
 - The water temperature on a heating curve, bounded by the lowest and highest water temperature
   and each circuit's maximum; up to four circuits at the advanced level, among them circuits run
   by other automation and circuits behind a fixed valve. A circuit run by other automation holds
@@ -62,6 +67,46 @@ version is decided then.
   gateway's terminals, no heating switch, a relay not confirmed as a separate contact.
 - Removing the integration hands the boiler back, and a repair issue stays if it cannot confirm
   it.
+
+**The Boiler page (being built)**
+
+- A page "Boiler" in Home Assistant's sidebar, for every user, in Home Assistant's language; the
+  switch **Page in the sidebar** (on by default) takes it away and puts it back (the user guide,
+  section 4.12). Its overview shows the status with its reasons, whether **Control** is on — with
+  "Change in settings" for an administrator — and tiles for the water asked and confirmed, flow, return, outdoor, flame and the
+  rooms calling for heat; and the schematic of the installation, drawn from the settings — the
+  boiler, its tank or its own hot water, each circuit with its valve, pump and radiators or
+  underfloor loop — with the water moving where it flows now, the measured temperatures, and
+  each circuit's rooms: how hard each one's controller heats and whether it calls for heat; and
+  the heating curve as control decides the water, with "where we are" on it, the last 7 days'
+  decisions and a preview of changes — drag the point at the hardest frost, shift the curve — that
+  the plugin checks as the settings do, and that an administrator can save after confirming —
+  through the plugin's own settings, their checks and their save; and the last 24 h from the
+  recorder — the water the plugin asked, flow, return and the burns — whose scrubber and play show
+  any moment of the day in every part of the page. A tab
+  **Burner**: the burner's metrics, the monitor's own burns of the last 24 h, and how long the
+  heating burns lasted, the short ones marked by the monitor's short-burn length. A tab **Use**:
+  gas per degree-day and the degree-days, the last 12 weeks' gas per degree-day, and the change
+  against yesterday cause by cause — weather, hot water, settings and the rest. A tab **Status
+  and alarms**: the control verdict with its reasons, every alarm with the active ones first, the
+  signals' health, the building values with their source — an administrator forgets a measured
+  one there, after confirming — and the suggested lowest water temperature with its evidence. A
+  tab **Journal**: what the plugin decided and why over the last 14 days — its starts and stops,
+  control taking the boiler and handing it back, the heat call, the water setpoint written, a
+  circuit's need, the alarms and each settings save, from the page or the settings — as lanes
+  that zoom by dragging and as a filtered list. The plugin keeps the journal in a store of its
+  own, 14 days and 2,000 entries at most; it only watches and changes nothing. A tab
+  **Analyses**: the energy signature — each day's heating gas against its mean outdoor
+  temperature, the days only watched and the days under control apart, each with the line the
+  plugin fits, and the two compared at the same temperature — and the burner's heating starts by
+  hour over the last 4 weeks. Each daily summary now keeps its heating starts hour by hour; days
+  kept before show without them.
+- **Cards** for your own dashboards, in the card picker while the plugin runs: "Boiler: status"
+  (the status, whether control is on and the tiles), "Boiler: schematic" (the installation and its
+  rooms), "Boiler: heating curve" and "Boiler: last 24 h" — the page's own parts, with no
+  settings, the same rules for changes.
+- The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
+  water was decided with, as the curve reads it.
 
 ### Requirements
 

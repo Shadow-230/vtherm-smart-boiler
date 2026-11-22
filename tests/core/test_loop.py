@@ -137,6 +137,39 @@ def test_the_curves_last_step_within_the_tolerance_waits(cold: float) -> None:
     assert 0.0 < decision.target - written <= 0.5
 
 
+@pytest.mark.parametrize(("correction", "written"), [(3.0, True), (2.9, False)])
+def test_the_comfort_correction_at_its_limit_is_written_exactly(
+    correction: float, written: bool
+) -> None:
+    """L12 (J4 of 2026-11-18, the user's decision of 2026-11-22): the correction climbs in steps
+    under the read-back's tolerance, so at its limit the boiler got the curve + 2.53 K, not
+    + 3 K. At its limit it is a bound, written exactly; below it the deadband stays."""
+    control = ControlConfig(
+        curve=HeatingCurve(),
+        ramp_k_per_min=None,
+        comfort_correction=True,
+        correction_max_k=3.0,
+        decision_interval_s=10.0,  # the water decided again at the next step
+    )
+    config = replace(CONFIG, control=control)
+    short = (ZoneState("z", 20.0, 21.0, True, reported_at=0.0, valve_open=1.0),)
+    state = LoopState(control=ControlState(correction=2.53))
+    state, out = loop_step(state, inputs(0.0, zones=short), None, config)
+    assert out.setpoint is not None
+    first = out.setpoint.value
+    state = replace(state, control=replace(state.control, correction=correction))
+    short = (ZoneState("z", 20.0, 21.0, True, reported_at=10.0, valve_open=1.0),)
+    state, out = loop_step(state, inputs(10.0, zones=short), first, config)
+    assert out.decision.correction == correction
+    assert out.decision.target == pytest.approx(first + correction - 2.53, abs=0.05)
+    if written:
+        assert out.setpoint is not None
+        assert out.setpoint.kind is WriteKind.CHANGE
+        assert out.setpoint.value == pytest.approx(first + 0.47, abs=0.05)
+    else:
+        assert out.setpoint is None or out.setpoint.kind is not WriteKind.CHANGE
+
+
 def test_keepalive_follows_between_decisions() -> None:
     state, _ = loop_step(LoopState(), inputs(0.0), None, CONFIG)
     state, out = loop_step(state, inputs(30.0), 45.0, CONFIG)

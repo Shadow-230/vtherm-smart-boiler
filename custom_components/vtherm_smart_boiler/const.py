@@ -19,6 +19,9 @@ CONTROL_STORE_VERSION = 1
 # The last-run record, ``<DOMAIN>.<entry_id>.alive``: when the plugin last ran and its downtimes
 # (P-95), small and written often, so the entry's store is not.
 ALIVE_STORE_VERSION = 1
+# The journal, ``<DOMAIN>.<entry_id>.journal``: what the plugin decided and why, for the Boiler
+# page (I10.6) — kept apart, so the entry's store and its version stay as they are.
+JOURNAL_STORE_VERSION = 1
 # In the entry's store: the control state lives in its own store (0.2.2 on). Without it, the
 # entry's store is 0.2.1's, whose "control" copy is the state.
 CONTROL_STORE_MARKER = "control_store"
@@ -91,6 +94,10 @@ def control_store_key(entry_id: str) -> str:
 
 def alive_store_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}.alive"
+
+
+def journal_store_key(entry_id: str) -> str:
+    return f"{DOMAIN}.{entry_id}.journal"
 
 
 def stored_flag(raw: object) -> bool:

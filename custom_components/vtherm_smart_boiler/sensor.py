@@ -685,6 +685,9 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             # The curve's room temperature the water was decided with — Auto's warmest room, or
             # the value entered (G11 D).
             "curve_room": _round(status.curve_room, 1),
+            # And the outdoor temperature it was decided with, as the curve reads it — the lower
+            # of the current and the averaged: the Boiler page puts "where we are" on the curve.
+            "curve_outdoor": _round(status.curve_outdoor, 1),
             # Whether the boiler is called and why not, the demand against its thresholds — and
             # when a start waiting VT's activation delay is due (decision 5) — as VT's central
             # boiler shows them (2026-10-14).

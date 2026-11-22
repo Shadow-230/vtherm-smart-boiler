@@ -6,6 +6,7 @@ imported and tested on its own.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from .coordinator import SmartBoilerConfigEntry, SmartBoilerCoordinator
 
 PLATFORMS = ("sensor", "binary_sensor", "switch", "button")
+# I11.2: the action an automation switches control with (the user's decisions of 2026-11-22).
+SET_CONTROL = "set_control"
 # The notice asking what is wired to the gateway's thermostat terminals (answer K, X6).
 KIND_ISSUE = "thermostat_kind_missing"
 # An entity the options name that Home Assistant removed: one repair issue per entity (P-19).
@@ -35,7 +38,16 @@ NOT_HEATED_ISSUE = "setup_failed_not_heated"
 
 # Loaded through Home Assistant's import executor before first use: importing them in the event
 # loop would read them from disk there.
-_RUNTIME_MODULES = ("config", "coordinator", "control", "feature_manager", "entity")
+_RUNTIME_MODULES = (
+    "config",
+    "coordinator",
+    "control",
+    "feature_manager",
+    "entity",
+    "journal",
+    "panel",
+    "websocket_api",
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) -> bool:
@@ -51,8 +63,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
     from .config import ConfigError, EntryConfig
     from .control import ControlUnit
     from .coordinator import SmartBoilerCoordinator
+    from .journal import Journal
+    from .panel import async_add_cards, async_remove_cards
     from .vtherm_link import vt_run
+    from .websocket_api import async_setup_websocket
 
+    try:
+        async_setup_websocket(hass)  # the Boiler page's commands (I10.2), once per run
+    except Exception:  # the page's matter: the monitor, control and a hand-back owed go on
+        logging.getLogger(__name__).exception("The Boiler page's commands could not be registered")
     vt_run(hass)  # this run's record for VT's restart latch, begun at the first setup (decision 9)
     try:
         # A control section that cannot be used leaves control out, not the whole entry: the
@@ -66,8 +85,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         if isinstance(err, ConfigError):
             code, subject = err.code, err.subject or "-"
         else:
-            import logging
-
             logging.getLogger(__name__).error("The options cannot be read: %s", err)
             code, subject = "unreadable_options", "-"
         raise ConfigEntryError(
@@ -88,6 +105,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         # What the last run left, first: a hand-back it owed is made before anything else can
         # fail, and the unit that makes it is the one that runs (P-05, C14).
         await coordinator.async_load()
+        coordinator.journal = Journal(hass, entry.entry_id)
+        await coordinator.journal.async_load()
         if config.control.configured:
             raw = control_as_run(entry.options)
             control = ControlUnit(hass, coordinator, config.control, raw=raw)
@@ -111,18 +130,76 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
         await coordinator.async_load_texts()  # the coded lists' texts (P-39)
         forwarded = True  # before: a forward that fails part-way leaves platforms set up
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        if coordinator.control is not None:
+            # I11.3: the wish the control store kept comes back at once, where the control
+            # switch gave it back when added (P-11); with none stored, control is off.
+            await coordinator.control.async_restore_enabled(coordinator.control.stored_wish is True)
         feature_manager.async_attach(hass, coordinator)
         entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+        # The journal (I10.6) follows from here: the start, then each change.
+        entry.async_on_unload(coordinator.journal.async_follow(coordinator))
+        _register_set_control(hass, entry)
         coordinator.async_start_background()
         # Renames and removals are followed only for an entry that runs (P-19).
         entry.async_on_unload(_follow_entities(hass, entry, coordinator, registered))
         _forget_not_heated(hass, entry)  # the plugin runs: a failed setup's issue goes (SB-10)
         # Last, once nothing can fail: a failed setup removes nothing from the registry (PB-07).
         _remove_stale_entities(hass, entry, coordinator)
+        # The Boiler page's cards in the card picker while the entry runs (I10.8) — a display's
+        # matter: failing, they leave the entry running.
+        try:
+            cards = await async_add_cards(hass)
+        except Exception:
+            logging.getLogger(__name__).exception("The Boiler page's cards could not be loaded")
+        else:
+            if cards:
+                entry.async_on_unload(lambda: async_remove_cards(hass))
     except Exception:
         await _async_setup_failed(hass, entry, coordinator, forwarded=forwarded)
         raise
     return True
+
+
+def _register_set_control(hass: HomeAssistant, entry: SmartBoilerConfigEntry) -> None:
+    """I11.2: the action an automation switches control with, while the entry runs — with the
+    checks the settings make (on refused while a blocker that needs the user remains, off with
+    the safe hand-back). A person calling it — from a dashboard, a script they start, the
+    developer tools — is sent to the settings, where an administrator switches control (the
+    user's decisions of 2026-11-22): only an automation's call carries no user."""
+    import probatio as vol
+    from homeassistant.core import ServiceCall
+    from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+    from homeassistant.helpers import config_validation as cv
+    from homeassistant.util import dt as dt_util
+
+    async def set_control(call: ServiceCall) -> None:
+        if call.context.user_id is not None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="control_in_settings"
+            )
+        coordinator = getattr(entry, "runtime_data", None)
+        unit = None if coordinator is None else coordinator.control
+        if unit is None or unit.hand_back_only:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="control_not_running"
+            )
+        if call.data["enabled"]:
+            refused = unit.blockers_for_on(dt_util.utcnow().timestamp())
+            if refused:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key=f"blocked_{refused[0]}",
+                    translation_placeholders={"count": str(len(refused) - 1)},
+                )
+            await unit.async_set_enabled(True)
+        elif not await unit.async_set_enabled(False):
+            # PB-39: control is off, but the boiler did not take the hand-back.
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="hand_back_failed")
+
+    hass.services.async_register(
+        DOMAIN, SET_CONTROL, set_control, schema=vol.Schema({vol.Required("enabled"): cv.boolean})
+    )
+    entry.async_on_unload(lambda: hass.services.async_remove(DOMAIN, SET_CONTROL))
 
 
 async def _async_options_error_text(hass: HomeAssistant, code: str) -> str:
@@ -151,8 +228,6 @@ async def _async_setup_failed(
     that is not ready, which hands back first again; after an error, the issue stays until a
     reload or an options change. Last, where the house is left unheated, SB-10's issue says so
     (``_report_not_heated``)."""
-    import logging
-
     from . import feature_manager
     from .control import report_owed_hand_back
 
@@ -364,7 +439,6 @@ def _migrate_building(hass: HomeAssistant, entry: ConfigEntry) -> None:
     stays as entered; it replaced a stored design load before, and does so now (logged). A value
     outside the form's range is brought into it (logged); one that is no positive number is
     dropped."""
-    import logging
     import math
 
     from .const import BUILDING, PARAMETERS
@@ -426,8 +500,6 @@ def _migrate_topics(hass: HomeAssistant, entry: ConfigEntry) -> None:
     connection, for the repeats, and in the control section, for the writes; they are stored
     once now, with the connection (`docs/en/development/plans/plan-0.2-i8.md` D2). Where the two
     differ, the control section's go there — what the writes used (Claude's call), logged."""
-    import logging
-
     from .const import BOILER
     from .control_config import MQTT_TOPIC_KEYS
 
@@ -517,8 +589,6 @@ def _migrate_read_backs(hass: HomeAssistant, entry: ConfigEntry) -> None:
     neither. Where the setpoint read-back and the signal were set and differ, the read-back's
     entity, which control was judged with, replaces the signal's — logged. Signals of another shape
     are left as stored, with the read-backs where they were, for the options' check to report."""
-    import logging
-
     from .const import READ_BACK_SIGNALS, SIGNALS
 
     options = dict(entry.options)
@@ -660,7 +730,6 @@ def _migrate_design_outdoor(hass: HomeAssistant, entry: ConfigEntry) -> None:
     control's curve stays as it ran; the heat-loss estimate from the design load then uses it
     too, and a value it replaces is logged. A value the building could not take (not a number,
     or outside −45 to 10 °C: a hand edit) stays in the curve, which control reads first."""
-    import logging
     import math
 
     from .const import PARAMETERS
@@ -753,6 +822,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry)
     coordinator = entry.runtime_data
     for unit in _units(coordinator):
         await unit.async_stop()  # hand back before anything else goes
+    if coordinator.journal is not None:
+        try:
+            await coordinator.journal.async_stop()  # after the hand-back, which it journals
+        except Exception:  # the unload goes on: the platforms, the timers, the listeners
+            logging.getLogger(__name__).exception("The journal could not be written at the unload")
     feature_manager.async_detach(hass, coordinator)
     try:
         unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -773,6 +847,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from homeassistant.helpers.importlib import async_import_module
 
     await async_import_module(hass, f"{__package__}.coordinator")
+    await async_import_module(hass, f"{__package__}.journal")
     from .coordinator import (
         INSTALLATION_ISSUE,
         INSTALLATION_WARNINGS,
@@ -782,7 +857,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         main_store,
     )
     from .forecasts import remove_partition_files
+    from .journal import journal_store
+    from .panel import async_hide_panel
 
+    async_hide_panel(hass)  # the page goes with the entry (a reload keeps it: F17)
     _delete_removed_issues(hass, entry.entry_id)
     for key in (
         "hand_back_owed",
@@ -857,6 +935,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # forecast weeks.
     await control.async_remove()
     await alive_store(hass, entry.entry_id).async_remove()
+    await journal_store(hass, entry.entry_id).async_remove()
     await store.async_remove()
     await hass.async_add_executor_job(
         remove_partition_files, Path(hass.config.path(".storage")), entry.entry_id
@@ -864,8 +943,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _report_control_problem(hass: HomeAssistant, entry: ConfigEntry, config: EntryConfig) -> None:
-    import logging
-
     from homeassistant.helpers import issue_registry as ir
 
     issue_id = f"control_options_invalid_{entry.entry_id}"
@@ -919,8 +996,6 @@ async def _async_report_owed_from_store(hass: HomeAssistant, entry: ConfigEntry)
     try:
         read = await async_read_control_state(hass, entry.entry_id, entry.options)
     except Exception:  # an unexpected failure: the cautious answer
-        import logging
-
         logging.getLogger(__name__).exception("Could not read the stored control state")
         owed = has_control_section(entry.options)
     else:
@@ -975,8 +1050,6 @@ def _hand_back_unit(
     control state read at setup): a unit built from the options that took the boiler makes it,
     and does nothing else but follow the SmartPI resumes it left. With nothing owed but such
     resumes, a unit without options only follows them (C15)."""
-    import logging
-
     from homeassistant.helpers import issue_registry as ir
 
     from .control import ControlUnit
@@ -1054,6 +1127,16 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
     coordinator = getattr(entry, "runtime_data", None)
     if coordinator is None or meaningful(entry.options) != meaningful(coordinator.options):
+        if coordinator is not None and coordinator.journal is not None:
+            # The journal names the sections saved changed (I10.6), before the reload.
+            old, new = meaningful(coordinator.options), meaningful(entry.options)
+            changed = sorted(key for key in old.keys() | new.keys() if old.get(key) != new.get(key))
+            try:
+                coordinator.journal.settings_saved(changed)
+            except Exception:  # the save is made all the same
+                logging.getLogger(__name__).exception(
+                    "The journal could not note the settings save"
+                )
         # Not running (its setup failed): whatever changed, it is set up again.
         await hass.config_entries.async_reload(entry.entry_id)
 
@@ -1241,8 +1324,6 @@ def _follow_renames(
     once — and so do the options, whose save reloads the entry as any options save does: one
     reload for the batch. Where only what a unit that hands back keeps named one, the entry is
     reloaded to hand back through the new ID. An entry removed meanwhile is left alone."""
-    import logging
-
     from .config import rename_entity
 
     if hass.config_entries.async_get_entry(entry.entry_id) is None:
@@ -1271,8 +1352,6 @@ def _report_removed(
 ) -> None:
     """The repair issue of an entity the options name that Home Assistant removed: a warning,
     not fixable, kept across restarts (nothing would raise it again)."""
-    import logging
-
     from homeassistant.helpers import issue_registry as ir
 
     shown = ", ".join(fields) or "-"

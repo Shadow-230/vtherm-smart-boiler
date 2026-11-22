@@ -128,9 +128,15 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
      [Sterowanie włączasz sam](#42-sterowanie-włączasz-sam)).
 4. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie ([4.1](#41-monitorowanie-i-werdykt)). Decyzja należy do ciebie.
-5. **Włącz sterowanie** przełącznikiem **Sterowanie (eksperymentalne)** na urządzeniu
-   integracji, od pierwszego dnia albo później. Jeśli czegoś brakuje, przełącznik mówi czego, a
-   monitor dalej działa. Dopóki go nie włączysz, wtyczka nic nie zapisuje do kotła.
+5. **Włącz sterowanie** w opcjach integracji: **Tryb sterowania**, zaznacz **Sterowanie
+   włączone**, potem **Zapisz i zakończ** — od pierwszego dnia albo później. Opcje otwiera tylko
+   administrator. Jeśli czegoś brakuje, okno mówi czego, nic się nie zmienia, a monitor dalej
+   działa. Odznacz, żeby wyłączyć sterowanie: kocioł zostaje od razu oddany. Dopóki go nie
+   włączysz, wtyczka nic nie zapisuje do kotła. Automatyzacja przełącza sterowanie akcją
+   `vtherm_smart_boiler.set_control` (`enabled`: włączone albo wyłączone), z tymi samymi
+   sprawdzeniami; wywołana przez osobę — z pulpitu, uruchomionego przez nią skryptu, narzędzi
+   deweloperskich — jest odrzucana. Encja **Sterowanie (eksperymentalne)** na urządzeniu
+   integracji pokazuje, czy sterowanie jest włączone; niczego nie przełącza.
 
 **Późniejsze zmiany ustawień.** Opcje integracji otwierają to samo menu, z **Zapisz i zakończ**
 zamiast **Utwórz**. Nic nie jest zapisywane, dopóki tego nie wybierzesz: sprawdza wszystko,
@@ -169,7 +175,7 @@ Potem czujnik **Werdykt sterowania** pokazuje jedną z wartości:
 | Jeszcze za mało danych | zmierzono za mało, żeby ocenić |
 
 Werdykt jest radą. Decyzja należy do ciebie. Zanim się pojawi, a poza sezonem grzewczym także
-wtedy, gdy dni miną bez wystarczających danych, przełącznik sterowania mówi, że sterowanie ruszy
+wtedy, gdy dni miną bez wystarczających danych, **Sterowanie (eksperymentalne)** mówi, że sterowanie ruszy
 bez werdyktu.
 
 Co znaczą werdykt i wartości budynku:
@@ -188,12 +194,13 @@ Co znaczą werdykt i wartości budynku:
 
 ### 4.2 Sterowanie włączasz sam
 
-Sterowanie jest **domyślnie wyłączone**. To przełącznik **Sterowanie (eksperymentalne)**.
-Możesz go włączyć od pierwszego dnia, gdy wypełnione są wszystkie wymagane ustawienia, na
-przykład:
+Sterowanie jest **domyślnie wyłączone**. Włączasz je w opcjach integracji (**Tryb sterowania**,
+**Sterowanie włączone**, potem **Zapisz i zakończ**); encja **Sterowanie (eksperymentalne)**
+pokazuje, czy jest włączone. Możesz je włączyć od pierwszego dnia, gdy wypełnione są wszystkie
+wymagane ustawienia, na przykład:
 
 - tryb sterowania „pełne sterowanie” albo „wł./wył.” (tylko monitorowanie i tylko temperatura
-  pokoju zostawiają sterowanie wyłączone, a przełącznik mówi dlaczego);
+  pokoju zostawiają sterowanie wyłączone, a **Sterowanie (eksperymentalne)** mówi dlaczego);
 - sposób zapisu do kotła i sposób jego oddania (zobacz
   [Podłączenie kotła](#5-podłączenie-kotła)), pasujące do połączenia kotła;
 - projektowa temperatura zasilania krzywej grzewczej (nie ma wartości domyślnej);
@@ -205,7 +212,7 @@ przykład:
   zmieniona po uruchomieniu Home Assistant, nawet bez kotła centralnego, też wymaga tego jednego
   ponownego uruchomienia.
 
-Gdy czegoś brakuje, przełącznik sterowania mówi czego. Monitor dalej działa, a kocioł zostaje
+Gdy czegoś brakuje, **Sterowanie (eksperymentalne)** mówi czego. Monitor dalej działa, a kocioł zostaje
 przy własnym sterowaniu albo przy swoim termostacie.
 
 ### 4.3 Kiedy grzanie się włącza i wyłącza
@@ -325,8 +332,8 @@ najwyżej 10 K, ustawianego w **Krzywej grzewczej** obok korekty; nigdy więcej 
 Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy +
 0,5 K, gdzie SmartPI przestaje je grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej.
 Jedno niedogrzane pomieszczenie liczy się jak każde inne — woda nigdy nie idzie wyżej dla jednego
-pokoju. Po trzech godzinach na limicie, gdy pomieszczenie nadal nie dochodzi do nastawy, korekta
-tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
+pokoju. Po trzech godzinach tak wysoko, jak może — na limicie albo po wzroście o 3 K w ciągu
+doby — gdy pomieszczenie nadal nie dochodzi do nastawy, korekta tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
 mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i więcej startów palnika — przy
 strefach TPI w VT często stoi na limicie i kilkakrotnie zwiększa liczbę startów, prawie nie dodając
 ciepła. Dlatego jest wyłączona: gdy pokój zostaje zimny, najpierw podnieś krzywą. Przycisk
@@ -463,6 +470,49 @@ doradza tych ustawień. Gdy ciepła woda albo duża zmiana temperatury wody zabu
 wtyczka wstrzymuje uczenie SmartPI (domyślnie włączone), żeby wywołane przez nią wahania nie
 trafiły do modelu SmartPI.
 
+### 4.12 Strona „Kocioł” i karty
+
+Wtyczka dodaje stronę **Kocioł** do menu bocznego Home Assistanta, dla każdego użytkownika;
+przełącznik **Strona w menu bocznym** na urządzeniu wtyczki ją zabiera i przywraca. Stronę widzi
+każdy. Zmienić coś na niej może tylko administrator, a każda zmiana najpierw prosi o
+potwierdzenie.
+
+| Zakładka | Co pokazuje |
+|---|---|
+| Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i wołającymi pokojami. Instalację narysowaną z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat, pokoje i krzywa ją pokażą |
+| Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
+| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn |
+| Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze. Starty grzania palnika według godzin z ostatnich 4 tygodni |
+| Dziennik | Co wtyczka zdecydowała i dlaczego w ostatnich 14 dniach. Pokazuje jej starty i zatrzymania, przejęcie kotła przez sterowanie i jego oddanie, wezwanie ciepła, zapisaną nastawę wody (zmiany o 1 K i więcej), potrzebę obiegu, alarmy i zapisane ustawienia. Widać to jako pasy, które przybliża się przeciągnięciem, i jako listę z filtrami |
+| Stan i alarmy | Werdykt sterowania z powodami; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
+
+**Zmiany ze strony.** Administrator, po potwierdzeniu:
+
+- zapisuje punkt krzywej grzewczej przy największym mrozie (i jej przesunięcie, na poziomie
+  zaawansowanym ustawień) **przez własne ustawienia wtyczki**: obowiązuje każde ich sprawdzenie,
+  wtyczka przeładowuje się jak po każdym zapisie ustawień, a dziennik to odnotowuje. Zapisu, przy
+  którym ustawienia by się zatrzymały (potwierdzenie, inna sekcja), strona nie robi: dokończ go w
+  ustawieniach;
+- zapomina zmierzoną wartość budynku własnymi przyciskami wtyczki.
+
+Sterowania nie przełącza się ze strony: przełącza się je w ustawieniach wtyczki (**Tryb
+sterowania**, **Sterowanie włączone**), dokąd strona prowadzi administratora.
+
+**Co pokazuje, a czego nie.** Strona pokazuje tylko to, co wtyczka i Home Assistant już wiedzą.
+Punkty krzywej, palenia, tygodnie, sygnatura i dziennik pochodzą z wtyczki, a nie z drugiej kopii
+jej zasad. Wartości, której encja nie jest wybrana w ustawieniach, strona nie pokazuje. Nieznana
+wartość to luka, nigdy ostatnia znana przeniesiona dalej. Ostatnie 24 h i ostatnie 7 dni
+pochodzą z recordera Home Assistanta (domyślnie 10 dni). Strona używa języka twojego profilu
+(angielski i polski; inne języki widzą angielski) oraz jasnego albo ciemnego motywu i działa na
+telefonie.
+
+**Karty.** Części przeglądu są też kartami na twoje własne pulpity: **Kocioł: stan**, **Kocioł:
+schemat**, **Kocioł: krzywa grzewcza** i **Kocioł: ostatnie 24 h**. Dodaj je jak każdą kartę
+(edytuj pulpit, dodaj kartę, wyszukaj „Kocioł”). Nie mają ustawień: każda sama znajduje wtyczkę,
+a zmiany podlegają tym samym zasadom. Są dostępne, póki wtyczka działa, czy strona jest w menu
+bocznym, czy nie. Po aktualizacji odśwież stronę przeglądarki, jeśli karta pokazuje jeszcze starą
+wersję.
+
 ## 5. Podłączenie kotła
 
 Wtyczka czyta kocioł przez encje, które wybierasz w jej formularzach. Do sterowania potrzebuje
@@ -563,8 +613,8 @@ Po oddaniu sterowania albo gdy Home Assistant nie działa, obowiązuje maksymaln
 ustawiona w kotle (albo w termostacie ściennym), a nie we wtyczce: na nim opiera się wtedy
 niezmieszany obieg podłogowy.
 
-Przełącznik sterowania pokazuje, co oddanie sterowania robi w twojej instalacji („Po oddaniu
-sterowania”).
+**Sterowanie (eksperymentalne)** pokazuje, co oddanie sterowania robi w twojej instalacji („Po
+oddaniu sterowania”).
 
 ### 5.3 Sposób podłączenia bramki
 
@@ -707,8 +757,8 @@ kocioł w ciągu około minuty wraca do własnego ustawienia.
   w ciągu około minuty. Przełącznik grzania nie jest przy tym połączeniu potrzebny; nigdy nie
   używaj do tego „heating activated” z EMS-ESP — kocioł zapisuje je w swojej pamięci. Co robi
   pompa kotła przy nastawie 0, nie wiadomo.
-- Jeśli kocioł od początku ignoruje 0, sterowanie staje i oddaje kocioł; przełącznik sterowania
-  podaje wtedy: Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie.
+- Jeśli kocioł od początku ignoruje 0, sterowanie staje i oddaje kocioł; **Sterowanie
+  (eksperymentalne)** podaje wtedy: Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie.
 - Kocioł przyjmuje nastawę z magistrali tylko poniżej ustawienia na własnym panelu (dokumentacja
   EMS-ESP): przy tym ustawieniu poniżej najwyższej temperatury wody we wtyczce wyższe nastawy nie
   są przyjmowane, a wtyczka to zgłasza.
@@ -780,7 +830,7 @@ zapisała, przypisuje to do jednego z czterech rodzajów:
 
 **Wtyczka nigdy nie walczy z innym sterownikiem.** Gdy ustępuje, wykonuje pełne bezpieczne
 oddanie sterowania i pozostaje wyłączona („zatrzask”), dopóki nie wyłączysz i nie włączysz
-sterowania. Opcjonalny „samodzielny powrót” (domyślnie wyłączony, nie dla przekaźników) przejmuje
+sterowania — w opcjach: odznacz **Sterowanie włączone** i zapisz, potem zaznacz i zapisz znowu. Opcjonalny „samodzielny powrót” (domyślnie wyłączony, nie dla przekaźników) przejmuje
 kocioł z powrotem po 60 minutach bez obcej wartości.
 
 Jeśli kocioł od początku sesji ignoruje **„wyłącz grzanie” albo „włącz grzanie”** wtyczki,
@@ -923,7 +973,7 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu przez jego czas (obieg prosto z kotła: nie podczas grzania ciepłej wody) | sprawdź jego maksimum |
-| Długie palenie bez nagrzewania | palnik pracuje 3 h — razem z przerwami do 30 min, więc liczy się też kocioł, który ciągle gaśnie i startuje — a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń (woda dochodzi do nastawy), kocioł na granicy mocy (płomień cały czas, poniżej nastawy przy wysokiej modulacji), czy woda za ciepła | woda za chłodna: podnieś krzywą (korekta, gdy jest włączona, ją podnosi); za ciepła: obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
+| Długie palenie bez nagrzewania | palnik pracuje 3 h — razem z przerwami do 30 min, więc liczy się też kocioł, który ciągle gaśnie i startuje — a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń (woda choć raz w ostatnich 30 minutach doszła do nastawy albo jest ponad nią, bo kocioł pracuje na minimum), kocioł na granicy mocy (płomień cały czas, poniżej nastawy przy wysokiej modulacji), czy woda za ciepła | woda za chłodna: podnieś krzywą (korekta, gdy jest włączona, ją podnosi); za ciepła: obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
 
 Zgłoszenia w Naprawach:
 
@@ -952,7 +1002,7 @@ Alarmy sterowania mają nazwy „Sterowanie: …”.
 | Sterowanie: zmiana przez inny sterownik | coś innego zapisało do kotła |
 | Sterowanie: oddanie nieudane | oddanie sterowania nie zostało potwierdzone |
 | Sterowanie: błąd wewnętrzny | błąd we wtyczce zatrzymał sterowanie |
-| Sterowanie: korekta komfortu na granicy | na swoim limicie (domyślnie 3 K) przez 3 godziny: zobacz jej zgłoszenie |
+| Sterowanie: korekta komfortu na granicy | na swoim limicie (domyślnie 3 K) albo po wzroście o 3 K w ciągu doby, przez 3 godziny: zobacz jej zgłoszenie |
 | Sterowanie: brak potwierdzenia z kotła | nastawa nie jest pokazywana z powrotem przez 5 minut |
 | Sterowanie: polecenia często giną | 3 utracone polecenia w ciągu 24 godzin (informacja) |
 | Sterowanie: brak oznak grzania kotła | grzanie włączone przez 30 minut bez płomienia i bez wzrostu temperatury |
@@ -978,10 +1028,10 @@ Zgłoszenia w Naprawach dotyczące sterowania:
 | Sterowanie czeka na potwierdzenie z bramki | odczyt zwrotny nastawy nie ma wartości |
 | Opcji sterowania nie da się użyć | otwórz opcje i ustaw sterowanie ponownie |
 | Reakcje na alarmy nie są już dostępne | te alarmy teraz tylko informują |
-| Krzywa grzewcza wygląda na za niską dla: … | korekta 3 h na limicie, większość pomieszczeń niedogrzana: najpierw podnieś krzywą, potem sprawdź grzejniki i ucieczkę ciepła |
-| … nie dochodzi do nastawy | korekta 3 h na limicie, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
+| Krzywa grzewcza wygląda na za niską dla: … | korekta 3 h tak wysoko, jak może, większość pomieszczeń niedogrzana: najpierw podnieś krzywą, potem sprawdź grzejniki i ucieczkę ciepła |
+| … nie dochodzi do nastawy | korekta 3 h tak wysoko, jak może, jedno pomieszczenie niedogrzane: najpierw sprawdź jego grzejnik, zawór i okno, potem krzywą |
 
-Przełącznik sterowania podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
+**Sterowanie (eksperymentalne)** podaje też odpowiedzi z kreatora, które zostawiają sterowanie wyłączone:
 tylko monitorowanie, sterowanie albo topologia
 niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny start.
 
@@ -1153,13 +1203,19 @@ domyślnie wyłączone.
 | Encja | Co pokazuje albo robi |
 |---|---|
 | Sterowanie (eksperymentalne) | włącza i wyłącza sterowanie; jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
-| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami |
+| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie — w miejsce czujnika kotła centralnego VT; przy zmianie wysyłane jest zdarzenie |
 | Wołające o ciepło, Moc wołających | wołające urządzenia (albo strefy) i zsumowana moc stref, każde obok swojego progu, tak jak pokazuje je kocioł centralny VT |
 | Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, nieznana strefa, mróz bez nagrzewania i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
 | Wyzeruj zmierzone straty ciepła, Wyzeruj zmierzony próg grzania | zapominają zmierzone wartości budynku |
+
+**Strona**
+
+| Encja | Co robi |
+|---|---|
+| Strona w menu bocznym | dodaje stronę „Kocioł” do menu bocznego Home Assistanta, dla każdego użytkownika, i ją zabiera; domyślnie włączona. Co pokazują strona i jej karty: [Strona „Kocioł” i karty](#412-strona-kocioł-i-karty) |
 
 Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w Ustawienia → Naprawy.
 
@@ -1253,8 +1309,8 @@ target:
 
 ## 14. Rozwiązywanie problemów
 
-- **Sterowanie się nie włącza albo stan sterowania mówi „Niedozwolone”.** Atrybuty przełącznika
-  (`blockers_text`, `blocked_by_text`) mówią, czego brakuje; zgłoszenie w Naprawach zwykle mówi,
+- **Sterowanie się nie włącza albo stan sterowania mówi „Niedozwolone”.** Atrybuty encji
+  **Sterowanie (eksperymentalne)** (`blockers_text`, `blocked_by_text`) mówią, czego brakuje; zgłoszenie w Naprawach zwykle mówi,
   co zrobić.
 - **Stan sterowania zostaje „Oddane kotłu”.** Wtyczka się wycofała — inny sterownik, kocioł
   ignorujący „grzanie wył.”, alarm ustawiony na oddanie. Usuń przyczynę, potem wyłącz i włącz
@@ -1302,11 +1358,11 @@ target:
 
 ## 16. Usuwanie
 
-1. Możesz najpierw wyłączyć **Sterowanie (eksperymentalne)** i sprawdzić, że kocioł wrócił do
-   własnego sterowania.
+1. Możesz najpierw wyłączyć sterowanie (**Tryb sterowania**, odznacz **Sterowanie włączone**) i
+   sprawdzić, że kocioł wrócił do własnego sterowania.
 2. Usuń wpis: Ustawienia → Urządzenia oraz usługi → Smart Boiler for Versatile Thermostat → Usuń.
    Wtyczka oddaje kocioł, wznawia wstrzymane przez siebie uczenie SmartPI i usuwa swój zapisany
-   stan i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
+   stan, dziennik i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
    Naprawach: oddaj kocioł ręcznie.
 3. Usuń ją w HACS (albo usuń jej folder) i uruchom ponownie Home Assistant.
 4. Aby wrócić do kotła centralnego VT, zaznacz go z powrotem w centralnej konfiguracji VT.

@@ -18,6 +18,9 @@
 # Home Assistant version, four parts — the lint, types and core tests; test_acceptance.py;
 # test_control.py; the rest, about a third of the Home Assistant tests' time each — then the
 # job the rulesets require gathers the parts' coverage and checks every module's floor.
+# The Boiler page (docs/en/development/plans/plan-0.2-i10.md) has its own job — its tests, its
+# types, and the built files beside the plugin exactly as its source builds them — which the
+# required jobs wait for.
 name: Tests
 
 on:
@@ -136,12 +139,45 @@ jobs:
           overwrite: true
           retention-days: 1
 
+  # The Boiler page: its tests, its types (the build checks them first), and the files committed
+  # beside the plugin, which HACS installs, the same as its source builds them.
+  page:
+    name: The Boiler page
+    needs: changes
+    if: needs.changes.outputs.only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.3
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Packages, as the lock file pins them
+        run: npm ci
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: The committed page is the one its source builds
+        run: |
+          changed="$(git status --porcelain -- ../custom_components/vtherm_smart_boiler/frontend)"
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            echo "Build the page (npm run build in frontend/) and commit its files." >&2
+            exit 1
+          fi
+
   # The checks the rulesets require, by their names: every part of their Home Assistant version
   # passed — a part that failed uploads no coverage — and, P-35, every module at least 95 % with
   # branches over all four parts, the config and options flows 100 %.
   tests:
     name: ${{ matrix.label }}
-    needs: [changes, parts]
+    needs: [changes, parts, page]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -193,8 +229,13 @@ jobs:
         if: steps.gate.outputs.only != 'true'
         env:
           GROUP: ${{ matrix.group }}
+          PAGE: ${{ needs.page.result }}
         run: |
           missing=0
+          if [ "$PAGE" != success ]; then
+            echo "The Boiler page's job did not pass: $PAGE" >&2
+            missing=1
+          fi
           for part in core acceptance control rest; do
             if [ ! -f ".tmp/coverage.$GROUP-$part" ]; then
               echo "The part '$part' did not pass: no coverage from it." >&2

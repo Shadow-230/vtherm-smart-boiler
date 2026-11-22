@@ -2,13 +2,17 @@
   "domain": "vtherm_smart_boiler",
   "name": "Smart Boiler for Versatile Thermostat",
   "after_dependencies": [
+    "frontend",
+    "http",
     "mqtt",
     "opentherm_gw",
+    "panel_custom",
     "recorder",
     "repairs",
     "versatile_thermostat",
     "vtherm_smartpi",
-    "weather"
+    "weather",
+    "websocket_api"
   ],
   "codeowners": [
     "@Shadow-230"

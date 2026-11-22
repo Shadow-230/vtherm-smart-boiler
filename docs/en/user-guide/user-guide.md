@@ -119,9 +119,15 @@ Only one entry of the integration can exist: it runs one boiler.
      [Control is opt-in](#42-control-is-opt-in)).
 4. **Read the verdict.** Once it has the days of data, the sensor **Control verdict** says whether
    control is worth enabling ([4.1](#41-monitoring-and-the-verdict)). You decide.
-5. **Switch control on** with the switch **Control (experimental)** of the integration's device,
-   on the first day or later. If something is missing, the switch says what, and the monitor
-   keeps running. Until you switch it on, the plugin writes nothing to the boiler.
+5. **Switch control on** in the integration's options: **Control mode**, tick **Control on**,
+   then **Save and finish** — on the first day or later. Only an administrator opens the options.
+   If something is missing, a window says what, nothing changes, and the monitor keeps running.
+   Untick it to switch control off: the boiler is handed back at once. Until you switch it on, the
+   plugin writes nothing to the boiler. An automation switches control with the action
+   `vtherm_smart_boiler.set_control` (`enabled`: on or off), with the same checks; called by a
+   person — from a dashboard, a script you start, the developer tools — it is refused. The
+   entity **Control (experimental)** of the integration's device shows whether control is on; it
+   switches nothing.
 
 **Changing settings later.** The integration's options open the same menu, with **Save and
 finish** in place of **Create**. Nothing is saved until you choose it: it checks everything,
@@ -160,7 +166,7 @@ Then the sensor **Control verdict** shows one of:
 | Not enough data yet | too little was measured to judge |
 
 The verdict is advice. You decide. Before it comes, and outside the heating season when the days
-pass without enough data, the control switch says that control starts without a verdict.
+pass without enough data, **Control (experimental)** says that control starts without a verdict.
 
 What the verdict and the building values mean:
 
@@ -178,11 +184,13 @@ What the verdict and the building values mean:
 
 ### 4.2 Control is opt-in
 
-Control is **off by default**. It is the switch **Control (experimental)**. You can switch it on
-from the first day, once every required setting is filled in, for example:
+Control is **off by default**. You switch it on in the integration's options (**Control mode**,
+**Control on**, then **Save and finish**); the entity **Control (experimental)** shows whether it
+is on. You can switch it on from the first day, once every required setting is filled in, for
+example:
 
-- the control mode "full control" or "on/off" (monitoring only keeps control off, and the
-  switch says so);
+- the control mode "full control" or "on/off" (monitoring only keeps control off, and
+  **Control (experimental)** says so);
 - a way to write to the boiler and a way to hand it back (see
   [Connecting the boiler](#5-connecting-the-boiler)), fitting the boiler's connection;
 - the heating curve's design flow temperature (it has no default);
@@ -193,7 +201,7 @@ from the first day, once every required setting is filled in, for example:
   controllers never drive the same boiler. A VT central configuration created or changed after
   Home Assistant started, even without a central boiler, needs that one restart too.
 
-When something is missing, the control switch says what. The monitor keeps running, and the
+When something is missing, **Control (experimental)** says what. The monitor keeps running, and the
 boiler stays with its own control or its thermostat.
 
 ### 4.3 When heating goes on and off
@@ -304,8 +312,9 @@ open, the water rises slowly above the curve, up to its limit: 3 K by default, u
 in **Heating curve** beside the correction; never more than 3 K a day. For a room whose SmartPI
 is in its learning phase, "short" means below its setpoint + 0.5 K, where SmartPI stops heating
 it. It does not rise while the boiler starts more often than before. One room short counts like
-any other — the water never goes higher for one room's sake. After three hours at its limit with
-a room still short, the correction holds there, and a repair issue names the room and the
+any other — the water never goes higher for one room's sake. After three hours as high as it may
+go — at its limit, or once it has risen 3 K within a day — with a room still short, the correction
+holds there, and a repair issue names the room and the
 possible causes: the curve too low, the room's radiator too small, or the room losing heat. What
 it costs: more gas, and more burner starts — with VT's TPI zones it often sits at its limit and
 raises the starts several times over for almost no warmth. That is why it is off: where a room
@@ -437,6 +446,47 @@ gives no advice on these settings. While hot water or a large change of the wate
 disturbs the rooms, the plugin pauses SmartPI's learning (on by default), so the swings it causes
 stay out of SmartPI's model.
 
+### 4.12 The Boiler page and cards
+
+The plugin adds a page **Boiler** to Home Assistant's sidebar, for every user; the switch **Page
+in the sidebar** on the plugin's device takes it away and puts it back. Everyone sees the page.
+Only an administrator can change anything on it, and every change asks for confirmation first.
+
+| Tab | What it shows |
+|---|---|
+| Overview | The status with its reasons and whether **Control** is on — an administrator gets **Change in settings**, which opens the plugin's page in Home Assistant's settings, where control is switched; its flame is filled while the burner burns, and outlined in the heating colour while the boiler is called for heat between burns. Tiles for the water the plugin asks, flow, return, outdoor, flame and the rooms calling. The installation drawn from the settings, with each circuit's rooms and whether they take heat. The heating curve with "where we are", the last 7 days' decisions and a preview of changes, drawn as boiler manuals draw it: warmer on the left, colder on the right. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic, the rooms and the curve show it |
+| Burner | The burner's metrics; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
+| Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day; the change against yesterday, cause by cause |
+| Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature. The burner's heating starts by hour over the last 4 weeks |
+| Journal | What the plugin decided and why, over the last 14 days. It shows its starts and stops, control taking the boiler and handing it back, the heat call, the water setpoint written (changes of 1 K or more), a circuit's need, the alarms and the settings saved. You see it as lanes that zoom by dragging across them, and as a list you can filter |
+| Status and alarms | The control verdict with its reasons; every alarm, the active ones first, each opening its history; the signals' health; the building values with where they come from; the suggested lowest water temperature with its evidence |
+
+**Changes from the page.** An administrator, after confirming:
+
+- saves the heating curve's point at the hardest frost (and its offset, at the advanced level of
+  the settings) **through the plugin's own settings**: every check they make applies, the plugin
+  reloads as after any settings save, and the journal notes it. A save the settings would stop
+  for (a confirmation, another section) is not made from the page: finish it in the settings;
+- forgets a measured building value with the plugin's own reset buttons.
+
+Control is not switched from the page: it is switched in the plugin's settings (**Control mode**,
+**Control on**), where the page leads an administrator.
+
+**What it shows, and what not.** The page shows only what the plugin and Home Assistant already
+know. The curve's points, the burns, the weeks, the signature and the journal come from the
+plugin, not from a second copy of its rules. A value whose entity is not picked in the settings
+is not shown. An unknown value is a gap, never the last one carried on. The last 24 h and the
+last 7 days come from Home Assistant's recorder (10 days by default). The page follows your
+profile's language (English and Polish; other languages show English) and the light or dark
+theme, and it works on a phone.
+
+**Cards.** The overview's parts are also cards for your own dashboards: **Boiler: status**,
+**Boiler: schematic**, **Boiler: heating curve** and **Boiler: last 24 h**. Add one as any card
+(edit the dashboard, add a card, search for "Boiler"). They have no settings: each finds the
+plugin by itself, and the same rules apply to changes. They are there while the plugin runs,
+whether the page is in the sidebar or not. After an update, reload the browser page if a card
+still shows the old version.
+
 ## 5. Connecting the boiler
 
 The plugin reads the boiler through entities you pick in its forms. To control the boiler it
@@ -537,7 +587,7 @@ After a hand-back, or while Home Assistant is down, the boiler's (or the wall th
 maximum water temperature applies, not the plugin's: an unmixed underfloor circuit then rests on
 that limit.
 
-The control switch shows what a hand-back does in your installation ("On hand-back").
+**Control (experimental)** shows what a hand-back does in your installation ("On hand-back").
 
 ### 5.3 The gateway topology
 
@@ -742,7 +792,8 @@ into one of four kinds:
   back once; a second change within 24 hours makes it step aside.
 
 **The plugin never fights another controller.** When it steps aside, it makes the full safe
-hand-back and stays off (a "latch") until you switch control off and on. An optional "return
+hand-back and stays off (a "latch") until you switch control off and on — in the options:
+untick **Control on** and save, then tick it and save again. An optional "return
 by itself" (off by default, not for relays) takes the boiler back after 60 minutes without a
 foreign value.
 
@@ -877,7 +928,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
-| Long burn without warming | the burner on for 3 h — gaps of up to 30 min included, so a boiler that keeps stopping and starting counts too — and the rooms not warming: its reason says the water too cool for the rooms short (the flow at its setpoint), the boiler at its power limit (the flame on throughout, below its setpoint at high modulation), or the water too hot | water too cool: raise the curve (the correction, where on, raises it); too hot: lower it — the curve, or on an on/off boiler its own water setting |
+| Long burn without warming | the burner on for 3 h — gaps of up to 30 min included, so a boiler that keeps stopping and starting counts too — and the rooms not warming: its reason says the water too cool for the rooms short (the flow reached its setpoint at least once in the last half hour, or stays above it with the boiler at its minimum), the boiler at its power limit (the flame on throughout, below its setpoint at high modulation), or the water too hot | water too cool: raise the curve (the correction, where on, raises it); too hot: lower it — the curve, or on an on/off boiler its own water setting |
 
 Repair issues:
 
@@ -905,7 +956,7 @@ Control alarms are named "Control: …".
 | Control: changed by another controller | something else wrote to the boiler |
 | Control: hand-back failed | the hand-back has not been confirmed |
 | Control: internal error | an error in the plugin stopped control |
-| Control: comfort correction at its limit | at its limit (3 K by default) for 3 hours: see its repair issue |
+| Control: comfort correction at its limit | at its limit (3 K by default), or at the 3 K it may rise in a day, for 3 hours: see its repair issue |
 | Control: the boiler's confirmation is missing | a setpoint not shown back for 5 minutes |
 | Control: commands often lost | 3 lost commands within 24 hours (information) |
 | Control: no sign the boiler heats | heating on for 30 minutes with no flame or rise |
@@ -931,10 +982,10 @@ Repair issues about control:
 | Control waits for the gateway's confirmation | the setpoint read-back has no value |
 | The control options cannot be used | open the options and set control up again |
 | Alarm reactions no longer offered | those alarms now only inform |
-| The heating curve looks too low for … | the correction at its limit for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
-| … stays short of its setpoint | the correction at its limit for 3 h, one room short: check its radiator, valve and window first, then the curve |
+| The heating curve looks too low for … | the correction as high as it may go for 3 h, most rooms short: raise the curve first, then check radiators and heat loss |
+| … stays short of its setpoint | the correction as high as it may go for 3 h, one room short: check its radiator, valve and window first, then the curve |
 
-The control switch also names the setup answers that keep control off: monitoring only, a
+**Control (experimental)** also names the setup answers that keep control off: monitoring only, a
 control or a topology that does not fit the boiler's connection, and on ESPHome the safe start
 not confirmed.
 
@@ -1105,13 +1156,19 @@ disabled by default.
 | Entity | What it shows or does |
 |---|---|
 | Control (experimental) | switches control on and off; its attributes say what blocks it and what a hand-back does in your installation |
-| Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons |
+| Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not — VT's central boiler sensor's place; an event fires when it changes |
 | Calling for heat, Calling power | the devices (or zones) calling and the zones' power summed, each beside its threshold, as VT's central boiler shows them |
 | Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, a zone unknown, frost not warming and the others |
 | Reset comfort correction | sets the comfort correction back to 0 |
 | Reset measured heat loss, Reset measured heating threshold | forget the measured building values |
+
+**The page**
+
+| Entity | What it does |
+|---|---|
+| Page in the sidebar | puts the page "Boiler" in Home Assistant's sidebar, for every user, and takes it away; on by default. What the page and its cards show: [The Boiler page and cards](#412-the-boiler-page-and-cards) |
 
 Problems that need you also show as repair issues under Settings → Repairs.
 
@@ -1204,8 +1261,8 @@ target:
 
 ## 14. Troubleshooting
 
-- **Control does not switch on, or the control state says "Not allowed".** The switch's
-  attributes (`blockers_text`, `blocked_by_text`) say what is missing; a repair issue usually says
+- **Control does not switch on, or the control state says "Not allowed".** The attributes of
+  **Control (experimental)** (`blockers_text`, `blocked_by_text`) say what is missing; a repair issue usually says
   what to do.
 - **The control state stays "Handed back".** The plugin stepped aside — another controller, the
   boiler ignoring "heating off", an alarm set to hand back. Fix the cause, then switch control off
@@ -1253,11 +1310,11 @@ target:
 
 ## 16. Removal
 
-1. Optionally switch **Control (experimental)** off first and check the boiler is back under its
-   own control.
+1. Optionally switch control off first (**Control mode**, untick **Control on**) and check the
+   boiler is back under its own control.
 2. Delete the entry: Settings → Devices & services → Smart Boiler for Versatile Thermostat →
    Delete. The plugin hands the boiler back, resumes SmartPI learning it had paused, and deletes
-   its stored state and forecasts. If the hand-back could not be confirmed, a repair issue stays
+   its stored state, its journal and its forecasts. If the hand-back could not be confirmed, a repair issue stays
    after removal: hand the boiler back by hand.
 3. Remove it in HACS (or delete its folder) and restart Home Assistant.
 4. To return to VT's own central boiler, tick it again in VT's central configuration.

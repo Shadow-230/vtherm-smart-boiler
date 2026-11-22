@@ -614,13 +614,13 @@ async def test_an_allow_listed_alarm_active_at_switch_on_blocks_control_at_once(
     state = rig.state("sensor", "control_state")
     assert state.state == "handed_back"
     assert state.attributes["latched_by"] == []
-    switch = rig.state("switch", "control")
+    switch = rig.state("binary_sensor", "control")
     assert switch.attributes["blocked_by"] == ["boiler_link_lost"]
     assert alarm_state(rig, "boiler_link_lost") == "on"
     rig.flow = 35.0
     await rig.advance(80)
     assert rig.gateway.setpoints()[-1] == EXPECTED
-    assert rig.state("switch", "control").attributes["blocked_by"] == []
+    assert rig.state("binary_sensor", "control").attributes["blocked_by"] == []
 
 
 # --- T-21 (P-22): hot-water draws with the named heating echo ----------------------------------

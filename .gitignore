@@ -11,6 +11,11 @@ devenv/ssh/
 .venv/
 .tmp/
 vendor/
+# A worktree may link these to the main checkout's: a link is a file, not a folder.
+/.venv
+/vendor
+# The Boiler page's packages (frontend/, plan-0.2-i10.md).
+frontend/node_modules/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -21,5 +26,6 @@ __pycache__/
 coverage.xml
 htmlcov/
 
-# Claude Code local settings
+# Claude Code local settings, and this machine's own instructions for Claude (CLAUDE.local.md)
 .claude/
+CLAUDE.local.md

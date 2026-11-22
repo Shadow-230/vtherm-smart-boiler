@@ -54,7 +54,9 @@ Details: [`docs/en/specification/scope.md`, §2](../specification/scope.md#2-why
 custom_components/vtherm_smart_boiler/   the integration (HA side)
 ├── core/                                 pure logic, no HA imports
 ├── transport/                            reading the boiler's entities, and the writers
-└── translations/                         en.json (the source) and other languages
+├── translations/                         en.json (the source) and other languages
+└── frontend/                             the Boiler page and its cards as built, licenses, texts
+frontend/                                 the Boiler page's source (TypeScript, Lit, Vite)
 tests/                                    tests: core/, integration/, sim/, tools/, and the rest
 sim/                                      the physics simulator and its test-only HA components
 tools/                                    recorder history importer for offline analysis
@@ -75,6 +77,59 @@ docs/                                     the documentation, one folder per lang
   stand-in `opentherm_gw`, both for tests only.
 - `tools/import_history.py` turns a copy of an HA recorder database into the core's history,
   so the monitor's analysis can be checked on recorded data.
+- The Boiler page ([`plan-0.2-i10.md`](../development/plans/plan-0.2-i10.md)):
+  `frontend/` is its source; `npm run build` there writes the module the plugin serves into
+  `custom_components/vtherm_smart_boiler/frontend/`, with the licenses of the packages bundled
+  into it. Those files are committed, so HACS installs them; CI builds them again and fails where
+  they differ. The page's texts live there too (`frontend/translations/`, English the source):
+  the page reads them, and `panel.py` takes the sidebar title from them. What the plugin's
+  entities already say — the alarms' and the signals' names, the verdict's reasons, where a
+  building value comes from — the page takes from the plugin's own translations
+  (`translations/`), which Home Assistant hands it in the user's language
+  (`hass.loadBackendTranslation("entity", …)`), so each is written once. `panel.py` serves the
+  files and puts the page in the sidebar through Home Assistant's `panel_custom`; the switch
+  "Page in the sidebar" takes it away and puts it back. The page stays through a reload — taken
+  away, it would throw a user on it off with an error; the start registers it again in one step
+  — and goes with the entry disabled or removed, or that switch disabled (J4's F17). While the
+  entry runs, `panel.py` also
+  has Home Assistant load the same module on every page (`frontend.add_extra_js_url`, taken
+  back at unload, an older address replaced after an update), so the overview's parts are in the
+  card picker as four cards — status and tiles, schematic and rooms, the curve, the last 24 h —
+  each the page's own part (`frontend/src/cards.ts`), with no settings: each finds the running
+  entry through `vtherm_smart_boiler/installation`. Without Home Assistant's frontend running
+  nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
+  `websocket_api.py` holds what the page reads, five read-only WebSocket commands for any
+  signed-in user, each answering from the running entry (else the error `not_running`):
+  `vtherm_smart_boiler/installation` — the boiler, the circuits with their zones and emitters,
+  the picked entity of every signal, the plugin's entities by key and the curve's settings;
+  `vtherm_smart_boiler/curve` — the curve's points for the settings in use or for draft values,
+  nothing saved, from `core/curve_view.py` (the curve at the room temperature in use, then the
+  limits, as control decides it before the comfort correction, a circuit's need and the ramp),
+  with the settings' own checks by their translation keys; `vtherm_smart_boiler/days` — the
+  daily summaries in their stored form, with the last 12 weeks' gas per degree-day reckoned by
+  `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule),
+  the energy signature fitted by `core/signature.py` — each day's heating gas per 24 h against
+  its mean outdoor temperature, the days only watched and the days under control apart, each
+  group's line through its heating days (colder than the heating threshold in use, with heating
+  gas) by the building fit's rules (`core/building.py`: days, outdoor spread, more gas on colder
+  days, R²), or why there is none, and the two compared in the middle of the temperatures both
+  cover — and the gas meter's unit (none without a meter: the gas is then estimated in the unit
+  of the boiler's gas figures); each day kept since I10.7 holds its heating starts hour by hour
+  from its start (`hourly_starts`, 23 or 25 hours at a clock change), which the page places at
+  their clock hours; days kept before have none and still read;
+  `vtherm_smart_boiler/burns` — the burns of the monitor's
+  last analysis as it classified them (heating, hot water, unknown), so the page draws the
+  monitor's own; `vtherm_smart_boiler/journal` — the journal (see
+  [Persistent state](#6-persistent-state)), from a moment on where one is given; and one write,
+  for an administrator only:
+  `vtherm_smart_boiler/curve/save` saves the curve's design point and, at the advanced level, its
+  offset **through the plugin's own options flow** — its "Heating curve" form filled with the
+  stored values and the changes, then "Save and finish" — so every check and the save with its
+  reload are the settings' own; a refusal comes back by its field and translation key, and a save
+  the settings would stop for (a confirmation, another section) is not made. Their schemas use
+  `probatio`, as Home Assistant's own commands do since 2026.10. The tab "Status and alarms"
+  forgets a measured building value with the plugin's own buttons (`button.press`), offered to an
+  administrator only, after confirming.
 
 ## 3. Component responsibilities
 
@@ -243,6 +298,23 @@ store, which holds the monitor's history and day summaries.
   damaged or of another shape) and the options hold a control section, a hand-back counts as
   owed and the boiler as held, so the plugin hands back to be safe.
 
+**The journal** (`journal.py`, its rules in `core/journal.py`) has a store of its own too,
+`<domain>.<entry_id>.journal`, so the entry's main store and its version stay as they are. It
+keeps what the plugin decided and why, for the Boiler page: the plugin's starts and stops,
+control taking the boiler and handing it back, the heat call on and off, the water setpoint
+written — its first value, then each change of at least 1 K from the value last journaled — a
+circuit's need holding the water, an alarm raised (or its level raised) and cleared, and each
+settings save, from the page (naming what it changed) or from the settings (naming the sections
+that changed); each with the reasons control gave. It only watches — it listens to control's
+state and the monitor's updates and changes nothing; a failure in it is logged once. The first
+look after a start journals control taking the boiler again — a restart's or a reload's
+takeover, with the heat call, the water and a circuit's need — and the stop journals the stop's
+own hand-back, made by control just before, unless it is still owed (J4's F18); the alarms
+already raised are the start's baseline; an alarm that cannot be judged stays as it was. Kept 14 days and 2,000 entries at most, the oldest dropped
+first (provisional, K4); written a minute after a change, at once when the entry unloads, and by
+Home Assistant at its stop; a store that cannot be read starts an empty journal. It goes with
+the entry's other stores when the entry is removed.
+
 ## 7. Testing
 
 Three layers ([`docs/en/development/plan.md`, "Test environment"](../development/plan.md#test-environment)):
@@ -270,6 +342,13 @@ scripts/env.sh ruff check .
 scripts/env.sh ruff format --check .
 scripts/env.sh mypy
 ```
+
+The Boiler page, in `frontend/`: `../scripts/env.sh npm test` and `../scripts/env.sh npm run build`
+(types checked first); commit the built files. `../scripts/env.sh npm run screenshots` draws the
+built page on sample data (`frontend/preview/index.html`) in a headless Chromium — light and
+dark, a desktop and a phone, an administrator and a user who is not — into `.tmp/screenshots/`,
+and fails on any error in the page; `scripts/bootstrap_browser.sh` puts that Chromium, and the
+system libraries it needs, into `.tools/`.
 
 ## 8. Water data for zone algorithms
 

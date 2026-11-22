@@ -234,7 +234,7 @@ async def test_the_restored_wish_is_stored_before_any_write(
     rig.flow = 35.0
     rig.live()
     await crash_and_start(rig, hass_storage, left)
-    assert rig.state("switch", "control").state == "on"
+    assert rig.state("binary_sensor", "control").state == "on"
     if held_by == "blocker":
         return
     await rig.advance(10)
@@ -243,18 +243,18 @@ async def test_the_restored_wish_is_stored_before_any_write(
 
 
 @pytest.mark.parametrize("restored", ["on", "off", None], ids=["on", "off", "nothing_restored"])
-async def test_without_a_stored_wish_the_restored_switch_is_stored_at_once(
+async def test_without_a_stored_wish_control_is_off_and_stored_at_once(
     rig: Rig, hass_storage: dict[str, Any], restored: str | None
 ) -> None:
-    """PB-02's negative, missing data: no wish stored (the first start of 0.2.2) — the switch's
-    own restored state decides once and is in the control store at once, though a blocker keeps
-    control from writing; with no restored state either, control is off, and so is the store."""
+    """PB-02's negative, missing data: no wish stored — control is off, whatever an old control
+    switch's restored state says (I11.3: the setup gives the stored wish back, none here), and
+    the store says off at once, though a blocker keeps control from writing."""
     if restored is not None:
         mock_restore_cache(rig.hass, [State(SWITCH, restored)])
     vt_central_unknown(rig)
     await start_with_stored(rig, hass_storage, {}, "0.2.2")
-    on = restored == "on"
-    assert rig.state("switch", "control").state == ("on" if on else "off")
+    on = False
+    assert rig.state("binary_sensor", "control").state == ("on" if on else "off")
     assert stored_control(hass_storage, rig)["enabled"] is on
     await rig.advance(60)
     assert stored_control(hass_storage, rig)["enabled"] is on
@@ -756,7 +756,7 @@ async def test_the_lost_link_issue_is_kept_across_a_restart(rig: Rig, link: str)
     assert found.severity is ir.IssueSeverity.ERROR
     await rig.advance(600)
     assert link_alarm(rig) == "on"
-    assert rig.state("switch", "control").attributes["blocked_by"] == ["boiler_link_lost"]
+    assert rig.state("binary_sensor", "control").attributes["blocked_by"] == ["boiler_link_lost"]
     assert active(rig, LINK_ISSUE)
     rig.flow = 35.0
     await rig.advance(80)
@@ -823,7 +823,7 @@ async def test_the_lost_link_issue_follows_blocked_by(rig: Rig) -> None:
     await rig.advance(320)
     await rig.switch(True)
     await rig.advance(10)
-    assert rig.state("switch", "control").attributes["blocked_by"] == ["boiler_link_lost"]
+    assert rig.state("binary_sensor", "control").attributes["blocked_by"] == ["boiler_link_lost"]
     assert rig.gateway.calls == []
     found = issue(rig, LINK_ISSUE)
     assert found is not None
@@ -872,7 +872,9 @@ async def test_control_does_not_take_the_boiler_while_its_memory_cannot_be_writt
     await start(rig)
     with control_writes_failing(rig) as failed:
         await rig.switch(True)
-        assert rig.state("switch", "control").state == "on"  # not refused: it passes by itself
+        assert (
+            rig.state("binary_sensor", "control").state == "on"
+        )  # not refused: it passes by itself
         assert "control_state_not_saved" in blockers(rig)
         found = issue(rig, STORE_ISSUE)
         assert found is not None

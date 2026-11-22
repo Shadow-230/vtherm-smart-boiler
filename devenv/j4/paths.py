@@ -156,9 +156,9 @@ async def _no_valve(r: Run) -> bool:
 
 async def R2(r: Run):
     """the relay restarts, seen unavailable: the command again at once, counted, no alarm"""
-    await rooms_call(r, True)
-    await r.switch(True)
-    await r.ha.until(lambda: relay_is(r, True), 120, 1)
+    # On for good first, as R9-R17 (J4 of 2026-11-18: switched on during a short VT pulse,
+    # the relay was rightly off again at the restart, with nothing to send).
+    await relay_on_under_control(r)
     await r.ha.wait(PAST_CONFIRM_S)
     t = time.time()
     await r.sim("relay_restart", reported=True)
@@ -171,9 +171,9 @@ async def R2(r: Run):
 
 async def R3(r: Run):
     """the relay restarts unseen, found off while commanded on: the command again"""
-    await rooms_call(r, True)
-    await r.switch(True)
-    await r.ha.until(lambda: relay_is(r, True), 120, 1)
+    # On for good first, as R9-R17 (J4 of 2026-11-18: switched on during a short VT pulse,
+    # the relay was rightly off again at the restart, with nothing to send).
+    await relay_on_under_control(r)
     await r.ha.wait(PAST_CONFIRM_S)
     t = time.time()
     await r.sim("relay_restart", reported=False)
@@ -245,22 +245,24 @@ async def R6(r: Run):
     """VT's activation delay of 120 s on the relay path"""
     d = await options_walk(r, {"control_behaviour": {"activation_delay_s": 120}})
     r.note(f"options {d.get('type')} {d.get('errors')}")
-    await rooms_call(r, False)
-    await r.switch(True)
-    await r.ha.until(lambda: relay_is(r, False), 400, 1)
-    await r.ha.wait(20)
-    await rooms_call(r, True)
-    opened = await r.ha.until(lambda: _any_valve(r), 400, 1)
-    t = time.time()
-    on = await r.ha.until(lambda: relay_is(r, True), 300, 1)
-    waited = None if on is None else round(time.time() - t)
-    r.check(
-        waited is not None and waited >= 115,
-        f"the relay on {waited} s after the first valve opened ({opened and round(opened)} s after the call)",
-    )
-    await r.switch(False)
-    await r.ha.wait(10)
-    await options_walk(r, {"control_behaviour": {"activation_delay_s": 0}})
+    try:
+        await rooms_call(r, False)
+        await r.switch(True)
+        await r.ha.until(lambda: relay_is(r, False), 400, 1)
+        await r.ha.wait(20)
+        await rooms_call(r, True)
+        opened = await r.ha.until(lambda: _any_valve(r), 400, 1)
+        t = time.time()
+        on = await r.ha.until(lambda: relay_is(r, True), 300, 1)
+        waited = None if on is None else round(time.time() - t)
+        r.check(
+            waited is not None and waited >= 115,
+            f"the relay on {waited} s after the first valve opened ({opened and round(opened)} s after the call)",
+        )
+    finally:
+        await r.switch(False)
+        await r.ha.wait(10)
+        await options_walk(r, {"control_behaviour": {"activation_delay_s": 0}})
 
 
 async def _any_valve(r: Run) -> bool:

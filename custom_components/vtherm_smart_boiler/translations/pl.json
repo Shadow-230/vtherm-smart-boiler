@@ -251,7 +251,7 @@
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
-          "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
+          "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu stan „Sterowanie” pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
@@ -495,7 +495,7 @@
       "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
       "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, odczyty zwrotne i typy zapisu, po których ocenia się oddanie, limit czasu urządzenia oraz najniższa temperatura wody nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
-      "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
+      "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie (Tryb sterowania, Sterowanie włączone), żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
       "count_threshold_above_zones": "Więcej niż stref w obiegach — albo, przy liczeniu urządzeń, ich urządzeń: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
@@ -595,13 +595,15 @@
       },
       "mode": {
         "title": "Tryb sterowania",
-        "description": "Co wtyczka robi z kotłem. Pełne sterowanie ustala temperaturę wody i włącza grzanie; wł./wył. tylko włącza grzanie; samo monitorowanie niczego nie zapisuje. Wybór niczego nie włącza: sterowanie ma własny przełącznik, wyłączony, dopóki go nie włączysz.",
+        "description": "Co wtyczka robi z kotłem. Pełne sterowanie ustala temperaturę wody i włącza grzanie; wł./wył. tylko włącza grzanie; samo monitorowanie niczego nie zapisuje. Wybór trybu niczego nie włącza: sterowanie włącza pole „Sterowanie włączone”, widoczne tu, gdy wtyczka działa z ustawionym sterowaniem.",
         "data": {
+          "control_on": "Sterowanie włączone",
           "control_mode": "Tryb sterowania",
           "condensing": "Kocioł kondensacyjny",
           "dhw_priority": "Ciepła woda ma priorytet"
         },
         "data_description": {
+          "control_on": "Włączone: wtyczka steruje kotłem tak, jak ustawiają to pozycje sterowania (eksperymentalne). Wyłączone: od razu oddaje kocioł jego własnemu sterownikowi. Działa po „Zapisz i zakończ”. Gdy coś nie pozwala sterowaniu działać, czeka; stan sterowania mówi dlaczego.",
           "control_mode": "Bez wartości domyślnej: wybierany świadomie. Pokazane są tylko tryby, które umie połączenie.",
           "condensing": "Kocioł kondensacyjny dostaje progi spalin dla kondensacji i jest oceniany po tym, jak często kondensuje. Zła odpowiedź ostrzega za późno albo na darmo i zniekształca werdykt.",
           "dhw_priority": "Włączone (domyślnie): podczas ciepłej wody pokoje nie dostają ciepła — kocioł dwufunkcyjny albo zasobnik na zaworze trójdrogowym. Wyłączone: jedno i drugie naraz. Zła odpowiedź wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć bez ciepła."
@@ -847,7 +849,7 @@
         "data_description": {
           "condensing_return": "Powrót poniżej tej wartości liczy się jako kondensacja, w °C. Domyślnie 55 °C. Za wysoka zawyża udział kondensacji.",
           "short_burn_min": "Palenia krótsze niż ta wartość liczą się jako krótkie, w minutach. Domyślnie 10. Dłuższa czyni więcej paleń krótkimi, a werdykt surowszym.",
-          "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu przełącznik pokazuje „za mało danych”.",
+          "monitoring_days": "Ile dni danych potrzebuje werdykt monitora, od dodania integracji. Domyślnie 7, najmniej. Niczego nie wstrzymuje: sterowanie można włączyć w każdej chwili, także bez werdyktu; do tego czasu stan „Sterowanie” pokazuje „za mało danych”.",
           "flue_gas_warning": "Spaliny powyżej tej wartości dają ostrzeżenie w kotle kondensacyjnym, w °C. Domyślnie 85 °C. Za wysoka ostrzega za późno.",
           "flue_gas_alarm": "Spaliny powyżej tej wartości dają alarm, w °C. Domyślnie 100 °C. Zbyt wysoki próg ostrzega za późno dla plastikowych przewodów spalinowych.",
           "starts_per_hour_limit": "Więcej startów palnika w ciągu jednej godziny niż ta wartość daje alarm. Domyślnie 12. Poniżej tego ponad 6 startów na godzinę przez 3 godziny daje ostrzeżenie: kotły gazowe są projektowane na około 6 cykli na godzinę. Za wysoka ukrywa taktowanie.",
@@ -1001,6 +1003,10 @@
           "save_anyway": "Zaznacz, aby mimo to zapisać zmianę. Bez zaznaczenia (domyślnie) nic nie zostanie zapisane i wrócisz do menu ze swoimi zmianami: możesz je poprawić albo zamknąć okno, żeby je porzucić."
         }
       },
+      "control_blocked": {
+        "title": "Sterowanie nie zostało włączone",
+        "description": "Sterowania nie da się jeszcze włączyć: {first} (innych powodów: {more}, wszystkie są w stanie sterowania). Nic nie zostało zmienione."
+      },
       "control_relay": {
         "title": "Przekaźnik",
         "description": "Jak wtyczka włącza i wyłącza kocioł wł./wył., tak jak kocioł centralny VT; kocioł sam ustala temperaturę wody, więc krzywa i limity wody nie obowiązują. Gdy Home Assistant przestanie działać, przekaźnik zostaje, jak był: przełączysz go ręcznie w jego własnej aplikacji albo stronie. Przekaźnik w zasilaniu kotła odcina też wybieg pompy i ochronę przed mrozem; zaciski termostatu pokojowego mogą mieć napięcie sieciowe.",
@@ -1074,7 +1080,7 @@
       "hand_back_value_effect_missing": "Metoda wartości wymaga skutku: co urządzenie robi z wartością oddania.",
       "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, odczyty zwrotne i typy zapisu, po których ocenia się oddanie, limit czasu urządzenia oraz najniższa temperatura wody nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
-      "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie, żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
+      "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie (Tryb sterowania, Sterowanie włączone), żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
       "count_threshold_above_zones": "Więcej niż stref w obiegach — albo, przy liczeniu urządzeń, ich urządzeń: grzanie nigdy nie zostałoby wezwane.",
       "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
@@ -1824,6 +1830,9 @@
           "curve_room": {
             "name": "Temperatura pokojowa krzywej"
           },
+          "curve_outdoor": {
+            "name": "Temperatura zewnętrzna krzywej"
+          },
           "boiler_called": {
             "name": "Wezwanie do grzania"
           },
@@ -2314,6 +2323,159 @@
       }
     },
     "binary_sensor": {
+      "control": {
+        "name": "Sterowanie (eksperymentalne)",
+        "state_attributes": {
+          "hand_back_effect": {
+            "name": "Po oddaniu sterowania",
+            "state": {
+              "thermostat_takes_over": "Przejmuje termostat",
+              "heating_stops": "Grzanie staje do powrotu sterowania",
+              "device_decides": "Działa własne zabezpieczenie urządzenia",
+              "own_control_resumes": "Przejmuje własne sterowanie kotła",
+              "relay_rests_off": "Przekaźnik zostaje wyłączony: ciepło tylko z termostatu podłączonego do kotła",
+              "relay_rests_on": "Przekaźnik zostaje włączony: kocioł grzeje według własnego ustawienia"
+            }
+          },
+          "frost_protection_by": {
+            "name": "Ochrona przed mrozem przez",
+            "state": {
+              "plugin": "Wtyczka",
+              "thermostat": "Termostat",
+              "boiler": "Własna ochrona kotła, jeśli ją ma",
+              "device": "Własne sterowanie kotła lub urządzenia"
+            }
+          },
+          "outage_effect": {
+            "name": "Gdy Home Assistant nie działa",
+            "state": {
+              "heating_stops": "Grzanie staje po około minucie bez Home Assistanta: bramka porzuca nastawę wtyczki, a kocioł grzeje znowu dopiero po powrocie sterowania"
+            }
+          },
+          "off_by": {
+            "name": "Wyłączanie ogrzewania przez",
+            "state": {
+              "heating_switch": "Przełącznik ogrzewania",
+              "low_setpoint": "Niską nastawę",
+              "relay": "Przekaźnik"
+            }
+          },
+          "wall_thermostat_setpoint": {
+            "name": "Termostat ścienny po oddaniu sterowania (°C)"
+          },
+          "wall_thermostat_warning": {
+            "name": "Ostrzeżenie o termostacie ściennym",
+            "state": {
+              "not_mapped": "Nieznana: przypisz nastawę termostatu ściennego",
+              "unknown": "Termostat ścienny nie podaje nastawy",
+              "low": "Poniżej 15 °C: po oddaniu sterowania dom się wychłodzi"
+            }
+          },
+          "confirmation": {
+            "name": "Potwierdzenie",
+            "state": {
+              "controlled_without_confirmation": "Sterowany bez potwierdzenia",
+              "without_heat_confirmation": "Sterowany bez potwierdzenia, że kocioł grzeje"
+            }
+          },
+          "blocked_by": {
+            "name": "Zablokowane przez",
+            "state": {
+              "boiler_link_lost": "Utracono łączność z kotłem: sterowanie czeka na jej powrót przez pełną minutę"
+            }
+          },
+          "verdict": {
+            "name": "Werdykt",
+            "state": {
+              "worth_it": "Warto włączyć",
+              "not_worth_it": "Nie warto włączać: sterowanie wciąż można włączyć",
+              "not_enough_data": "Za mało danych: sterowanie może ruszyć bez werdyktu"
+            }
+          },
+          "blockers": {
+            "name": "Blokady",
+            "state": {
+              "no_write_path": "Sterowanie nie jest skonfigurowane",
+              "boiler_class_no_control": "Tym połączeniem kotła nie da się sterować",
+              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do połączenia kotła",
+              "no_setpoint_entity": "Nie wybrano encji nastawy",
+              "write_type_not_supported": "Typu zapisu encji nastawy nie można użyć",
+              "no_hand_back": "Nie wybrano sposobu oddania",
+              "timeout_needs_expiring_writes": "Oddanie przez limit czasu wymaga zapisów wygasających",
+              "no_gateway": "Brak ID bramki OpenTherm",
+              "no_mqtt_topic": "Brak prefiksu tematu MQTT lub nazwy węzła",
+              "mqtt_topic_invalid": "Prefiks tematu MQTT lub nazwa węzła ze spacją lub symbolem wieloznacznym (+ lub #)",
+              "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
+              "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
+              "no_topology": "Nie zadeklarowano podłączenia bramki",
+              "curve_not_entered": "Nie wpisano krzywej grzewczej",
+              "one_direct_circuit_only": "Sterować można najwyżej jednym obiegiem zasilanym wprost z kotła i żadnym mieszanym przez kocioł",
+              "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
+              "no_zones": "Brak strefy Versatile Thermostat",
+              "count_threshold_above_zones": "Próg zapotrzebowania przekracza liczbę stref",
+              "off_setpoint_not_below_hard_min": "„Wyłączone” nie jest poniżej najniższej temperatury wody",
+              "hand_back_switch_not_writable": "Typu zapisu przełącznika sterowania zewnętrznego nie można użyć",
+              "hand_back_value_above_max": "Wartość oddania przekracza maksimum",
+              "off_setpoint_near_hand_back_value": "„Wyłączone” jest za blisko wartości oddania",
+              "hand_back_switch_is_heating_switch": "Przełącznik sterowania zewnętrznego pełni też inną rolę",
+              "entity_for_two_signals": "Jedna encja zasila dwa sygnały",
+              "topology_not_for_path": "Podłączenie bramki nie pasuje do ścieżki zapisu",
+              "design_flow_too_low": "Projektowa temperatura zasilania jest za niska",
+              "design_flow_above_hard_max": "Projektowa temperatura zasilania przekracza najwyższą temperaturę wody",
+              "design_outdoor_too_warm": "Temperatura przy najsilniejszym mrozie jest za wysoka",
+              "hard_min_not_below_design_flow": "Najniższa temperatura wody nie jest poniżej projektowej temperatury zasilania",
+              "hard_min_above_max": "Najniższa temperatura wody jest wyższa od maksimum",
+              "no_heating_switch": "Brak przełącznika ogrzewania do użycia przez wtyczkę",
+              "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
+              "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
+              "thermostat_kind_dont_know": "Odpowiedź „Nie wiem”: co jest podłączone do zacisków termostatu bramki",
+              "thermostat_kind_contradicts_topology": "Odpowiedź o zaciskach termostatu nie pasuje do podłączenia bramki",
+              "no_flame_signal": "Brak sygnału płomienia",
+              "no_flow_signal": "Brak sygnału temperatury zasilania",
+              "no_relay_entity": "Nie wybrano przekaźnika",
+              "relay_domain_not_supported": "Przekaźnik nie jest przełącznikiem ani encją termostatu kotła",
+              "relay_in_another_role": "Przekaźnik pełni też inną rolę",
+              "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
+              "ha_starting": "Home Assistant się uruchamia",
+              "vt_central_boiler_active": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant: wtedy wystarczy jedno ponowne uruchomienie Home Assistant",
+              "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
+              "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
+              "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
+              "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
+              "control_error": "Zatrzymane po błędzie wewnętrznym: wyłącz i włącz sterowanie",
+              "monitor_failed": "Monitor wtyczki stale zawodzi",
+              "control_state_not_saved": "Wtyczka nie może zapisać swojej pamięci o kotle",
+              "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
+              "heating_on_ignored": "Kocioł nie przyjął „włącz grzanie”: wyłącz i włącz sterowanie",
+              "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
+              "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
+              "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
+              "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
+              "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
+              "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
+              "entity_used_by_zone": "Strefa już steruje encją nastawy lub przełącznikiem",
+              "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
+              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie",
+              "control_mode_monitor": "Wybrano tylko monitorowanie",
+              "connection_not_for_path": "Ustawione sterowanie nie pasuje do połączenia kotła",
+              "topology_not_for_connection": "Topologia nie pasuje do połączenia kotła",
+              "esphome_start_not_confirmed": "Nie potwierdzono bezpiecznego startu ESP"
+            }
+          },
+          "blockers_text": {
+            "name": "Blokady (tekst)"
+          },
+          "blocked_by_text": {
+            "name": "Zablokowane przez (tekst)"
+          },
+          "allowed_services": {
+            "name": "Usługi, które sterowanie może wywołać"
+          },
+          "experimental": {
+            "name": "Eksperymentalne"
+          }
+        }
+      },
       "boiler_called": {
         "name": "Wezwanie do grzania",
         "state_attributes": {
@@ -2742,158 +2904,8 @@
       }
     },
     "switch": {
-      "control": {
-        "name": "Sterowanie (eksperymentalne)",
-        "state_attributes": {
-          "hand_back_effect": {
-            "name": "Po oddaniu sterowania",
-            "state": {
-              "thermostat_takes_over": "Przejmuje termostat",
-              "heating_stops": "Grzanie staje do powrotu sterowania",
-              "device_decides": "Działa własne zabezpieczenie urządzenia",
-              "own_control_resumes": "Przejmuje własne sterowanie kotła",
-              "relay_rests_off": "Przekaźnik zostaje wyłączony: ciepło tylko z termostatu podłączonego do kotła",
-              "relay_rests_on": "Przekaźnik zostaje włączony: kocioł grzeje według własnego ustawienia"
-            }
-          },
-          "frost_protection_by": {
-            "name": "Ochrona przed mrozem przez",
-            "state": {
-              "plugin": "Wtyczka",
-              "thermostat": "Termostat",
-              "boiler": "Własna ochrona kotła, jeśli ją ma",
-              "device": "Własne sterowanie kotła lub urządzenia"
-            }
-          },
-          "outage_effect": {
-            "name": "Gdy Home Assistant nie działa",
-            "state": {
-              "heating_stops": "Grzanie staje po około minucie bez Home Assistanta: bramka porzuca nastawę wtyczki, a kocioł grzeje znowu dopiero po powrocie sterowania"
-            }
-          },
-          "off_by": {
-            "name": "Wyłączanie ogrzewania przez",
-            "state": {
-              "heating_switch": "Przełącznik ogrzewania",
-              "low_setpoint": "Niską nastawę",
-              "relay": "Przekaźnik"
-            }
-          },
-          "wall_thermostat_setpoint": {
-            "name": "Termostat ścienny po oddaniu sterowania (°C)"
-          },
-          "wall_thermostat_warning": {
-            "name": "Ostrzeżenie o termostacie ściennym",
-            "state": {
-              "not_mapped": "Nieznana: przypisz nastawę termostatu ściennego",
-              "unknown": "Termostat ścienny nie podaje nastawy",
-              "low": "Poniżej 15 °C: po oddaniu sterowania dom się wychłodzi"
-            }
-          },
-          "confirmation": {
-            "name": "Potwierdzenie",
-            "state": {
-              "controlled_without_confirmation": "Sterowany bez potwierdzenia",
-              "without_heat_confirmation": "Sterowany bez potwierdzenia, że kocioł grzeje"
-            }
-          },
-          "blocked_by": {
-            "name": "Zablokowane przez",
-            "state": {
-              "boiler_link_lost": "Utracono łączność z kotłem: sterowanie czeka na jej powrót przez pełną minutę"
-            }
-          },
-          "verdict": {
-            "name": "Werdykt",
-            "state": {
-              "worth_it": "Warto włączyć",
-              "not_worth_it": "Nie warto włączać: sterowanie wciąż można włączyć",
-              "not_enough_data": "Za mało danych: sterowanie może ruszyć bez werdyktu"
-            }
-          },
-          "blockers": {
-            "name": "Blokady",
-            "state": {
-              "no_write_path": "Sterowanie nie jest skonfigurowane",
-              "boiler_class_no_control": "Tym połączeniem kotła nie da się sterować",
-              "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do połączenia kotła",
-              "no_setpoint_entity": "Nie wybrano encji nastawy",
-              "write_type_not_supported": "Typu zapisu encji nastawy nie można użyć",
-              "no_hand_back": "Nie wybrano sposobu oddania",
-              "timeout_needs_expiring_writes": "Oddanie przez limit czasu wymaga zapisów wygasających",
-              "no_gateway": "Brak ID bramki OpenTherm",
-              "no_mqtt_topic": "Brak prefiksu tematu MQTT lub nazwy węzła",
-              "mqtt_topic_invalid": "Prefiks tematu MQTT lub nazwa węzła ze spacją lub symbolem wieloznacznym (+ lub #)",
-              "no_confirmed_setpoint": "Nie wybrano odczytu zwrotnego nastawy",
-              "thermostat_setpoint_same_as_read_back": "Własna nastawa termostatu to odczyt zwrotny nastawy",
-              "no_topology": "Nie zadeklarowano podłączenia bramki",
-              "curve_not_entered": "Nie wpisano krzywej grzewczej",
-              "one_direct_circuit_only": "Sterować można najwyżej jednym obiegiem zasilanym wprost z kotła i żadnym mieszanym przez kocioł",
-              "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
-              "no_zones": "Brak strefy Versatile Thermostat",
-              "count_threshold_above_zones": "Próg zapotrzebowania przekracza liczbę stref",
-              "off_setpoint_not_below_hard_min": "„Wyłączone” nie jest poniżej najniższej temperatury wody",
-              "hand_back_switch_not_writable": "Typu zapisu przełącznika sterowania zewnętrznego nie można użyć",
-              "hand_back_value_above_max": "Wartość oddania przekracza maksimum",
-              "off_setpoint_near_hand_back_value": "„Wyłączone” jest za blisko wartości oddania",
-              "hand_back_switch_is_heating_switch": "Przełącznik sterowania zewnętrznego pełni też inną rolę",
-              "entity_for_two_signals": "Jedna encja zasila dwa sygnały",
-              "topology_not_for_path": "Podłączenie bramki nie pasuje do ścieżki zapisu",
-              "design_flow_too_low": "Projektowa temperatura zasilania jest za niska",
-              "design_flow_above_hard_max": "Projektowa temperatura zasilania przekracza najwyższą temperaturę wody",
-              "design_outdoor_too_warm": "Temperatura przy najsilniejszym mrozie jest za wysoka",
-              "hard_min_not_below_design_flow": "Najniższa temperatura wody nie jest poniżej projektowej temperatury zasilania",
-              "hard_min_above_max": "Najniższa temperatura wody jest wyższa od maksimum",
-              "no_heating_switch": "Brak przełącznika ogrzewania do użycia przez wtyczkę",
-              "thermostat_on_off": "Styk wł./wył. na zaciskach termostatu bramki",
-              "thermostat_kind_unknown": "Brak odpowiedzi: co jest podłączone do zacisków termostatu bramki",
-              "thermostat_kind_dont_know": "Odpowiedź „Nie wiem”: co jest podłączone do zacisków termostatu bramki",
-              "thermostat_kind_contradicts_topology": "Odpowiedź o zaciskach termostatu nie pasuje do podłączenia bramki",
-              "no_flame_signal": "Brak sygnału płomienia",
-              "no_flow_signal": "Brak sygnału temperatury zasilania",
-              "no_relay_entity": "Nie wybrano przekaźnika",
-              "relay_domain_not_supported": "Przekaźnik nie jest przełącznikiem ani encją termostatu kotła",
-              "relay_in_another_role": "Przekaźnik pełni też inną rolę",
-              "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
-              "ha_starting": "Home Assistant się uruchamia",
-              "vt_central_boiler_active": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant: wtedy wystarczy jedno ponowne uruchomienie Home Assistant",
-              "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
-              "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
-              "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
-              "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
-              "control_error": "Zatrzymane po błędzie wewnętrznym: wyłącz i włącz sterowanie",
-              "monitor_failed": "Monitor wtyczki stale zawodzi",
-              "control_state_not_saved": "Wtyczka nie może zapisać swojej pamięci o kotle",
-              "heating_off_ignored": "Kocioł nie przyjął „wyłącz grzanie”: wyłącz i włącz sterowanie",
-              "heating_on_ignored": "Kocioł nie przyjął „włącz grzanie”: wyłącz i włącz sterowanie",
-              "relay_off_not_taken": "Przekaźnik przestał przyjmować „wyłącz”: wyłącz i włącz sterowanie",
-              "gateway_not_set_up": "Integracja bramki jest usunięta lub wyłączona",
-              "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
-              "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
-              "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
-              "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
-              "entity_used_by_zone": "Strefa już steruje encją nastawy lub przełącznikiem",
-              "relay_of_boiler_interface": "Przekaźnik należy do integracji kotła lub VT",
-              "relay_climate_modes": "Encji termostatu nie da się ustawić na grzanie i na wyłączenie",
-              "control_mode_monitor": "Wybrano tylko monitorowanie",
-              "connection_not_for_path": "Ustawione sterowanie nie pasuje do połączenia kotła",
-              "topology_not_for_connection": "Topologia nie pasuje do połączenia kotła",
-              "esphome_start_not_confirmed": "Nie potwierdzono bezpiecznego startu ESP"
-            }
-          },
-          "blockers_text": {
-            "name": "Blokady (tekst)"
-          },
-          "blocked_by_text": {
-            "name": "Zablokowane przez (tekst)"
-          },
-          "allowed_services": {
-            "name": "Usługi, które sterowanie może wywołać"
-          },
-          "experimental": {
-            "name": "Eksperymentalne"
-          }
-        }
+      "sidebar_page": {
+        "name": "Strona w menu bocznym"
       }
     },
     "button": {
@@ -3112,6 +3124,12 @@
     },
     "blocked_esphome_start_not_confirmed": {
       "message": "Nie potwierdzono, że ESP startuje na bezpiecznych wartościach z krótkim reboot_timeout API: po zatrzymaniu Home Assistant trzymałby ostatnią nastawę i grzanie do 15 minut. Zaznacz to w Urządzeniu sterującym, gdy ESP jest tak ustawiony. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "control_in_settings": {
+      "message": "Sterowanie przełącza administrator w ustawieniach wtyczki: Tryb sterowania, Sterowanie włączone. Ta akcja jest dla automatyzacji."
+    },
+    "control_not_running": {
+      "message": "Wtyczka nie steruje teraz kotłem: sterowanie nie jest ustawione albo wtyczka nie działa."
     }
   },
   "issues": {
@@ -3199,7 +3217,7 @@
     },
     "control_stopped_heating": {
       "title": "Sterowanie stanęło, a kocioł nie grzeje",
-      "description": "Sterowanie oddało kocioł, bo coś je teraz blokuje (przełącznik sterowania pokazuje co). W tej instalacji oddanie zatrzymuje grzanie: kocioł znów grzeje, gdy sterowanie wróci po zniknięciu blokady albo gdy przywrócisz mu własne sterowanie. Ochrona przed mrozem zależy teraz od własnej ochrony kotła, jeśli ją ma."
+      "description": "Sterowanie oddało kocioł, bo coś je teraz blokuje (stan „Sterowanie” pokazuje co). W tej instalacji oddanie zatrzymuje grzanie: kocioł znów grzeje, gdy sterowanie wróci po zniknięciu blokady albo gdy przywrócisz mu własne sterowanie. Ochrona przed mrozem zależy teraz od własnej ochrony kotła, jeśli ją ma."
     },
     "control_latched": {
       "title": "Sterowanie ustąpiło: do kotła pisze inny sterownik",
@@ -3427,15 +3445,27 @@
     },
     "curve_too_low": {
       "title": "Krzywa grzewcza wygląda na za niską dla: {zones}",
-      "description": "Od trzech godzin korekta komfortu stoi na limicie {limit} K, a większość pokoi — {zones} — dalej nie dochodzi do nastaw przy całkiem otwartych zaworach. Możliwe przyczyny, od najbardziej prawdopodobnej: za niska krzywa grzewcza (jej projektowe zasilanie, w Krzywej grzewczej); za mały grzejnik w pokoju; pokój tracący ciepło (okno, nieszczelności). Korekta stoi na limicie i dalej nie rośnie."
+      "description": "Od trzech godzin korekta komfortu jest tak wysoko, jak może (na limicie {limit} K albo po 3 K, o które może wzrosnąć w ciągu doby), a większość pokoi — {zones} — dalej nie dochodzi do nastaw przy całkiem otwartych zaworach. Możliwe przyczyny, od najbardziej prawdopodobnej: za niska krzywa grzewcza (jej projektowe zasilanie, w Krzywej grzewczej); za mały grzejnik w pokoju; pokój tracący ciepło (okno, nieszczelności). Korekta dalej nie rośnie: ani ponad limit, ani o więcej niż 3 K na dobę."
     },
     "room_short_at_limit": {
       "title": "{zones} nie dochodzi do nastawy",
-      "description": "Od trzech godzin korekta komfortu stoi na limicie {limit} K, a {zones} dalej nie dochodzi do nastawy przy całkiem otwartym zaworze, choć inne pokoje dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: za mały grzejnik; pokój traci ciepło (okno, zawór, nieszczelności); za niska dla niego krzywa grzewcza. Korekta stoi na limicie i dalej nie rośnie."
+      "description": "Od trzech godzin korekta komfortu jest tak wysoko, jak może (na limicie {limit} K albo po 3 K, o które może wzrosnąć w ciągu doby), a {zones} dalej nie dochodzi do nastawy przy całkiem otwartym zaworze, choć inne pokoje dochodzą. Możliwe przyczyny, od najbardziej prawdopodobnej: za mały grzejnik; pokój traci ciepło (okno, zawór, nieszczelności); za niska dla niego krzywa grzewcza. Korekta dalej nie rośnie: ani ponad limit, ani o więcej niż 3 K na dobę."
     },
     "boiler_power_limit": {
       "title": "Kocioł jest na granicy mocy dla: {zones}",
       "description": "Od trzech godzin palnik pracuje bez przerwy, {zones} nie dochodzi do nastawy, a woda jest ponad kelwin poniżej nastawy przy modulacji 90 % lub więcej: kocioł nie da więcej. Sprawdź, czy jest ustawiony na pełną moc grzewczą i czy dom nie traci więcej ciepła, niż kocioł przewidziano. Sterowanie niczego nie zmienia."
+    }
+  },
+  "services": {
+    "set_control": {
+      "name": "Ustaw sterowanie",
+      "description": "Włącza albo wyłącza sterowanie, dla automatyzacji. Osoba przełącza sterowanie w ustawieniach wtyczki (Tryb sterowania, Sterowanie włączone); wywołana przez osobę, ta akcja jest odrzucana.",
+      "fields": {
+        "enabled": {
+          "name": "Włączone",
+          "description": "Włączone: sterowanie włączone, odrzucone, gdy blokuje je coś, co wymaga twojej uwagi. Wyłączone: kocioł zostaje od razu oddany."
+        }
+      }
     }
   }
 }
