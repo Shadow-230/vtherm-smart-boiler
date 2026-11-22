@@ -3451,6 +3451,34 @@ async def test_a_setup_that_fails_after_its_platforms_keeps_the_registry(
     assert not back.attributes.get("restored")
 
 
+async def test_the_control_switch_of_an_earlier_version_goes_from_the_registry(
+    rig: Rig, hass_ws_client: Any
+) -> None:
+    """I11.3 (the test session's review of 2026-11-22): an entry updated from a version with the
+    Control switch has its old registry entry — the switch domain, the same unique ID as the new
+    binary sensor's. It goes as stale: the registry tells entities apart by domain, so a stale
+    one is judged by its domain and unique ID together; the page finds the binary sensor."""
+    from .test_websocket import connect
+
+    entry = add_entry(rig, options(rig.zones))
+    registry = er.async_get(rig.hass)
+    old = registry.async_get_or_create(
+        "switch",
+        DOMAIN,
+        f"{entry.entry_id}_control",
+        config_entry=entry,
+        suggested_object_id="boiler_control_experimental",
+    )
+    await set_up(rig, entry)
+    assert registry.async_get(old.entity_id) is None
+    state = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_control")
+    assert state is not None
+    assert "blockers" in rig.state("binary_sensor", "control").attributes
+    client = await connect(rig.hass, hass_ws_client)
+    view = (await client.ask("installation"))["result"]
+    assert view["entities"]["control"] == state
+
+
 async def test_a_platform_that_fails_its_setup_keeps_its_registry_entries(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

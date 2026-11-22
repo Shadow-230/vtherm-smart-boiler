@@ -135,7 +135,9 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    włączysz, wtyczka nic nie zapisuje do kotła. Automatyzacja przełącza sterowanie akcją
    `vtherm_smart_boiler.set_control` (`enabled`: włączone albo wyłączone), z tymi samymi
    sprawdzeniami; wywołana przez osobę — z pulpitu, uruchomionego przez nią skryptu, narzędzi
-   deweloperskich — jest odrzucana. Encja **Sterowanie (eksperymentalne)** na urządzeniu
+   deweloperskich — jest odrzucana. Automatyzacja uruchomiona ręcznie („Uruchom”) też nie niesie
+   osoby, więc każdy, kto może ją uruchomić, przełącza nią sterowanie: dawaj taką automatyzację
+   tylko tym, którzy mogą przełączać sterowanie. Encja **Sterowanie (eksperymentalne)** na urządzeniu
    integracji pokazuje, czy sterowanie jest włączone; niczego nie przełącza.
 
 **Późniejsze zmiany ustawień.** Opcje integracji otwierają to samo menu, z **Zapisz i zakończ**

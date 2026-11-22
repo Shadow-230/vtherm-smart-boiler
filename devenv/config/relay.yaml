@@ -37,3 +37,10 @@ boiler_sim:
   gateway_id: sim
   relay:
     start_up: "off"
+
+# J4: this configuration's role, read by the runner before every scenario and by base.py
+# (devenv/j4/run.py ROLES): a scenario runs only on an instance of its role.
+input_text:
+  j4_role:
+    name: J4 role
+    initial: relay

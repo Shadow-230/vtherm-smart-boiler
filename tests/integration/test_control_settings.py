@@ -273,3 +273,39 @@ async def test_the_action_goes_with_the_entry(hass: HomeAssistant) -> None:
     assert raised.value.translation_key == "control_not_running"
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not hass.services.has_service("vtherm_smart_boiler", "set_control")
+
+
+def _gateway_configuration() -> dict[str, Any]:
+    """J4's gateway configuration (devenv/config/configuration.yaml)."""
+    from pathlib import Path
+
+    import yaml
+
+    path = Path(__file__).resolve().parents[2] / "devenv/config/configuration.yaml"
+    return dict(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+async def test_the_j4_automation_switches_control(rig: Rig) -> None:
+    """J4's I2 (the test session's review of 2026-11-22, point 7): the test configuration's
+    automation "J4 set control" (devenv/config/configuration.yaml) switches control through the
+    action — an automation's call, with no user — on and off with the safe hand-back."""
+    config = _gateway_configuration()
+    await started(rig)
+    boolean = {"j4_set_control": config["input_boolean"]["j4_set_control"]}
+    assert await async_setup_component(rig.hass, "input_boolean", {"input_boolean": boolean})
+    assert await async_setup_component(rig.hass, "automation", {"automation": config["automation"]})
+    await rig.hass.async_block_till_done()
+
+    async def flip(service: str) -> None:
+        await rig.hass.services.async_call(
+            "input_boolean", service, {"entity_id": "input_boolean.j4_set_control"}, blocking=True
+        )
+        await rig.hass.async_block_till_done(wait_background_tasks=True)
+
+    await flip("turn_on")
+    assert control_on(rig)
+    await rig.advance(60)
+    assert ("setpoint", EXPECTED) in rig.gateway.calls
+    await flip("turn_off")
+    assert not control_on(rig)
+    assert rig.gateway.calls[-3:] == HAND_BACK

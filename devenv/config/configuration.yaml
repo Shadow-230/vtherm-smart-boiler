@@ -24,6 +24,32 @@ logger:
 input_boolean:
   j4_circuit_asks:
     name: J4 circuit asks for heat
+  # J4's scenario I2 (plan-0.2-i11.md, I11.2): the switch through which the automation below
+  # switches control, the only caller the action vtherm_smart_boiler.set_control takes.
+  j4_set_control:
+    name: J4 set control
+
+automation:
+  - id: j4_set_control
+    alias: J4 set control
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.j4_set_control
+        to:
+          - "on"
+          - "off"
+    actions:
+      - action: vtherm_smart_boiler.set_control
+        data:
+          enabled: "{{ trigger.to_state.state == 'on' }}"
+
+# J4: this configuration's role, read by the runner before every scenario and by base.py
+# (devenv/j4/run.py ROLES): a scenario runs only on an instance of its role.
+input_text:
+  j4_role:
+    name: J4 role
+    initial: gateway
 
 # J4's test-only fault injector (sim/custom_components/j4_faults): makes the plugin's own monitor
 # fail, starts the plugin on the stores a crash or another version leaves, or removes answers

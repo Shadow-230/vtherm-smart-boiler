@@ -188,7 +188,15 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
    instancji kryterium startów — i czyta jeszcze raz po 10 s, zanim odmówi, bo Home Assistant
    zapisuje zmianę na dysk kilka sekund później; scenariusz odrzucony albo taki, którego warunek
    wstępny nie jest spełniony (Q5, gdy SmartPI dopiero się uczy), ma wynik NOT RUN z powodem. B6
-   restartuje katalog własnej instancji (`TEST_HA_DIR_N`).
+   restartuje katalog własnej instancji (`TEST_HA_DIR_N`). Każda konfiguracja podaje swoją rolę w
+   `input_text.j4_role` (gateway, relay, entity, standalone, starts): scenariusz działa tylko na
+   instancji swojej roli, a `base.py` ustawia tylko stan bazowy własnej roli. Sterowanie
+   przełącza się przez „Tryb sterowania”, „Sterowanie włączone”, ściśle: gdy wpis jeszcze nie
+   działa, zapis jest ponawiany przez 30 s, a odmowa kończy scenariusz porażką, chyba że ją
+   przewiduje (G2, G3, R8, N3, N4, K5). B1, B2, B3 i B6 czytają też dziennik wtyczki
+   (`vtherm_smart_boiler/journal`): oddanie kotła przed „zatrzymano” i ponowne przejęcie po
+   „uruchomiono” — po zabiciu bez oddania. E4 i Q1 sprawdzają, że granica korekty komfortu jest
+   zapisana dokładnie (L12).
    - Na poziomie zaawansowanym sygnał „Nastawa termostatu przewodowego”
      `sensor.otgw_sim_thermostat_room_setpoint` (własne ustawienie termostatu ściennego, 21 °C w godzinach 06:00–22:00
      i 17 °C poza tym czasem, UTC).
@@ -228,6 +236,10 @@ podmienione lub usunięte tak, jak zostawia je awaria, utrata pliku albo inna we
 tylko do testowego Home Assistanta i nigdy nie jest częścią wydania wtyczki. `configuration.yaml`
 instancji 1 zawiera też `input_boolean.j4_circuit_asks`, przełącznik, przez który obieg sterowany przez
 inną automatykę z E7 woła o ciepło; E7 dodaje ten obieg przez „Dodaj obieg” i usuwa go na końcu.
+Jej `input_boolean.j4_set_control` steruje automatyzacją „J4 set control”, która wywołuje
+`vtherm_smart_boiler.set_control`: I2 przełącza przez nią sterowanie i sprawdza, że ta sama akcja
+wywołana tokenem runnera — osoby — jest odrzucana; I1 zaznacza „Sterowanie włączone” razem z
+inną zmianą w „Trybie sterowania” (I11).
 Ich wyniki biorą się
 ze stanów encji i liczników poleceń symulatora (atrybuty
 `sensor.boiler_sim_persistent_writes`: polecenia na ścieżkę, `ch_writes`, `relay_commands`,

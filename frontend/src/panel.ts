@@ -3,6 +3,7 @@
 // what they say. The schematic, the curve and the last 24 h come in the next steps.
 import { LitElement, css, html, nothing } from "lit";
 import { localize } from "./localize";
+import { askUntilRunning } from "./refetch";
 import "./analyses-view";
 import "./burner-view";
 import "./cards";
@@ -102,9 +103,24 @@ export class SmartBoilerPanel extends LitElement {
   }
 
   /** After a save from the page the plugin reloads its settings: read the installation again
-   * once it has (a few seconds), keeping the page as it is meanwhile. */
+   * once it runs again — every 2 s for 30 s at most, as a reload can take longer than a fixed
+   * wait — keeping the page as it is meanwhile. */
   private refetchSoon(): void {
-    window.setTimeout(() => void this.fetchInstallation(false), 3000);
+    const hass = this.hass;
+    if (!hass) return;
+    void askUntilRunning(
+      () => hass.callWS<Installation>({ type: "vtherm_smart_boiler/installation" }),
+      { everyMs: 2000, withinMs: 30000, wait: (ms) => new Promise((done) => window.setTimeout(done, ms)) },
+    ).then((asked) => {
+      if (asked.kind === "ready") {
+        this.load = { kind: "ready", installation: asked.value };
+      } else if (asked.kind === "not_running") {
+        this.load = { kind: "not_running" };
+      } else {
+        const message = (asked.error as { message?: unknown })?.message;
+        this.load = { kind: "error", message: typeof message === "string" ? message : String(asked.error) };
+      }
+    });
   }
 
   private body() {

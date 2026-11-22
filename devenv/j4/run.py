@@ -21,7 +21,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 import contextlib
 from itertools import pairwise
 
-from lib import CONTAINER, HA, ROOT, SIGNALS, ssh
+from lib import CONTAINER, HA, ROLE_ENTITY, ROOT, SIGNALS, ssh
 from options import (
     BASE_GATEWAY,
     CIRCUIT_ASKS,
@@ -30,10 +30,13 @@ from options import (
     GATEWAY_ITEMS,
     REMOVE_CIRCUIT,
 )
-from walk import save_options
+from walk import CONTROL_BLOCKED, save_options
 
-# I11.1: the tick in "Control mode" that switches control.
+# I11.1: the tick in "Control mode" that switches control; asked again while the entry is not
+# running yet, every SWITCH_WAIT_S for SWITCH_TRIES saves.
 CONTROL_ON = "control_on"
+SWITCH_TRIES = 6
+SWITCH_WAIT_S = 5.0
 
 RESULTS = pathlib.Path(
     os.environ.get("J4_RESULTS")
@@ -98,15 +101,38 @@ class Run:
     async def sim(self, service: str, **data):
         return await self.ha.call("boiler_sim", service, **data)
 
-    async def switch(self, on: bool):
+    async def switch(self, on: bool, refusal_ok: bool = False):
         """Control switched as an administrator does it (I11.5, plan-0.2-i11.md): "Control
         mode", "Control on", saved — nothing else switches it but an automation's action, which
-        the runner, a person's token, may not call. A refusal comes back with its ``errors`` and
-        the blocker's text in ``description_placeholders``; nothing is saved then."""
-        entry = await self.ha.entry("vtherm_smart_boiler")
-        return await save_options(
-            self.ha.rest, entry["entry_id"], {CONTROL_ON: on}, ("mode",), strict=False
-        )
+        the runner, a person's token, may not call. The tick must be asked: while the entry is
+        not running (just after a reload) it is not shown, and the save is tried again for up to
+        30 s rather than passing silently (the test session's review of 2026-11-22). A refusal —
+        the window "Control not switched on" — comes back with its ``errors`` and the blocker's
+        text where the scenario expects one (``refusal_ok``), and raises otherwise."""
+        d: dict = {}
+        for _attempt in range(SWITCH_TRIES):
+            entry = await self.ha.entry("vtherm_smart_boiler")
+            d = await save_options(
+                self.ha.rest,
+                entry["entry_id"],
+                {CONTROL_ON: on},
+                ("mode",),
+                required=[CONTROL_ON],
+                strict=False,
+            )
+            if d.get("type") != "not_asked":
+                break
+            await self.ha.wait(SWITCH_WAIT_S)
+        errors = d.get("errors")
+        if errors and not (refusal_ok and errors.get(CONTROL_ON) == CONTROL_BLOCKED):
+            raise RuntimeError(f"control not switched {'on' if on else 'off'}: {errors}")
+        return d
+
+    async def journal(self, since: float) -> list[str]:
+        """The plugin's journal since ``since`` (seconds, the runner's clock, a few seconds of
+        slack for the instance's), by kind — what the Boiler page's Journal shows (I10.6)."""
+        d = await self.ha.ws_cmd({"type": "vtherm_smart_boiler/journal", "since": since - 5})
+        return [entry["kind"] for entry in (d or {}).get("entries", [])]
 
     async def override(self) -> bool:
         return bool(await self.attr("sensor.boiler_sim_persistent_writes", "override_active"))
@@ -222,6 +248,11 @@ async def B1(r: Run):
     r.note(f"commands: {c}")
     r.check(("setpoint", 0) in c, "the reload handed back (setpoint 0 sent)")
     r.check(await r.override() and await r.s("control") == "on", "control resumed after the reload")
+    kinds = await r.journal(t)
+    r.check(
+        in_order(kinds, ["handed_back", "stopped", "started", "took_over"]),
+        f"the journal (F18): {kinds}",
+    )
 
 
 async def B2(r: Run):
@@ -230,21 +261,30 @@ async def B2(r: Run):
     await r.ha.wait(60)
     entry = await r.ha.entry("vtherm_smart_boiler")
     t = time.time()
-    await r.ha.ws_cmd(
-        {"type": "config_entries/disable", "entry_id": entry["entry_id"], "disabled_by": "user"}
-    )
-    await r.ha.wait(15)
-    c = r.cmds(t)
-    r.check(("setpoint", 0) in c[-3:], f"hand-back at unload: {c}")
-    r.check(not await r.override(), "override released")
-    n = len(r.ha.since(t))
-    await r.ha.wait(120)
-    r.check(len(r.ha.since(t)) == n, "no loop left running for 2 min")
-    await r.ha.ws_cmd(
-        {"type": "config_entries/disable", "entry_id": entry["entry_id"], "disabled_by": None}
-    )
+    try:
+        await r.ha.ws_cmd(
+            {"type": "config_entries/disable", "entry_id": entry["entry_id"], "disabled_by": "user"}
+        )
+        await r.ha.wait(15)
+        c = r.cmds(t)
+        r.check(("setpoint", 0) in c[-3:], f"hand-back at unload: {c}")
+        r.check(not await r.override(), "override released")
+        n = len(r.ha.since(t))
+        await r.ha.wait(120)
+        r.check(len(r.ha.since(t)) == n, "no loop left running for 2 min")
+    finally:
+        # Enabled again even after a failure: a disabled entry stops every later scenario (the
+        # test session's review of 2026-11-22).
+        await r.ha.ws_cmd(
+            {"type": "config_entries/disable", "entry_id": entry["entry_id"], "disabled_by": None}
+        )
     await r.ha.wait(60)
     r.ent.update(await r.ha.entities())
+    kinds = await r.journal(t)
+    r.check(
+        in_order(kinds, ["handed_back", "stopped", "started", "took_over"]),
+        f"the journal (F18): {kinds}",
+    )
     r.note(
         f"after enabling: switch {await r.s('control')}, state {await r.s('control_state')}, override {await r.override()}"
     )
@@ -664,7 +704,7 @@ async def _refused(r: Run, label: str, d: dict) -> None:
         r.check(True, f"{label}: refused where it is entered: {d['errors']}")
         return
     t0 = time.time()
-    res = await r.switch(True)
+    res = await r.switch(True, refusal_ok=True)
     await r.ha.wait(60)
     r.check(
         await r.s("control") == "off" and r.cmds(t0) == [],
@@ -1029,6 +1069,25 @@ BASE_READ_WAIT_S = 10.0
 # gateway with a wall thermostat — a scenario on an instance of another role is not run (J4 of
 # 2026-11-18: no scenario's role was checked).
 STANDALONE = frozenset({"S1", "S2"})
+# The configuration's role (devenv/config/*.yaml, input_text.j4_role): a scenario runs only on
+# an instance of its role — the gateway's scenarios not on a relay, an entity path, a stand-alone
+# gateway or a starts instance, and the other way round (the test session's review of
+# 2026-11-22: the base and topology alone let a starts instance pass after base.py gateway).
+
+
+def scenario_roles(sid: str | None) -> set[str]:
+    """The roles an instance may have for the scenario ``sid``; any for none."""
+    if sid is None:
+        return {"gateway", "relay", "entity", "standalone", "starts"}
+    if sid in STANDALONE:
+        return {"standalone"}
+    if sid[:1] == "R" and sid[1:].isdigit():
+        return {"relay"}
+    if sid[:1] in ("N", "U") and sid[1:].isdigit():
+        return {"entity"}
+    if sid == "L1" and os.environ.get("J4_WRITE_PATH") == "entity":
+        return {"entity"}
+    return {"gateway"}
 
 
 def topology_drift(control: dict[str, object], sid: str | None) -> list[str]:
@@ -1045,6 +1104,14 @@ async def base_problem(r: Run, sid: str | None = None) -> str | None:
     else why a scenario must not run on it — its base changed, its role is another, or it could
     not be read: a scenario never runs unchecked (J4 of 2026-10-14). A drift is read again
     before it counts: the last save may not be on disk yet."""
+    role = (await r.ha.state(ROLE_ENTITY) or {}).get("state")
+    if role is None:
+        return (
+            f"no role marker ({ROLE_ENTITY}): deploy the instance with this commit's "
+            "configuration first"
+        )
+    if role not in scenario_roles(sid):
+        return f"the instance's role is {role!r}, the scenario's {sorted(scenario_roles(sid))}"
     for attempt in range(BASE_READ_TRIES):
         try:
             control = await asyncio.to_thread(stored_control)
@@ -1094,6 +1161,32 @@ async def diagnosis(r: Run, since: dt.datetime) -> list[str]:
     except Exception as err:
         out.append(f"state: not read ({err})")
     return out
+
+
+def in_order(kinds: list[str], wanted: list[str]) -> bool:
+    """``wanted`` appear in ``kinds`` in this order, others between them allowed."""
+    found = iter(kinds)
+    return all(kind in found for kind in wanted)
+
+
+# The gateway path's setpoint as written: OpenTherm's steps of 1/256 K, the gateway's display of
+# 0.1 K — a written value within this of the decided one is it (F14's 0.05 K and the display's).
+EXACT_SHOWN_K = 0.1
+
+
+async def check_written_exactly(r: Run, since: float) -> None:
+    """L12 (#184): the comfort correction at its limit is written exactly — the last setpoint
+    the gateway got is the control state's target, not 0.47 K under it (the test session's
+    review of 2026-11-22: no scenario read the value)."""
+    target = await r.attr("control_state", "target")
+    written = [v for _k, v in r.cmds(since, "setpoint")]
+    last = written[-1] if written else None
+    r.check(
+        isinstance(target, (int, float))
+        and last is not None
+        and abs(float(last) - float(target)) <= EXACT_SHOWN_K,
+        f"the limit written exactly (L12): written {last}, target {target}",
+    )
 
 
 class NotRun(Exception):
@@ -1227,7 +1320,10 @@ async def E4(r: Run):
         r.note(f"highest setpoint every 5 min: {seen}")
         r.check(max(seen) > base + 1.0, "the correction worked")
         r.check(max(seen) <= base + 3.1, "and stayed within 3 K")
-        r.check(await r.s("alarm_correction_at_limit") == "on", "told at the edge")
+        at_edge = await r.s("alarm_correction_at_limit") == "on"
+        r.check(at_edge, "told at the edge")
+        if at_edge:
+            await check_written_exactly(r, t)
     finally:
         await r.switch(False)
         await r.ha.wait(10)
@@ -1388,7 +1484,7 @@ async def K5(r: Run):
     await r.ha.call("j4_faults", "remove_options", section="control", keys=["thermostat_kind"])
     await r.ha.wait(20)
     r.ent.update(await r.ha.entities())
-    res = await r.switch(True)
+    res = await r.switch(True, refusal_ok=True)
     await r.ha.wait(600)
     r.check(r.cmds(t) == [], f"nothing written: {r.cmds(t)}")
     r.check(
@@ -1963,7 +2059,90 @@ async def V1(r: Run):
         r.check(water is not None, f"{zone}: the water known again ({value})")
 
 
-SCENARIOS.update({f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1, E7)})
+# --- I11: control switched in the settings and by automations (plan-0.2-i11.md) -----------
+
+
+async def _control_is(r: Run, state: str) -> bool:
+    return await r.s("control") == state
+
+
+async def I1(r: Run):
+    """I11.1: "Control on" ticked together with another change in "Control mode" (condensing):
+    the entry reloads and the reload's new run takes the boiler — the old one, its options being
+    replaced, never takes it, so nothing is handed back at its stop"""
+    entry_id = (await r.ha.entry("vtherm_smart_boiler"))["entry_id"]
+    seen = await save_options(r.ha.rest, entry_id, {}, ("mode",))
+    condensing = seen["seen"]["mode"].get("condensing")
+    if not isinstance(condensing, bool):
+        raise NotRun('"Control mode" shows no condensing question on this instance')
+    await r.ha.wait(30)
+    t = time.time()
+    try:
+        await save_options(
+            r.ha.rest,
+            entry_id,
+            {CONTROL_ON: True, "condensing": not condensing},
+            ("mode",),
+            required=[CONTROL_ON, "condensing"],
+        )
+        await r.ha.wait(60)
+        r.ent.update(await r.ha.entities())
+        kinds = await r.journal(t)
+        r.check(
+            in_order(kinds, ["stopped", "started", "took_over"]) and "handed_back" not in kinds,
+            f"reloaded, the new run took the boiler, the old one never did: {kinds}",
+        )
+        r.check(
+            await r.s("control") == "on" and await r.override(),
+            f"control on after the reload: {await r.s('control')}",
+        )
+    finally:
+        await r.switch(False)
+        await r.ha.wait(10)
+        await save_options(r.ha.rest, entry_id, {"condensing": condensing}, ("mode",))
+        await r.ha.wait(30)
+
+
+# The test configuration's switch for the automation that calls the action (configuration.yaml).
+SET_CONTROL_SWITCH = "input_boolean.j4_set_control"
+
+
+async def I2(r: Run):
+    """I11.2: an automation switches control with vtherm_smart_boiler.set_control — on, then off
+    with the safe hand-back; the same action called with the runner's token, a person's, is
+    refused (control_in_settings)"""
+    if await r.ha.state(SET_CONTROL_SWITCH) is None:
+        raise NotRun(
+            f"no {SET_CONTROL_SWITCH}: deploy the instance with this commit's configuration"
+        )
+    refused = await r.ha.call("vtherm_smart_boiler", "set_control", enabled=True)
+    await r.ha.wait(5)
+    r.check(
+        "control_in_settings" in str((refused or {}).get("error"))
+        and await r.s("control") == "off",
+        f"a person's call refused: {refused}",
+    )
+    try:
+        await r.ha.call("input_boolean", "turn_on", entity_id=SET_CONTROL_SWITCH)
+        on = await r.ha.until(lambda: _control_is(r, "on"), 60, 2)
+        r.check(on is not None, f"the automation switched control on ({on and round(on)} s)")
+        await r.ha.wait(60)
+        r.check(await r.override(), "control holds the boiler")
+        t = time.time()
+        await r.ha.call("input_boolean", "turn_off", entity_id=SET_CONTROL_SWITCH)
+        off = await r.ha.until(lambda: _control_is(r, "off"), 60, 2)
+        await r.ha.wait(20)
+        r.check(
+            off is not None and r.cmds(t)[-3:] == SAFE,
+            f"the automation switched control off, the safe hand-back: {r.cmds(t)[-3:]}",
+        )
+    finally:
+        await r.ha.call("input_boolean", "turn_off", entity_id=SET_CONTROL_SWITCH)
+
+
+SCENARIOS.update(
+    {f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1, E7, I1, I2)}
+)
 
 
 if __name__ == "__main__":
