@@ -544,6 +544,16 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
     assert meets_starts_criterion(own, controlled)
 
 
+@pytest.mark.parametrize("mean", [8.0, -5.0])
+def test_the_correction_buys_no_more_comfort_than_its_text_names(mean: float) -> None:
+    """The option's text: "for under 0.15 K of comfort". With the daily swing, every room's mean
+    over the compared day is that close to its mean with the correction off (at most 0.12 K,
+    the bathroom at +8 °C), for the starts the next test pins."""
+    _own, off = starts_both_ways(mean, comfort_correction=False, swing=SWING_K)
+    _own, on = starts_both_ways(mean, comfort_correction=True, swing=SWING_K)
+    assert all(warmer < 0.15 for warmer in comfort_shortfall(on, off).values())
+
+
 @pytest.mark.parametrize(
     ("mean", "correction", "swing", "low", "high"),
     [
@@ -551,9 +561,9 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
         (-5.0, False, SWING_K, 1.95, 2.15),
         (8.0, True, 0.0, 0.95, 1.05),
         (-5.0, True, 0.0, 4.9, 5.4),
-        # The correction on — with the daily swing, x1.93 and x5.96: why it is off by default
-        # since K4 (2026-11-17). The option's text names "1.4 to 6 times", measured in the
-        # heavier house before L16 (x1.39 and x6.28).
+        # The correction on — with the daily swing, x1.93 and x5.96 (the "about 2 to 6 times"
+        # the option's text names; x1.39 and x6.28 in the heavier house before L16): why it is
+        # off by default since K4 (2026-11-17).
         (8.0, True, SWING_K, 1.8, 2.05),
         (-5.0, True, SWING_K, 5.7, 6.2),
     ],
