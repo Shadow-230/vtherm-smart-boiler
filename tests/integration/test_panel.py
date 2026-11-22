@@ -277,3 +277,17 @@ async def test_a_renamed_switch_keeps_the_page(
     switch.async_entity_id_changed("switch.before")
     assert calls == ([(page, "switch.before")] if home_assistant_has_it else [])
     frontend.remove.assert_not_called()
+
+
+async def test_cards_that_cannot_be_loaded_stop_nothing(
+    hass: HomeAssistant, frontend: Frontend
+) -> None:
+    """I10.10's scope check, gap 2 (b): the cards fail to load — a display's matter — and the
+    entry runs all the same: the monitor, control, the page."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    frontend.add_script.side_effect = RuntimeError("the cards cannot be loaded")
+    entry = await started(hass)
+    assert entry.state is ConfigEntryState.LOADED
+    frontend.register.assert_awaited_once()
+    assert await hass.config_entries.async_unload(entry.entry_id)
