@@ -213,7 +213,7 @@ reach, its commands dropped — the lost link; `relay`: the relay's state unknow
 `set_room_temperature` (one room set at once, as to 4 °C for frost), `reset_gateway` and
 `restart_device` (a lost command with a trace), `relay_restart` (seen, or with `reported: false`
 unseen), `relay_wifi_loss`, `relay_switch` (an automation or its button), `set_wall_setpoint`,
-`set_fault` — the stub's own `opentherm_gw.reset_gateway`, the control switch and the options, and
+`set_fault` — the stub's own `opentherm_gw.reset_gateway`, the options (control switched through them: "Control mode", "Control on", I11), and
 the test-only fault injector `j4_faults` (on instance 1, by `configuration.yaml`): `monitor` (the
 plugin's own monitor fails, or works again), `restart_with_stores` (the entry stopped, its stores
 replaced or removed as a crash, a lost file or another version leaves them, and started again) and

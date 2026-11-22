@@ -32,6 +32,9 @@ from options import (
 )
 from walk import save_options
 
+# I11.1: the tick in "Control mode" that switches control.
+CONTROL_ON = "control_on"
+
 RESULTS = pathlib.Path(
     os.environ.get("J4_RESULTS")
     or ROOT / "research" / f"{dt.datetime.now(dt.UTC):%Y-%m-%d}-j4-results.md"
@@ -96,8 +99,13 @@ class Run:
         return await self.ha.call("boiler_sim", service, **data)
 
     async def switch(self, on: bool):
-        return await self.ha.call(
-            "switch", "turn_on" if on else "turn_off", entity_id=self.ent["control"]
+        """Control switched as an administrator does it (I11.5, plan-0.2-i11.md): "Control
+        mode", "Control on", saved — nothing else switches it but an automation's action, which
+        the runner, a person's token, may not call. A refusal comes back with its ``errors`` and
+        the blocker's text in ``description_placeholders``; nothing is saved then."""
+        entry = await self.ha.entry("vtherm_smart_boiler")
+        return await save_options(
+            self.ha.rest, entry["entry_id"], {CONTROL_ON: on}, ("mode",), strict=False
         )
 
     async def override(self) -> bool:
