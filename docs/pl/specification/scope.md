@@ -1313,7 +1313,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Krok sterowania 10 s | `const.py` | grzanie od razu podąża za strefami |
 | Podtrzymanie 30 s | `control_config.py` | OTGW potrzebuje `CS` co najmniej raz na minutę |
 | Najniższe `CS` OTGW 8 °C | `transport/writers.py` | poniżej 8 °C nadpisanie nigdy nie wygasa |
-| Limit czasu potwierdzenia 120 s; tolerancja 0.5 K — także strefa nieczułości dla małych zmian krzywej, co ogranicza liczbę startów (symulacja: x1.20 przy +8 °C z nią, x1.36 bez niej); granica, przy której woda jest trzymana (najniższa lub najwyższa temperatura wody, maksimum lub potrzeba obiegu, maksimum kotła), jest zapisywana dokładnie, gdy rampa ją osiągnie, powyżej 0.05 K (F14, J4 z 2026-10-14) | `core/guards.py`, `core/loop.py` | tymczasowe, K4 (powód do potwierdzenia) |
+| Limit czasu potwierdzenia 120 s; tolerancja 0.5 K — także strefa nieczułości dla małych zmian krzywej, co ogranicza liczbę startów (symulacja: x1.20 przy +8 °C z nią, x1.36 bez niej); granica, przy której woda jest trzymana (najniższa lub najwyższa temperatura wody, maksimum lub potrzeba obiegu, maksimum kotła oraz korekta komfortu na swojej granicy), jest zapisywana dokładnie, gdy rampa ją osiągnie, powyżej 0.05 K (F14, J4 z 2026-10-14; granica korekty: L12, decyzja użytkownika z 2026-11-22) | `core/guards.py`, `core/loop.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Odstęp zapisu co najmniej 5 s | `core/guards.py` | jeden zapis na krok |
 | Własne wygaśnięcie wtyczki po 60 s ciszy | `core/guards.py` | nadpisanie OTGW wygasa po około minucie |
 | Okno ponownego zapisu 24 h | `core/guards.py` | postanowione 2026-09-25 |
