@@ -88,7 +88,10 @@ docs/                                     dokumentacja, osobny katalog na każdy
   w języku użytkownika (`hass.loadBackendTranslation("entity", …)`), więc każde jest zapisane
   raz. `panel.py`
   udostępnia pliki i dodaje stronę do menu bocznego przez `panel_custom` Home Assistanta;
-  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Póki wpis działa, `panel.py` każe
+  przełącznik „Strona w menu bocznym” ją zabiera i przywraca. Strona zostaje na czas
+  przeładowania — zabrana, wyrzuciłaby oglądającego ją użytkownika z błędem; start rejestruje ją
+  ponownie w jednym kroku — i znika z wyłączonym albo usuniętym wpisem albo z wyłączonym tym
+  przełącznikiem (F17 z J4). Póki wpis działa, `panel.py` każe
   też Home Assistantowi wczytywać ten sam moduł na każdej stronie (`frontend.add_extra_js_url`,
   zabierane przy wyładowaniu, starszy adres zastępowany po aktualizacji), więc części przeglądu
   są w wyborze kart jako cztery karty — stan i kafelki, schemat i pokoje, krzywa, ostatnie 24 h —

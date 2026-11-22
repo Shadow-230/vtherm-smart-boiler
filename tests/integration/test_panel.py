@@ -123,22 +123,54 @@ async def test_the_switch_takes_the_page_away_and_back(
     frontend.serve.assert_awaited_once()  # the files are served once per run
 
 
-async def test_the_page_goes_with_the_entry_and_comes_back_after_a_reload(
-    hass: HomeAssistant, frontend: Frontend
-) -> None:
+async def test_the_page_stays_through_a_reload(hass: HomeAssistant, frontend: Frontend) -> None:
+    """J4 I10.10, F17: a reload — a settings save, the page's own curve save — must not take the
+    page out of the sidebar while the user is on it (Home Assistant's frontend then throws them
+    off it with an error). Nothing takes it away at the unload; the start registers it again in
+    one step, its old registration replaced."""
     entry = await started(hass)
     frontend.remove.reset_mock()
+    order = MagicMock()
+    order.attach_mock(frontend.remove, "remove")
+    order.attach_mock(frontend.register, "register")
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
-    frontend.remove.assert_called()
-    assert frontend.register.await_count == 2
+    assert [call[0] for call in order.mock_calls] == ["remove", "register"]
     frontend.serve.assert_awaited_once()
-
-    frontend.remove.reset_mock()
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("how", ["disabled", "removed"])
+async def test_the_page_goes_with_the_entry(
+    hass: HomeAssistant, frontend: Frontend, how: str
+) -> None:
+    """The entry disabled or removed: the page leaves the sidebar."""
+    from homeassistant.config_entries import ConfigEntryDisabler
+
+    entry = await started(hass)
+    frontend.remove.reset_mock()
+    if how == "disabled":
+        assert await hass.config_entries.async_set_disabled_by(
+            entry.entry_id, ConfigEntryDisabler.USER
+        )
+    else:
+        assert await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     frontend.remove.assert_called_with(hass, PANEL_URL_PATH, warn_if_unknown=False)
+
+
+async def test_the_page_goes_with_its_switch_disabled(
+    hass: HomeAssistant, frontend: Frontend
+) -> None:
+    """The sidebar switch's entity disabled by the user: the page goes with it."""
+    entry = await started(hass)
+    page = entity_id(hass, entry, "switch", "sidebar_page")
+    frontend.remove.reset_mock()
+    er.async_get(hass).async_update_entity(page, disabled_by=er.RegistryEntryDisabler.USER)
+    await hass.async_block_till_done()
+    frontend.remove.assert_called_with(hass, PANEL_URL_PATH, warn_if_unknown=False)
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_a_page_left_hidden_stays_hidden_after_a_restart(
