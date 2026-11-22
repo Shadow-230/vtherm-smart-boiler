@@ -57,6 +57,8 @@ export interface Label {
   x: number;
   y: number;
   text: string;
+  /** Left out of a narrow card, where it would overlap: the rooms below name the circuits. */
+  minor?: boolean;
 }
 
 export interface Schematic {
@@ -253,7 +255,7 @@ export function schematicView(inputs: LiveInputs): Schematic {
   const { paths, circuits, hotWater } = drawSchematic(installation, mode, active);
   const signal = (name: string) => states[installation.signals[name] ?? ""];
   const flame = signal("flame")?.state === "on";
-  const labels: Label[] = [{ kind: "inside", x: 135, y: 132, text: t("schematic.boiler") }];
+  const labels: Label[] = [{ kind: "inside", x: 135, y: 132, text: t("schematic.boiler"), minor: true }];
   const status = flame
     ? mode === "dhw"
       ? t("schematic.burning_hot_water")
@@ -265,7 +267,7 @@ export function schematicView(inputs: LiveInputs): Schematic {
   const modulation = numberOf(signal("modulation")?.state);
   if (flame && modulation != null) {
     labels.push({
-      kind: "inside", x: 135, y: 284,
+      kind: "inside", x: 135, y: 284, minor: true,
       text: t("tiles.flame_modulation", { value: formatNumber(modulation, language, 0) }),
     });
   }
@@ -293,14 +295,14 @@ export function schematicView(inputs: LiveInputs): Schematic {
   }
   for (const c of circuits) {
     // Below the return pipe, where nothing is drawn: under the circuit, clear of its pipes.
-    labels.push({ kind: "text", x: c.cx, y: 500, text: c.name });
+    labels.push({ kind: "text", x: c.cx, y: 500, text: c.name, minor: true });
     const fed =
       c.kind === "fixed_valve" && c.setting != null
         ? t("schematic.fixed_valve", { value: formatNumber(c.setting, language, 0) })
         : c.kind === "other" && c.need != null
           ? t("schematic.other_need", { value: formatNumber(c.need, language, 0) })
           : t(`schematic.${c.kind}`);
-    labels.push({ kind: "text", x: c.cx, y: 520, text: fed });
+    labels.push({ kind: "text", x: c.cx, y: 520, text: fed, minor: true });
   }
   return { paths, circuits, hotWater, mode, labels, flame };
 }

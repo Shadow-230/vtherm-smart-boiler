@@ -11,6 +11,27 @@ export interface WeekUse {
   per_degree_day: number | null;
 }
 
+/** Why a week has no gas per degree-day, by the rule that reckons it (`core/weekly.py`). */
+export type WeekGap = "no_week" | "days" | "gas" | "degree_days" | "mild";
+
+const DAYS_IN_WEEK = 7;
+
+/** What keeps `week` from a gas per degree-day; `null` where it has one. */
+export function weekGap(week: WeekUse | undefined): WeekGap | null {
+  if (!week) return "no_week";
+  if (week.per_degree_day != null) return null;
+  if (week.days < DAYS_IN_WEEK) return "days";
+  if (week.gas == null) return "gas";
+  return week.degree_days == null ? "degree_days" : "mild";
+}
+
+/** What keeps `week` from its degree-days; `null` where it has them. */
+export function degreeDaysGap(week: WeekUse | undefined): WeekGap | null {
+  if (!week) return "no_week";
+  if (week.degree_days != null) return null;
+  return week.days < DAYS_IN_WEEK ? "days" : "degree_days";
+}
+
 export const CAUSES = ["weather", "dhw", "settings", "other"] as const;
 export type Cause = (typeof CAUSES)[number];
 

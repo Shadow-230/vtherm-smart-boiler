@@ -17,6 +17,7 @@ import {
 import { formatNumber } from "./format";
 import { dayLabel } from "./journal";
 import { localize } from "./localize";
+import { homeZone, zonesDiffer } from "./time";
 import type { HomeAssistant, Installation } from "./types";
 
 export const ANALYSES_TAG = "vtherm-smart-boiler-analyses";
@@ -112,7 +113,7 @@ export class SmartBoilerAnalyses extends LitElement {
 
   private dayText(day: SignatureDay, unit: string): string {
     return this.t("analyses.day", {
-      date: dayLabel(day.start * 1000, this.language),
+      date: dayLabel(day.start * 1000, this.language, homeZone(this.hass)),
       outdoor: formatNumber(day.outdoor, this.language, 1),
       gas: this.gas(day.gas, unit),
       group: this.t(day.controlled ? "analyses.control" : "analyses.observing"),
@@ -225,7 +226,8 @@ export class SmartBoilerAnalyses extends LitElement {
   // ---------------------------------------------------------------------- the starts by hour
 
   private startsCard(answer: DaysAnswer): TemplateResult {
-    const rows = hourRows(answer.days, ROWS);
+    const home = homeZone(this.hass);
+    const rows = hourRows(answer.days, ROWS, home);
     const means = hourMeans(rows);
     const most = Math.max(1, ...rows.flatMap((r) => r.hours.map((h) => h ?? 0)));
     const lang = this.language;
@@ -239,6 +241,7 @@ export class SmartBoilerAnalyses extends LitElement {
         </div>
       </div>
       <p class="muted small">${this.t("analyses.starts_hint")}</p>
+      ${zonesDiffer(this.hass) && home ? html`<p class="muted small">${this.t("analyses.hours_zone", { zone: home })}</p>` : nothing}
       ${rows.length === 0
         ? html`<p class="muted">${this.t("analyses.no_days")}</p>`
         : html`<div class="calendar" role="table" aria-label=${this.t("analyses.starts")}>
@@ -249,12 +252,12 @@ export class SmartBoilerAnalyses extends LitElement {
             </div>
             ${rows.map(
               (row) => html`<div class="row" role="row">
-                <span class="day" role="rowheader">${dayLabel(row.start * 1000, lang)}</span>
+                <span class="day" role="rowheader">${dayLabel(row.start * 1000, lang, home)}</span>
                 ${row.hours.map((count, h) => {
                   const text =
                     count == null
-                      ? this.t("analyses.hour_not_kept", { date: dayLabel(row.start * 1000, lang) })
-                      : this.t("analyses.hour", { date: dayLabel(row.start * 1000, lang), hour: hourLabel(h), count: String(count) });
+                      ? this.t("analyses.hour_not_kept", { date: dayLabel(row.start * 1000, lang, home) })
+                      : this.t("analyses.hour", { date: dayLabel(row.start * 1000, lang, home), hour: hourLabel(h), count: String(count) });
                   return html`<span
                     class="cell ${count == null ? "none" : `l${levelOf(count, most)}`}"
                     role="cell"

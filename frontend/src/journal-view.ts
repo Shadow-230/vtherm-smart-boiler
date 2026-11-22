@@ -25,6 +25,7 @@ import {
 } from "./journal";
 import { localize } from "./localize";
 import { entityText, type Localize } from "./status";
+import { profileZone } from "./time";
 import { clock } from "./timeline";
 import type { HomeAssistant, Installation } from "./types";
 
@@ -201,7 +202,8 @@ export class SmartBoilerJournal extends LitElement {
 
   private when(entry: JournalEntry): string {
     const t = entry.at * 1000;
-    return `${dayLabel(t, this.language)} ${clock(t, this.language)}`;
+    const zone = profileZone(this.hass);
+    return `${dayLabel(t, this.language, zone)} ${clock(t, this.language, zone)}`;
   }
 
   // ------------------------------------------------------------------------------- the lanes
@@ -290,7 +292,7 @@ export class SmartBoilerJournal extends LitElement {
       last = v;
     }
     const narrow = this.offsetWidth > 0 && this.offsetWidth < 600;
-    const ticks = timeTicks(from, to, this.language, narrow);
+    const ticks = timeTicks(from, to, this.language, narrow, profileZone(this.hass));
     const sel = this.selection;
     const shown = inRange.filter((e) => this.groups.has(groupOf(e)));
     return html`<div class="chart">
@@ -383,8 +385,8 @@ export class SmartBoilerJournal extends LitElement {
     const lang = this.language;
     const zoomText = this.zoom
       ? this.t("journal.zoomed", {
-          from: `${dayLabel(range[0], lang)} ${clock(range[0], lang)}`,
-          to: `${dayLabel(range[1], lang)} ${clock(range[1], lang)}`,
+          from: `${dayLabel(range[0], lang, profileZone(this.hass))} ${clock(range[0], lang, profileZone(this.hass))}`,
+          to: `${dayLabel(range[1], lang, profileZone(this.hass))} ${clock(range[1], lang, profileZone(this.hass))}`,
         })
       : "";
     return html`

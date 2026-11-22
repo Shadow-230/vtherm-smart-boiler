@@ -3,6 +3,7 @@
 // overview can show that moment — and into the chart's series. Pure.
 import { numberOf } from "./format";
 import { zoneIds } from "./live";
+import { wallClock } from "./time";
 import type { HassEntity, Installation } from "./types";
 
 export const HOUR_MS = 3600000;
@@ -187,20 +188,20 @@ export function hourTicks(
   to: number,
   stepHours: number,
   language: string,
+  timeZone?: string,
 ): { t: number; label: string }[] {
   const out: { t: number; label: string }[] = [];
   const first = Math.ceil(from / (stepHours * HOUR_MS)) * stepHours * HOUR_MS;
   for (let t = first; t <= to; t += stepHours * HOUR_MS) {
-    out.push({ t, label: clock(t, language) });
+    out.push({ t, label: clock(t, language, timeZone) });
   }
   return out;
 }
 
-export function clock(t: number, language: string): string {
+export function clock(t: number, language: string, timeZone?: string): string {
   try {
-    return new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" }).format(t);
+    return new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit", timeZone }).format(t);
   } catch {
-    const d = new Date(t);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    return wallClock(t, timeZone);
   }
 }

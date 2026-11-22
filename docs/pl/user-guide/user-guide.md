@@ -472,6 +472,17 @@ doradza tych ustawień. Gdy ciepła woda albo duża zmiana temperatury wody zabu
 wtyczka wstrzymuje uczenie SmartPI (domyślnie włączone), żeby wywołane przez nią wahania nie
 trafiły do modelu SmartPI.
 
+**Gdy czujnik milczy.** VT przełącza strefę w tryb bezpieczny, gdy przez czas opóźnienia
+bezpieczeństwa, domyślnie 60 minut, nie dostaje nowej wartości z czujnika pokojowego albo
+zewnętrznego, a strefa chce grzać przez co najmniej połowę czasu. Strefa grzeje wtedy tylko przez
+10% czasu, aż przyjdzie nowa wartość (to domyślne ustawienia VT). Sprawny czujnik, który wysyła
+tylko zmiany, może milczeć tak długo, gdy temperatura się nie zmienia. Jeśli strefa z tego powodu
+często wchodzi w tryb bezpieczny, ustaw dłuższe opóźnienie bezpieczeństwa w ustawieniach
+zaawansowanych tej strefy w VT albo wskaż VT atrybut `last_seen` czujnika, jeśli go ma. Przy
+dłuższym opóźnieniu czujnik, który naprawdę się zepsuł, zostanie zauważony później. Wtyczka nie
+zmienia tego ustawienia. Nadal liczy wezwanie strefy na ciepło, nie opiera się na jej temperaturze
+i podaje ją w atrybucie `room_sensor_lost_zones` encji **Stan sterowania**.
+
 ### 4.12 Strona „Kocioł” i karty
 
 Wtyczka dodaje stronę **Kocioł** do menu bocznego Home Assistanta, dla każdego użytkownika;
@@ -483,7 +494,7 @@ potwierdzenie.
 |---|---|
 | Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i wołającymi pokojami. Instalację narysowaną z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat, pokoje i krzywa ją pokażą |
 | Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
-| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn |
+| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn. Przy nieznanej wartości mówi, dlaczego |
 | Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze. Starty grzania palnika według godzin z ostatnich 4 tygodni |
 | Dziennik | Co wtyczka zdecydowała i dlaczego w ostatnich 14 dniach. Pokazuje jej starty i zatrzymania, przejęcie kotła przez sterowanie i jego oddanie, wezwanie ciepła, zapisaną nastawę wody (zmiany o 1 K i więcej), potrzebę obiegu, alarmy i zapisane ustawienia. Widać to jako pasy, które przybliża się przeciągnięciem, i jako listę z filtrami |
 | Stan i alarmy | Werdykt sterowania z powodami; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
@@ -506,7 +517,9 @@ jej zasad. Wartości, której encja nie jest wybrana w ustawieniach, strona nie 
 wartość to luka, nigdy ostatnia znana przeniesiona dalej. Ostatnie 24 h i ostatnie 7 dni
 pochodzą z recordera Home Assistanta (domyślnie 10 dni). Strona używa języka twojego profilu
 (angielski i polski; inne języki widzą angielski) oraz jasnego albo ciemnego motywu i działa na
-telefonie.
+telefonie. Godziny idą za ustawieniem strefy czasowej w twoim profilu. Dni liczone przez wtyczkę
+i starty według godzin to dni w strefie czasowej Home Assistanta; gdy strefa profilu jest inna,
+zakładka **Analizy** o tym mówi.
 
 **Karty.** Części przeglądu są też kartami na twoje własne pulpity: **Kocioł: stan**, **Kocioł:
 schemat**, **Kocioł: krzywa grzewcza** i **Kocioł: ostatnie 24 h**. Dodaj je jak każdą kartę

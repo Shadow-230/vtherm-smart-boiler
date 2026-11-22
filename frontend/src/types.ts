@@ -12,7 +12,9 @@ export interface HassEntity {
 
 export interface HomeAssistant {
   language: string;
-  locale?: { language: string };
+  /** `time_zone`: the profile's choice, the browser's ("local") or Home Assistant's ("server"). */
+  locale?: { language: string; time_zone?: "local" | "server" };
+  config?: { time_zone?: string };
   user?: { is_admin: boolean; name?: string };
   themes?: { darkMode?: boolean };
   states: Record<string, HassEntity>;
