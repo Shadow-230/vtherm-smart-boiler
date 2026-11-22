@@ -320,8 +320,11 @@ ostatnio zapisanej w dzienniku — potrzebę obiegu, która trzyma wodę, alarm 
 podniesionym poziomem) i ustąpiony oraz każdy zapis ustawień, ze strony (z tym, co zmienił) albo
 z ustawień (z sekcjami, które się zmieniły); każde z powodami, które podało sterowanie. Tylko
 obserwuje — słucha stanu sterowania i odświeżeń monitora i niczego nie zmienia; jego błąd jest
-logowany raz. Pierwsze spojrzenie po starcie ustala punkt wyjścia: zapisany jest sam start, a
-nie to, co już było; alarm, którego nie da się teraz ocenić, zostaje taki, jaki był. Trzyma 14
+logowany raz. Pierwsze spojrzenie po starcie zapisuje ponowne przejęcie kotła przez sterowanie
+— po restarcie albo przeładowaniu, z wezwaniem ciepła, wodą i potrzebą obiegu — a zatrzymanie
+zapisuje oddanie kotła, które sterowanie zrobiło tuż przed nim, chyba że oddanie jest jeszcze
+należne (F18 z J4); alarmy już podniesione są punktem wyjścia startu; alarm, którego nie da się
+teraz ocenić, zostaje taki, jaki był. Trzyma 14
 dni i najwyżej 2000 wpisów, najstarsze wypadają pierwsze (tymczasowo, K4); zapisywany minutę po
 zmianie, od razu przy wyładowaniu wpisu i przez Home Assistanta przy jego zatrzymaniu; magazyn,
 którego nie da się odczytać, zaczyna pusty dziennik. Znika razem z innymi magazynami wpisu, gdy
