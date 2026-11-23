@@ -25,6 +25,7 @@ the same place under `docs/pl/`.
 | [Technical documentation](technical/technical.md) | current | [yes](../pl/technical/technical.md) |
 | [Scope](specification/scope.md) | current | [yes](../pl/specification/scope.md) |
 | [Water data for zone algorithms](specification/water-interface.md) | current | [yes](../pl/specification/water-interface.md) |
+| [Boiler connections and the device template](specification/device-connections.md) | current | [yes](../pl/specification/device-connections.md) |
 | [Reference codes](specification/references.md) | current | [yes](../pl/specification/references.md) |
 | [Development plan](development/plan.md) | current | [yes](../pl/development/plan.md) |
 | [Test environment](testing/test-environment.md) | current | [yes](../pl/testing/test-environment.md) |

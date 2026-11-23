@@ -163,6 +163,24 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
   wyłączenia (Siemens LMS14, czas przeciw taktowaniu w kotłach Vaillant; około 0,04 K przy −5 °C) —
   oraz histereza wezwania do grzania (ASHRAE Guideline 36). Obie są sprzeczne z zasadą 12 (grzanie
   od razu za VT): decyduje użytkownik.
+- **Szablony urządzeń** (decyzje użytkownika z 2026-11-22): to, czym różnią się połączenia kotła,
+  przechodzi do jednego pliku YAML na urządzenie, w trzech warstwach: protokół, zachowanie i drogi
+  do urządzenia. Po pierwszym wydaniu, przed pracami nad 0.3:
+  [`plan-device-templates.md`](../../en/development/plans/plan-device-templates.md); pola i obecne
+  karty są w [`device-connections.md`](../specification/device-connections.md).
+- **Pomysły z `vtherm_api`** (przeczytane 2026-11-22), żaden nie jest potrzebny do bety:
+  - *Impulsy stref znane z wyprzedzeniem.* VT mówi menedżerowi funkcji, kiedy zaczyna się cykl każdej
+    strefy i jak długo grzeje (`async_on_underlying_power`, od `vtherm_api` 0.9.0). Wtyczka mogłaby
+    odróżnić krótką przerwę między strefami od prawdziwego końca zapotrzebowania, czyli przerwę,
+    która gasi palnik przy 5-minutowym cyklu VT. To jest sprzeczne z zasadą 12, więc decyduje
+    użytkownik, a zysk trzeba najpierw zmierzyć w symulatorze.
+  - *Ostrzeżenie przed trybem bezpiecznym VT.* Zegary świeżości VT (`vtherm_api` 0.12.0, jeszcze
+    niewydane) pozwoliłyby powiedzieć, że czujnik milczy przez większą część opóźnienia
+    bezpieczeństwa VT.
+  - *Jeden sygnał dla każdego algorytmu strefy: „ta strefa dostaje teraz ciepło”.* Autor SmartPI
+    zaproponował interfejs na tym poziomie 2026-11-22. Byłaby to mała, opcjonalna umowa w
+    `vtherm_api`, najpierw omówiona z autorami VT i SmartPI, z działającą wtyczką jako dowodem i bez
+    pull requesta przed ich zgodą.
 
 ## Plany wydań
 
@@ -191,3 +209,5 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
 - 0.2, krok I11 — `docs/en/development/plans/plan-0.2-i11.md`: sterowanie włącza i wyłącza tylko
   administrator w ustawieniach wtyczki, oraz automatyzacje; przełącznik „Sterowanie” staje się
   samym pokazaniem stanu (decyzje użytkownika z 2026-11-22, po F19 z J4)
+- Szablony urządzeń — `docs/en/development/plans/plan-device-templates.md`: jeden plik parametrów na
+  urządzenie kotła, po pierwszym wydaniu (decyzje użytkownika z 2026-11-22)

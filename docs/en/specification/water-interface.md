@@ -261,6 +261,11 @@ unchanged). The consumer's side is the consumer's: for SmartPI, Annex A.
 
 Kept here until SmartPI's specification holds it; informative for Smart Boiler.
 
+> **Not agreed with SmartPI's author.** This annex records what the plugin's owner expected of
+> SmartPI. On 2026-11-22 SmartPI's author wrote that SmartPI should hold no setup-dependent logic,
+> and suggested an interface at a higher level, in `vtherm_api`, for any regulation algorithm.
+> SmartPI reads none of this data today. Do not count on this annex.
+
 1. **Heating type.** Each SmartPI thermostat has a heating type: water radiator, water floor,
    electric mat, fast electric. A water type gives the emitter exponent `n` and a reference water
    `T_ref`; provisional values: radiator 1.3 and 60 °C, floor 1.1 and 45 °C. Electric types
