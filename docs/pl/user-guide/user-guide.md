@@ -535,7 +535,8 @@ też sposobu **zapisu** do kotła — „ścieżki zapisu” — oraz sposobu od
 sterowaniu — **oddania sterowania**.
 
 Szczegóły: [`docs/pl/specification/scope.md`, §5](../specification/scope.md#5-sprzęt-obiegi-i-algorytmy-stref) i
-[Gateway topology](../specification/scope.md#topologia-bramki).
+[Gateway topology](../specification/scope.md#topologia-bramki). Każde połączenie, pole po polu:
+[Połączenia kotła](../specification/device-connections.md).
 
 Pierwszy ekran pyta, **jak kocioł jest podłączony**. Odpowiedź decyduje, co wtyczka może
 zapisywać, jak oddaje kocioł i co proponuje urządzenie sterujące:
@@ -556,6 +557,13 @@ innego połączenia jest zablokowane („Ustawione sterowanie nie pasuje do poł
 ESPHome i EMS-ESP to sterowniki po stronie Home Assistant: ich topologia to „wirtualna”. Moduły
 Wi-Fi i integracje producentów zwykle zapisują do pamięci kotła albo przez chmurę, więc
 sterowanie jest proponowane tylko z typem zapisu, który jest znany i nie jest trwały.
+
+**Sterowanie nigdy nie zapisuje przez usługę w chmurze.** Bez internetu wtyczka nie mogłaby oddać
+kotła, a usługi w chmurze ograniczają liczbę wywołań. Encja, której integracja podaje, że działa
+przez chmurę, jest odrzucana jako cel zapisu i blokuje sterowanie; nadal można ją monitorować.
+Samo Wi-Fi nie przeszkadza: urządzenie, do którego Home Assistant łączy się lokalnie, nie jest
+chmurą. Pomocnika albo mostu MQTT przed chmurą wtyczka nie zobaczy, więc nie używaj ich do
+sterowania.
 
 ### 5.1 Ścieżki zapisu
 
@@ -871,7 +879,9 @@ zerowego grzania.
 
 Możesz wskazać własne sygnały usterek kotła: usterkę niskiego ciśnienia wody i inną usterkę,
 która go zatrzymuje. Na OTGW usterka liczy się tylko wtedy, gdy jednocześnie włączona jest
-„Fault indication” kotła, i ten sygnał też musi być wskazany.
+„Fault indication” kotła, i ten sygnał też musi być wskazany. Przy firmware OTGW przez MQTT encje
+bramki to te na tym samym urządzeniu Home Assistanta co jej nastawa. Encje napisane ręcznie w YAML
+nie mają urządzenia: liczą się jako encje bramki, gdy nastawa też go nie ma.
 
 Dopóki taka usterka pokazuje „włączony” przez 5 minut, wtyczka trzyma grzanie wyłączone — razem
 z grzaniem przeciwmrozowym — bez oddania sterowania i bez zatrzasku. Grzeje znowu sama, gdy

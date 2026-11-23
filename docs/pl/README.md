@@ -25,6 +25,7 @@ samym miejscu pod `docs/pl/`.
 | [Dokumentacja techniczna](technical/technical.md) | aktualny | [tak](../en/technical/technical.md) |
 | [Zakres](specification/scope.md) | aktualny | [tak](../en/specification/scope.md) |
 | [Dane o wodzie dla algorytmów stref](specification/water-interface.md) | aktualny | [tak](../en/specification/water-interface.md) |
+| [Połączenia kotła i szablon urządzenia](specification/device-connections.md) | aktualny | [tak](../en/specification/device-connections.md) |
 | [Kody odniesień](specification/references.md) | aktualny | [tak](../en/specification/references.md) |
 | [Plan rozwoju](development/plan.md) | aktualny | [tak](../en/development/plan.md) |
 | [Środowisko testowe](testing/test-environment.md) | aktualny | [tak](../en/testing/test-environment.md) |

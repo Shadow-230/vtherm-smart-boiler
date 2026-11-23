@@ -154,7 +154,13 @@ from .core.metrics import ModulationScale
 from .core.parameters import Estimate, ParameterKey, ParameterSet, Source
 from .core.relay import TIMER_MIN_S, RelayPowerOn, RelayReports, RelayRest, RelayTimer
 from .core.signals import Signal
-from .transport.entities import read_bounds, read_grid, relay_hvac_modes, temperature_unit_of
+from .transport.entities import (
+    read_bounds,
+    read_grid,
+    relay_hvac_modes,
+    temperature_unit_of,
+    through_cloud,
+)
 from .vtherm_link import (
     VtCentralBoiler,
     VtCommands,
@@ -1941,6 +1947,8 @@ def relay_entity_error(
         return "relay_used_by_zone"
     if relay_of_boiler_interface(hass, entity):
         return "relay_of_boiler_interface"
+    if through_cloud(hass, entity):
+        return "write_through_cloud"
     from .config import named_entities
 
     fields = named_entities(options).get(entity, ())
@@ -2369,6 +2377,15 @@ def targets_used_by_zone(hass: HomeAssistant, user_input: Mapping[str, Any]) -> 
         key: "entity_used_by_zone"
         for key in TARGET_ENTITY_FIELDS
         if isinstance(user_input.get(key), str) and relay_used_by_zone(hass, user_input[key])
+    }
+
+
+def targets_through_cloud(hass: HomeAssistant, user_input: Mapping[str, Any]) -> dict[str, str]:
+    """The entity path's write targets of an integration that works through a cloud service."""
+    return {
+        key: "write_through_cloud"
+        for key in TARGET_ENTITY_FIELDS
+        if isinstance(user_input.get(key), str) and through_cloud(hass, user_input[key])
     }
 
 
@@ -3582,8 +3599,10 @@ class _ControlSteps(_Steps):
             fixed = {k: stored.get(k, v) for k, v in fixed_write_types(self.options).items()}
             user_input = {**fixed, **user_input}
             grid = read_grid(self.hass, user_input["setpoint_entity"])
-            found = entity_errors(self.hass, user_input, TARGET_ENTITY_FIELDS) or (
-                targets_used_by_zone(self.hass, user_input)  # PB-54
+            found = (
+                entity_errors(self.hass, user_input, TARGET_ENTITY_FIELDS)
+                or targets_used_by_zone(self.hass, user_input)  # PB-54
+                or targets_through_cloud(self.hass, user_input)
             )
             if found:
                 errors = found

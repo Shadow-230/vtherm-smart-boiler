@@ -15,8 +15,9 @@ and [`plan-0.2-i9.md`][plan-0.2-i9]; step I10, the Boiler page in the sidebar an
 user's decisions of 2026-11-18, before the first release), is planned in
 [`plan-0.2-i10.md`][plan-0.2-i10] and listed in the development plan, since `plan-0.2.md` is
 history; step I11, control switched only in the plugin's settings (the user's decisions of
-2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; phases run in
-order. A 🔒 step whose plan says it holds nothing
+2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; the device
+templates, after the first release and before 0.3, in
+[`plan-device-templates.md`][plan-device-templates]; phases run in order. A 🔒 step whose plan says it holds nothing
 up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
 go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decision 16; provisionally
 0.2.3b1).
@@ -31,6 +32,7 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2-i9]: docs/en/development/plans/plan-0.2-i9.md
 [plan-0.2-i10]: docs/en/development/plans/plan-0.2-i10.md
 [plan-0.2-i11]: docs/en/development/plans/plan-0.2-i11.md
+[plan-device-templates]: docs/en/development/plans/plan-device-templates.md
 [plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
 [plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
 [plan-0.2.2-details]: docs/en/development/plans/plan-0.2.2-details.md
@@ -276,7 +278,8 @@ Each topic lives only in its file; do not copy it here.
   `RT=` (ID 24) and `BS=` (ID 16) set room temperature and setpoint; without a thermostat they
   also need `AA=24` / `AA=16`. Its author: boilers do not need room temperature and setpoint.
   No writable entity for the flow setpoint or the modulation cap: `opentherm_gw` (HA 2026.9.3)
-  has no `number` — services `set_control_setpoint`, `set_max_modulation`,
+  has no `number` (2026.11 added `control_setpoint_override`; the plugin keeps to the services) —
+  services `set_control_setpoint`, `set_max_modulation`,
   `send_transparent_command`; firmware 1.7.4 over MQTT neither — commands on
   `<top>/set/<node>/<command>` (`ctrlsetpt`, `maxmodulation`, `chenable`, `command`). Reported
   from the author's installation, to confirm: `SW` does not expire; values outside the gateway's
@@ -315,8 +318,9 @@ Each topic lives only in its file; do not copy it here.
   top complaint in both; boilers silently ignore some commands; a gateway acting as master lost
   the DHW-enable bit (Immergas); a reload left old loops toggling the boiler; a failed outdoor
   sensor stopped all heating. SAT never sends ID 24 / 16. VT users feed external OpenTherm
-  controllers a reference room (spec: VT discussion #2068). VT's author adds no more to the
-  central boiler and sends new features to plugins.
+  controllers a reference room (spec: VT discussion #2068). VT's author sends new features to
+  plugins (VT's `CONTRIBUTING.md`); VT's central boiler is still maintained (command templates in
+  10.6.1).
 - **SAT** sources consulted for ideas: `pwm.py`, `minimum_setpoint.py`, `heating_curve.py`,
   `overshoot_protection.py`, `mqtt/opentherm.py`; SAT sends the setpoint only when its loop runs
   (no watchdog). What we take: `docs/en/specification/scope.md` §8.

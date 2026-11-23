@@ -263,6 +263,11 @@ Strona odbiorcy należy do odbiorcy: dla SmartPI — Załącznik A.
 
 Zostaje tu, dopóki nie przejmie tego specyfikacja SmartPI; informacyjnie dla Smart Boiler.
 
+> **Nieuzgodnione z autorem SmartPI.** Ten załącznik zapisuje, czego właściciel wtyczki oczekiwał od
+> SmartPI. 2026-11-22 autor SmartPI napisał, że SmartPI nie powinien zawierać logiki zależnej od
+> instalacji, i zaproponował interfejs na wyższym poziomie, w `vtherm_api`, dla każdego algorytmu
+> regulacji. SmartPI nie czyta dziś tych danych. Nie należy liczyć na ten załącznik.
+
 1. **Typ ogrzewania.** Każdy termostat SmartPI ma typ ogrzewania: grzejnik wodny, podłoga wodna,
    mata elektryczna, elektryczne szybkie. Typ wodny daje wykładnik odbiornika ciepła `n` i wodę
    odniesienia `T_ref`; wartości tymczasowe: grzejnik 1.3 i 60 °C, podłoga 1.1 i 45 °C. Typy

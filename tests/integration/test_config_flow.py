@@ -10,7 +10,11 @@ import pytest
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    MockModule,
+    mock_integration,
+)
 
 from custom_components.vtherm_smart_boiler.config import EntryConfig
 from custom_components.vtherm_smart_boiler.const import DOMAIN
@@ -2516,6 +2520,46 @@ async def test_a_switch_a_vt_zone_drives_is_refused_on_the_entity_path(
     assert result["errors"] == {field: "entity_used_by_zone"}
     result = await options_step(hass, result, details)
     assert result["step_id"] == "control_curve"
+
+
+@pytest.mark.parametrize("field", ["setpoint_entity", "ch_entity", "hand_back_entity"])
+async def test_a_write_target_through_a_cloud_is_refused_on_the_entity_path(
+    hass: HomeAssistant, entities: dict[str, str], field: str
+) -> None:
+    """The form says it at once: a setpoint, heating switch or external-control switch of an
+    integration that works through a cloud. Negative: the local ones are accepted."""
+    from homeassistant.helpers import entity_registry as er
+
+    mock_integration(hass, MockModule("maker", partial_manifest={"iot_class": "cloud_polling"}))
+    domain = "number" if field == "setpoint_entity" else "switch"
+    cloud = er.async_get(hass).async_get_or_create(domain, "maker", "target").entity_id
+    hass.states.async_set(cloud, "40" if domain == "number" else "off")
+    hass.states.async_set("switch.external_control", "off")
+    entry_id = await create_entry(hass, entities, "simple", ("living",))
+    result = await to_control_entity(hass, entry_id)
+    details = {
+        "setpoint_entity": BOILER_FLOW,
+        "write_type": "held",
+        "ch_entity": CH_SWITCH,
+        "ch_write_type": "held",
+        "hand_back": "switch",
+        "hand_back_entity": "switch.external_control",
+        "hand_back_entity_write_type": "held",
+    }
+    result = await options_step(hass, result, details | {field: cloud})
+    assert result["errors"] == {field: "write_through_cloud"}
+    result = await options_step(hass, result, details)
+    assert result["step_id"] == "control_curve"
+
+
+async def test_a_relay_through_a_cloud_is_refused(hass: HomeAssistant) -> None:
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.vtherm_smart_boiler.config_flow import relay_entity_error
+
+    mock_integration(hass, MockModule("maker", partial_manifest={"iot_class": "cloud_push"}))
+    relay = er.async_get(hass).async_get_or_create("switch", "maker", "relay").entity_id
+    assert relay_entity_error(hass, {}, relay) == "write_through_cloud"
 
 
 async def test_one_entity_for_two_signals_is_refused(

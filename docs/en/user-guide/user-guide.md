@@ -508,7 +508,8 @@ also needs a way to **write** to it — a "write path" — and a way to give the
 own control — the **hand-back**.
 
 Details: [`docs/en/specification/scope.md`, §5](../specification/scope.md#5-hardware-circuits-and-zone-algorithms) and
-[Gateway topology](../specification/scope.md#gateway-topology).
+[Gateway topology](../specification/scope.md#gateway-topology). Each connection, field by field:
+[Boiler connections](../specification/device-connections.md).
 
 The first panel asks **how the boiler is connected**. The answer decides what the plugin can
 write, how it hands the boiler back, and what the control device offers:
@@ -530,6 +531,12 @@ connection"). ESPHome and EMS-ESP are controllers on Home Assistant's side: thei
 "virtual". The Wi-Fi module and manufacturer integrations usually write to the boiler's memory
 or through a cloud, so control is offered only with a write type that is known and not
 persistent.
+
+**Control never writes through a cloud service.** Without internet the plugin could not hand the
+boiler back, and cloud services limit how often they may be called. An entity whose integration
+says it works through a cloud is refused as a write target and blocks control; it can still be
+monitored. Wi-Fi alone is fine: a device Home Assistant reaches locally is not a cloud. A helper
+or an MQTT bridge in front of a cloud cannot be seen by the plugin, so do not use one for control.
 
 ### 5.1 The write paths
 
@@ -833,7 +840,9 @@ A failed outdoor sensor is not a lost link: the plugin uses a fallback setpoint,
 
 You may map the boiler's own fault signals: its low-water-pressure fault, and another fault that
 stops it. On an OTGW a fault counts only while the boiler's "Fault indication" is on as well, and
-that signal must be mapped too.
+that signal must be mapped too. With the OTGW firmware over MQTT, the gateway's entities are those
+on the same Home Assistant device as its setpoint. Entities written by hand in YAML have no device:
+they count as the gateway's when the setpoint has none either.
 
 While such a fault reads "on" for 5 minutes, the plugin keeps heating off — frost heating
 included — with no hand-back and no latch. It heats again by itself as soon as every mapped fault
