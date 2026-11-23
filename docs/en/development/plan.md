@@ -162,6 +162,23 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
   Vaillant's anti-cycle time; about 0.04 K at −5 °C) — and hysteresis on the heat call
   (ASHRAE Guideline 36). Both go against principle 12 (heating follows VT at once): the user's
   decision.
+- **Device templates** (the user's decisions of 2026-11-22): what differs between boiler
+  connections moves into one YAML file per device, in three layers: protocol, behaviour and the
+  routes to the device. After the first release, before the work on 0.3:
+  [`plan-device-templates.md`](plans/plan-device-templates.md); the fields and today's cards are in
+  [`device-connections.md`](../specification/device-connections.md).
+- **Ideas from `vtherm_api`** (read on 2026-11-22), none needed for the beta:
+  - *The zones' pulses known ahead.* VT tells a feature manager when each zone's cycle starts and
+    how long it heats (`async_on_underlying_power`, since `vtherm_api` 0.9.0). The plugin could tell
+    a short gap between two zones from a real end of demand, the gap that stops the burner with
+    VT's 5-minute cycle. This goes against principle 12, so it is the user's decision, and its gain
+    is measured in the simulator first.
+  - *A warning before VT's safety mode.* VT's freshness clocks (`vtherm_api` 0.12.0, not released)
+    would let the plugin say a sensor has been quiet for most of VT's safety delay.
+  - *One signal for every zone algorithm: "this zone gets heat now".* SmartPI's author suggested
+    an interface at this level on 2026-11-22. It would be a small optional contract in
+    `vtherm_api`, talked over with VT's and SmartPI's authors first, with the working plugin as the
+    evidence, and no pull request before they agree.
 
 ## Release plans
 
@@ -190,3 +207,5 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
 - 0.2, step I11 — `docs/en/development/plans/plan-0.2-i11.md`: control switched on and off only
   by an administrator in the plugin's settings, and by automations; the Control switch becomes a
   state shown (the user's decisions of 2026-11-22, after J4's F19)
+- Device templates — `docs/en/development/plans/plan-device-templates.md`: one parameter file per
+  boiler device, after the first release (the user's decisions of 2026-11-22)

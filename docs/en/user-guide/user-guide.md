@@ -508,7 +508,8 @@ also needs a way to **write** to it — a "write path" — and a way to give the
 own control — the **hand-back**.
 
 Details: [`docs/en/specification/scope.md`, §5](../specification/scope.md#5-hardware-circuits-and-zone-algorithms) and
-[Gateway topology](../specification/scope.md#gateway-topology).
+[Gateway topology](../specification/scope.md#gateway-topology). Each connection, field by field:
+[Boiler connections](../specification/device-connections.md).
 
 The first panel asks **how the boiler is connected**. The answer decides what the plugin can
 write, how it hands the boiler back, and what the control device offers:

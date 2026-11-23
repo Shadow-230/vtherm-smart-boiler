@@ -535,7 +535,8 @@ też sposobu **zapisu** do kotła — „ścieżki zapisu” — oraz sposobu od
 sterowaniu — **oddania sterowania**.
 
 Szczegóły: [`docs/pl/specification/scope.md`, §5](../specification/scope.md#5-sprzęt-obiegi-i-algorytmy-stref) i
-[Gateway topology](../specification/scope.md#topologia-bramki).
+[Gateway topology](../specification/scope.md#topologia-bramki). Każde połączenie, pole po polu:
+[Połączenia kotła](../specification/device-connections.md).
 
 Pierwszy ekran pyta, **jak kocioł jest podłączony**. Odpowiedź decyduje, co wtyczka może
 zapisywać, jak oddaje kocioł i co proponuje urządzenie sterujące:
