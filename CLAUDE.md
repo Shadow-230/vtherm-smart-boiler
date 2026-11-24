@@ -15,7 +15,9 @@ and [`plan-0.2-i9.md`][plan-0.2-i9]; step I10, the Boiler page in the sidebar an
 user's decisions of 2026-11-18, before the first release), is planned in
 [`plan-0.2-i10.md`][plan-0.2-i10] and listed in the development plan, since `plan-0.2.md` is
 history; step I11, control switched only in the plugin's settings (the user's decisions of
-2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; the device
+2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; step I12, data
+through `vtherm_api` (the user's decisions of 2026-11-24), in [`plan-0.2-i12.md`][plan-0.2-i12],
+listed there too; the device
 templates, after the first release and before 0.3, in
 [`plan-device-templates.md`][plan-device-templates]; phases run in order. A 🔒 step whose plan says it holds nothing
 up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
@@ -32,6 +34,7 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2-i9]: docs/en/development/plans/plan-0.2-i9.md
 [plan-0.2-i10]: docs/en/development/plans/plan-0.2-i10.md
 [plan-0.2-i11]: docs/en/development/plans/plan-0.2-i11.md
+[plan-0.2-i12]: docs/en/development/plans/plan-0.2-i12.md
 [plan-device-templates]: docs/en/development/plans/plan-device-templates.md
 [plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
 [plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
@@ -187,6 +190,9 @@ Each topic lives only in its file; do not copy it here.
   imports; control and learning laws are pure functions with unit tests.
 - Zone data only through one module (`vtherm_link.py`); no `hass.states.get(...)` by entity name
   elsewhere.
+- Data between VT, SmartPI and the plugin goes through `vtherm_api` where the API has it; what it
+  lacks is listed in `docs/en/development/plans/plan-0.2-i12.md` and read the old way only until
+  the API has it (the user's rule, 2026-11-24). Nothing is kept that nothing uses.
 - Detect capabilities (`hasattr`, import in `try`); VT, `vtherm_api` and SmartPI change fast and
   older versions must work.
 - `translations/en.json` is the source; every user-visible string via translation keys; a test
@@ -201,6 +207,11 @@ Each topic lives only in its file; do not copy it here.
 - **`vtherm_api`**: class `VThermAPI`, `VThermAPI.get_vtherm_api(hass)`; `register_feature_manager`,
   `get_feature_manager_factories`, `list_feature_managers`, `register_prop_algorithm`,
   `PluginClimate`. No central hook — hence the plugin replaces VT's central boiler itself.
+  0.12.0 and 0.13.1 were released on 2026-11-23. The thermostat VT hands a feature manager is
+  declared by its `unique_id` (`InterfaceThermostat`) with the runtime members of
+  `InterfaceThermostatRuntime`; VT 10.6.5's `on_percent` getter calls the algorithm's
+  `update_realized_power` when safety or the duty cap clamps it, so the plugin does not read it
+  from there (`docs/en/development/plans/plan-0.2-i12.md`, Facts).
   A feature manager can add attributes to the VT climate (`add_custom_attributes`); its
   `refresh_state()` runs after the algorithm (one-cycle lag). The thermostat method
   `get_feature_manager(name)` exists from VT 10.5.0.beta1, not in 10.4.0. `get_vtherm_api`

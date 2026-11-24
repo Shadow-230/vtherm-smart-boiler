@@ -17,6 +17,8 @@ from custom_components.vtherm_smart_boiler.vtherm_link import (
     VT_CENTRAL_SEEN,
     VT_FEATURE_MANAGERS_FROM,
     VThermLink,
+    register_thermostat,
+    unregister_thermostat,
     vt_climate_entities,
     vt_loads_feature_managers,
 )
@@ -1137,3 +1139,120 @@ async def test_a_zone_without_a_state_is_named_from_its_registry_entry(hass: Hom
     assert zone_name(hass, bare.entity_id) == bare.entity_id  # nothing to name it by
     hass.states.async_set(named.entity_id, "heat", {"friendly_name": "Living room"})
     assert zone_name(hass, named.entity_id) == "Living room"
+
+
+class Runtime:
+    """VT's thermostat as ``vtherm_api`` declares it (VT 10.6.5's values), with a duty cycle whose
+    reading would act on the regulation — counted, so a test sees whether it was read."""
+
+    def __init__(self, unique_id: str, **values: Any) -> None:
+        self.unique_id = unique_id
+        self.values = {
+            "current_temperature": 19.46,
+            "target_temperature": 21.0,
+            "vtherm_hvac_mode": "heat",
+            "hvac_action": "heating",
+            "is_device_active": True,
+            "last_temperature_measure": datetime(2026, 11, 24, 9, 0, tzinfo=dt_util.UTC),
+            "is_overpowering_detected": True,
+            "hvac_off_reason": None,
+            "cycle_min": 10,
+        } | values
+        self.duty_reads = 0
+
+    def __getattr__(self, name: str) -> Any:
+        values = self.__dict__.get("values", {})
+        if name not in values:
+            raise AttributeError(name)
+        value = values[name]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    @property
+    def on_percent(self) -> float:
+        self.duty_reads += 1
+        return 0.9
+
+
+async def test_zone_values_come_through_vtherm_api(hass: HomeAssistant, zones: FakeZones) -> None:
+    """The user's rule (2026-11-24): where VT has handed the thermostat to the plugin, the values
+    ``vtherm_api`` declares come from it — the rest from the attributes, the duty cycle among
+    them (its reading would act on SmartPI). Negative: without the thermostat, or with VT not
+    showing it running, the attributes."""
+    living = zones.add(
+        "living",
+        current_temperature=20.0,
+        temperature=20.0,
+        hvac_action="idle",
+        on_percent=0.3,
+        valve_open_percent=30,
+        specific_states={"is_device_active": False, "hvac_off_reason": "hvac_off_manual"},
+        configuration={"cycle_min": 5},
+    )
+    link = VThermLink(hass, [living])
+    assert link.zone(living).temperature == pytest.approx(20.0)
+    assert link.zones_through_api() == []
+    thermostat = Runtime("fake_living")
+    register_thermostat(hass, thermostat)
+    zone = link.zone(living)
+    assert zone.temperature == pytest.approx(19.5)  # to a tenth, as the attributes show it
+    assert zone.target == pytest.approx(21.0)
+    assert (zone.heating_enabled, zone.calling, zone.device_active) == (True, True, True)
+    assert zone.shedding is True
+    assert zone.temperature_at == datetime(2026, 11, 24, 9, 0, tzinfo=dt_util.UTC).timestamp()
+    assert zone.on_percent == pytest.approx(0.3)  # the attribute's
+    assert zone.valve_open == pytest.approx(0.3)  # not in the API: the attribute's
+    assert thermostat.duty_reads == 0
+    assert link.zone_off_reason(living) is None  # the thermostat's: no reason
+    assert link.zone_algorithm(living).cycle_min == 10
+    assert link.zones_through_api() == [living]
+
+    zones.set("living", state="unavailable", current_temperature=20.0)
+    assert link.zone(living).temperature != pytest.approx(19.5)
+    assert link.zones_through_api() == []
+    zones.set("living", current_temperature=20.0, temperature=20.0)
+    unregister_thermostat(hass, thermostat)
+    assert link.zone(living).temperature == pytest.approx(20.0)
+    assert link.zone_algorithm(living).cycle_min is None  # no cycle in these attributes
+
+
+async def test_a_member_that_fails_or_is_missing_keeps_the_attribute(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """Negative: a member VT lacks, one whose property fails, or a method where ``vtherm_api``
+    declares a property gives nothing — that field keeps the attribute's value, the others
+    still come from the thermostat; another VT entity's thermostat is never taken."""
+    living = zones.add("living", current_temperature=20.0, temperature=20.0, hvac_action="idle")
+    bedroom = zones.add("bedroom", current_temperature=18.0, temperature=18.0)
+    thermostat = Runtime(
+        "fake_living",
+        current_temperature=RuntimeError("VT failed"),
+        hvac_action=lambda: "heating",
+    )
+    del thermostat.values["target_temperature"]
+    register_thermostat(hass, thermostat)
+    link = VThermLink(hass, [living, bedroom])
+    zone = link.zone(living)
+    assert zone.temperature == pytest.approx(20.0)
+    assert zone.target == pytest.approx(20.0)
+    assert zone.calling is False  # the attribute's "idle"
+    assert zone.device_active is True  # still the thermostat's
+    assert link.zone(bedroom).temperature == pytest.approx(18.0)
+    assert link.zones_through_api() == [living]
+
+
+async def test_the_newest_thermostat_handed_over_is_read(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """VT's reload hands over a new thermostat for the same unique ID: the newest is read, as
+    VT's own ``get_feature_manager`` picks; one VT stopped is forgotten."""
+    living = zones.add("living", current_temperature=20.0)
+    old, new = Runtime("fake_living"), Runtime("fake_living", current_temperature=22.0)
+    register_thermostat(hass, old)
+    register_thermostat(hass, new)
+    register_thermostat(hass, new)  # once only
+    link = VThermLink(hass, [living])
+    assert link.zone(living).temperature == pytest.approx(22.0)
+    unregister_thermostat(hass, new)
+    assert link.zone(living).temperature == pytest.approx(19.5)

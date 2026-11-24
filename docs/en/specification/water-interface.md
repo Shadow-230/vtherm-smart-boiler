@@ -51,19 +51,11 @@ has the fields of section 4 as read-only properties. A consumer reaches it throu
 10.5.0.beta1 and later). VT gives a thermostat its managers when the thermostat starts, so one
 that started before Smart Boiler registered has none until VT's next reload.
 
-### 3.2 The public API
+### 3.2 The public API (removed)
 
-While Smart Boiler runs, `hass.data["vtherm_smart_boiler_api"]` holds an object with named
-functions; it is removed when Smart Boiler stops. Today it has one:
-
-- `zone_water(entity_id: str) -> Mapping[str, Any] | None` — for a VT climate's entity ID, a
-  read-only mapping with the fields of section 4; `None` when the thermostat is not one of Smart
-  Boiler's zones, or its data cannot be read.
-
-It works with every VT version Smart Boiler supports (10.2.0 and later; 10.5.1 tested) and before
-VT's reload. A consumer imports nothing of Smart Boiler's; it checks that the key and the
-function exist. A later addition is a new function on the same object. Smart Boiler's other keys
-in `hass.data` are internal and not part of this interface.
+Removed on 2026-11-24 (the user's rule: Smart Boiler's data goes out through `vtherm_api` only;
+nothing used it). `hass.data["vtherm_smart_boiler_api"]` no longer exists; a consumer reads the
+feature manager (3.1).
 
 ### 3.3 The attribute on VT's thermostat
 
@@ -75,7 +67,7 @@ The `smart_boiler` attribute on each VT climate Smart Boiler serves is a mapping
 | `supply_temperature` | `int \| None`, °C | section 4's value rounded to 1 °C | on a change of at least 1 K, or to or from `None` |
 
 For display only: VT records its thermostats' attributes, so the attribute changes rarely. A
-consumer reads the live values (3.1, 3.2).
+consumer reads the live values (3.1).
 
 ### 3.4 What Smart Boiler reads from a consumer
 
@@ -112,16 +104,8 @@ Per VT thermostat that is one of Smart Boiler's zones.
 | `heat_reason` | `str` | one of 4.2 | `heat_available` is `True` | why heat does not reach the zone, or why it cannot be told |
 | `boiler_called` | `bool` | `True`: Smart Boiler asks the boiler for space heating now, frost protection included. `False`: it does not, while it controls the boiler | Smart Boiler does not control the boiler now, or cannot tell yet | whether heat is asked of the boiler, apart from the burner's own cycling |
 | `call_reason` | `str` | one of 4.3 | `boiler_called` is `True` | why the boiler is not called, or why it cannot be told |
-| `demand_count` | `int` | the devices — or zones, as `count_by` says — calling now | no zone is known | diagnostics: the demand against its threshold |
-| `count_threshold` | `int` | the count that starts the boiler | the count criterion is off (0) | diagnostics |
-| `count_by` | `str` | `devices` (VT's heads, valves and switches, as VT's central boiler counts them) or `zones` | the count criterion is off | diagnostics |
-| `demand_power_kw` | `float`, kW | the zones' mean power over their cycles, summed, as VT's central boiler shows it; it counts toward its threshold only while a calling zone's valve is open or its device on | no zone gives a power | diagnostics |
-| `power_threshold_kw` | `float`, kW | the power that starts the boiler | the power criterion is not set | diagnostics |
-| `demand_opening` | `float`, 0 to 1 | the widest opening among the calling zones — a valve's opening, else the zone's duty cycle | no calling zone publishes one | diagnostics |
-| `opening_threshold` | `float`, 0 to 1 | the opening that starts the boiler | the opening criterion is not set | diagnostics |
 
-`boiler_called`, `call_reason` and the demand fields are the installation's: the same for each of
-its zones. `True` means Smart Boiler commands heating, not proof that the boiler obeys (a write
+`boiler_called` and `call_reason` are the installation's: the same for each of its zones. `True` means Smart Boiler commands heating, not proof that the boiler obeys (a write
 ignored or a relay not confirmed has its own alarm); a burner pause or hot water with priority
 stay in `heat_available` / `heat_reason`.
 
@@ -235,7 +219,10 @@ What a consumer gets follows from what is mapped (5.1), not from the connection.
 
 ## 8. Changes
 
-- Only additions: a new field, a new reason value, a new API function.
+- Only additions: a new field, a new reason value. One removal so far, on 2026-11-24 (the
+  user's decision, nothing read them): the public API (3.2) and the seven demand fields
+  (`demand_count`, `count_threshold`, `count_by`, `demand_power_kw`, `power_threshold_kw`,
+  `demand_opening`, `opening_threshold`), which Smart Boiler's own entities still show.
 - A consumer must take an unknown reason value as "no data" for that moment.
 - A change of meaning gets a new name; the old name stays until consumers have moved.
 - The contract test (section 2) fails on any change to a name, a type or an allowed value; that
@@ -250,12 +237,13 @@ consumer only the key of 3.4.
 ## 10. Built
 
 Smart Boiler's side: step I9 (2026-10-12) — the fields (with the reasons `not_mapped` and
-`several_circuits`), the manager's properties (3.1), the API (3.2), the attribute (3.3), the read
+`several_circuits`), the manager's properties (3.1), the API (3.2, removed), the attribute (3.3), the read
 of the consumer's key (3.4), the pause conditions (3.5) and the contract test (section 2).
 2026-10-14: the boiler's call and the demand against its thresholds (§4, §4.3), at SmartPI's
 request (SmartPI's `specs/2026-10-14-smart-boiler-boiler-call.md`), with the reason
 `below_threshold` and the corrected mapping agreed then; no learning pause added for it (3.5
-unchanged). The consumer's side is the consumer's: for SmartPI, Annex A.
+unchanged). 2026-11-24: the API and the demand fields removed (section 8). The consumer's side
+is the consumer's: for SmartPI, Annex A.
 
 ## Annex A — SmartPI's use (agreed on 2026-10-12; belongs to SmartPI's own specification)
 

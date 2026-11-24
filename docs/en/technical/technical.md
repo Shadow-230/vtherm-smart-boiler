@@ -35,9 +35,15 @@ writes that to the boiler and hands the boiler back on every exit.
 - **The HA side** around it gathers inputs from the entities the user picked, runs the core on
   timers and state changes, carries out its writes, and publishes sensors, binary sensors,
   switches, buttons and repair issues.
-- **`vtherm_link.py` is the only door to zone data.** It reads VT's climate entities and VT's
-  central configuration, and detects what is installed (VT and its version, `vtherm_api`,
-  SmartPI) instead of assuming it. No other module looks up a zone's state by entity name.
+- **`vtherm_link.py` is the only door to zone data.** It reads each zone through `vtherm_api`
+  where the API has the value: VT hands each thermostat to the plugin's feature manager, and the
+  members the API declares are read from it — the room temperature and when it was measured,
+  the target, the mode, whether the zone heats and its device is on, power shedding, why VT keeps
+  it off, its cycle (the user's rule, 2026-11-24). The rest, and every value of a thermostat VT
+  started before the plugin registered, comes from VT's climate entities; so do VT's central
+  configuration and its central boiler. It detects what is installed (VT and its version,
+  `vtherm_api`, SmartPI) instead of assuming it. No other module looks up a zone's state by
+  entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
   `register_feature_manager`) shows on each VT thermostat whether the boiler's heat reaches its
   zone now — `heat_available`, from `core/heat.py` (I8, decision C1) — and, since I9, the water
@@ -360,21 +366,24 @@ water with priority. Data flows one way, from the plugin to the zone algorithm.
 
 The plugin exposes, per VT thermostat that is one of its zones, the supply temperature with the
 reason it is missing (lasting or momentary), when it was measured, and whether heat reaches the
-zone with its reason: as properties of its feature manager, through a function in `hass.data`
-that works with every supported VT version, and, rounded, in the `smart_boiler` attribute. It
+zone with its reason: as properties of its feature manager, and, rounded, in the
+`smart_boiler` attribute (a function in `hass.data` until 2026-11-24, removed: the data goes out
+through `vtherm_api` only). It
 reads one key a consumer writes into the thermostat's `specific_states`, and pauses SmartPI's
 learning on its own conditions. No version number: consumers detect what exists, changes only
 add, and a contract test (`tests/test_water_interface.py`) pins every name and value. The parts:
 `core/supply.py` and `core/heat.py` (the reasons), `core/water.py` (a zone's fields),
-`coordinator.py` (each zone's `ZoneWater`), `feature_manager.py` (the properties, the attribute,
-the API), `vtherm_link.py` (the consumer's key) and `core/learning.py` (the pauses).
+`coordinator.py` (each zone's `ZoneWater`), `feature_manager.py` (the properties and the
+attribute), `vtherm_link.py` (the consumer's key) and `core/learning.py` (the pauses).
 
 **Added 2026-10-14, at SmartPI's request:** whether the boiler is called for heat
 (`boiler_called`) and why not (`call_reason` — `below_threshold` where zones call under the
 demand criteria, `no_demand`, `activation_delay`, `boiler_fault`, `not_controlling`,
-`waiting_data`), with the demand against its thresholds — so a zone algorithm does not learn
+`waiting_data`) — so a zone algorithm does not learn
 from heat that never came, which a burner pause does not tell apart. The installation's values,
-the same for each zone, read live from control (`core/boiler_call.py`).
+the same for each zone, read live from control (`core/boiler_call.py`). The demand against
+its thresholds was there too until 2026-11-24; nothing read it, and the plugin's own entities
+show it.
 
 The full specification — names, types, values, ranges, what happens when a value is missing:
 [`water-interface.md`](../specification/water-interface.md).

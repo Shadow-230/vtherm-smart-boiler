@@ -53,19 +53,11 @@ niego przez `thermostat.get_feature_manager("vtherm_smart_boiler")` tam, gdzie V
 więc termostat, który wystartował, zanim Smart Boiler się zarejestrował, nie ma go aż do
 następnego przeładowania VT.
 
-### 3.2 Publiczne API
+### 3.2 Publiczne API (usunięte)
 
-Gdy Smart Boiler działa, `hass.data["vtherm_smart_boiler_api"]` zawiera obiekt z nazwanymi
-funkcjami; po zatrzymaniu Smart Boiler jest usuwany. Dziś ma jedną:
-
-- `zone_water(entity_id: str) -> Mapping[str, Any] | None` — dla identyfikatora encji klimatu VT:
-  mapa tylko do odczytu z polami z sekcji 4; `None`, gdy termostat nie jest strefą Smart Boiler
-  albo jego danych nie da się odczytać.
-
-Działa z każdą wersją VT, którą Smart Boiler obsługuje (10.2.0 i nowsze; przetestowana 10.5.1)
-oraz przed przeładowaniem VT. Odbiorca niczego nie importuje ze Smart Boiler; sprawdza tylko, czy
-istnieją klucz i funkcja. Późniejszy dodatek to nowa funkcja na tym samym obiekcie. Pozostałe
-klucze Smart Boiler w `hass.data` są wewnętrzne i nie należą do tego interfejsu.
+Usunięte 2026-11-24 (zasada użytkownika: dane Smart Boiler wychodzą tylko przez `vtherm_api`;
+nikt go nie używał). `hass.data["vtherm_smart_boiler_api"]` już nie istnieje; odbiorca czyta
+menedżer funkcji (3.1).
 
 ### 3.3 Atrybut w termostacie VT
 
@@ -77,7 +69,7 @@ Atrybut `smart_boiler` w każdej encji climate VT, którą obsługuje Smart Boil
 | `supply_temperature` | `int \| None`, °C | wartość z sekcji 4 zaokrąglona do 1 °C | przy zmianie o co najmniej 1 K lub przy przejściu do `None` albo z `None` |
 
 Tylko do wyświetlania: VT zapisuje atrybuty swoich termostatów, więc atrybut zmienia się rzadko.
-Odbiorca czyta wartości na żywo (3.1, 3.2).
+Odbiorca czyta wartości na żywo (3.1).
 
 ### 3.4 Co Smart Boiler czyta od odbiorcy
 
@@ -113,16 +105,8 @@ Dla każdego termostatu VT, który jest strefą Smart Boiler.
 | `heat_reason` | `str` | jedna z 4.2 | `heat_available` to `True` | dlaczego ciepło nie dociera do strefy albo dlaczego nie da się tego ustalić |
 | `boiler_called` | `bool` | `True`: Smart Boiler prosi teraz kocioł o centralne ogrzewanie (c.o.), wraz z ochroną przed mrozem. `False`: nie prosi, gdy steruje kotłem | Smart Boiler teraz nie steruje kotłem albo jeszcze nie może tego ustalić | czy kocioł jest proszony o ciepło, niezależnie od włączeń i wyłączeń samego palnika |
 | `call_reason` | `str` | jedna z 4.3 | `boiler_called` to `True` | dlaczego kocioł nie jest wezwany albo dlaczego nie da się tego ustalić |
-| `demand_count` | `int` | urządzenia — albo strefy, zależnie od `count_by` — które teraz wołają | żadna strefa nie jest znana | diagnostyka: zapotrzebowanie wobec progu |
-| `count_threshold` | `int` | liczba, która uruchamia kocioł | kryterium liczby jest wyłączone (0) | diagnostyka |
-| `count_by` | `str` | `devices` (głowice, zawory i przełączniki VT, tak jak liczy je centralny kocioł VT) albo `zones` | kryterium liczby jest wyłączone | diagnostyka |
-| `demand_power_kw` | `float`, kW | moc średnia stref z ich cykli, zsumowana, tak jak pokazuje ją centralny kocioł VT; liczy się do progu tylko wtedy, gdy zawór wołającej strefy jest otwarty albo jej urządzenie włączone | żadna strefa nie podaje mocy | diagnostyka |
-| `power_threshold_kw` | `float`, kW | moc, która uruchamia kocioł | kryterium mocy nie jest ustawione | diagnostyka |
-| `demand_opening` | `float`, od 0 do 1 | największe otwarcie wśród wołających stref — otwarcie zaworu, a w przeciwnym razie cykl pracy strefy | żadna wołająca strefa go nie podaje | diagnostyka |
-| `opening_threshold` | `float`, od 0 do 1 | otwarcie, które uruchamia kocioł | kryterium otwarcia nie jest ustawione | diagnostyka |
 
-`boiler_called`, `call_reason` i pola zapotrzebowania dotyczą całej instalacji: są takie same dla
-każdej jej strefy. `True` znaczy, że Smart Boiler poleca grzać, a nie dowód, że kocioł słucha
+`boiler_called` i `call_reason` dotyczą całej instalacji: są takie same dla każdej jej strefy. `True` znaczy, że Smart Boiler poleca grzać, a nie dowód, że kocioł słucha
 (zignorowany zapis lub niepotwierdzony przekaźnik ma własny alarm); przerwa palnika lub c.w.u.
 z priorytetem zostają w `heat_available` / `heat_reason`.
 
@@ -237,7 +221,10 @@ Zwykle:
 
 ## 8. Zmiany
 
-- Tylko dodatki: nowe pole, nowa wartość powodu, nowa funkcja API.
+- Tylko dodatki: nowe pole, nowa wartość powodu. Jak dotąd jedno usunięcie, 2026-11-24 (decyzja
+  użytkownika, nikt ich nie czytał): publiczne API (3.2) i siedem pól zapotrzebowania
+  (`demand_count`, `count_threshold`, `count_by`, `demand_power_kw`, `power_threshold_kw`,
+  `demand_opening`, `opening_threshold`), które nadal pokazują własne encje Smart Boiler.
 - Odbiorca musi traktować nieznaną wartość powodu jako „brak danych” na tę chwilę.
 - Zmiana znaczenia dostaje nową nazwę; stara nazwa zostaje, dopóki odbiorcy się nie przeniosą.
 - Test kontraktowy (sekcja 2) zawodzi przy każdej zmianie nazwy, typu lub dozwolonej wartości; to
@@ -252,12 +239,13 @@ strefy. Smart Boiler czyta od odbiorcy tylko klucz z 3.4.
 ## 10. Zbudowane
 
 Strona Smart Boiler: krok I9 (2026-10-12) — pola (z powodami `not_mapped` i `several_circuits`),
-właściwości menedżera (3.1), API (3.2), atrybut (3.3), odczyt klucza odbiorcy (3.4), warunki
+właściwości menedżera (3.1), API (3.2, usunięte), atrybut (3.3), odczyt klucza odbiorcy (3.4), warunki
 wstrzymania (3.5) i test kontraktowy (sekcja 2). 2026-10-14: wezwanie kotła i zapotrzebowanie
 wobec progów (§4, §4.3), na prośbę SmartPI (SmartPI:
 `specs/2026-10-14-smart-boiler-boiler-call.md`), z powodem `below_threshold` i poprawionym
 przyporządkowaniem uzgodnionym wtedy; bez dodania wstrzymania nauki z tego powodu (3.5 bez zmian).
-Strona odbiorcy należy do odbiorcy: dla SmartPI — Załącznik A.
+2026-11-24: API i pola zapotrzebowania usunięte (sekcja 8). Strona odbiorcy należy do odbiorcy: dla
+SmartPI — Załącznik A.
 
 ## Załącznik A — użycie przez SmartPI (uzgodnione 2026-10-12; należy do własnej specyfikacji SmartPI)
 
