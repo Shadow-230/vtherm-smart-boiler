@@ -142,13 +142,18 @@ async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_value
     assert (zone.temperature, zone.target, zone.heating_enabled) == (19.0, 21.0, True)
     assert zone.on_percent == pytest.approx(0.76)  # TPI: 0.3 · 2 K + 0.01 · 16 K
     assert zone.calling is True
+    assert zone.device_active is True
+    assert zone.temperature_at is not None
     assert DOMAIN in VThermAPI.get_vtherm_api(hass).list_feature_managers()
+    # I12 (the user's rule, 2026-11-24): VT handed the thermostat to the plugin's manager, and
+    # the zone above was read from it through ``vtherm_api``.
+    assert entry.runtime_data.link.zones_through_api() == [LIVING]
     await entry.runtime_data.async_refresh()
     await heat_to(hass, 21.5)  # VT publishes its attributes again
     shown = hass.states.get(LIVING).attributes.get("smart_boiler")
     assert shown is not None
     # I9 (water-interface.md §3.3): heat available, and the water rounded to 1 °C — the boiler's
-    # flame off, its flow at 30 °C; the same as the public API's fields (§3.2).
+    # flame off, its flow at 30 °C; the same as the manager's properties (§3.1).
     assert shown == {"heat_available": False, "supply_temperature": 30}
     assert _water(hass) == {
         "supply_temperature": 30.0,
@@ -173,13 +178,20 @@ async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_value
 
 
 def _water(hass: HomeAssistant) -> dict[str, Any]:
-    """The public API's water fields for the living room, the moment of the reading aside —
-    known while the water is; the boiler's call (§4.3) is pinned in-process with control."""
-    water = hass.data["vtherm_smart_boiler_api"].zone_water(LIVING)
-    assert water is not None
-    fields = {key: water[key] for key in WATER_KEYS}
-    assert (water["supply_measured_at"] is None) is (fields["supply_temperature"] is None)
+    """The living room's water fields as its thermostat's manager shows them through
+    ``vtherm_api`` (§3.1), the moment of the reading aside — known while the water is; the
+    boiler's call (§4.3) is pinned in-process with control."""
+    manager = VThermAPI.get_vtherm_api(hass).get_feature_manager(DOMAIN).create(_Climate(LIVING))
+    fields = {key: getattr(manager, key) for key in WATER_KEYS}
+    assert (manager.supply_measured_at is None) is (fields["supply_temperature"] is None)
     return fields
+
+
+@dataclass
+class _Climate:
+    """A consumer's stand-in for the thermostat, as a manager is asked for one."""
+
+    entity_id: str
 
 
 WATER_KEYS = ("supply_temperature", "supply_reason", "heat_available", "heat_reason")
@@ -190,8 +202,9 @@ async def test_a_real_vt_thermostat_finds_the_plugins_manager_by_its_name(
 ) -> None:
     """I9 (water-interface.md §3.1): from VT 10.5.0 a zone algorithm finds the plugin's manager
     on its own thermostat by its stable name, ``get_feature_manager("vtherm_smart_boiler")``;
-    its properties are the public API's fields. The pinned VT 10.5.1 has the lookup; an older one
-    (10.4.0 has none) skips the test."""
+    its properties are the specification's fields, the zone found by the thermostat's unique ID
+    (I12). The pinned VT 10.5.1 has the lookup; an older one (10.4.0 has none) skips the
+    test."""
     from homeassistant.components.climate import DATA_COMPONENT
 
     entry = await room_and_boiler(hass)
@@ -211,9 +224,8 @@ async def test_a_real_vt_thermostat_finds_the_plugins_manager_by_its_name(
     await entry.runtime_data.async_refresh()
     manager = lookup(DOMAIN)
     assert manager is not None
-    water = hass.data["vtherm_smart_boiler_api"].zone_water(LIVING)
-    assert water is not None
-    assert {name: getattr(manager, name) for name in water} == dict(water)
+    assert "vtherm_smart_boiler_api" not in hass.data
+    assert {name: getattr(manager, name) for name in WATER_KEYS} == _water(hass)
     assert manager.supply_temperature == 45.6
     assert manager.heat_available is True
 

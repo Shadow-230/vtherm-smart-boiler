@@ -141,6 +141,9 @@ async def async_get_config_entry_diagnostics(
             "options": dict(entry.options),
             "capabilities": asdict(data.capabilities),
             "vt_feature_manager": _feature_manager(hass),
+            # The zones read through ``vtherm_api`` at their last read; the others from VT's
+            # attributes (a thermostat VT started before the plugin registered).
+            "zones_through_vtherm_api": coordinator.link.zones_through_api(),
             "central_mode": None if data.central_mode is None else data.central_mode.value,
             "monitoring_since": data.monitoring_since,
             # P-95: when the plugin was not running, unknown in what is read back.

@@ -13,7 +13,6 @@ from pathlib import Path
 from custom_components.vtherm_smart_boiler import control, feature_manager, vtherm_link
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.boiler_call import CallReason
-from custom_components.vtherm_smart_boiler.core.demand import CountBy
 from custom_components.vtherm_smart_boiler.core.heat import HeatReason
 from custom_components.vtherm_smart_boiler.core.supply import SupplyReason
 
@@ -24,9 +23,12 @@ FIELDS = (
     "supply_measured_at",
     "heat_available",
     "heat_reason",
-    # 2026-10-14, SmartPI's request (§4.3): the boiler's call and the demand.
+    # 2026-10-14, SmartPI's request (§4.3): the boiler's call (the demand against its thresholds
+    # removed on 2026-11-24, §8: nothing read it).
     "boiler_called",
     "call_reason",
+)
+DEMAND = (
     "demand_count",
     "count_threshold",
     "count_by",
@@ -84,12 +86,15 @@ def _first_column(section: str) -> set[str]:
 
 
 def test_the_names_are_the_specified_ones() -> None:
-    """§3, §4: the manager's name, the fields in their order, the API's key and function, the
-    attribute, the consumer's key and the learning service."""
+    """§3, §4: the manager's name, the fields in their order, the attribute, the consumer's key
+    and the learning service; no public API in ``hass.data`` and no demand field any more (§3.2,
+    §8: the data goes out through ``vtherm_api`` only)."""
     assert feature_manager.MANAGER_NAME == DOMAIN == "vtherm_smart_boiler"
     assert feature_manager.WATER_FIELDS == FIELDS
-    assert feature_manager.API_KEY == "vtherm_smart_boiler_api"
-    assert callable(feature_manager.SmartBoilerApi.zone_water)
+    assert not hasattr(feature_manager, "API_KEY")
+    assert not hasattr(feature_manager, "SmartBoilerApi")
+    for gone in DEMAND:
+        assert not hasattr(feature_manager.SmartBoilerFeatureManager, gone)
     assert feature_manager.ATTRIBUTE == "smart_boiler"
     assert feature_manager.ATTRIBUTE_STEP_K == 1.0
     assert vtherm_link.WATER_DATA_KEY == "water_factor"
@@ -114,13 +119,6 @@ def test_the_property_types_are_the_specified_ones() -> None:
         "heat_reason": "str | None",
         "boiler_called": "bool | None",
         "call_reason": "str | None",
-        "demand_count": "int | None",
-        "count_threshold": "int | None",
-        "count_by": "str | None",
-        "demand_power_kw": "float | None",
-        "power_threshold_kw": "float | None",
-        "demand_opening": "float | None",
-        "opening_threshold": "float | None",
     }
 
 
@@ -132,17 +130,14 @@ def test_the_reasons_are_the_specified_values() -> None:
     assert _first_column(_section("### 4.2 `heat_reason`")) == HEAT_REASONS
     assert {r.value for r in CallReason} == CALL_REASONS
     assert _first_column(_section("### 4.3 `call_reason`")) == CALL_REASONS
-    assert {by.value for by in CountBy} == {"devices", "zones"}  # count_by's values (§4)
 
 
 def test_the_specification_lists_the_fields_and_the_attribute() -> None:
-    """§4's table names the fields; §3.3's the attribute's keys; §3.2 the API."""
+    """§4's table names the fields; §3.3's the attribute's keys; §3.2 says the API is gone."""
     assert _first_column(_section("## 4. The fields")) == set(FIELDS)
     assert _first_column(_section("### 3.3 The attribute on VT's thermostat")) == {
         "heat_available",
         "supply_temperature",
     }
-    api = _section("### 3.2 The public API")
-    assert '`hass.data["vtherm_smart_boiler_api"]`' in api
-    assert "`zone_water(entity_id: str) -> Mapping[str, Any] | None`" in api
+    assert "no longer exists" in _section("### 3.2 The public API (removed)")
     assert "`water_factor`" in _section("### 3.4 What Smart Boiler reads from a consumer")

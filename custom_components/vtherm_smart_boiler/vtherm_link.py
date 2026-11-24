@@ -1,8 +1,13 @@
 """The only module that reads Versatile Thermostat zones and VT's central configuration.
 
-It reads VT's climate entities (state and top-level attributes, see ``vtherm_attributes``) and
-VT's central mode select. It detects what is installed instead of assuming it: VT, its version,
-``vtherm_api`` and SmartPI may be missing or older.
+Zone values go through ``vtherm_api`` where it has them (the user's rule, 2026-11-24): VT hands
+each of its thermostats to the plugin's feature manager, which keeps it here
+(``register_thermostat``), and the members the API declares are read from it
+(``vtherm_attributes.RUNTIME_MEMBERS``). The rest — and every value of a thermostat VT started
+before the plugin registered, until VT's reload — comes from VT's climate entities (state and
+top-level attributes, see ``vtherm_attributes``) and VT's central mode select. It detects what is
+installed instead of assuming it: VT, its version, ``vtherm_api`` and SmartPI may be missing or
+older.
 
 Moving over from VT's own central boiler (X8, R14), it reads — never writes — what VT's central
 entry keeps (its commands, activation delay and keep-alive) and VT's two threshold numbers, so
@@ -21,6 +26,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 from awesomeversion import AwesomeVersion
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -40,11 +46,20 @@ from .const import DOMAIN, OPENTHERM_GW_DOMAIN, VT_DOMAIN
 from .core.readings import ZoneState
 from .transport.entities import reported_at
 from .units import parse_number
-from .vtherm_attributes import CentralMode, central_mode, zone_values
+from .vtherm_attributes import (
+    RUNTIME_MEMBERS,
+    CentralMode,
+    central_mode,
+    runtime_zone,
+    zone_values,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 SMARTPI_DOMAIN = "vtherm_smartpi"
+# VT's thermostats as VT handed them to the plugin's feature manager, for this Home Assistant run:
+# kept across the plugin's reloads, as the managers are (``feature_manager``).
+THERMOSTATS_KEY = f"{DOMAIN}_vt_thermostats"
 CENTRAL_MODE_UNIQUE_ID = "central_mode"
 CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
 CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (VT 10.4.0)
@@ -599,14 +614,80 @@ def smartpi_learning_phase(hass: HomeAssistant, state: State | None) -> bool | N
     return diagnostics.state == SMARTPI_LEARNING_PHASE
 
 
+def register_thermostat(hass: HomeAssistant, thermostat: Any) -> None:
+    """Keep a thermostat VT handed to the plugin's feature manager (``vtherm_api``)."""
+    thermostats: list[Any] = hass.data.setdefault(THERMOSTATS_KEY, [])
+    if not any(kept is thermostat for kept in thermostats):
+        thermostats.append(thermostat)
+
+
+def unregister_thermostat(hass: HomeAssistant, thermostat: Any) -> None:
+    """Forget a thermostat VT stopped (its manager's ``stop_listening``)."""
+    thermostats: list[Any] = hass.data.get(THERMOSTATS_KEY, [])
+    thermostats[:] = [kept for kept in thermostats if kept is not thermostat]
+
+
+def vt_thermostat(hass: HomeAssistant, entity_id: str) -> Any | None:
+    """The VT thermostat behind a climate entity, as VT handed it to the plugin: matched by the
+    unique ID ``vtherm_api`` declares, against the entity's VT registry entry; the newest one
+    kept, as VT's own ``get_feature_manager`` picks. ``None`` for a thermostat VT never handed
+    over — one VT started before the plugin registered, until VT's reload."""
+    thermostats: list[Any] = hass.data.get(THERMOSTATS_KEY, [])
+    if not thermostats:
+        return None
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None or entry.platform != VT_DOMAIN:
+        return None
+    for thermostat in reversed(thermostats):
+        try:
+            unique_id = thermostat.unique_id
+        except Exception:  # VT's property failed: not this one
+            continue
+        if unique_id == entry.unique_id:
+            return thermostat
+    return None
+
+
+def vt_entity_id(hass: HomeAssistant, thermostat: Any) -> str | None:
+    """The climate entity of a thermostat VT handed over: by the unique ID ``vtherm_api``
+    declares, in VT's registry entries; else the entity ID it carries (assumed, a VT not seen
+    without a registry entry)."""
+    try:
+        unique_id = thermostat.unique_id
+    except Exception:  # VT's property failed, or not there
+        unique_id = None
+    if isinstance(unique_id, str):
+        found = er.async_get(hass).async_get_entity_id("climate", VT_DOMAIN, unique_id)
+        if found is not None:
+            return found
+    entity_id = getattr(thermostat, "entity_id", None)
+    return entity_id if isinstance(entity_id, str) else None
+
+
+def runtime_readings(thermostat: Any, members: Sequence[str]) -> dict[str, object]:
+    """The members a VT thermostat gives now; one that is missing, fails, or is a method where
+    ``vtherm_api`` declares a property is left out — the caller keeps the attribute's value."""
+    found: dict[str, object] = {}
+    for member in members:
+        try:
+            value = getattr(thermostat, member)
+        except Exception:  # missing in this VT, or its property failed
+            continue
+        if not callable(value):
+            found[member] = value
+    return found
+
+
 class VThermLink:
-    """Zones as the core sees them, read from VT's climate entities."""
+    """Zones as the core sees them, read through ``vtherm_api`` and from VT's climate
+    entities."""
 
     def __init__(self, hass: HomeAssistant, zone_entities: Sequence[str]) -> None:
         self._hass = hass
         self._zones = tuple(zone_entities)
         self._api_version: str | None = None
         self._watching = False
+        self._through_api: set[str] = set()  # the zones read through ``vtherm_api`` last time
 
     async def async_detect(self) -> None:
         """Read what does not change while Home Assistant runs — the installed ``vtherm_api``
@@ -616,9 +697,28 @@ class VThermLink:
     def zone(self, entity_id: str) -> ZoneState:
         state = self._hass.states.get(entity_id)
         zone = self.zone_from_state(entity_id, state)
+        thermostat = self._thermostat(entity_id, state)
+        if thermostat is not None:
+            unit = str(self._hass.config.units.temperature_unit)
+            found = runtime_zone(runtime_readings(thermostat, RUNTIME_MEMBERS), unit)
+            zone = replace(zone, **found)
+            self._through_api.add(entity_id)
+        else:
+            self._through_api.discard(entity_id)
         lost = zone.safety_on or self._room_sensor_lost(entity_id)
         learning = smartpi_learning_phase(self._hass, state)
         return replace(zone, room_sensor_lost=lost, smartpi_learning_phase=learning)
+
+    def _thermostat(self, entity_id: str, state: State | None) -> Any | None:
+        """The zone's VT thermostat as VT handed it to the plugin, while VT shows it running: a
+        climate away, unavailable or unknown keeps what its state says."""
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
+        return vt_thermostat(self._hass, entity_id)
+
+    def zones_through_api(self) -> list[str]:
+        """The zones whose values came through ``vtherm_api`` at their last read."""
+        return sorted(self._through_api)
 
     def _room_sensor_lost(self, entity_id: str) -> bool:
         """The room sensor VT reads is gone, unavailable or unknown: VT keeps its last
@@ -699,6 +799,12 @@ class VThermLink:
         state = self._hass.states.get(entity_id)
         if state is None:
             return None
+        thermostat = self._thermostat(entity_id, state)
+        if thermostat is not None:
+            readings = runtime_readings(thermostat, (HVAC_OFF_REASON,))
+            if HVAC_OFF_REASON in readings:
+                reason = readings[HVAC_OFF_REASON]
+                return reason if isinstance(reason, str) else None
         specific = state.attributes.get("specific_states")
         reason = specific.get(HVAC_OFF_REASON) if isinstance(specific, dict) else None
         if reason is None:
@@ -711,7 +817,8 @@ class VThermLink:
         return None if state is None else attribute in state.attributes
 
     def zone_algorithm(self, entity_id: str) -> ZoneAlgorithm:
-        """What runs a zone, from VT's live attributes (not kept by the recorder)."""
+        """What runs a zone, from VT's live attributes (not kept by the recorder); its cycle
+        through ``vtherm_api`` where VT handed the thermostat over."""
         state = self._hass.states.get(entity_id)
         if state is None:
             return ZoneAlgorithm()
@@ -728,6 +835,9 @@ class VThermLink:
         function = configuration.get("proportional_function")
         kind = configuration.get("type")
         cycle = configuration.get("cycle_min")
+        thermostat = self._thermostat(entity_id, state)
+        if thermostat is not None:
+            cycle = runtime_readings(thermostat, ("cycle_min",)).get("cycle_min", cycle)
         return ZoneAlgorithm(
             proportional_function=function if isinstance(function, str) else None,
             smartpi_learning=smartpi if isinstance(smartpi, bool) else None,

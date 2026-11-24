@@ -102,6 +102,60 @@ def zone_values(
     )
 
 
+# What the plugin reads through ``vtherm_api`` (the user's rule, 2026-11-24): the members of VT's
+# thermostat that the API declares (``InterfaceThermostatRuntime``; ``last_temperature_measure``
+# in ``InterfaceTemperatureTimestampRuntime`` from 0.12.0) and that the plugin uses — VT 10.6.5
+# fills each from the same field as the attribute it replaces (``base_thermostat.py``). Not
+# ``on_percent``: VT 10.6.5's getter tells the algorithm the realized power whenever safety or
+# the cap clamps it (``thermostat_prop.py``), so reading it would act on the regulation.
+RUNTIME_MEMBERS = (
+    "current_temperature",
+    "target_temperature",
+    "vtherm_hvac_mode",
+    "hvac_action",
+    "is_device_active",
+    "last_temperature_measure",
+    "is_overpowering_detected",
+)
+
+
+def runtime_zone(raw: Mapping[str, object], temperature_unit: object = "°C") -> dict[str, Any]:
+    """The zone values a VT thermostat gave through ``vtherm_api``, keyed by the ``ZoneValues``
+    field each replaces. A member it did not give, or one of another type, gives nothing: that
+    field keeps the attribute's value. Temperatures are taken to a tenth, as Home Assistant
+    shows them in the attributes; a mode or an action not known gives nothing either."""
+    found: dict[str, Any] = {}
+    for field_name, member in (
+        ("temperature", "current_temperature"),
+        ("target", "target_temperature"),
+    ):
+        value = raw.get(member)
+        number = parse_number(value) if isinstance(value, int | float) else None  # not a text
+        if number is not None:
+            found[field_name] = temperature_to_celsius(round(number, 1), temperature_unit)
+    mode = raw.get("vtherm_hvac_mode")
+    if mode is not None:
+        text = str(mode)
+        enabled = _heating_enabled(text)
+        if enabled is not None:
+            found["heating_enabled"] = enabled
+            found["auto_mode"] = text in AUTO_MODES
+    calling = _calling(raw.get("hvac_action"))
+    if calling is not None:
+        found["calling"] = calling
+    for field_name, member in (
+        ("device_active", "is_device_active"),
+        ("shedding", "is_overpowering_detected"),
+    ):
+        value = raw.get(member)
+        if isinstance(value, bool):
+            found[field_name] = value
+    moment = raw.get("last_temperature_measure")
+    if isinstance(moment, datetime) and moment.tzinfo is not None:
+        found["temperature_at"] = moment.timestamp()
+    return found
+
+
 def _entity_ids(raw: object) -> frozenset[str] | None:
     """A list of entity IDs, as VT 10.4.0 lists a zone's active devices; else not known."""
     if not isinstance(raw, list) or not all(isinstance(e, str) and e for e in raw):

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.vtherm_attributes import (
+    RUNTIME_MEMBERS,
     CentralMode,
     ZoneValues,
     central_mode,
+    runtime_zone,
     zone_values,
 )
 
@@ -300,3 +304,93 @@ def test_a_malformed_hvac_action_or_unit_is_unknown(action: object) -> None:
     )
     assert values.calling is None
     assert values.temperature is None
+
+
+def test_runtime_values_replace_the_attributes_field_by_field() -> None:
+    """The user's rule (2026-11-24): what ``vtherm_api`` declares is read from VT's thermostat —
+    temperatures to a tenth, as the attributes show them; the mode, the action, the device and
+    power shedding; the measurement's moment."""
+    measured = datetime(2026, 11, 24, 10, 0, tzinfo=UTC)
+    found = runtime_zone(
+        {
+            "current_temperature": 19.46,
+            "target_temperature": 21.0,
+            "vtherm_hvac_mode": "heat",
+            "hvac_action": "heating",
+            "is_device_active": True,
+            "last_temperature_measure": measured,
+            "is_overpowering_detected": False,
+        }
+    )
+    assert found == {
+        "temperature": 19.5,
+        "target": 21.0,
+        "heating_enabled": True,
+        "auto_mode": False,
+        "calling": True,
+        "device_active": True,
+        "temperature_at": measured.timestamp(),
+        "shedding": False,
+    }
+    assert set(found) <= set(ZoneValues.__dataclass_fields__)
+    assert runtime_zone({"vtherm_hvac_mode": "auto"})["auto_mode"] is True
+    assert runtime_zone({"current_temperature": 68.0}, "°F") == {"temperature": 20.0}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"current_temperature": True, "target_temperature": "21"},  # not numbers
+        {"current_temperature": float("nan")},
+        {"vtherm_hvac_mode": "unknown"},  # VT's mode before its start: the attribute's stays
+        {"vtherm_hvac_mode": None, "hvac_action": None},
+        {"hvac_action": "something"},
+        {"is_device_active": 1, "is_overpowering_detected": "on"},  # not booleans
+        {"last_temperature_measure": datetime(2026, 11, 24, 10, 0)},  # no time zone
+        {"last_temperature_measure": "2026-11-24T10:00:00+00:00"},  # a text, not a moment
+    ],
+)
+def test_a_runtime_value_of_another_kind_leaves_the_attribute(raw: dict) -> None:
+    """Negative: a member of another type, or a mode or an action not known, gives nothing — the
+    field keeps the attribute's value."""
+    assert runtime_zone(raw) == {}
+
+
+@pytest.mark.parametrize(
+    ("mode", "heating", "auto"),
+    [
+        ("heat", True, False),
+        ("auto", True, True),
+        ("heat_cool", True, True),
+        ("cool", False, False),
+        ("dry", False, False),
+        ("fan_only", False, False),
+        ("off", False, False),
+    ],
+)
+def test_every_vt_mode_reads_as_its_state(mode: str, heating: bool, auto: bool) -> None:
+    """VT's modes (``vtherm_hvac_mode.py``, 10.6.5) through the API mean what the climate's state
+    with the same value means — for every thermostat type, as VT publishes the state from that
+    mode."""
+    assert runtime_zone({"vtherm_hvac_mode": mode}) == {
+        "heating_enabled": heating,
+        "auto_mode": auto,
+    }
+    state = zone_values(mode, {})
+    assert (state.heating_enabled, state.auto_mode) == (heating, auto)
+
+
+@pytest.mark.parametrize("mode", ["sleep", "unknown", "unavailable"])
+def test_a_vt_mode_the_plugin_does_not_know_keeps_the_attribute(mode: str) -> None:
+    """VT's "sleep" (auto start/stop) and its modes before a start read as nothing through the
+    API, as through the state: the attribute's reading stays."""
+    assert runtime_zone({"vtherm_hvac_mode": mode}) == {}
+    assert zone_values(mode, {}).heating_enabled is None
+
+
+def test_the_duty_cycle_is_not_read_from_the_thermostat() -> None:
+    """VT 10.6.5's ``on_percent`` getter tells the algorithm the realized power whenever safety
+    or the cap clamps it (``thermostat_prop.py``): a read that acts on the regulation, so it
+    stays the attribute's."""
+    assert "on_percent" not in RUNTIME_MEMBERS
+    assert runtime_zone({"on_percent": 0.4}) == {}

@@ -23,10 +23,9 @@ registration and needs VT's reload (P-59).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import EVENT_COMPONENT_LOADED, EVENT_STATE_CHANGED
@@ -50,26 +49,17 @@ RELOAD_GRACE_S = 15 * 60  # a started thermostat shows the value within this, el
 # The public name of "heat reaches the zone now" (P-61; "hot water" is the boiler's domestic hot
 # water).
 HEAT_AVAILABLE = "heat_available"
-# The water interface (I9; docs/en/specification/water-interface.md): its fields, in its order, and
-# the public API's key in ``hass.data``.
+# The water interface (I9; docs/en/specification/water-interface.md): its fields, in its order.
 SUPPLY_TEMPERATURE = "supply_temperature"
 SUPPLY_REASON = "supply_reason"
 SUPPLY_MEASURED_AT = "supply_measured_at"
 HEAT_REASON = "heat_reason"
-# Whether the boiler is called for heat and why not, and the demand against its thresholds (§4,
-# §4.3; SmartPI's request, the user's decisions of 2026-10-14): the installation's, the same for
-# each of its zones, read live from control.
+# Whether the boiler is called for heat and why not (§4.3; SmartPI's request, the user's decisions
+# of 2026-10-14): the installation's, the same for each of its zones, read live from control. The
+# demand against its thresholds is the plugin's own entities' only (the user's decision of
+# 2026-11-24: nothing reads it on a thermostat).
 BOILER_CALLED = "boiler_called"
 CALL_REASON = "call_reason"
-DEMAND_FIELDS = (
-    "demand_count",
-    "count_threshold",
-    "count_by",
-    "demand_power_kw",
-    "power_threshold_kw",
-    "demand_opening",
-    "opening_threshold",
-)
 WATER_FIELDS = (
     SUPPLY_TEMPERATURE,
     SUPPLY_REASON,
@@ -78,9 +68,7 @@ WATER_FIELDS = (
     HEAT_REASON,
     BOILER_CALLED,
     CALL_REASON,
-    *DEMAND_FIELDS,
 )
-API_KEY = f"{DOMAIN}_api"
 # The attribute shows the water rounded, changed only once it has moved this far (§3.3, P-63).
 ATTRIBUTE_STEP_K = 1.0
 
@@ -119,46 +107,13 @@ def zone_values(
 
 
 def boiler_call_values(coordinator: SmartBoilerCoordinator) -> dict[str, Any]:
-    """§4, §4.3: whether the boiler is called and why not, and the demand against its
-    thresholds, as control shows them now — without control (monitoring only), or while it
-    stops, the boiler is not the plugin's: not called by it, nothing to tell."""
+    """§4.3: whether the boiler is called and why not, as control shows it now — without control
+    (monitoring only), or while it stops, the boiler is not the plugin's: not called by it."""
     control = coordinator.control
     if control is None or control.stopping:
-        return {
-            BOILER_CALLED: None,
-            CALL_REASON: CallReason.NOT_CONTROLLING.value,
-            **dict.fromkeys(DEMAND_FIELDS),
-        }
+        return {BOILER_CALLED: None, CALL_REASON: CallReason.NOT_CONTROLLING.value}
     status = control.status
-    return {
-        BOILER_CALLED: status.boiler_called,
-        CALL_REASON: status.call_reason,
-        "demand_count": status.demand_count,
-        "count_threshold": status.count_threshold,
-        "count_by": status.count_by,
-        "demand_power_kw": status.demand_power_kw,
-        "power_threshold_kw": status.power_threshold_kw,
-        "demand_opening": status.demand_opening,
-        "opening_threshold": status.opening_threshold,
-    }
-
-
-class SmartBoilerApi:
-    """What other integrations read, under ``hass.data[API_KEY]`` while an installation runs
-    (I9; water-interface.md §3.2): named functions, a later one added beside these."""
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        self._hass = hass
-
-    def zone_water(self, entity_id: str) -> Mapping[str, Any] | None:
-        """A VT climate's water data (§4) as a read-only mapping; ``None`` when it is not a
-        zone of a running installation, or anything goes wrong — never an exception."""
-        try:
-            values = zone_values(_running(self._hass), entity_id)
-        except Exception:
-            _LOGGER.debug("Could not read the water data of %s", entity_id, exc_info=True)
-            return None
-        return None if values is None else MappingProxyType(values)
+    return {BOILER_CALLED: status.boiler_called, CALL_REASON: status.call_reason}
 
 
 def _running(hass: HomeAssistant) -> list[SmartBoilerCoordinator]:
@@ -179,6 +134,10 @@ class SmartBoilerFeatureManager:
         self._failing = False  # a lasting failure is logged once, with its trace
         self._published: dict[str, Any] | None = None  # what VT's thermostat shows
         self._published_water: float | None = None  # the unrounded water it was shown from
+        try:  # the zone's values are read from it through ``vtherm_api`` (``vtherm_link``)
+            vtherm_link.register_thermostat(hass, thermostat)
+        except Exception:  # never into VT
+            _LOGGER.debug("Could not keep a VT thermostat", exc_info=True)
 
     def post_init(self, entry_infos: Any) -> None:
         return None
@@ -187,6 +146,10 @@ class SmartBoilerFeatureManager:
         return None
 
     def stop_listening(self) -> bool | None:
+        try:  # VT removes the thermostat: its values come from nowhere else now
+            vtherm_link.unregister_thermostat(self._hass, self._thermostat)
+        except Exception:  # never into VT
+            _LOGGER.debug("Could not forget a VT thermostat", exc_info=True)
         return None
 
     async def refresh_state(self) -> bool:
@@ -259,59 +222,13 @@ class SmartBoilerFeatureManager:
         value = self._field(CALL_REASON)
         return value if isinstance(value, str) else None
 
-    @property
-    def demand_count(self) -> int | None:
-        """The devices — or zones, as ``count_by`` says — calling now (§4)."""
-        return self._whole(self._field("demand_count"))
-
-    @property
-    def count_threshold(self) -> int | None:
-        """The count that starts the boiler; ``None`` with the count off (§4)."""
-        return self._whole(self._field("count_threshold"))
-
-    @property
-    def count_by(self) -> str | None:
-        """What the count counts: ``devices`` or ``zones``; ``None`` with the count off (§4)."""
-        value = self._field("count_by")
-        return value if isinstance(value, str) else None
-
-    @property
-    def demand_power_kw(self) -> float | None:
-        """The zones' mean power summed, kW, as VT's central boiler shows it (§4)."""
-        return self._number(self._field("demand_power_kw"))
-
-    @property
-    def power_threshold_kw(self) -> float | None:
-        """The power that starts the boiler, kW; ``None`` where not set (§4)."""
-        return self._number(self._field("power_threshold_kw"))
-
-    @property
-    def demand_opening(self) -> float | None:
-        """The widest opening among the calling zones, 0 to 1 (§4)."""
-        return self._number(self._field("demand_opening"))
-
-    @property
-    def opening_threshold(self) -> float | None:
-        """The opening that starts the boiler, 0 to 1; ``None`` where not set (§4)."""
-        return self._number(self._field("opening_threshold"))
-
-    @staticmethod
-    def _whole(value: Any) -> int | None:
-        return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-    @staticmethod
-    def _number(value: Any) -> float | None:
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            return None
-        return float(value)
-
     def _field(self, name: str) -> Any:
         values = self._values()
         return None if values is None else values.get(name)
 
     def _values(self) -> dict[str, Any] | None:
-        entity_id = getattr(self._thermostat, "entity_id", None)
-        return self._lookup(entity_id) if isinstance(entity_id, str) else None
+        entity_id = vtherm_link.vt_entity_id(self._hass, self._thermostat)
+        return self._lookup(entity_id) if entity_id is not None else None
 
     def add_custom_attributes(self, attributes: dict[str, Any]) -> None:
         try:
@@ -554,7 +471,6 @@ def async_attach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
     if "registration" not in shared:
         shared["registration"] = FeatureRegistration(hass)
         shared["registration"].start()
-    hass.data.setdefault(API_KEY, SmartBoilerApi(hass))  # the public API (I9, §3.2)
 
 
 def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
@@ -610,4 +526,3 @@ def async_detach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
         if current is not None:
             current.stop()
         hass.data.pop(DATA_KEY, None)
-        hass.data.pop(API_KEY, None)

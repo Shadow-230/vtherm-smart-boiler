@@ -35,9 +35,15 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
 - **Strona HA** wokół niego zbiera dane wejściowe z encji wybranych przez użytkownika, uruchamia
   rdzeń na timerach i przy zmianach stanu, wykonuje jego zapisy i publikuje czujniki, czujniki
   binarne, przełączniki, przyciski i zgłoszenia w Naprawach.
-- **`vtherm_link.py` to jedyne wejście do danych stref.** Czyta encje klimatu VT i centralną
-  konfigurację VT oraz wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`,
-  SmartPI), zamiast to zakładać. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
+- **`vtherm_link.py` to jedyne wejście do danych stref.** Czyta każdą strefę przez
+  `vtherm_api` tam, gdzie API ma daną wartość: VT przekazuje każdy termostat modułowi funkcji
+  wtyczki, a pola zadeklarowane w API są czytane z niego — temperatura pokoju i czas jej pomiaru,
+  nastawa, tryb, czy strefa grzeje i czy jej urządzenie pracuje, odciążanie mocy, powód, dla
+  którego VT trzyma ją wyłączoną, i długość cyklu (zasada użytkownika, 2026-11-24). Resztę, i
+  wszystkie wartości termostatu uruchomionego przez VT przed rejestracją wtyczki, czyta z encji
+  klimatu VT; stamtąd też centralną konfigurację VT i jego centralny kocioł. Wykrywa, co jest
+  zainstalowane (VT i jego wersję, `vtherm_api`, SmartPI), zamiast to zakładać. Żaden inny moduł
+  nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
   `register_feature_manager` z `vtherm_api`) pokazuje na każdym termostacie VT, czy ciepło z
   kotła dociera teraz do jego strefy — `heat_available`, z `core/heat.py` (I8, decyzja C1) — a od
@@ -390,16 +396,17 @@ Co wtyczka wystawia dla każdego termostatu VT, który jest jej strefą:
   cyklem palnika;
 - **czy kocioł jest wezwany do grzania** (`boiler_called`) i dlaczego nie (`call_reason`:
   `below_threshold` — strefy wołają, ale poniżej progów zapotrzebowania, `no_demand`,
-  `activation_delay`, `boiler_fault`, `not_controlling`, `waiting_data`), z zapotrzebowaniem
-  wobec progów — dodane 2026-10-14 na prośbę SmartPI, żeby algorytm strefy nie uczył się na
+  `activation_delay`, `boiler_fault`, `not_controlling`, `waiting_data`) — dodane 2026-10-14 na
+  prośbę SmartPI (do 2026-11-24 także z zapotrzebowaniem wobec progów: nikt go nie czytał, a
+  pokazują je własne encje wtyczki), żeby algorytm strefy nie uczył się na
   cieple, które nie przyszło, czego przerwa palnika nie odróżnia. Wartości całej instalacji, te
   same dla każdej strefy, czytane na bieżąco ze sterowania (`core/boiler_call.py`).
 
 Gdzie: jako właściwości modułu funkcji (feature manager) na termostacie VT (gdy VT ma
-`get_feature_manager`, od 10.5.0.beta1); przez funkcję `zone_water(entity_id)` pod kluczem
-`hass.data["vtherm_smart_boiler_api"]`, działającą z każdą obsługiwaną wersją VT; i w atrybucie
+`get_feature_manager`, od 10.5.0.beta1); i w atrybucie
 `smart_boiler` termostatu, z temperaturą zaokrągloną do 1 °C i publikowaną przy zmianie o co
-najmniej 1 K. Wtyczka czyta jeden klucz, który algorytm wpisuje do `specific_states` termostatu
+najmniej 1 K. Funkcja `zone_water(entity_id)` w `hass.data` działała do 2026-11-24 i została
+usunięta: dane wychodzą tylko przez `vtherm_api`. Wtyczka czyta jeden klucz, który algorytm wpisuje do `specific_states` termostatu
 (dla SmartPI proponowany `water_factor`), i nadal sama wstrzymuje uczenie SmartPI na swoich
 warunkach: ciepła woda z priorytetem i awaria kotła — w strefach wołających ciepła; duże
 wahania wody — tylko gdy algorytm nie korzysta z danych o wodzie. Bez numeru wersji: strony
