@@ -43,7 +43,73 @@ const VIEWS = [
   { name: "desktop-en-user", width: 1280, height: 600, query: "?lang=en&user=1", scale: 1 },
   { name: "desktop-pl-hot-water", width: 1280, height: 600, query: "?dhw=1", scale: 1 },
   { name: "desktop-en-combi-dark", width: 1280, height: 600, query: "?lang=en&combi=1&dark=1", scale: 1 },
+  // F21: the schematic card in one narrow dashboard column, on a wide screen.
+  { name: "column-340-en-combi", width: 900, height: 900, query: "?lang=en&combi=1&cards=1&column=340", scale: 2, cards: true, column: true },
+  { name: "column-340-pl-pause", width: 900, height: 900, query: "?flame=0&cards=1&column=340", scale: 2, cards: true, column: true },
+  { name: "column-420-pl-combi-hot-water", width: 900, height: 900, query: "?combi=1&dhw=1&cards=1&column=420", scale: 2, cards: true, column: true },
+  { name: "column-420-en", width: 900, height: 900, query: "?lang=en&cards=1&column=420", scale: 2, cards: true, column: true },
 ];
+
+// The boiler's body and the tank in the drawing's units (schematic.ts, `drawSchematic`; the view box
+// starts at y 70 and is 1000 wide).
+const BOILER = { x1: 60, y1: 110, x2: 210, y2: 360 };
+const TANK = { x1: 255, y1: 195, x2: 345, y2: 415 };
+
+// Every schematic on the page: no two labels overlap, the boiler's state stays inside its body and
+// clear of the flame, the words beside the drawing stay off the boiler and the tank, and none leaves
+// the card. A word is measured by its text, a value by its badge; the badges sit on the pipes, so
+// they may touch the boiler's edge.
+function schematicProblems({ BOILER, TANK }) {
+  const all = (root, tag, found = []) => {
+    for (const element of root.querySelectorAll("*")) {
+      if (element.localName === tag) found.push(element);
+      if (element.shadowRoot) all(element.shadowRoot, tag, found);
+    }
+    return found;
+  };
+  const meets = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+  const problems = [];
+  for (const schematic of all(document, "vtherm-smart-boiler-schematic")) {
+    const root = schematic.shadowRoot;
+    const drawing = root.querySelector(".drawing");
+    if (!drawing) continue;
+    const d = drawing.getBoundingClientRect();
+    const s = d.width / 1000;
+    const box = (b) => ({ left: d.left + b.x1 * s, right: d.left + b.x2 * s, top: d.top + (b.y1 - 70) * s, bottom: d.top + (b.y2 - 70) * s });
+    const boiler = box(BOILER);
+    const obstacles = [boiler];
+    if ([...root.querySelectorAll("path.coil")].some((path) => path.getAttribute("d"))) obstacles.push(box(TANK));
+    const flame = root.querySelector("svg.flame").getBoundingClientRect();
+    const host = schematic.getBoundingClientRect();
+    const extent = (span) => {
+      if (!span.classList.contains("text") && !span.classList.contains("inside")) return span.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(span);
+      return range.getBoundingClientRect();
+    };
+    const labels = [...drawing.querySelectorAll(":scope > span")]
+      .filter((span) => getComputedStyle(span).display !== "none")
+      .map((span) => ({
+        text: span.textContent.trim(),
+        inside: span.classList.contains("inside"),
+        word: span.classList.contains("text"),
+        rect: extent(span),
+      }));
+    labels.forEach((a, i) => {
+      for (const b of labels.slice(i + 1)) if (meets(a.rect, b.rect)) problems.push(`"${a.text}" overlaps "${b.text}"`);
+      if (a.rect.left < host.left || a.rect.right > host.right) problems.push(`"${a.text}" leaves the card`);
+      if (a.inside) {
+        const r = a.rect;
+        if (r.left < boiler.left || r.right > boiler.right || r.top < boiler.top || r.bottom > boiler.bottom)
+          problems.push(`"${a.text}" sticks out of the boiler`);
+        if (meets(r, flame)) problems.push(`"${a.text}" overlaps the flame`);
+      } else if (a.word && obstacles.some((o) => meets(a.rect, o))) {
+        problems.push(`"${a.text}" overlaps the boiler or the tank`);
+      }
+    });
+  }
+  return problems;
+}
 
 mkdirSync(out, { recursive: true });
 const env = existsSync(libs)
@@ -90,6 +156,12 @@ for (const view of VIEWS) {
     .waitFor();
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(out, `${view.name}.png`), fullPage: true });
+  if (view.column) {
+    await page.locator("vtherm-smart-boiler-schematic-card").screenshot({ path: join(out, `${view.name}-schematic.png`) });
+  }
+  for (const problem of await page.evaluate(schematicProblems, { BOILER, TANK })) errors.push(`schematic: ${problem}`);
+  const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+  if (pageWidth > view.width) errors.push(`the page is ${pageWidth} px wide on a ${view.width} px screen`);
   if (view.settings) {
     // I11: control is switched in the plugin's settings; the page leads an administrator there.
     await page.locator("vtherm-smart-boiler-overview button.text").click();

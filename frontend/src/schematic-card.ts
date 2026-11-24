@@ -107,17 +107,22 @@ export class SmartBoilerSchematic extends LitElement {
             class="flame ${view.flame ? "lit" : ""}"
             viewBox="0 0 24 24"
             aria-hidden="true"
-            style="left: ${percent(135, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(205, VIEW_BOX.y, VIEW_BOX.height)}"
+            style="left: ${percent(135, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(185, VIEW_BOX.y, VIEW_BOX.height)}"
           >
             <path d=${FLAME_PATH}></path>
           </svg>
-          ${view.labels.map(
-            (label) => html`<span
-              class="${label.kind}${label.minor ? " minor" : ""}"
-              style="left: ${percent(label.x, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(label.y, VIEW_BOX.y, VIEW_BOX.height)}"
-              >${label.text}</span
-            >`,
-          )}
+          ${view.labels.map((label) => {
+            const style = `left: ${percent(label.x, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(label.y, VIEW_BOX.y, VIEW_BOX.height)}`;
+            return label.caption
+              ? html`<span class="captioned" style=${style}
+                  ><span class="text">${label.caption}</span><span class="${label.kind}">${label.text}</span></span
+                >`
+              : html`<span
+                  class="${label.kind}${label.minor ? " minor" : ""}${label.end ? " end" : ""}${label.wrap ? " wrap" : ""}"
+                  style=${style}
+                  >${label.text}</span
+                >`;
+          })}
         </div>
         ${count
               ? html`<div class="rooms" style="grid-template-columns: ${columns}">
@@ -318,7 +323,8 @@ export class SmartBoilerSchematic extends LitElement {
       stroke: var(--state-climate-heat-color, #ff8100);
     }
     .text,
-    .value {
+    .value,
+    .captioned {
       position: absolute;
       transform: translate(-50%, -50%);
       white-space: nowrap;
@@ -331,6 +337,28 @@ export class SmartBoilerSchematic extends LitElement {
       white-space: nowrap;
       pointer-events: none;
       font-size: clamp(8px, 1.55cqw, 12px);
+    }
+    .text.end {
+      transform: translate(-100%, -50%);
+    }
+    /* The boiler's state wraps inside its body (150 of the drawing's 1000 wide) at any width. */
+    .inside.wrap {
+      font-size: clamp(7.5px, 1.55cqw, 12px); /* a long word still fits the boiler's body */
+      white-space: normal;
+      width: 13%;
+      text-align: center;
+      line-height: 1.15;
+    }
+    /* A value with its name above it, as one block. */
+    .captioned {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .captioned > span {
+      position: static;
+      transform: none;
     }
     .text {
       color: var(--secondary-text-color);
@@ -381,12 +409,6 @@ export class SmartBoilerSchematic extends LitElement {
     @container (max-width: 480px) {
       .minor {
         display: none;
-      }
-      .inside {
-        white-space: normal;
-        width: 19%;
-        text-align: center;
-        line-height: 1.1;
       }
     }
     .room {

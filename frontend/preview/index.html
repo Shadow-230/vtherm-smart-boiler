@@ -3,7 +3,8 @@
   The Boiler page on sample data, for screenshots (frontend/scripts/screenshots.mjs): a stand-in
   for Home Assistant's `hass` object and theme. Sample values only — no real installation.
   ?lang=en|pl, ?dark=1, ?user=1 (a user who is not an administrator), ?dhw=1 (hot water),
-  ?combi=1 (a combi boiler), ?flame=0 (called for heat, the burner between burns).
+  ?combi=1 (a combi boiler), ?flame=0 (called for heat, the burner between burns),
+  ?cards=1&column=340 (the cards in one dashboard column of that width, in px).
 -->
 <html lang="en">
 <head>
@@ -364,6 +365,8 @@
     document.documentElement.lang = lang;
     const grid = document.createElement("div");
     grid.className = "dashboard";
+    const column = Number(query.get("column"));
+    if (column > 0) grid.style.gridTemplateColumns = `${column}px`;
     for (const tag of ["status", "schematic", "curve", "day"].map((p) => `vtherm-smart-boiler-${p}-card`)) {
       const card = document.createElement(tag);
       card.setConfig({});
