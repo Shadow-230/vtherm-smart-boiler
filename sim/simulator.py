@@ -1,13 +1,14 @@
 """Whole scenarios on the simulated plant (``boiler_sim.plant``), producing the core's ``History``.
 
 A scenario sets the plant, the weather, hot water runs, the zone valves — thermostatic heads, or
-switches driven by a TPI stand-in for VT (on for ``on_percent`` of each cycle, P-114) — and
-optionally an external controller called every control period with what it would see. The
-controller's commands reach the boiler as through a gateway: a setpoint is ``CS`` (lapsing
-unless repeated), heating on/off is the gateway's ``CH`` flag (kept until changed), a hand-back is
-``CH=1`` then ``CS=0``. Without a controller the boiler runs on its own regulation — its own
-curve, heating whenever a zone's valve is open, as VT's central boiler switches it. The result
-holds the recorded signals, energy totals and the daily sums, kept whatever the step (P-112).
+switches driven by a TPI stand-in for VT (on for ``on_percent`` of each cycle, P-114), and any zone
+on SmartPI's learning from scratch (``LearningZone``) — and optionally an external controller
+called every control period with what it would see. The controller's commands reach the boiler
+as through a gateway: a setpoint is ``CS`` (lapsing unless repeated), heating on/off is the
+gateway's ``CH`` flag (kept until changed), a hand-back is ``CH=1`` then ``CS=0``. Without a
+controller the boiler runs on its own regulation — its own curve, heating whenever a zone's valve
+is open, as VT's central boiler switches it. The result holds the recorded signals, energy totals
+and the daily sums, kept whatever the step (P-112).
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ __all__ = [
     "HOUR",
     "WATER_KWH_PER_L_K",
     "DhwSchedule",
+    "LearningZone",
     "Scenario",
     "SimCommand",
     "SimResult",
@@ -81,6 +83,15 @@ DEFAULT_SIGNALS = frozenset(
     }
 )
 
+# SmartPI's learning from scratch, as the plugin reads it (G11 C; SmartPI 0.4.0 ``HYST_UPPER_C``,
+# ``HYST_LOWER_C``; 0.6.7's documentation as the test session read it on 2026-11-22: 5 cooling and
+# 4 or 5 heating phases, each a full swing): on at 0.3 K under the setpoint, off at 0.5 K over it,
+# decided at each VT cycle of 5 min. Assumed: SmartPI's own rules beyond the band, and that the
+# zone's thermostatic head stands for SmartPI's regulation once it has learned.
+LEARNING_BAND = (-0.3, 0.5)
+LEARNING_CYCLE_S = 300.0
+LEARNING_PHASES = 10
+
 
 def daily_cycle(means: Sequence[float], amplitude: float = 3.0) -> Callable[[float], float]:
     """Outdoor temperature: a mean per day plus a daily swing, warmest at 15:00."""
@@ -110,6 +121,33 @@ class SimZoneView:
     target: float
     opening: float
     on_percent: float | None = None  # a TPI zone's on-percent of its cycle
+    smartpi_learning: bool | None = None  # a SmartPI zone: in its learning phase; None: no SmartPI
+
+
+@dataclass
+class LearningZone:
+    """A zone on SmartPI's learning from scratch (``LEARNING_…``): fully on or off, starting on;
+    each phase that ends — "heat" at the band's top, "cool" at its bottom — kept with its time."""
+
+    on: bool = True
+    decided: float | None = None
+    phases: list[tuple[str, float]] = field(default_factory=list)
+
+    @property
+    def learning(self) -> bool:
+        return len(self.phases) < LEARNING_PHASES
+
+    def advance(self, t: float, target: float, room: float) -> bool:
+        """On or off now, deciding at each VT cycle while it learns."""
+        if self.learning and (self.decided is None or t - self.decided >= LEARNING_CYCLE_S):
+            self.decided = t
+            if self.on and room >= target + LEARNING_BAND[1]:
+                self.on = False
+                self.phases.append(("heat", t))
+            elif not self.on and room <= target + LEARNING_BAND[0]:
+                self.on = True
+                self.phases.append(("cool", t))
+        return self.on
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +190,7 @@ class Scenario:
     override_expires_s: float | None = 60.0  # None: an override holds until changed
     without_override: WithoutOverride = WithoutOverride.OWN_CURVE
     tpi: TpiConfig | None = None  # switch valves driven by TPI; None: thermostatic heads
+    learning: frozenset[str] = frozenset()  # zones on SmartPI's learning from scratch
 
 
 @dataclass
@@ -171,6 +210,18 @@ class SimResult:
     override_s: float = 0.0  # time an external override was in force
     commands: int = 0
     ch_switchings: int = 0  # the CH enable the boiler gets turning on or off
+    # Each learning zone's ended phases, ("heat" or "cool", time) (``LearningZone``).
+    learning_phases: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+
+
+def _on_percent(
+    tpi: dict[str, TpiZone] | None, learning: dict[str, LearningZone], zone_id: str, opening: float
+) -> float | None:
+    """What VT publishes as the zone's on-percent: TPI's; a learning zone's, fully on or off."""
+    zone = learning.get(zone_id)
+    if zone is not None and zone.learning:
+        return opening
+    return None if tpi is None else tpi[zone_id].percent
 
 
 def reference_outputs(scenario: Scenario) -> list[float]:
@@ -195,6 +246,7 @@ def simulate(scenario: Scenario) -> SimResult:
     )
     plant.settle(scenario.outdoor(0.0))
     tpi = None if scenario.tpi is None else {z.zone_id: TpiZone(scenario.tpi) for z in zones}
+    learning = {z.zone_id: LearningZone() for z in zones if z.zone_id in scenario.learning}
 
     record = scenario.signals
     signals: dict[Signal, Series] = {s: Series() for s in record}
@@ -227,6 +279,10 @@ def simulate(scenario: Scenario) -> SimResult:
                 tpi[z.zone_id].advance(t, plant.targets[i], plant.room[i], outdoor)
                 for i, z in enumerate(zones)
             ]
+        for i, z in enumerate(zones):
+            zone = learning.get(z.zone_id)
+            if zone is not None and zone.learning:
+                openings[i] = 1.0 if zone.advance(t, plant.targets[i], plant.room[i]) else 0.0
         dhw = scenario.dhw is not None and scenario.dhw.active(t - t0)
         if scenario.controller is not None and t >= next_control:
             next_control = t + scenario.control_period_s
@@ -243,7 +299,8 @@ def simulate(scenario: Scenario) -> SimResult:
                         round(plant.room[i], 1),
                         z.target,
                         round(openings[i], 2),
-                        None if tpi is None else tpi[z.zone_id].percent,
+                        _on_percent(tpi, learning, z.zone_id, openings[i]),
+                        None if z.zone_id not in learning else learning[z.zone_id].learning,
                     )
                     for i, z in enumerate(zones)
                 ),
@@ -308,6 +365,7 @@ def simulate(scenario: Scenario) -> SimResult:
 
     if steps:
         result.daily_ch_kwh.append(day_ch)
+    result.learning_phases = {zone_id: zone.phases for zone_id, zone in learning.items()}
     result.water_end = plant.water
     result.emitters_end_kwh = sum(plant.stored)
     return result

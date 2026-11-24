@@ -350,8 +350,9 @@ export class SmartBoilerOverview extends LitElement {
     }
     .control {
       display: flex;
+      flex-wrap: wrap; /* on a phone the button goes below, not past the screen's edge */
       align-items: center;
-      gap: 14px;
+      gap: 8px 14px;
       flex: 1 1 340px;
       justify-content: flex-end;
       text-align: right;

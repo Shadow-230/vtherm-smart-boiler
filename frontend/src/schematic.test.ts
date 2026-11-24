@@ -199,6 +199,30 @@ describe("the labels", () => {
     const none = { ...INSTALLATION, boiler: { type: "single", dhw: "none", condensing: true } };
     expect(schematicView(inputs([], none)).labels.map((l) => l.text)).not.toContain("hot water");
   });
+
+  // F21: in a narrow dashboard column the labels overlapped each other and the boiler.
+  it("keep the outdoor temperature and its name in one block", () => {
+    const view = schematicView(inputs(heating, INSTALLATION, "pl"));
+    expect(view.labels.find((l) => l.text === "3,8 °C")?.caption).toBe("Na zewnątrz");
+    expect(view.labels.map((l) => l.text)).not.toContain("Na zewnątrz");
+  });
+
+  it("end the words beside a combi before the boiler, and leave them out of a narrow card", () => {
+    const combi = { ...INSTALLATION, boiler: { type: "combi", dhw: "combi", condensing: true } };
+    const words = schematicView(inputs([], combi)).labels.filter((l) => ["hot water", "cold"].includes(l.text));
+    expect(words).toHaveLength(2);
+    for (const word of words) {
+      expect(word.end).toBe(true);
+      expect(word.x).toBeLessThan(60); // the boiler's body starts at 60
+      expect(word.minor).toBe(true);
+    }
+  });
+
+  it("wrap only the boiler's state", () => {
+    const view = schematicView(inputs(heating, INSTALLATION, "pl"));
+    const wrapping = view.labels.filter((l) => l.wrap).map((l) => l.text);
+    expect(wrapping).toEqual(["pali · ogrzewanie"]);
+  });
 });
 
 describe("the rooms", () => {

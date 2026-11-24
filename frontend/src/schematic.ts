@@ -59,6 +59,12 @@ export interface Label {
   text: string;
   /** Left out of a narrow card, where it would overlap: the rooms below name the circuits. */
   minor?: boolean;
+  /** Ends at `x` instead of centring on it: a label left of the boiler never reaches its body. */
+  end?: boolean;
+  /** A value's name, shown above it as one block, so the two cannot overlap at any width. */
+  caption?: string;
+  /** Wraps to the boiler's width: its state, which can be long. */
+  wrap?: boolean;
 }
 
 export interface Schematic {
@@ -263,11 +269,11 @@ export function schematicView(inputs: LiveInputs): Schematic {
     : mode === "heat"
       ? t("schematic.pause")
       : t("schematic.idle");
-  labels.push({ kind: "inside", x: 135, y: 262, text: status });
+  labels.push({ kind: "inside", x: 135, y: 262, text: status, wrap: true });
   const modulation = numberOf(signal("modulation")?.state);
   if (flame && modulation != null) {
     labels.push({
-      kind: "inside", x: 135, y: 284, minor: true,
+      kind: "inside", x: 135, y: 298, minor: true,
       text: t("tiles.flame_modulation", { value: formatNumber(modulation, language, 0) }),
     });
   }
@@ -282,16 +288,16 @@ export function schematicView(inputs: LiveInputs): Schematic {
   }
   const outdoor = numberOf(signal("outdoor")?.state);
   if (outdoor != null) {
-    labels.push({ kind: "text", x: 925, y: 96, text: t("tiles.outdoor") });
-    labels.push({ kind: "value", x: 925, y: 120, text: formatTemperature(outdoor, language) });
+    labels.push({ kind: "value", x: 925, y: 108, text: formatTemperature(outdoor, language), caption: t("tiles.outdoor") });
   }
   if (hotWater === "tank") {
     labels.push({ kind: "text", x: 376, y: 444, text: t("schematic.tank") });
     labels.push({ kind: "text", x: 380, y: 170, text: t("schematic.hot_water") });
     labels.push({ kind: "text", x: 414, y: 372, text: t("schematic.cold_water") });
   } else if (hotWater === "instant") {
-    labels.push({ kind: "text", x: 30, y: 282, text: t("schematic.hot_water") });
-    labels.push({ kind: "text", x: 30, y: 348, text: t("schematic.cold_water") });
+    // Left of the boiler, where a narrow card has no room for them: the arrows stay.
+    labels.push({ kind: "text", x: 56, y: 282, text: t("schematic.hot_water"), end: true, minor: true });
+    labels.push({ kind: "text", x: 56, y: 348, text: t("schematic.cold_water"), end: true, minor: true });
   }
   for (const c of circuits) {
     // Below the return pipe, where nothing is drawn: under the circuit, clear of its pipes.

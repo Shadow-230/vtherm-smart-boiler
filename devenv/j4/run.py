@@ -1294,9 +1294,10 @@ async def _handed_back(r: Run) -> bool:
 
 
 # The correction reaches its 3 K in about 2 h of heat flow, and tells at its edge after 3 h
-# there (J4 of 2026-11-18: E4's 3 h ended before the notice could come): 6 h at most, done as
-# soon as it tells.
-E4_LOOKS = 72
+# there (J4 of 2026-11-18: E4's 3 h ended before the notice could come). In the house of 22 h it
+# rose after about 65 min, reached 3 K after about 2 h 20 min and told after 5.5 h (J4 of
+# 2026-11-23, L19): 8 h at most, done as soon as it tells.
+E4_LOOKS = 96
 
 
 async def E4(r: Run):

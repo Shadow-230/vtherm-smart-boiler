@@ -3505,13 +3505,14 @@ function Ln(e) {
 		kind: "inside",
 		x: 135,
 		y: 262,
-		text: p
+		text: p,
+		wrap: !0
 	});
 	let m = I(u("modulation")?.state);
 	d && m != null && f.push({
 		kind: "inside",
 		x: 135,
-		y: 284,
+		y: 298,
 		minor: !0,
 		text: i("tiles.flame_modulation", { value: L(m, r, 0) })
 	});
@@ -3540,17 +3541,13 @@ function Ln(e) {
 		});
 	}
 	let v = I(u("outdoor")?.state);
-	v != null && (f.push({
-		kind: "text",
-		x: 925,
-		y: 96,
-		text: i("tiles.outdoor")
-	}), f.push({
+	v != null && f.push({
 		kind: "value",
 		x: 925,
-		y: 120,
-		text: R(v, r)
-	})), l === "tank" ? (f.push({
+		y: 108,
+		text: R(v, r),
+		caption: i("tiles.outdoor")
+	}), l === "tank" ? (f.push({
 		kind: "text",
 		x: 376,
 		y: 444,
@@ -3567,14 +3564,18 @@ function Ln(e) {
 		text: i("schematic.cold_water")
 	})) : l === "instant" && (f.push({
 		kind: "text",
-		x: 30,
+		x: 56,
 		y: 282,
-		text: i("schematic.hot_water")
+		text: i("schematic.hot_water"),
+		end: !0,
+		minor: !0
 	}), f.push({
 		kind: "text",
-		x: 30,
+		x: 56,
 		y: 348,
-		text: i("schematic.cold_water")
+		text: i("schematic.cold_water"),
+		end: !0,
+		minor: !0
 	}));
 	for (let e of c) {
 		f.push({
@@ -3697,15 +3698,20 @@ var Hn = class extends j {
             class="flame ${t.flame ? "lit" : ""}"
             viewBox="0 0 24 24"
             aria-hidden="true"
-            style="left: ${Vn(135, X.x, X.width)}; top: ${Vn(205, X.y, X.height)}"
+            style="left: ${Vn(135, X.x, X.width)}; top: ${Vn(185, X.y, X.height)}"
           >
             <path d=${Bn}></path>
           </svg>
-          ${t.labels.map((e) => T`<span
-              class="${e.kind}${e.minor ? " minor" : ""}"
-              style="left: ${Vn(e.x, X.x, X.width)}; top: ${Vn(e.y, X.y, X.height)}"
-              >${e.text}</span
-            >`)}
+          ${t.labels.map((e) => {
+			let t = `left: ${Vn(e.x, X.x, X.width)}; top: ${Vn(e.y, X.y, X.height)}`;
+			return e.caption ? T`<span class="captioned" style=${t}
+                  ><span class="text">${e.caption}</span><span class="${e.kind}">${e.text}</span></span
+                >` : T`<span
+                  class="${e.kind}${e.minor ? " minor" : ""}${e.end ? " end" : ""}${e.wrap ? " wrap" : ""}"
+                  style=${t}
+                  >${e.text}</span
+                >`;
+		})}
         </div>
         ${i ? T`<div class="rooms" style="grid-template-columns: ${a}">
                   <div class="rooms-intro">
@@ -3895,7 +3901,8 @@ var Hn = class extends j {
       stroke: var(--state-climate-heat-color, #ff8100);
     }
     .text,
-    .value {
+    .value,
+    .captioned {
       position: absolute;
       transform: translate(-50%, -50%);
       white-space: nowrap;
@@ -3908,6 +3915,28 @@ var Hn = class extends j {
       white-space: nowrap;
       pointer-events: none;
       font-size: clamp(8px, 1.55cqw, 12px);
+    }
+    .text.end {
+      transform: translate(-100%, -50%);
+    }
+    /* The boiler's state wraps inside its body (150 of the drawing's 1000 wide) at any width. */
+    .inside.wrap {
+      font-size: clamp(7.5px, 1.55cqw, 12px); /* a long word still fits the boiler's body */
+      white-space: normal;
+      width: 13%;
+      text-align: center;
+      line-height: 1.15;
+    }
+    /* A value with its name above it, as one block. */
+    .captioned {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .captioned > span {
+      position: static;
+      transform: none;
     }
     .text {
       color: var(--secondary-text-color);
@@ -3958,12 +3987,6 @@ var Hn = class extends j {
     @container (max-width: 480px) {
       .minor {
         display: none;
-      }
-      .inside {
-        white-space: normal;
-        width: 19%;
-        text-align: center;
-        line-height: 1.1;
       }
     }
     .room {
@@ -4679,8 +4702,9 @@ var Jn = "vtherm-smart-boiler-overview", Yn = "/config/integrations/integration/
     }
     .control {
       display: flex;
+      flex-wrap: wrap; /* on a phone the button goes below, not past the screen's edge */
       align-items: center;
-      gap: 14px;
+      gap: 8px 14px;
       flex: 1 1 340px;
       justify-content: flex-end;
       text-align: right;

@@ -8,11 +8,21 @@ from functools import cache
 
 import pytest
 from custom_components.boiler_sim.plant import boiler_setpoint
-from custom_components.boiler_sim.profiles import BOILERS, HOUSES, BoilerProfile, radiator_zones
+from custom_components.boiler_sim.profiles import (
+    BOILERS,
+    HOUSES,
+    BoilerProfile,
+    light_bedroom_zones,
+    radiator_zones,
+)
 
 from custom_components.vtherm_smart_boiler.control_config import parse_control
 from custom_components.vtherm_smart_boiler.core.comfort_rules import STARTS_WINDOW_S
-from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
+from custom_components.vtherm_smart_boiler.core.controller import (
+    OVERHEAT_K,
+    ControlConfig,
+    ControlInputs,
+)
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.cycles import find_burns
 from custom_components.vtherm_smart_boiler.core.guards import GuardConfig, WriteType
@@ -32,6 +42,7 @@ from custom_components.vtherm_smart_boiler.core.signals import Signal
 from sim.simulator import (
     DAY,
     HOUR,
+    LEARNING_PHASES,
     Scenario,
     SimCommand,
     SimResult,
@@ -70,6 +81,7 @@ class LoopController:
     # the flame seen going on without hot water, within the window.
     flame_seen: bool | None = None
     started: list[float] = field(default_factory=list)
+    corrections: list[tuple[float, float]] = field(default_factory=list)  # the comfort correction
 
     def writes(self, start: float, end: float) -> list[tuple[float, object]]:
         """Every setpoint and heating write ``loop_step`` asked for in ``[start, end)``."""
@@ -99,6 +111,7 @@ class LoopController:
         )
         confirmed = view.confirmed_setpoint if link else None
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)
+        self.corrections.append((t, self.state.control.correction))
         called = any(z.opening > 0.0 for z in view.zones)  # VT's rule (2026-10-14)
         self.heating.append((t, out.heating_on, called))
         if out.setpoint is not None:
@@ -120,7 +133,8 @@ class LoopController:
 
 def zone_state(zone: SimZoneView, t: float) -> ZoneState:
     """A zone as VT publishes it: a thermostatic valve's opening; a switch zone under TPI — VT's
-    over_switch — its duty (``on_percent``) and whether its device is on now, no opening."""
+    over_switch — or SmartPI, its duty (``on_percent``) and whether its device is on now, no
+    opening; a SmartPI zone, whether it runs its learning phase."""
     if zone.on_percent is not None:
         on = zone.opening > 0.5
         return ZoneState(
@@ -132,6 +146,7 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
             device_active=on,
             calling=on,
             reported_at=t,
+            smartpi_learning_phase=zone.smartpi_learning,
         )
     return ZoneState(
         zone.zone_id,
@@ -140,6 +155,7 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
         heating_enabled=True,
         valve_open=zone.opening,
         reported_at=t,
+        smartpi_learning_phase=zone.smartpi_learning,
     )
 
 
@@ -185,6 +201,52 @@ def test_rooms_hold_their_setpoints_under_control(mean: float, correction: bool)
         assert min(temps) > targets[zid] - short_by, zid
         assert max(temps) < targets[zid] + 1.5, zid
     assert result.override_s > 0.95 * 2 * DAY  # control held the boiler the whole time
+
+
+# L19 (J4 of 2026-11-22/24): the light bedroom learning SmartPI from scratch, the comfort correction
+# on, at the weather the gateway's instance learned in (+3 °C, the daily swing).
+CORRECTION_ON = replace(LOOP, control=replace(LOOP.control, comfort_correction=True))
+
+
+def learning_bedroom(zones) -> tuple[SimResult, LoopController]:
+    controller = LoopController(CORRECTION_ON)
+    result = simulate(
+        scenario([3.0], controller, zones=zones, learning=frozenset({"zone_bedroom"}))
+    )
+    return result, controller
+
+
+def test_smartpi_learns_in_the_light_bedroom_with_the_correction_on_and_no_room_too_warm() -> None:
+    """Learning, the bedroom counts as short while it heats towards its band's top (G11 C), so
+    the correction rises for it; SmartPI's ten phases still end within 14 h (about 9.4 h here),
+    and no room is ever ``OVERHEAT_K`` over its setpoint (the bedroom about 0.8 K at most)."""
+    result, controller = learning_bedroom(light_bedroom_zones())
+    phases = result.learning_phases["zone_bedroom"]
+    assert len(phases) == LEARNING_PHASES, phases
+    assert phases[-1][1] < 14 * HOUR
+    assert max(k for _t, k in controller.corrections) > 1.0
+    targets = {z.zone_id: z.target for z in light_bedroom_zones()}
+    for zid, temps in late_rooms(result, 0.0, DAY).items():
+        assert max(temps) < targets[zid] + OVERHEAT_K, zid
+
+
+def test_the_correction_raised_for_the_learning_bedroom_falls_back_once_smartpi_has_learned() -> (
+    None
+):
+    """With the other rooms at the curve's room temperature only the learning bedroom is short:
+    the correction it raised is back at 0 within 3 h of SmartPI's last phase (about 2 h here)
+    and stays there for the rest of the day — no lasting rise of the water for a room that has
+    learned."""
+    zones = tuple(
+        z if z.zone_id == "zone_bedroom" else replace(z, target=CURVE.room)
+        for z in light_bedroom_zones()
+    )
+    result, controller = learning_bedroom(zones)
+    learned = result.learning_phases["zone_bedroom"][-1][1]
+    assert max(k for t, k in controller.corrections if t < learned) > 1.0
+    after = [k for t, k in controller.corrections if learned + 3 * HOUR <= t < DAY]
+    assert after
+    assert max(after) == 0.0
 
 
 def test_setpoints_stay_within_the_limits_even_in_deep_frost() -> None:
