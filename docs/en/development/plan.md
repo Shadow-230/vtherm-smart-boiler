@@ -207,8 +207,9 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
 - 0.2, step I11 — `docs/en/development/plans/plan-0.2-i11.md`: control switched on and off only
   by an administrator in the plugin's settings, and by automations; the Control switch becomes a
   state shown (the user's decisions of 2026-11-22, after J4's F19)
-- 0.2, step I12 — `docs/en/development/plans/plan-0.2-i12.md`: data between VT, SmartPI and the
-  plugin through `vtherm_api` where it has it, what nobody uses removed, VT 10.6.5 the oldest
-  supported, and the list of what the API lacks (the user's decisions of 2026-11-24)
+- 0.2, step I12 — `docs/en/development/plans/plan-0.2-i12.md`: VT integration only through
+  `vtherm_api`; VT's central boiler decides whether to heat, through a helper the plugin follows;
+  no learning pauses, water interface or frost protection of the plugin's; the rooms from VT; VT
+  10.6.5 the oldest supported (the user's decisions of 2026-11-24 and 2026-11-25)
 - Device templates — `docs/en/development/plans/plan-device-templates.md`: one parameter file per
   boiler device, after the first release (the user's decisions of 2026-11-22)

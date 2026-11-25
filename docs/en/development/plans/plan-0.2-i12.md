@@ -65,14 +65,14 @@ The public API in `hass.data` (`water-interface.md` §3.2) and the seven demand 
 manager (`demand_count` … `opening_threshold`) removed; the plugin's own entities still show the
 demand. The specification records the removal (its section 8).
 
-### I12.3 VT 10.6.5 the oldest supported 🔒
+### I12.3 VT 10.6.5 the oldest supported 🔒 (moved to I12.6 by the second part)
 
 Waits for the user's consent to two things: VT 10.6.5's sources in `vendor/` for the local real-VT
 tests (today VT 10.5.1), and the `workflow` scope for one push (CI fetches VT 10.5.1 and SmartPI
 0.4.0 for its real-VT tests). Then: the version check, the code kept only for older VT removed,
 the user guide's requirements.
 
-### I12.4 What `vtherm_api` lacks 🔒
+### I12.4 What `vtherm_api` lacks 🔒 (replaced by the second part's review of every gap)
 
 A discussion with VT's and SmartPI's authors, opened only with the user's consent to publish
 (`research/2026-11-24-vtherm-api-exchange-paths.md`, the proposal).
@@ -97,3 +97,139 @@ A discussion with VT's and SmartPI's authors, opened only with the user's consen
 | Every value of a thermostat VT started before the plugin registered | VT → plugin | attributes | VT hands the thermostat over only when it starts |
 | The room sensor VT reads, the devices VT drives | VT → plugin | VT's config entry | not declared |
 | What VT's central boiler kept (its commands, delay, thresholds), read once when moving over | VT → plugin | VT's config entry | not declared |
+
+## Second part: the review of every gap (the user's decisions of 2026-11-24 and 2026-11-25)
+
+The user went through every gap of the list above, one at a time
+(`research/2026-11-24-api-only-analysis.md` sections 12–19), then had the API needs analysed
+again on those answers (`research/2026-11-25-api-reanalysis.md`). The rule became: **VT
+integration goes only through `vtherm_api`; no fallback for what the API has.** What the plugin
+reads from Home Assistant after this part is none of VT's data: VT's version and whether VT is
+loaded (Home Assistant's integrations), the user's own devices VT names through `entry_infos`
+(the room thermometer, the window sensor), the helper below (the user's entity and its recorder
+history), and Home Assistant's registries (an entity's area, a relay's platform).
+
+### Decisions
+
+1. **VT decides whether the boiler heats** ("Zgoda", 2026-11-25). VT's central boiler, with its
+   own thresholds and activation delay, commands a helper (an `input_boolean`), as VT's author
+   recommends for a boiler that needs more than on/off (VT #2107); the plugin follows the
+   helper's state and `CENTRAL_BOILER_EVENT`, and adds the water temperature and its safety
+   rules. The plugin's own demand (count, devices, power, opening), VT's activation delay carried
+   over and their settings go. Control is blocked while VT's central boiler is not set, while its
+   command targets anything but the helper (two controllers), or without the helper.
+2. **No learning pauses** ("Tak, usuwamy"): pausing a zone algorithm is the user's, not a
+   plugin's (SmartPI's author: no setup-dependent logic; VT's author: special needs in
+   automations). The plugin no longer pauses SmartPI or anything else, nor reads SmartPI; it
+   publishes one "boiler gives no heat" binary sensor with its reason, which the user picks in
+   SmartPI 1.0 (its new "heating unavailable" input, `dev-1.0`, 2026-11-24) or uses in an
+   automation.
+3. **No water interface** ("Usuwamy"): nothing reads it; the manager's properties, the
+   `smart_boiler` attribute and `water-interface.md` go. The manager stays: VT hands its
+   thermostats over through it.
+4. **No frost protection of the plugin's**: it is VT's (its frost preset and central mode).
+5. **Rooms from VT**: no zone list of the plugin's; the rooms are the thermostats VT hands over,
+   marked "used by the central boiler". The mapping of thermostats to circuits is a separate
+   element (the water temperature and the heat source), dealt with apart.
+6. **The Boiler page has no rooms list**; it shows how many rooms call, with a link to VT.
+7. **The oldest VT is the newest stable at the beta** (10.6.5 today), raised when a VT change is
+   needed; no `vtherm_api` floor above VT's own pin.
+8. Gap by gap: the duty cycle, valve and cap from the power hook (only for the correction, the
+   critical zone, the low-flow alarm and the lowest-water evidence); "started" from the first
+   `refresh_state`; VT's safety mode from `SAFETY_EVENT`, a room left out of the curve's
+   judgement while in it, or while its thermometer is unavailable, or before a measurement newer
+   than the plugin's restart; the critical zone skips a room with an open window and one still
+   warming after it closes; the analyses' "was the boiler called" from the helper's history; one
+   "reload VT once" repair at a first installation; the zones' past days not rebuilt from the
+   recorder.
+9. An issue to VT's author on the safety state (`get_feature_manager("safety")` from
+   `vtherm_api`'s guide finds nothing, VT naming its built-in managers after the thermostat),
+   published only with the user's consent after reading it.
+
+### Facts (checked on 2026-11-25 over the network: VT 10.6.5, `main` 78f7e54; `vtherm_api` 0.13.1)
+
+- `InterfaceThermostatRuntime` declares `entity_id`, `name`, `unique_id` and `entry_infos`;
+  `entry_infos` (also given to the manager's `post_init`) is the thermostat's settings merged over
+  VT's central entry's data whenever the central entry exists (`base_thermostat.py` 405–468), so it
+  carries VT's central boiler settings (`use_central_boiler_feature`,
+  `central_boiler_activation_service`, `central_boiler_deactivation_service`,
+  `central_boiler_activation_delay_sec`) — to confirm with a real-VT test.
+- VT calls the manager's `refresh_state` first in `init_underlyings_completed`, which runs only
+  once `is_ready` (725–760, 1027–1040).
+- VT calls every manager's `add_custom_attributes` before each write of its climate's state but
+  four over_climate setters (fan, humidity, swing).
+- The power hook `async_on_underlying_power` fires at each cycle start (over_switch), valve update
+  (over_valve, over_climate with valve regulation) and stop, never for plain over_climate, only on
+  managers whose `is_configured` is true.
+- VT's central boiler counts as configured only with a command (`_is_configured`); it decides
+  once every VTherm has started; `CENTRAL_BOILER_EVENT` carries `central_boiler` or
+  `delayed_activation_sec`, only after its command succeeded, never on keep-alive or a cancelled
+  delay; `PluginClimate` drops it (another entity's event).
+- VT 10.6.5 keeps its API while a plugin is registered (`vtherm_central_api.py` `remove_entry`).
+- `SAFETY_EVENT` carries `type` start or end (`feature_safety_manager.py` 190–232); built-in
+  managers are named after the thermostat (`base_manager.py` 28), so `get_feature_manager("safety")`
+  finds nothing.
+- VT 10.6.5's `on_percent` getter calls the algorithm's `update_realized_power` when safety or the
+  cap clamps it (`thermostat_prop.py`).
+
+### Steps
+
+#### I12.5 The plan and the rules ✅
+
+This part, and `CLAUDE.md`'s rules and facts.
+
+#### I12.6 VT 10.6.5 the oldest supported
+
+A version check refusing an older VT with a notification; the code kept only for VT 10.2–10.5
+removed; the climate-state listener for a new VT API removed. The real-VT tests, locally and in
+CI, on VT 10.6.5 (its sources fetched into `vendor/` by Claude, the user's consent of 2026-11-25;
+the `workflow` scope for one push, the user's consent of the same day).
+
+#### I12.7 Thermostats through the API
+
+The zone matched by its declared `entity_id`; only what is still needed, from the thermostat:
+`current_temperature`, `last_temperature_measure`, `target_temperature`, `vtherm_hvac_mode`,
+`hvac_action`, `is_device_active`, `hvac_off_reason` (the window only); "started" from the first
+`refresh_state`; the power hook; from `entry_infos` only `used_by_controls_central_boiler`,
+`thermostat_type`, `cycle_min`, the room thermometer, the window sensor and action,
+`underlying_entity_ids` and VT's central boiler settings; `SAFETY_EVENT`, `WINDOW_AUTO_EVENT`;
+the rooms read at each refresh and water decision; their details kept in the plugin's own store
+for about 8 days. The attribute fallback and parser go.
+
+#### I12.8 VT decides whether to heat
+
+Decision 1: the helper setting, following its state and `CENTRAL_BOILER_EVENT`; the plugin's own
+demand, VT's delay carried over and their settings removed (a repair notice for a saved power or
+opening threshold); the blockers turned round; a hint for a relay VT commands today; a check that
+every room is marked "used by the central boiler"; the Auto-TPI notices removed.
+
+#### I12.9 No learning pauses, no water interface
+
+Decisions 2 and 3, with the user guide's automations for SmartPI 1.0, SmartPI 0.6.x and Auto-TPI.
+
+#### I12.10 Frost and the rooms' trust
+
+Decision 4 and the rooms' trust of decision 8; the "blind room" alarm removed; the critical
+zone's window rule.
+
+#### I12.11 Rooms from VT
+
+Decision 5: no zone picker, the rooms VT marks; the first installation's "reload VT once" repair;
+VT's version and "loaded" marked as Home Assistant's information; no VT central mode.
+
+#### I12.12 The page and the analyses
+
+Decision 6; the analyses' "was the boiler called" from the helper's history.
+
+#### I12.13 Docs and a guard
+
+The specification, technical description and user guide in English and Polish; a test that no
+module reads VT's entities, entries or states.
+
+#### I12.14 VT's author 🔒
+
+Decision 9, once the user has read the issue and consented.
+
+#### I12.15 J4 and K4 🔒
+
+J4 over the whole on `qas`, then the review before the beta.
