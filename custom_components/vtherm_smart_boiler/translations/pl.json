@@ -1770,6 +1770,7 @@
               "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
               "write_through_cloud": "Sterowanie zapisywałoby przez chmurę: tylko monitorowanie",
               "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
+              "vt_too_old": "Versatile Thermostat starszy niż 10.6.5",
               "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
               "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
               "entity_used_by_zone": "Strefa już steruje encją nastawy lub przełącznikiem",
@@ -2455,6 +2456,7 @@
               "mqtt_not_set_up": "Integracja MQTT jest usunięta lub wyłączona",
               "write_through_cloud": "Sterowanie zapisywałoby przez chmurę: tylko monitorowanie",
               "zone_not_vt": "Strefa nie jest termostatem Versatile Thermostat",
+              "vt_too_old": "Versatile Thermostat starszy niż 10.6.5",
               "zone_on_boiler_thermostat": "Strefa jest zbudowana na własnym termostacie kotła",
               "relay_used_by_zone": "Strefa już przełącza ten przekaźnik",
               "entity_used_by_zone": "Strefa już steruje encją nastawy lub przełącznikiem",
@@ -3054,6 +3056,9 @@
     "blocked_zone_not_vt": {
       "message": "Jedna ze stref nie jest termostatem Versatile Thermostat, a tylko one mogą być strefami: usuń ją w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
+    "blocked_vt_too_old": {
+      "message": "Versatile Thermostat jest starszy niż 10.6.5, najstarsza wersja obsługiwana przez wtyczkę: zaktualizuj go. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
     "blocked_zone_on_boiler_thermostat": {
       "message": "Strefa Versatile Thermostat jest zbudowana na encji termostatu samego kotła lub bramki: prosiłaby o ciepło zawsze, gdy pali się płomień. Zbuduj strefę na czujniku pokojowym i jej zaworach albo głowicach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
@@ -3195,8 +3200,8 @@
       "description": "Sterowanie nie może wstrzymać nauki w tych strefach podczas ciepłej wody i wahań wody: {zones}. Auto-TPI dałoby się wstrzymać tylko kasując jego naukę; SmartPI bez flagi nauki nie da się wstrzymać. Uczą się więc i w tych chwilach, co może zniekształcić ich naukę."
     },
     "vt_feature_manager_unsupported": {
-      "title": "Termostaty VT nie mogą pokazać wartości strefy z wtyczki",
-      "description": "Zainstalowany tu Versatile Thermostat nie może załadować menedżera funkcji wtyczki (menedżery funkcji wymagają VT {version} lub nowszego z vtherm_api 0.5 lub nowszym; wtyczkę testowano z VT 10.5.1), więc jego termostaty nie mogą pokazać, czy ciepło dociera do ich stref. Zaktualizuj Versatile Thermostat, żeby to pokazać."
+      "title": "Versatile Thermostat jest za stary dla wtyczki",
+      "description": "Zainstalowany tu Versatile Thermostat jest starszy niż {version}, najstarsza wersja obsługiwana przez wtyczkę (testowaną z VT 10.6.5), albo nie może załadować menedżera funkcji wtyczki: VT nie może przekazać wtyczce swoich termostatów. Zaktualizuj Versatile Thermostat; dopóki jest starszy niż {version}, sterowanie jest zablokowane."
     },
     "vt_reload_needed": {
       "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki",

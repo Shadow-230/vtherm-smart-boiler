@@ -7,9 +7,15 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from homeassistant.config_entries import (
+    SIGNAL_CONFIG_ENTRY_CHANGED,
+    ConfigEntryChange,
+    ConfigEntryState,
+)
 from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from vtherm_api.vtherm_api import VThermAPI
 
@@ -177,21 +183,29 @@ async def test_registered_again_after_vt_recreates_its_api(
     assert new.list_feature_managers() == [DOMAIN]
 
 
-async def test_a_new_vt_api_gets_the_factory_before_its_thermostat_starts(
+async def test_a_new_vt_api_gets_the_factory_when_a_vt_entry_is_set_up(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """VT drops its API with its last entry (VT 10.4.0 ``remove_entry``); set up again, it
-    builds a thermostat, which writes its first state, and only then starts it and asks for
-    feature managers. The factory is registered with the new API at that first state — the
-    plugin's next update would come after the start, and the thermostat would never ask again
-    until the next reload, which would drop the API once more."""
+    """A real VT 10.6.4, which the floor lets through, drops its API with its last entry and
+    creates a new one when an entry is set up again. Home Assistant's signal for that entry
+    being set up gives the new API the factory at once, before VT builds its thermostats.
+    Negative: a climate's state no longer does (I12: nothing of VT's state is read), nor another
+    integration's entry."""
     api = vt_is_set_up(hass)
     await setup(hass, zones)
     assert api.list_feature_managers() == [DOMAIN]
     VThermAPI.reset_vtherm_api()
     new = VThermAPI.get_vtherm_api(hass)
+    hass.states.async_set("climate.rebuilt_thermostat", "heat")
+    other = MockConfigEntry(domain="generic_thermostat")
+    other.add_to_hass(hass)
+    other.mock_state(hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    async_dispatcher_send(hass, SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange.UPDATED, other)
     assert new.list_feature_managers() == []
-    hass.states.async_set("climate.rebuilt_thermostat", "heat")  # its first state
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    async_dispatcher_send(hass, SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange.UPDATED, vt_entry)
     assert new.list_feature_managers() == [DOMAIN]  # at once, with no update in between
 
 
@@ -351,9 +365,9 @@ async def test_the_reload_repair_skips_zones_that_are_away_or_not_ready(
     ("version", "method", "expected"),
     [
         ("10.1.0", True, feature_manager.RegistrationState.UNSUPPORTED),
-        ("10.0.2", True, feature_manager.RegistrationState.UNSUPPORTED),
-        ("10.2.0", True, feature_manager.RegistrationState.REGISTERED),
-        ("10.4.0", True, feature_manager.RegistrationState.REGISTERED),
+        ("10.6.3", True, feature_manager.RegistrationState.UNSUPPORTED),
+        ("10.6.4", True, feature_manager.RegistrationState.REGISTERED),  # 10.6.5's manifest
+        ("10.6.5", True, feature_manager.RegistrationState.REGISTERED),
         (None, True, feature_manager.RegistrationState.REGISTERED),  # detection as before
         (None, False, feature_manager.RegistrationState.UNSUPPORTED),
         ("not a version", True, feature_manager.RegistrationState.REGISTERED),
@@ -367,10 +381,9 @@ async def test_an_old_vt_is_detected_by_its_version(
     method: bool,
     expected: feature_manager.RegistrationState,
 ) -> None:
-    """P-60 (Q3.1): VT 10.0 and 10.1 take the registration — the shared ``vtherm_api`` has the
-    method — and never create the manager: their version tells, and the issue names the first
-    VT that does, 10.2.0 (provisional, K4). Negative: the version unknown or unreadable, the
-    capability decides as before."""
+    """I12.6 (P-60): a VT older than the oldest supported is not registered with, whatever its
+    API offers, and the issue names 10.6.5 — compared as 10.6.4, what its manifest says.
+    Negative: the version unknown or unreadable, the capability decides as before."""
     monkeypatch.setattr(vtherm_link, "vt_version", lambda _hass: version)
     if method:
         api = vt_is_set_up(hass)
@@ -384,7 +397,7 @@ async def test_an_old_vt_is_detected_by_its_version(
     issue = ir.async_get(hass).async_get_issue(DOMAIN, "vt_feature_manager_unsupported")
     if expected is feature_manager.RegistrationState.UNSUPPORTED:
         assert issue is not None
-        assert issue.translation_placeholders == {"version": "10.2.0"}
+        assert issue.translation_placeholders == {"version": "10.6.5"}
     else:
         assert issue is None
     if method:
@@ -574,14 +587,18 @@ def test_vt_api_lookups_that_fail_leave_the_registration_waiting_or_unsupported(
 def test_a_registration_whose_lookups_fail_keeps_waiting(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Never into VT's state writes, never out of a check: an error leaves it waiting."""
+    """Never into Home Assistant's entry signal, never out of a check: an error leaves it
+    waiting."""
     current = feature_manager.FeatureRegistration(hass)
 
     def boom(*_args: object) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(feature_manager, "_stored_api", boom)
-    current._on_climate_state(None)  # type: ignore[arg-type]
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.LOADED)
+    current._on_entry_changed(ConfigEntryChange.UPDATED, vt_entry)
     monkeypatch.setattr(current, "_check", boom)
     assert current.check() is False
     assert current.state is feature_manager.RegistrationState.WAITING
@@ -618,7 +635,7 @@ async def test_a_refused_registration_is_not_retried_on_the_same_api(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """PB-46: an API that refuses the factory is not asked again at every climate state and
+    """PB-46: an API that refuses the factory is not asked again at every VT entry signal and
     update — one warning with its trace; a new API VT creates is asked once, its refusal logged
     at debug."""
     import logging
@@ -626,8 +643,17 @@ async def test_a_refused_registration_is_not_retried_on_the_same_api(
     caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smart_boiler")
     api = broken_vt(hass, monkeypatch, "register")
     entry = await setup(hass, zones)
-    for index in range(50):
-        hass.states.async_set("climate.other", "heat", {"n": index})
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.LOADED)
+
+    def vt_entry_set_up() -> None:
+        async_dispatcher_send(
+            hass, SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange.UPDATED, vt_entry
+        )
+
+    for _ in range(50):
+        vt_entry_set_up()
     await entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
     assert api.attempts == 1
@@ -641,8 +667,8 @@ async def test_a_refused_registration_is_not_retried_on_the_same_api(
     newer.register_feature_manager = newer.register  # type: ignore[attr-defined]
     hass.data[VT_DOMAIN] = {"vtherm_api": newer}
     monkeypatch.setattr(VThermAPI, "get_vtherm_api", staticmethod(lambda _hass=None: newer))
-    hass.states.async_set("climate.other", "heat", {"n": "new"})
-    hass.states.async_set("climate.other", "heat", {"n": "again"})
+    vt_entry_set_up()
+    vt_entry_set_up()
     assert newer.attempts == 1
     refusals = [r for r in caplog.records if "Could not register" in r.getMessage()]
     assert [r.levelno for r in refusals] == [logging.WARNING, logging.DEBUG]

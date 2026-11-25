@@ -15,12 +15,12 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from custom_components.vtherm_smart_boiler.vtherm_attributes import CentralMode
 from custom_components.vtherm_smart_boiler.vtherm_link import (
     VT_CENTRAL_SEEN,
-    VT_FEATURE_MANAGERS_FROM,
+    VT_OLDEST,
     VThermLink,
     register_thermostat,
     unregister_thermostat,
     vt_climate_entities,
-    vt_loads_feature_managers,
+    vt_supported,
 )
 
 from .harness import VT_PLATFORM, FakeZones, ha_started
@@ -451,25 +451,23 @@ async def test_without_its_sensor_a_vt_central_entry_off_or_silent_is_not_there(
 @pytest.mark.parametrize(
     ("version", "expected"),
     [
-        ("9.3.3", False),
-        ("10.0.2", False),
         ("10.1.0", False),  # takes the registration, never creates the manager (Q3.1)
-        ("10.2.0.beta1", False),  # a beta is not a supported install: under-claimed
-        ("10.2.0", True),
-        ("10.4.0", True),
-        ("10.5.0.beta2", True),
+        ("10.5.1", False),
+        ("10.6.3", False),
+        ("10.6.4.beta1", False),  # a beta is not a supported install: under-claimed
+        ("10.6.4", True),  # VT 10.6.5's manifest says 10.6.4
+        ("10.6.5", True),
+        ("10.6.6.beta2", True),
         ("10.10.0", True),
         (None, None),  # unknown: capability detection decides
         ("not a version", None),
         ("", None),
     ],
 )
-def test_vt_versions_that_load_external_feature_managers(
-    version: str | None, expected: bool | None
-) -> None:
-    """P-60 (Q3.1, provisional, K4): VT loads outside feature managers from 10.2.0 on."""
-    assert vt_loads_feature_managers(version) is expected
-    assert VT_FEATURE_MANAGERS_FROM == "10.2.0"
+def test_vt_versions_the_plugin_supports(version: str | None, expected: bool | None) -> None:
+    """I12.6: the oldest VT supported is 10.6.5, compared as 10.6.4 — what its manifest says."""
+    assert vt_supported(version) is expected
+    assert VT_OLDEST == "10.6.4"
 
 
 async def test_vt_is_loaded_only_with_a_loaded_entry(hass: HomeAssistant) -> None:

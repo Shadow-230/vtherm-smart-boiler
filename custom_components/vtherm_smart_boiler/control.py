@@ -482,6 +482,8 @@ RUNTIME_BLOCKERS = (
     "write_through_cloud",
     "zone_not_vt",
     "zone_on_boiler_thermostat",
+    # I12.6: VT older than the oldest the plugin supports (``vtherm_link.VT_OLDEST``).
+    "vt_too_old",
     # X8 (R2): a relay a VT zone drives, one of the boiler's gateway integration or of VT, and a
     # boiler thermostat entity that cannot be set to both heat and off — read at every step, as
     # they can change without the options changing.
@@ -1694,6 +1696,8 @@ class ControlUnit:
         link = self._coordinator.link
         if link.zones_of_another_kind():
             found.append("zone_not_vt")  # a hand edit: only VT climates are zones (X5.7)
+        if link.vt_too_old():
+            found.append("vt_too_old")  # I12.6: update VT
         if link.zones_on_boiler_thermostat([*config.signals.values(), *self.options.entities]):
             # X5.19: it would ask for heat whenever the flame burns; VT's entries are read at
             # every step, as VT can be reconfigured without the options changing.

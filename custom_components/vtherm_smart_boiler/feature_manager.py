@@ -28,9 +28,16 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import EVENT_COMPONENT_LOADED, EVENT_STATE_CHANGED
-from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.config_entries import (
+    SIGNAL_CONFIG_ENTRY_CHANGED,
+    ConfigEntry,
+    ConfigEntryChange,
+    ConfigEntryState,
+)
+from homeassistant.const import EVENT_COMPONENT_LOADED
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
 
 from . import vtherm_link
@@ -287,11 +294,6 @@ class SmartBoilerFeatureFactory:
         return SmartBoilerFeatureManager(self._hass, thermostat, self._lookup)
 
 
-@callback
-def _is_climate(data: EventStateChangedData) -> bool:
-    return data["entity_id"].startswith("climate.")
-
-
 def _api_name() -> str:
     try:
         from vtherm_api.const import VTHERM_API_NAME
@@ -308,13 +310,13 @@ def _stored_api(hass: HomeAssistant) -> Any | None:
 
 def _api(hass: HomeAssistant) -> tuple[Any | None, RegistrationState]:
     """VT's API once VT has created it, with what it allows. ``get_vtherm_api`` is called only
-    when the instance exists, as it would create a bare one otherwise. A VT older than the first
-    version that creates outside feature managers is unsupported whatever its API offers: the
-    ``vtherm_api`` shared with the plugin has the method all the same (P-60); its version
-    unknown, the API's capability decides."""
+    when the instance exists, as it would create a bare one otherwise. A VT older than the oldest
+    the plugin supports is unsupported whatever its API offers (I12.6; P-60: VT 10.0 and 10.1 take
+    a registration and never create a manager); its version unknown, the API's capability
+    decides."""
     if VT_DOMAIN not in hass.config.components:
         return None, RegistrationState.WAITING
-    if vtherm_link.vt_loads_feature_managers(vtherm_link.vt_version(hass)) is False:
+    if vtherm_link.vt_supported(vtherm_link.vt_version(hass)) is False:
         return None, RegistrationState.UNSUPPORTED
     try:
         from vtherm_api.vtherm_api import VThermAPI
@@ -354,28 +356,28 @@ class FeatureRegistration:
         self._refused: Any | None = None
         self._refusal_logged = False
         self._unsub: CALLBACK_TYPE | None = None
-        self._unsub_states: CALLBACK_TYPE | None = None
+        self._unsub_entries: CALLBACK_TYPE | None = None
         self.state = RegistrationState.WAITING
         self.registered_at: float | None = None  # when the current API got the factory
 
     def start(self) -> None:
-        # VT drops its API with its last entry and creates a new one when set up again; a
-        # thermostat it then builds writes its first state before it starts and asks for
-        # feature managers, so the new API is given the factory right then.
-        self._unsub_states = self._hass.bus.async_listen(
-            EVENT_STATE_CHANGED, self._on_climate_state, event_filter=_is_climate
+        # VT 10.6.5 keeps its API while a plugin is registered; a real 10.6.4, which the floor
+        # lets through (``vtherm_link.VT_OLDEST``), drops it with its last entry and creates a new
+        # one when an entry is set up again. Home Assistant's own signal for a VT entry being set
+        # up gives the new API the factory before VT builds the entry's thermostats, as SmartPI
+        # does — no state of VT's read.
+        self._unsub_entries = async_dispatcher_connect(
+            self._hass, SIGNAL_CONFIG_ENTRY_CHANGED, self._on_entry_changed
         )
         if not self.check():
             self._unsub = self._hass.bus.async_listen(EVENT_COMPONENT_LOADED, self._on_loaded)
 
     @callback
-    def _on_climate_state(self, _event: Event[EventStateChangedData]) -> None:
-        try:
-            stored = _stored_api(self._hass)
-        except Exception:  # never into VT's state writes
-            _LOGGER.debug("VT's API could not be looked up", exc_info=True)
-            return
-        if stored is not None and stored is not self._api and stored is not self._refused:
+    def _on_entry_changed(self, _change: ConfigEntryChange, entry: ConfigEntry) -> None:
+        if entry.domain == VT_DOMAIN and entry.state in (
+            ConfigEntryState.SETUP_IN_PROGRESS,
+            ConfigEntryState.LOADED,
+        ):
             self.check()
 
     @callback
@@ -431,7 +433,7 @@ class FeatureRegistration:
                 is_fixable=False,
                 severity=ir.IssueSeverity.WARNING,
                 translation_key=UNSUPPORTED_ISSUE,
-                translation_placeholders={"version": vtherm_link.VT_FEATURE_MANAGERS_FROM},
+                translation_placeholders={"version": vtherm_link.VT_OLDEST_SHOWN},
             )
         elif state is RegistrationState.REGISTERED:
             ir.async_delete_issue(self._hass, DOMAIN, UNSUPPORTED_ISSUE)
@@ -440,9 +442,9 @@ class FeatureRegistration:
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
-        if self._unsub_states is not None:
-            self._unsub_states()
-            self._unsub_states = None
+        if self._unsub_entries is not None:
+            self._unsub_entries()
+            self._unsub_entries = None
         api, self._api = self._api, None
         if api is None:
             return

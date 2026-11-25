@@ -114,7 +114,7 @@ def test_session_summaries_are_ignored() -> None:
 
 
 def test_requires_the_vtherm_api_its_contract_was_checked_on() -> None:
-    assert MANIFEST["requirements"] == ["vtherm_api>=0.5.0"]
+    assert MANIFEST["requirements"] == ["vtherm_api>=0.9.0"]  # VT 10.6.5's own floor
 
 
 def test_manifest_links_to_the_repository() -> None:

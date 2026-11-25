@@ -24,9 +24,10 @@ from .harness import FakeBoiler
 pytestmark = [requires_vendor, pytest.mark.usefixtures("enable_custom_integrations")]
 
 
+# The pinned VT is 10.6.5 (I12.6), whose manifest says 10.6.4 (the tag's ``manifest.json``).
 @pytest.mark.parametrize(
     ("domain", "version"),
-    [("versatile_thermostat", "10.5.1"), ("vtherm_smartpi", "0.0.0")],
+    [("versatile_thermostat", "10.6.4"), ("vtherm_smartpi", "0.0.0")],
 )
 async def test_vendored_integration_loads(hass: HomeAssistant, domain: str, version: str) -> None:
     integration = await async_get_integration(hass, domain)
@@ -124,11 +125,11 @@ async def heat_to(hass: HomeAssistant, target: float, zone: str = LIVING) -> Non
 async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_values(
     hass: HomeAssistant,
 ) -> None:
-    """P59: VT itself (the pinned 10.5.1; 10.4.0 until 2026-10-13), not a state standing in for
-    it, through Home Assistant's start (VT starts its thermostats once Home Assistant has
-    started): the plugin reads the room temperature, target, heating mode and duty cycle of an
-    over_switch thermostat below its target, and the thermostat shows the plugin's values
-    through the feature manager."""
+    """P59: VT itself (the pinned 10.6.5; 10.5.1 until 2026-11-25, 10.4.0 until 2026-10-13), not a
+    state standing in for it, through Home Assistant's start (VT starts its thermostats once Home
+    Assistant has started): the plugin reads the room temperature, target, heating mode and duty
+    cycle of an over_switch thermostat below its target, and the thermostat shows the plugin's
+    values through the feature manager."""
     entry = await room_and_boiler(hass)
     hass.set_state(CoreState.starting)
     await setup(hass, entry)
@@ -203,7 +204,7 @@ async def test_a_real_vt_thermostat_finds_the_plugins_manager_by_its_name(
     """I9 (water-interface.md §3.1): from VT 10.5.0 a zone algorithm finds the plugin's manager
     on its own thermostat by its stable name, ``get_feature_manager("vtherm_smart_boiler")``;
     its properties are the specification's fields, the zone found by the thermostat's unique ID
-    (I12). The pinned VT 10.5.1 has the lookup; an older one (10.4.0 has none) skips the
+    (I12). The pinned VT 10.6.5 has the lookup; an older one (10.4.0 has none) skips the
     test."""
     from homeassistant.components.climate import DATA_COMPONENT
 
@@ -340,7 +341,7 @@ class Shown:
 async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
     hass: HomeAssistant,
 ) -> None:
-    """Decision 3's rules are written against this (VT 10.4.0, and the pinned 10.5.1 alike,
+    """Decision 3's rules are written against this (VT 10.4.0, 10.5.1 and the pinned 10.6.5 alike,
     over_switch and over_climate):
 
     - before Home Assistant has started, a thermostat shows the placeholder "off": at first with
@@ -445,7 +446,7 @@ async def test_a_vt_thermostat_whose_devices_never_report_stays_unknown(
 ) -> None:
     """Check C's F1 (SB-02): the devices' integration never sets up after a restart — Home
     Assistant shows their entities restored "unavailable", and no state event ever comes. VT
-    (10.4.0 as 10.5.1) keeps its placeholder "off", with neither ``is_ready`` nor
+    (10.4.0 to the pinned 10.6.5) keeps its placeholder "off", with neither ``is_ready`` nor
     ``specific_states``, for good — through 30 minutes of its cycles and room readings; the
     over_climate thermostat shows "off" with ``is_ready`` false. The plugin reads each as unknown
     after the recognition period too, never as the user's "off": demand is unknown, not "no"."""
@@ -676,12 +677,12 @@ def vt_central_with_boiler() -> MockConfigEntry:
 async def test_a_real_vt_central_entry_is_read_through_its_reload_and_its_untick(
     hass: HomeAssistant,
 ) -> None:
-    """X7 against the pinned VT (10.5.1; 10.4.0 before): its central boiler configured, the
-    plugin reads it at every state change while VT sets its central entry up again — never
+    """X7 against the pinned VT (10.6.5; 10.5.1 and 10.4.0 before): its central boiler configured,
+    the plugin reads it at every state change while VT sets its central entry up again — never
     unknown (P-105). The user unticks it (VT drops its two commands and reloads): VT's entry says
     "off", yet in this run the plugin keeps it as there — VT's manager may still switch the relay
-    until Home Assistant restarts. The stand-in VT's untick leaves, written in this run, says so
-    by itself (decision 9 of plan 0.2.3)."""
+    until Home Assistant restarts. The stand-in VT's untick leaves, written in this run, says so by
+    itself (decision 9 of plan 0.2.3)."""
     from custom_components.versatile_thermostat import const as vt
     from homeassistant.const import EVENT_STATE_CHANGED
     from homeassistant.core import Event, callback

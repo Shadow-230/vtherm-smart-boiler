@@ -44,12 +44,11 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
 
 - **Home Assistant 2026.10.4 lub nowszy** — wymaga go najnowszy Versatile Thermostat (10.6.5), a
   wtyczka jest na nim testowana.
-- **Versatile Thermostat 10.2.0 lub nowszy**, z termostatami (wtyczka nazywa je strefami)
-  ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł. VT wczytuje zewnętrzne moduły funkcji
-  (feature managers) od wersji 10.2.0; testowane są 10.5.1 i najnowsza, 10.6.5. To minimum jest
-  tymczasowe i zostanie potwierdzone przed pierwszym wydaniem. Sam VT 10.6.5 wymaga Home
-  Assistanta 2026.10.4 i `vtherm_api` 0.9.0.
-- Biblioteka `vtherm_api` w wersji 0.5.0 lub nowszej. Home Assistant instaluje ją razem z
+- **Versatile Thermostat 10.6.5 lub nowszy**, z termostatami (wtyczka nazywa je strefami)
+  ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł. Ze starszym VT wtyczka nie steruje
+  kotłem i prosi o aktualizację VT. VT 10.6.5 przedstawia się w Home Assistancie jako 10.6.4, co
+  wtyczka przyjmuje. Sam VT 10.6.5 wymaga Home Assistanta 2026.10.4 i `vtherm_api` 0.9.0.
+- Biblioteka `vtherm_api` w wersji 0.9.0 lub nowszej. Home Assistant instaluje ją razem z VT i
   wtyczką.
 - **Kocioł, który Home Assistant potrafi odczytać**, przez dowolną integrację pokazującą jego
   sygnały jako encje: na przykład OpenTherm Gateway (OTGW), EMS-ESP albo sterownik OpenTherm na
@@ -249,12 +248,6 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   godzinę; w symulacji cykl 10–15 minut zmniejszył liczbę startów kotła o jedną trzecią do połowy
   w łagodną pogodę, przy równie ciepłych pokojach. Gdy sterowanie jest ustawione, wtyczka
   wymienia pokoje, które VT przełącza w cyklach krótszych niż 10 minut („Krótkie cykle w VT”).
-- **Strefy z zaworem, który nie zamyka się do końca** (w VT **Maksymalny stopień zamknięcia**
-  poniżej 100): używaj VT 10.5 lub nowszego. Od 10.5 zawór trzymany na tym minimum nie liczy się
-  jako grzejący, a strefa prosi o ciepło dopiero, gdy VT otworzy go bardziej. VT 10.2–10.4 liczył
-  go jako grzejący, więc taka strefa prosiła o ciepło bez przerwy i kocioł mógł się nigdy nie
-  wyłączać. Przy ustawieniu domyślnym (100: zawór zamyka się całkiem) wszystkie wersje działają
-  tak samo.
 - Obieg sterowany przez inną automatykę prosi o ciepło, gdy jego encja **Obieg prosi o ciepło**
   jest włączona albo gdy potrzebuje ciepła któraś z jego stref: grzanie włącza się wtedy dla
   niego samego, bez względu na ustawioną liczbę stref — jego mieszacz potrzebuje wody. Gdy tej
@@ -1369,9 +1362,6 @@ target:
   Przy jednej stałej wartości jest raz zapisywana ponownie, a druga zmiana w ciągu 24 h każe
   wtyczce się wycofać.
 - Jeden kocioł na Home Assistant (jeden wpis). Bez pomp ciepła, zaworów i sterowania ciepłą wodą.
-- **Strefy VT z zaworem, który nie zamyka się do końca** (w VT „Maksymalny stopień zamknięcia”
-  poniżej 100) wymagają VT 10.5 lub nowszego: VT 10.2–10.4 liczy taki zawór na jego minimum jako
-  grzejący, więc strefa prosi o ciepło bez przerwy i kocioł może się nigdy nie wyłączać.
 - Sterowanie temperaturą wody wymaga przełącznika grzania wł./wył. (poza EMS-ESP); bramka z
   termostatem wł./wył. na zaciskach to tylko monitor.
 - Własny kocioł centralny VT musi być wyłączony, a Home Assistant raz uruchomiony ponownie.
