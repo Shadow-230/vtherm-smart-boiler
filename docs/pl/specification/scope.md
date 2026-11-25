@@ -1391,7 +1391,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Limit czasu zapisu 10 s; krok sterowania liczy najwyżej 60 s | sterowanie | tymczasowe, K4 (powód do potwierdzenia) |
 | Próg „dolej wody” przyjmowany w granicach 0.1–2.0 bar | opcje (Y1) | tymczasowe, K4 (powód do potwierdzenia) |
 | Wywołania nauki SmartPI przekraczają limit czasu po 5 s, w ramach 15-sekundowego budżetu zatrzymania | `control.py` | tymczasowe, K4 (powód do potwierdzenia) |
-| Minimalna wersja VT 10.2.0 (zewnętrzne menedżery funkcji ładują się od niej; 10.5.1 jest testowana) | `vtherm_link.py` | tymczasowe, K4 (Q3.1) |
+| Najstarszy VT 10.6.5, porównywany jako 10.6.4 — tak podaje jego manifest (testowany jest 10.6.5) | `vtherm_link.py` | postanowione 2026-11-25 (I12.6); podnoszone, gdy potrzebna jest zmiana w VT |
 | Uruchomiony termostat, który nie pokazuje wartości strefy w ciągu 15 min: zgłoszenie naprawy „przeładuj VT” | `feature_manager.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Dzień się liczy, gdy 90 % jest znane; jego stopniodni wymagają 80 % | monitor (Y2) | tymczasowe, K4 (powód do potwierdzenia) |
 | Sugestia najniższej temperatury wody nigdy powyżej 50 °C | monitor (X6) | tymczasowe, K4 (powód do potwierdzenia) |
@@ -1659,7 +1659,8 @@ liczone po godzinach, w których było ogrzewanie.
       encji pogody.
   13. Klasa 3 wchodzi do 0.2.2 bez minimalnych czasów i bez limitu przełączeń; przeciwdziałanie
       cyklowaniu w 0.3 do rozstrzygnięcia wobec zasady 12.
-  14. CI pobiera VT 10.5.1 (10.4.0 do 2026-10-13) i SmartPI 0.4.0 z ich tagów na serwerach GitHuba.
+  14. CI pobiera VT 10.6.5 (10.5.1 do 2026-11-25, 10.4.0 do 2026-10-13) i SmartPI 0.4.0 z ich tagów
+      na serwerach GitHuba.
   15. J4 wywołuje nagły restart i utratę łączności tylko w kontenerze testowym.
   16. Pierwsza opublikowana wersja po niezależnym sprawdzeniu i przy K4; zawartość przy K5.
   Do tego: reguła braku danych, ochrona kotła na podstawie jego własnej usterki, bezpieczne oddanie

@@ -43,11 +43,11 @@ the [technical documentation](../technical/technical.md).
 
 - **Home Assistant 2026.10.4 or later** — the newest Versatile Thermostat (10.6.5) needs it, and
   the plugin is tested on it.
-- **Versatile Thermostat 10.2.0 or later**, with its thermostats (the plugin calls them zones)
-  set up for the rooms this boiler heats. VT loads external feature managers from 10.2.0;
-  10.5.1 and the newest, 10.6.5, are tested. The minimum is provisional and is confirmed before
-  the first release. VT 10.6.5 itself needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0.
-- The `vtherm_api` library, 0.5.0 or later. Home Assistant installs it with the plugin.
+- **Versatile Thermostat 10.6.5 or later**, with its thermostats (the plugin calls them zones)
+  set up for the rooms this boiler heats. With an older VT the plugin does not control the
+  boiler and asks you to update VT. VT 10.6.5 shows itself as 10.6.4 in Home Assistant, which
+  the plugin accepts. VT 10.6.5 itself needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0.
+- The `vtherm_api` library, 0.9.0 or later. Home Assistant installs it with VT and the plugin.
 - **A boiler that Home Assistant can read**, through any integration that shows its signals as
   entities: for example the OpenTherm Gateway (OTGW), EMS-ESP or an ESPHome OpenTherm controller.
   A boiler with only on/off room-thermostat terminals can be monitored and switched by a relay.
@@ -237,11 +237,6 @@ same way VT's central boiler does. You choose one or more of these criteria:
   in the simulation a 10–15 minute cycle cut the boiler's starts by a third to a half in mild
   weather, with the rooms as warm. While control is set up, the plugin names the rooms VT
   switches in cycles under 10 minutes ("Short cycles in VT").
-- **Valve zones whose valve may not close fully** (VT's **Max closing degree** below 100): use
-  VT 10.5 or newer. From 10.5, a valve held at that floor does not count as heating, and the zone
-  calls only once VT opens it further. VT 10.2–10.4 counted it as heating, so such a zone called
-  for heat all the time and the boiler might never switch off. With the default (100: the valve
-  closes fully) every version behaves the same.
 - A circuit controlled by other automation asks for heat while its **Circuit asks for heat**
   entity is on, or one of its zones calls: heating goes on for it alone, whatever number of
   zones is set — its mixer needs the water. If that entity is unavailable or unknown, the
@@ -1319,9 +1314,6 @@ target:
   With one steady value it is written back once, and a second change within 24 h makes the plugin
   step aside.
 - One boiler per Home Assistant (one entry). No heat pumps, no valves, no hot-water control.
-- **VT zones with a valve that may not close fully** (VT's "Max closing degree" below 100) need
-  VT 10.5 or newer: VT 10.2–10.4 counts such a valve as heating at its floor, so the zone calls
-  for heat all the time and the boiler may never switch off.
 - Water-temperature control needs a heating on/off switch (except EMS-ESP); a gateway with an
   on/off thermostat on its terminals is monitor only.
 - VT's own central boiler must be off, and Home Assistant restarted once.

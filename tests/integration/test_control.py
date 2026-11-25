@@ -12119,6 +12119,27 @@ async def test_a_zone_that_is_not_a_vt_climate_blocks_control(rig: Rig) -> None:
     assert "zone_not_vt" not in rig.state("binary_sensor", "control").attributes["blockers"]
 
 
+async def test_a_vt_older_than_the_oldest_supported_blocks_control(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I12.6: VT older than 10.6.5 — whose manifest says 10.6.4 — blocks control
+    (``vt_too_old``) and switching on is refused. Negative: 10.6.5 read as 10.6.4, and a version
+    not known."""
+    from custom_components.vtherm_smart_boiler import vtherm_link
+
+    version: dict[str, str | None] = {"now": "10.6.3"}
+    monkeypatch.setattr(vtherm_link, "vt_version", lambda _hass: version["now"])
+    await start(rig)
+    await rig.advance(10)
+    assert "vt_too_old" in rig.state("binary_sensor", "control").attributes["blockers"]
+    with pytest.raises(ServiceValidationError):
+        await rig.switch(True)
+    for supported in ("10.6.4", None):
+        version["now"] = supported
+        await rig.advance(10)
+        assert "vt_too_old" not in rig.state("binary_sensor", "control").attributes["blockers"]
+
+
 async def test_a_gateway_entry_removed_or_disabled_blocks_control(rig: Rig) -> None:
     """X5.5 at run time: the ``opentherm_gw`` entry of the gateway picked disabled while control
     runs — the blocker ``gateway_not_set_up`` hands back; enabled again, control resumes by

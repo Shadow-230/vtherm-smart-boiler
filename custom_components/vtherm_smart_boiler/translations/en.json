@@ -1770,6 +1770,7 @@
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
               "write_through_cloud": "Control would write through a cloud service: monitoring only",
               "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
+              "vt_too_old": "Versatile Thermostat older than 10.6.5",
               "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
               "relay_used_by_zone": "A zone already switches the relay",
               "entity_used_by_zone": "A zone already drives the setpoint entity or a switch",
@@ -2455,6 +2456,7 @@
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
               "write_through_cloud": "Control would write through a cloud service: monitoring only",
               "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
+              "vt_too_old": "Versatile Thermostat older than 10.6.5",
               "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
               "relay_used_by_zone": "A zone already switches the relay",
               "entity_used_by_zone": "A zone already drives the setpoint entity or a switch",
@@ -3054,6 +3056,9 @@
     "blocked_zone_not_vt": {
       "message": "A zone is not a Versatile Thermostat thermostat, and only those can be zones: remove it in the options. Other reasons: {count} (all are listed on the control state)."
     },
+    "blocked_vt_too_old": {
+      "message": "Versatile Thermostat is older than 10.6.5, the oldest the plugin supports: update it. Other reasons: {count} (all are listed on the control state)."
+    },
     "blocked_zone_on_boiler_thermostat": {
       "message": "A Versatile Thermostat zone is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead. Other reasons: {count} (all are listed on the control state)."
     },
@@ -3195,8 +3200,8 @@
       "description": "Control cannot pause learning in these zones during hot water and water swings: {zones}. Auto-TPI could only be paused by wiping what it learned; a SmartPI without a learning flag cannot be paused. They keep learning through those moments, which can skew what they learn."
     },
     "vt_feature_manager_unsupported": {
-      "title": "VT's thermostats cannot show the plugin's zone value",
-      "description": "The Versatile Thermostat installed here cannot load the plugin's feature manager (feature managers need VT {version} or newer, with vtherm_api 0.5 or newer; the plugin is tested with VT 10.5.1), so its thermostats cannot show whether heat reaches their zones. Update Versatile Thermostat to show it."
+      "title": "Versatile Thermostat is too old for the plugin",
+      "description": "The Versatile Thermostat installed here is older than {version}, the oldest the plugin supports (it is tested with VT 10.6.5), or it cannot load the plugin's feature manager: VT cannot hand the plugin its thermostats. Update Versatile Thermostat; control is blocked while it is older than {version}."
     },
     "vt_reload_needed": {
       "title": "Some VT thermostats need a reload to show the plugin's value",

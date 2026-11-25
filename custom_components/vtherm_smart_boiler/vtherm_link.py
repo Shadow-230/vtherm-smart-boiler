@@ -91,11 +91,14 @@ _CENTRAL_RUNNING = frozenset(
         ConfigEntryState.NOT_LOADED,
     }
 )
-# VT loads outside feature managers from this version on (research/2026-09-27-q3-1-vt-feature-
-# manager-version.md; provisional, K4): VT 10.0 and 10.1 use ``vtherm_api`` for control
-# algorithms only — a registration there succeeds, and no manager is ever created (P-60).
-VT_FEATURE_MANAGERS_FROM = "10.2.0"
-VT_TESTED = "10.5.1"  # the VT version the plugin is tested with (10.4.0 until 2026-10-13)
+# The oldest VT supported (I12.6, the user's decision of 2026-11-25): 10.6.5, the newest stable at
+# the beta. Its manifest says 10.6.4 (the tag's ``manifest.json``), and Home Assistant reports what
+# the manifest says, so the floor is compared as 10.6.4 and named 10.6.5 to the user; a real
+# 10.6.4, which drops its API with its last entry, gets the factory again when a VT entry is set
+# up (``feature_manager``). Older VT: no registration, control blocked (``vt_too_old``).
+VT_OLDEST = "10.6.4"
+VT_OLDEST_SHOWN = "10.6.5"
+VT_TESTED = "10.6.5"  # the VT version the plugin is tested with (10.5.1 until 2026-11-25)
 # VT's central entry is the one whose ``thermostat_type`` is this (VT 10.4.0 ``const.py``); its
 # central boiler's activation delay, 0–600 s, stays in its data once the feature is unticked.
 THERMOSTAT_TYPE = "thermostat_type"
@@ -586,14 +589,14 @@ def vt_version(hass: HomeAssistant) -> str | None:
         return None
 
 
-def vt_loads_feature_managers(version: str | None) -> bool | None:
-    """Whether a VT version creates the feature managers other integrations register (P-60);
-    ``None`` when the version is unknown or cannot be compared — capability detection decides
-    then. A beta of the first version counts as older: support is under-claimed, never over."""
+def vt_supported(version: str | None) -> bool | None:
+    """Whether a VT version is one the plugin supports (``VT_OLDEST``); ``None`` when the version
+    is unknown or cannot be compared — capability detection decides then. A beta of the oldest
+    counts as older: support is under-claimed, never over."""
     if not version:
         return None
     try:
-        return AwesomeVersion(version) >= AwesomeVersion(VT_FEATURE_MANAGERS_FROM)
+        return AwesomeVersion(version) >= AwesomeVersion(VT_OLDEST)
     except Exception:  # a version of another form
         return None
 
@@ -766,6 +769,11 @@ class VThermLink:
 
     def zone_name(self, entity_id: str) -> str:
         return zone_name(self._hass, entity_id)
+
+    def vt_too_old(self) -> bool:
+        """VT is loaded and older than the oldest the plugin supports (I12.6); not while its
+        version is unknown."""
+        return vt_supported(vt_version(self._hass)) is False
 
     def zones_of_another_kind(self) -> list[str]:
         """The zones known not to be VT climates (a hand edit, X5.7)."""

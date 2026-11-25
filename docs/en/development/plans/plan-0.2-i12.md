@@ -178,7 +178,7 @@ history), and Home Assistant's registries (an entity's area, a relay's platform)
 
 This part, and `CLAUDE.md`'s rules and facts.
 
-#### I12.6 VT 10.6.5 the oldest supported
+#### I12.6 VT 10.6.5 the oldest supported ✅
 
 A version check refusing an older VT with a notification; the code kept only for VT 10.2–10.5
 removed; the climate-state listener for a new VT API removed. The real-VT tests, locally and in

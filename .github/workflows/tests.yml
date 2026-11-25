@@ -1,6 +1,6 @@
 # Tests, lint, formatting and types on every push and pull request
 # (docs/en/development/plans/plan-0.2.md, K2; docs/en/development/plans/plan-0.2.1.md, R3), on the
-# Home Assistant version tested and on the declared minimum (hacs.json). vendor/ (VT 10.5.1 and
+# Home Assistant version tested and on the declared minimum (hacs.json). vendor/ (VT 10.6.5 and
 # SmartPI 0.4.0) is not in the repository: CI fetches both on GitHub's servers by the full commit
 # their release tags pointed at, so a tag moved later changes nothing, and so runs the real-VT
 # tests on every change (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86; nothing is
