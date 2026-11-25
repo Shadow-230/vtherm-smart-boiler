@@ -209,9 +209,9 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
 - 0.2, krok I11 — `docs/en/development/plans/plan-0.2-i11.md`: sterowanie włącza i wyłącza tylko
   administrator w ustawieniach wtyczki, oraz automatyzacje; przełącznik „Sterowanie” staje się
   samym pokazaniem stanu (decyzje użytkownika z 2026-11-22, po F19 z J4)
-- 0.2, krok I12 — `docs/en/development/plans/plan-0.2-i12.md`: dane między VT, SmartPI a wtyczką
-  przez `vtherm_api` tam, gdzie API je ma, usunięte to, czego nikt nie używa, VT 10.6.5 jako
-  najstarsza obsługiwana wersja i lista tego, czego API brakuje (decyzje użytkownika z
-  2026-11-24)
+- 0.2, krok I12 — `docs/en/development/plans/plan-0.2-i12.md`: integracja z VT tylko przez
+  `vtherm_api`; o grzaniu decyduje centralny kocioł VT przez pomocnika, za którym idzie wtyczka;
+  bez pauz nauki, interfejsu wody i własnej ochrony przed mrozem; pokoje z VT; VT 10.6.5 jako
+  najstarsza obsługiwana wersja (decyzje użytkownika z 2026-11-24 i 2026-11-25)
 - Szablony urządzeń — `docs/en/development/plans/plan-device-templates.md`: jeden plik parametrów na
   urządzenie kotła, po pierwszym wydaniu (decyzje użytkownika z 2026-11-22)
