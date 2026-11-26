@@ -69,6 +69,16 @@ GATEWAY_CONTROL = {
 }
 
 
+# VT's climate unavailable: no attribute of its own (I12.7: its thermostat gives no mode either).
+UNAVAILABLE: dict[str, Any] = {
+    "current_temperature": None,
+    "temperature": None,
+    "hvac_action": None,
+    "on_percent": None,
+    "power_percent": None,
+}
+
+
 @dataclass
 class Rig:
     hass: HomeAssistant
@@ -79,6 +89,7 @@ class Rig:
     entry: MockConfigEntry | None = None
     vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
     over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
+    rebuilt: set[str] = field(default_factory=set)  # zones VT rebuilt as over_climate
     modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
     # VT's ``is_ready`` on every thermostat; false: VT cannot start them; ``None``: its
     # placeholder, neither ``is_ready`` nor ``specific_states`` (no device has reported).
@@ -112,10 +123,11 @@ class Rig:
             self.sim.set_zone_mode(zone.zone_id, plant_mode)
             opening = self.sim.opening(zone.zone_id)
             index = [z.zone_id for z in self.sim.zones].index(zone.zone_id)
-            entity_id = self.zones.entities[zone.zone_id]
             mode = self.modes.get(zone.zone_id, self.vt_mode)
             if mode == "unavailable":
-                self.hass.states.async_set(entity_id, "unavailable", {})
+                # VT's climate unavailable: its thermostat gives no mode (I12.7), and one VT had
+                # started is stopped (the harness hands over a new one, not started).
+                self.zones.set(zone.zone_id, "unavailable", **UNAVAILABLE)
                 continue
             active = opening > 0.05
             action = "heating" if active else "idle"
@@ -123,19 +135,25 @@ class Rig:
                 opening = 1.0 if mode == "sleep" else 0.0
                 mode, active, action = "off", False, "off"
             if zone.zone_id in self.over_climate:
-                # It drives a device with its own regulation: no opening, only whether it heats
-                # — and, as VT 10.4.0 shows every started thermostat, that it has started.
-                shown: dict[str, Any] = {
-                    "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
-                    "temperature": self.degrees(self.sim.plant.targets[index]),
-                    "hvac_action": action,
-                }
-                if self.vt_ready is not None:
-                    shown |= {
-                        "is_ready": self.vt_ready,
-                        "specific_states": {"is_device_active": active},
-                    }
-                self.hass.states.async_set(entity_id, mode, shown)
+                # It drives a device with its own regulation: no opening — VT's power hook never
+                # comes for a plain over_climate — only whether it heats, and that it has started.
+                if zone.zone_id not in self.rebuilt:  # VT rebuilds a thermostat it reconfigures
+                    self.rebuilt.add(zone.zone_id)
+                    self.zones.stop(zone.zone_id)
+                    self.zones.last.pop(zone.zone_id, None)
+                    self.zones.hand(zone.zone_id)
+                self.zones.set(
+                    zone.zone_id,
+                    mode,
+                    current_temperature=self.degrees(self.sim.room(zone.zone_id)),
+                    temperature=self.degrees(self.sim.plant.targets[index]),
+                    hvac_action=action,
+                    on_percent=None,
+                    specific_states={"is_device_active": active}
+                    if self.vt_ready is not None
+                    else None,
+                    is_ready=self.vt_ready,
+                )
                 continue
             # What real VT publishes for every thermostat, and what demand follows first (T4):
             # whether its device heats now, and that it has started.

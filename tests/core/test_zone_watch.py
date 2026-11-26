@@ -24,19 +24,18 @@ MIN = 60.0
 def zone(zone_id: str, t: float, **kw) -> ZoneState:
     """A zone VT has started, heating and calling."""
     kw.setdefault("heating_enabled", True)
-    kw.setdefault("reported", True)
     kw.setdefault("valve_open", 0.6)
     return ZoneState(zone_id, reported_at=t, **kw)
 
 
 def gone(zone_id: str) -> ZoneState:
-    return ZoneState(zone_id)  # unavailable: no mode, nothing reported
+    return ZoneState(zone_id, started=False)  # not handed over: no mode, not started
 
 
 def placeholder(zone_id: str, t: float) -> ZoneState:
-    """What VT 10.4.0 shows before a thermostat's first refresh: "off", neither is_ready nor
-    the rest of its state."""
-    return ZoneState(zone_id, heating_enabled=False, reported=False, reported_at=t)
+    """A thermostat before VT's first ``refresh_state`` on the manager (I12.7): "off", not
+    started."""
+    return ZoneState(zone_id, heating_enabled=False, started=False, reported_at=t)
 
 
 def run(steps, watch: ZoneWatch | None = None, starting=lambda _t: False) -> list[ZoneWatch]:
@@ -248,21 +247,17 @@ def test_the_no_zone_issue_is_due_after_ten_minutes_of_every_zone_unknown() -> N
     assert not no_zone_issue_due(back, NO_ZONE_ISSUE_S + 10.0)
 
 
-@pytest.mark.parametrize("ready", [False, None], ids=["not_ready", "placeholder"])
 @pytest.mark.parametrize("heating_enabled", [False, True], ids=["off_or_cool", "heat"])
 def test_a_zone_vt_cannot_start_stays_unknown_after_the_recognition(
-    heating_enabled: bool, ready: bool | None
+    heating_enabled: bool,
 ) -> None:
     """SB-02 (decision 1 of 2026-10-05): VT shows a thermostat it cannot start — an underlying
-    device unavailable — "off" ("heat" for over_valve) for as long as it cannot: ``is_ready``
-    false, or, while none of its devices has ever reported, its placeholder with neither
-    ``is_ready`` nor ``specific_states`` (VT 10.4.0, check C's F1). Every zone stays unknown
-    after the recognition period, and the repair issue follows."""
+    device unavailable — "off" ("heat" for over_valve) for as long as it cannot, and never calls
+    the manager's ``refresh_state`` (I12.7; check C's F1). Every zone stays unknown after the
+    recognition period, and the repair issue follows."""
 
     def unstarted(t: float) -> ZoneState:
-        return ZoneState(
-            "a", heating_enabled=heating_enabled, ready=ready, reported=False, reported_at=t
-        )
+        return ZoneState("a", heating_enabled=heating_enabled, started=False, reported_at=t)
 
     seen = run([(t, (unstarted(t),)) for t in (0.0, RECOGNITION_S, NO_ZONE_ISSUE_S + 10.0)])
     assert [watch.unknown_since for watch in seen] == [0.0, 0.0, 0.0]
@@ -271,10 +266,9 @@ def test_a_zone_vt_cannot_start_stays_unknown_after_the_recognition(
 
 
 def test_a_started_off_zone_is_known_during_the_recognition_and_after() -> None:
-    """S-34 kept: "off" on a zone VT has started (``is_ready`` true) is the user's "off"."""
+    """S-34 kept: "off" on a zone VT has started (its ``refresh_state``) is the user's "off"."""
     steps = [
-        (t, (zone("a", t, heating_enabled=False, ready=True, valve_open=0.0),))
-        for t in (0.0, RECOGNITION_S)
+        (t, (zone("a", t, heating_enabled=False, valve_open=0.0),)) for t in (0.0, RECOGNITION_S)
     ]
     assert [watch.unknown_since for watch in run(steps)] == [None, None]
 

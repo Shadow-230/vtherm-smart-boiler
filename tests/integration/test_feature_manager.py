@@ -37,9 +37,9 @@ class Thermostat:
 
 @dataclass
 class Runtime:
-    """A VT thermostat as ``vtherm_api`` declares it: its unique ID, no entity ID."""
+    """A VT thermostat as ``vtherm_api`` declares it: its entity ID, nothing else."""
 
-    unique_id: str
+    entity_id: str
 
 
 @pytest.fixture(autouse=True)
@@ -82,11 +82,11 @@ async def test_the_manager_keeps_the_thermostat_and_publishes_nothing(
     10.5.1 on calls ``add_custom_attributes`` only where a manager has it). The unload
     unregisters the factory."""
     api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     entry = await setup(hass, zones)
     assert api.list_feature_managers() == [DOMAIN]
     factory = api.get_feature_manager(DOMAIN)
-    thermostat = Runtime("fake_living")
+    thermostat = Runtime(living)
     assert factory.supports(thermostat)
     manager = factory.create(thermostat)
     manager.post_init({})
@@ -144,14 +144,24 @@ async def test_the_one_installation_registers_once_and_its_unload_unregisters(
 def test_the_manager_never_raises_into_vt(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """T-53: keeping or forgetting the thermostat failing never reaches VT."""
+    """T-53: keeping or forgetting the thermostat, noting it started or its power failing never
+    reaches VT."""
+    from .harness import power_command, run_now
 
     def boom(*_args: object) -> None:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(vtherm_link, "register_thermostat", boom)
-    monkeypatch.setattr(vtherm_link, "unregister_thermostat", boom)
+    for name in (
+        "register_thermostat",
+        "unregister_thermostat",
+        "thermostat_started",
+        "thermostat_power",
+    ):
+        monkeypatch.setattr(vtherm_link, name, boom)
     manager = feature_manager.SmartBoilerFeatureManager(hass, Thermostat("climate.a"))
+    assert run_now(manager.refresh_state()) is False
+    command = power_command("switch.a", "switch", 0.5)
+    assert run_now(manager.async_on_underlying_power(command)) is None
     assert manager.stop_listening() is None
     assert manager.name == DOMAIN
     assert manager.is_configured
@@ -165,9 +175,9 @@ async def test_the_thermostats_handed_over_outlive_the_plugins_reload(
     reloads (an options change): the thermostats it handed over stay kept for this Home
     Assistant run, so the zones are still read through ``vtherm_api`` until VT reloads."""
     api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     entry = await setup(hass, zones)
-    thermostat = Runtime("fake_living")
+    thermostat = Runtime(living)
     api.get_feature_manager(DOMAIN).create(thermostat)
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
@@ -244,7 +254,7 @@ async def test_thermostats_started_before_the_registration_are_reported(
     await hass.async_block_till_done()
     await entry.runtime_data.async_refresh()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
-    api.get_feature_manager(DOMAIN).create(Runtime("fake_living"))  # VT reloaded
+    api.get_feature_manager(DOMAIN).create(Runtime(living))  # VT reloaded
     await entry.runtime_data.async_refresh()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
     assert living
@@ -651,16 +661,47 @@ async def test_no_public_api_outside_vtherm_api(hass: HomeAssistant, zones: Fake
     assert not hasattr(feature_manager, "SmartBoilerApi")
 
 
+async def test_vt_tells_the_manager_its_thermostat_started_and_its_power(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I12.7: VT's first ``refresh_state`` on the manager — which it calls only once the
+    thermostat is ready — starts the zone; its power hook gives the duty, which VT calls only on a
+    manager that is configured (``vtherm_api`` 0.9.0 ``underlying_hooks.py``). The hook has the
+    name and the signature ``vtherm_api`` declares."""
+    import inspect
+
+    from vtherm_api.underlying_hooks import InterfaceUnderlyingPowerHook
+
+    from .harness import power_command
+
+    api = vt_is_set_up(hass)
+    living = zones.add("living", handed_over=False, hvac_action="heating", on_percent=None)
+    await setup(hass, zones)
+    thermostat = Runtime(living)
+    manager = api.get_feature_manager(DOMAIN).create(thermostat)
+    assert isinstance(manager, InterfaceUnderlyingPowerHook)
+    assert inspect.iscoroutinefunction(manager.async_on_underlying_power)
+    assert manager.is_configured
+    link = vtherm_link.VThermLink(hass, [living])
+    assert (link.zone(living).started, link.zone(living).on_percent) == (False, None)
+    await manager.refresh_state()
+    await manager.async_on_underlying_power(power_command("switch.heater", "switch", 0.6))
+    zone = link.zone(living)
+    assert (zone.started, zone.on_percent, zone.valve_open) == (True, 0.6, None)
+    manager.stop_listening()
+    assert link.zone(living).started is False
+
+
 async def test_the_manager_keeps_its_thermostat_for_the_zone_reads(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
     """The thermostat VT hands to the manager is the one the zone is read from through
-    ``vtherm_api`` (``vtherm_link``), matched by its unique ID; VT stopping it (the manager's
-    ``stop_listening``) leaves the zone to its attributes."""
+    ``vtherm_api`` (``vtherm_link``), matched by its declared entity ID (I12.7); VT stopping it
+    (the manager's ``stop_listening``) leaves the zone not known."""
     api = vt_is_set_up(hass)
     living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     await setup(hass, zones)
-    thermostat = Runtime("fake_living")
+    thermostat = Runtime(living)
     manager = api.get_feature_manager(DOMAIN).create(thermostat)
     assert vtherm_link.vt_thermostat(hass, living) is thermostat
     manager.stop_listening()

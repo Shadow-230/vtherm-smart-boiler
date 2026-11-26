@@ -12,39 +12,41 @@ from pathlib import Path
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components/vtherm_smart_boiler"
 ALLOWED = {"vtherm_link.py", "vtherm_attributes.py"}
 
-# VT 10.4.0's climate attributes and central-configuration entry keys the plugin reads (nothing of
-# SmartPI's since I12.9), and VT's events (I12.10: safety mode and the automatic window detection;
-# no safety attribute any more); generic Home Assistant words ("heat", "temperature", "on") are not
-# VT's.
+# VT's names the plugin reads (I12.7): the thermostat members ``vtherm_api`` declares and its
+# power hook's kinds of device; the keys of a thermostat's ``entry_infos`` (VT 10.6.5
+# ``const.py``); VT's events (I12.10: safety mode and the automatic window detection); and VT
+# 10.4.0's climate attributes the zone history (I12.7b) and the reload repair (I12.11) still read.
+# Generic Home Assistant words ("heat", "temperature", "on") are not VT's.
 VT_NAMES = frozenset(
     {
         "central_boiler_activation_service",
         "central_boiler_deactivation_service",
-        "configuration",
-        "delayed_activation_sec",
         "cycle_min",
+        "delayed_activation_sec",
         "device_power",
+        "entry_infos",
         "hvac_off_reason",
+        "hvac_off_window_detection",
         "is_device_active",
         "is_ready",
-        "is_used_by_central_boiler",
-        "last_temperature_datetime",
-        "max_on_percent",
-        "mean_cycle_power",
+        "last_temperature_measure",
         "on_percent",
-        "overpowering_state",
         "power_manager",
         "power_unit",
-        "specific_states",
+        "target_temperature",
         "temperature_sensor_entity_id",
+        "thermostat_over_switch",
+        "thermostat_type",
         "underlying_entity_ids",
         "use_central_boiler_feature",
+        "used_by_controls_central_boiler",
         "valve_open_percent",
+        "valve_regulation",
         "versatile_thermostat_central_boiler_event",
         "versatile_thermostat_safety_event",
         "versatile_thermostat_window_auto_event",
+        "vtherm_hvac_mode",
         "window_sensor_entity_id",
-        "hvac_off_window_detection",
     }
 )
 

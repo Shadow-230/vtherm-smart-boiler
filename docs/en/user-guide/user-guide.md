@@ -223,8 +223,10 @@ temperature and its safety rules.
   [After a restart](#47-after-a-restart)).
 - The plugin counts the rooms that call, for display. Where VT gives no device state, a room calls
   with its valve open at all, or, without a valve, with its duty cycle above 0 — VT's own rule.
-- A zone counts only while VT reports it clearly. A zone that is unavailable, or that VT has not
-  started yet, is "unknown" — never "no demand".
+- A zone counts only once VT has handed its thermostat to the plugin and started it. The plugin
+  reads the room only from VT's thermostat, never from what VT's climate entity shows. A room
+  whose thermostat was already running when the plugin was installed is handed over only when VT
+  reloads; until then it is "unknown", as is a room VT has not started yet — never "no demand".
 - VT's central mode (Auto, Stopped, Heat only, Cool only, Frost protection) acts through the
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
   VT does not hand the boiler back, and it means nobody heats: frost protection is VT's (see
@@ -1069,7 +1071,7 @@ not confirmed.
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
 | Versatile Thermostat is too old for the plugin | update VT; control is blocked meanwhile |
-| Some VT thermostats need a reload to be handed to the plugin | reload VT |
+| Some VT thermostats need a reload to be handed to the plugin | reload VT; until then those rooms are unknown |
 
 "3 variants": the boiler is not heating, or it is back on its thermostat, or the plugin only
 monitors.

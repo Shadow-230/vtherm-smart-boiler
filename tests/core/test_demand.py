@@ -79,10 +79,9 @@ def test_stale_zones_do_not_count_and_no_fresh_zone_is_unknown() -> None:
 @pytest.mark.parametrize(
     "unknown",
     [
-        zone("a", heating_enabled=None, valve_open=0.9),  # `unavailable`, or a mode not known
-        zone("a", ready=False, valve_open=0.9),  # heating, but VT has not finished starting it
-        zone("a", reported=False, valve_open=0.9),  # heating, VT's first refresh still to come
-        zone("a", valve_open=0.9, temperature_at=NOW - 2 * AGE),  # its room sensor went quiet
+        zone("a", heating_enabled=None, valve_open=0.9),  # not handed over, or a mode not known
+        zone("a", started=False, valve_open=0.9),  # heating, VT's first refresh still to come
+        zone("a", valve_open=0.9, reported_at=NOW - 2 * AGE),  # not read within the age
     ],
 )
 def test_a_zone_that_is_not_known_is_never_counted(unknown: ZoneState) -> None:
@@ -93,44 +92,34 @@ def test_a_zone_that_is_not_known_is_never_counted(unknown: ZoneState) -> None:
     assert other == Demand(True, 0, 1, ("a",))
 
 
-def test_the_temperature_age_decides_freshness() -> None:
-    """VT rewrites its climate often: its report time says little about the room sensor."""
-    fresh = zone(valve_open=0.5, reported_at=NOW - 3 * AGE, temperature_at=NOW - 10.0)
+def test_the_read_decides_freshness() -> None:
+    """I12.7: VT keeps its thermostat's values live — a zone is fresh when read, however old
+    VT's last measurement of the room."""
+    fresh = zone(valve_open=0.5, reported_at=NOW - 10.0, temperature_at=NOW - 3 * AGE)
     assert fresh.is_fresh(NOW, AGE)
-    assert not zone(reported_at=NOW, temperature_at=NOW - 2 * AGE).is_fresh(NOW, AGE)
+    assert not zone(reported_at=NOW - 2 * AGE, temperature_at=NOW).is_fresh(NOW, AGE)
 
 
-@pytest.mark.parametrize(
-    ("ready", "reported", "known"),
-    [
-        (None, False, False),  # VT's placeholder: neither ``is_ready`` nor ``specific_states``
-        (False, False, False),  # ``is_ready`` false: VT cannot start it
-        (None, True, True),  # an older VT: ``specific_states`` without ``is_ready``
-        (True, True, True),  # started
-    ],
-)
-def test_an_off_zone_not_started_after_the_recognition(
-    ready: bool | None, reported: bool, known: bool
-) -> None:
-    """T-17 (S-34) and SB-02: "off" is the user's "off" only on a zone VT has started. VT's
-    placeholder and ``is_ready`` false stay unknown after the recognition period too (check C's
-    F1)."""
-    off = zone("a", heating_enabled=False, ready=ready, reported=reported, temperature=19.0)
+@pytest.mark.parametrize(("started", "known"), [(False, False), (True, True)])
+def test_an_off_zone_not_started_after_the_recognition(started: bool, known: bool) -> None:
+    """T-17 (S-34) and SB-02: "off" is the user's "off" only on a zone VT has started — its
+    manager had ``refresh_state`` (I12.7). One VT has not started stays unknown after the
+    recognition period too (check C's F1)."""
+    off = zone("a", heating_enabled=False, started=started, temperature=19.0)
     result = boiler_demand([off], NOW, AGE, False)
     assert result.wanted is (False if known else None)
     assert result.unknown == (() if known else ("a",))
 
 
-@pytest.mark.parametrize("ready", [False, None])
-def test_a_heating_zone_not_ready_is_unknown(ready: bool | None) -> None:
-    heating = zone("a", ready=ready, reported=False, valve_open=0.6)
+def test_a_heating_zone_not_started_is_unknown() -> None:
+    heating = zone("a", started=False, valve_open=0.6)
     assert boiler_demand([heating], NOW, AGE, True) == Demand(None, unknown=("a",))
 
 
 def test_a_shed_zone_does_not_call() -> None:
-    """T-45's core: VT's power shedding holds the zone off — whatever its duty cycle or its
-    device showed last."""
-    shed = zone("a", valve_open=0.6, device_active=True, power=2.0, on_percent=0.6, shedding=True)
+    """T-45's core: VT's power shedding turns the zone's devices off — VT's own view of them
+    decides, whatever duty VT applied last."""
+    shed = zone("a", valve_open=0.6, device_active=False, on_percent=0.6)
     assert zone_wants_heat(shed) is False
     assert boiler_demand([shed], NOW, AGE, False) == Demand(False, 0, 1, ())
 
@@ -165,19 +154,19 @@ def test_a_zone_in_vts_safety_mode_stays_known_and_is_counted_as_vt_runs_it() ->
 def test_an_open_window_switching_a_zone_off_leaves_it_known() -> None:
     """VT's window detection with its "turn off" action: the zone goes to "off" while VT keeps
     it started — known, not calling, so no "no zone known" end state follows."""
-    heating = zone("a", valve_open=0.7, calling=True, ready=True, reported=True)
+    heating = zone("a", valve_open=0.7, calling=True)
     window_off = replace(heating, heating_enabled=False, valve_open=0.0, calling=False)
     assert boiler_demand([window_off], NOW, AGE, False) == Demand(False, 0, 1, ())
     assert boiler_demand([heating], NOW, AGE, True) == Demand(True, 1, 1, ())
 
 
 def test_a_vt_restart_off_and_not_ready_then_started() -> None:
-    """VT reloads: before its first refresh each thermostat shows a placeholder "off", without
-    ``is_ready``. Such a zone is unknown, as is a heating mode VT has not started; once VT has
-    started the zone, it counts as it shows."""
-    placeholder = zone("a", heating_enabled=False, ready=None, reported=False, temperature=None)
-    heat_unstarted = zone("a", valve_open=0.6, ready=False, reported=False)
-    started = zone("a", valve_open=0.6, ready=True, reported=True)
+    """VT reloads: before VT calls the manager's ``refresh_state`` a thermostat may show "off".
+    Such a zone is unknown, as is a heating mode VT has not started; once VT has started the
+    zone, it counts as it shows."""
+    placeholder = zone("a", heating_enabled=False, started=False, temperature=None)
+    heat_unstarted = zone("a", valve_open=0.6, started=False)
+    started = zone("a", valve_open=0.6)
     results = [boiler_demand([z], NOW, AGE, True) for z in (placeholder, heat_unstarted, started)]
     assert [(r.wanted, r.fresh_zones, r.unknown) for r in results] == [
         (None, 0, ("a",)),

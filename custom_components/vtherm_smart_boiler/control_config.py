@@ -1042,8 +1042,6 @@ def parse_control(
             frozenset(z.zone_id for z in installation.zones_in(c.circuit_id)),
             c.circuit_id in requests,
             c.needed,
-            # I8.8b: a zone it feeds in part asks in it through those devices.
-            {z.zone_id: z.devices for z in installation.zones_in(c.circuit_id) if z.devices},
         )
         for c in installation.circuits
         if c.control is CircuitControl.SEPARATE

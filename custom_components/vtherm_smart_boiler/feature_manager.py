@@ -1,6 +1,10 @@
 """A VT feature manager: the channel through which VT hands each of its thermostats to the plugin
 (``vtherm_api``). It publishes nothing on VT's thermostats (I12.9, the user's decision of
-2026-11-25: the water interface went, nobody read it) and never controls.
+2026-11-25: the water interface went, nobody read it) and never controls. What VT tells it of
+its thermostat is kept in ``vtherm_link`` (I12.7): VT has started the thermostat (its first
+``refresh_state``, which VT calls only once the thermostat is ready), and the duty and valve
+opening VT applied (its power hook ``async_on_underlying_power``, which VT calls only on a manager
+whose ``is_configured`` is true).
 
 VT picks up external feature managers from the ``vtherm_api`` registry when a thermostat starts
 (research F4): a thermostat already running sees the manager only after VT's next reload, which
@@ -56,7 +60,7 @@ class RegistrationState(StrEnum):
 
 class SmartBoilerFeatureManager:
     """One per VT thermostat: keeps the thermostat VT handed over, for the plugin to read through
-    ``vtherm_api``; publishes nothing, never controls."""
+    ``vtherm_api``, and what VT tells of it; publishes nothing, never controls."""
 
     def __init__(self, hass: HomeAssistant, thermostat: Any) -> None:
         self._hass = hass
@@ -80,7 +84,20 @@ class SmartBoilerFeatureManager:
         return None
 
     async def refresh_state(self) -> bool:
-        return False  # nothing of the manager's own to refresh
+        try:  # VT calls it only once the thermostat is ready: VT has started it
+            vtherm_link.thermostat_started(self._hass, self._thermostat)
+        except Exception:  # never into VT
+            _LOGGER.debug("Could not note a VT thermostat started", exc_info=True)
+        return False  # nothing of the manager's own changed
+
+    async def async_on_underlying_power(self, command: Any) -> None:
+        """VT's power hook (``vtherm_api`` 0.9.0 ``underlying_hooks.py``): the duty VT applied to
+        one of the thermostat's devices at a cycle start, a valve update or a stop. A notification
+        only: it never changes VT's command."""
+        try:
+            vtherm_link.thermostat_power(self._hass, self._thermostat, command)
+        except Exception:  # never into VT
+            _LOGGER.debug("Could not note a VT thermostat's power", exc_info=True)
 
     def restore_state(self, old_state: Any) -> None:
         return None
@@ -90,7 +107,7 @@ class SmartBoilerFeatureManager:
 
     @property
     def is_configured(self) -> bool:
-        return True
+        return True  # VT calls the power hook only on a manager that is configured
 
     @property
     def is_detected(self) -> bool:
@@ -304,9 +321,10 @@ def async_attach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
 def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
     """At each update: registered with VT's current API, and the zones whose thermostat VT has
     still not handed over some time after the registration reported — they started before it and
-    pick the manager up only at VT's next reload. Only a zone VT shows running is listed:
-    reported and ready, its mode known (P-59); one away, unavailable or still starting would not
-    be handed over yet anyway."""
+    pick the manager up only at VT's next reload. Only a zone VT's climate shows running is
+    listed: ready, its mode known (P-59; I12.11 replaces this read of VT's climate with the
+    first installation's "reload VT once"); one away, unavailable or still starting would not be
+    handed over yet anyway."""
     current = registration(hass)
     if current is not None:
         current.check()
@@ -323,9 +341,7 @@ def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> Non
         for zone_id in coordinator.config.zone_entities:
             if zone_id not in data.zones:
                 continue
-            zone = link.zone(zone_id)
-            running = zone.started and zone.ready is not False and zone.heating_enabled is not None
-            if running and vtherm_link.vt_thermostat(hass, zone_id) is None:
+            if link.shows_running(zone_id) and vtherm_link.vt_thermostat(hass, zone_id) is None:
                 missing.append(link.zone_name(zone_id))
     if missing:
         ir.async_create_issue(

@@ -141,8 +141,8 @@ async def async_get_config_entry_diagnostics(
             "options": dict(entry.options),
             "capabilities": asdict(data.capabilities),
             "vt_feature_manager": _feature_manager(hass),
-            # The zones read through ``vtherm_api`` at their last read; the others from VT's
-            # attributes (a thermostat VT started before the plugin registered).
+            # The zones whose thermostat VT had handed over at their last read; the others are
+            # not known (I12.7: a thermostat VT started before the plugin registered).
             "zones_through_vtherm_api": coordinator.link.zones_through_api(),
             "central_mode": None if data.central_mode is None else data.central_mode.value,
             "monitoring_since": data.monitoring_since,

@@ -1,4 +1,5 @@
-"""VT link: zones from VT climate entities, the central mode and capability detection."""
+"""VT link: zones from the thermostats VT hands over (I12.7), the central mode and capability
+detection."""
 
 from __future__ import annotations
 
@@ -13,10 +14,12 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
+from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.vtherm_attributes import CentralMode
 from custom_components.vtherm_smart_boiler.vtherm_link import (
     VT_OLDEST,
     VThermLink,
+    ZoneAlgorithm,
     register_thermostat,
     unregister_thermostat,
     vt_climate_entities,
@@ -51,23 +54,15 @@ async def test_zones_from_vt_climate_entities(hass: HomeAssistant, zones: FakeZo
     assert vt_climate_entities(hass) == sorted([living, bedroom])
 
 
-async def test_a_zones_device_count_comes_from_its_vt_entry(
+async def test_a_zone_vt_has_not_handed_over_is_not_known(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """2026-10-14: what a count of devices is capped by — the devices VT's entry lists for the
-    zone; a zone whose list cannot be read has none (``None``: it counts one)."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-    living = zones.add("living", hvac_action="heating", valve_open_percent=80)
-    bedroom = zones.add("bedroom", hvac_action="idle")
-    entry = MockConfigEntry(
-        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.a", "switch.b"]}
-    )
-    entry.add_to_hass(hass)
-    er.async_get(hass).async_update_entity(living, config_entry_id=entry.entry_id)
-    states = {z.zone_id: z for z in VThermLink(hass, [living, bedroom]).zones()}
-    assert states[living].device_count == 2
-    assert states[bedroom].device_count is None
+    """I12.7: no attribute fallback — a zone whose thermostat VT started before the plugin
+    registered is not known, whatever its climate shows: not started, no mode, never read."""
+    late = zones.add("late", handed_over=False, hvac_action="heating", valve_open_percent=80)
+    zone = VThermLink(hass, [late]).zone(late)
+    assert zone == ZoneState(late, started=False, room_sensor_lost=True)
+    assert not zone.is_known(dt_util.utcnow().timestamp(), None)
 
 
 async def test_nothing_of_smartpi_is_read(hass: HomeAssistant, zones: FakeZones) -> None:
@@ -75,9 +70,9 @@ async def test_nothing_of_smartpi_is_read(hass: HomeAssistant, zones: FakeZones)
     its learning flag, nor VT's Auto-TPI keys; a SmartPI room is judged like any other."""
     living = zones.add(
         "living",
-        configuration={"proportional_function": "smartpi"},
         specific_states={"regulation_diagnostics": "sensor.diag", "smartpi_learning_enabled": True},
     )
+    zones.configure("living", proportional_function="smartpi")
     hass.states.async_set("sensor.diag", "bootstrap_hysteresis")
     link = VThermLink(hass, [living])
     zone = link.zone(living)
@@ -140,18 +135,34 @@ async def test_the_api_version_is_read_once_off_the_event_loop(
     assert threads == [False]  # once, not in the loop's thread
 
 
-async def test_zone_algorithm_from_live_attributes(hass: HomeAssistant, zones: FakeZones) -> None:
-    """Whether VT's central boiler counts the zone, from its live configuration; unknown for a
-    zone VT does not show."""
-    counted = zones.add("counted", configuration={"is_used_by_central_boiler": True})
-    left_out = zones.add("left_out", configuration={"is_used_by_central_boiler": False})
-    link = VThermLink(hass, [counted, left_out])
-    assert link.zone_algorithm(counted).used_by_central_boiler is True
+async def test_zone_algorithm_from_entry_infos(hass: HomeAssistant, zones: FakeZones) -> None:
+    """I12.7: a zone's settings from its thermostat's ``entry_infos`` (VT 10.6.5 ``const.py``)
+    — whether VT's central boiler counts it, its type and its cycle; not known for a zone VT has
+    not handed over, whatever its climate shows. A value of another kind tells nothing."""
+    counted = zones.add("counted")
+    zones.configure(
+        "counted",
+        used_by_controls_central_boiler=True,
+        thermostat_type="thermostat_over_switch",
+        cycle_min=5,
+    )
+    left_out = zones.add("left_out")
+    zones.configure(
+        "left_out", used_by_controls_central_boiler=False, thermostat_type="thermostat_over_valve"
+    )
+    odd = zones.add("odd")
+    zones.configure("odd", used_by_controls_central_boiler="yes", thermostat_type=3, cycle_min=0)
+    late = zones.add("late", handed_over=False, configuration={"is_used_by_central_boiler": True})
+    link = VThermLink(hass, [counted, left_out, odd, late])
+    assert link.zone_algorithm(counted) == ZoneAlgorithm(True, "thermostat_over_switch", 5.0, True)
+    assert link.zone_algorithm(counted).switches_on_off
     assert link.zone_algorithm(left_out).used_by_central_boiler is False
-    assert link.zone_algorithm(counted).known
-    missing = link.zone_algorithm("climate.missing")
-    assert missing.used_by_central_boiler is None
-    assert not missing.known
+    assert not link.zone_algorithm(left_out).switches_on_off
+    assert link.zone_algorithm(odd) == ZoneAlgorithm(known=True)
+    assert link.zone_algorithm(late) == ZoneAlgorithm()
+    assert link.zone_algorithm("climate.missing") == ZoneAlgorithm()
+    zones.stand_in.entry_infos = None  # VT's settings cannot be read
+    assert not link.zone_algorithm(counted).known
 
 
 @pytest.mark.parametrize(
@@ -308,31 +319,25 @@ async def test_a_rooms_window_is_open_by_vt_or_by_its_sensor(
     stop()
 
 
-async def test_a_zones_underlying_entities_are_read_from_its_vt_entry(
+async def test_a_zones_underlying_entities_are_read_from_its_entry_infos(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """VT 10.4.0 keeps what a thermostat drives in its entry's data. Negative: a zone not
-    registered, without an entry, whose entry is gone, or without the list (an older VT) cannot
-    be read — ``None``; items that are not entity IDs are left out."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
+    """I12.7: what a thermostat drives, from its ``entry_infos`` (VT 10.6.5
+    ``underlying_entity_ids``). Negative: a zone VT has not handed over, or settings without the
+    list, cannot be read — ``None``; items that are not entity IDs are left out."""
     from custom_components.vtherm_smart_boiler.vtherm_link import zone_underlying_entities
 
-    registry = er.async_get(hass)
     living = zones.add("living")
+    late = zones.add("late", handed_over=False)
     assert zone_underlying_entities(hass, "climate.not_registered") is None
-    assert zone_underlying_entities(hass, living) is None  # no entry
-    entry = MockConfigEntry(
-        domain=VT_PLATFORM, data={"underlying_entity_ids": ["switch.valve", "", 7, None]}
-    )
-    entry.add_to_hass(hass)
-    registry.async_update_entity(living, config_entry_id=entry.entry_id)
+    assert zone_underlying_entities(hass, living) is None  # no list
+    zones.configure("living", underlying_entity_ids=["switch.valve", "", 7, None])
+    zones.configure("late", underlying_entity_ids=["switch.valve"])
     assert zone_underlying_entities(hass, living) == ("switch.valve",)
-    hass.config_entries.async_update_entry(entry, data={"underlying_entity_ids": "switch.valve"})
+    assert zone_underlying_entities(hass, late) is None  # not handed over
+    zones.configure("living", underlying_entity_ids="switch.valve")
     assert zone_underlying_entities(hass, living) is None  # not a list
-    hass.config_entries.async_update_entry(entry, data={})
-    assert zone_underlying_entities(hass, living) is None  # an older VT: no list
-    await hass.config_entries.async_remove(entry.entry_id)
+    zones.stop("living")
     assert zone_underlying_entities(hass, living) is None
 
 
@@ -341,18 +346,13 @@ async def test_each_vt_zones_devices_are_found_with_their_zone(
 ) -> None:
     """I8.8c: the devices a circuit's form offers — each VT zone's own, with the zone; a zone
     whose list cannot be read offers none; a device two zones name stays the first's."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
     from custom_components.vtherm_smart_boiler.vtherm_link import zone_devices
 
-    registry = er.async_get(hass)
     living, bedroom = zones.add("living"), zones.add("bedroom")
-    zones.add("hall")  # no entry: nothing to offer
+    zones.add("hall")  # no list: nothing to offer
     assert zone_devices(hass) == {}
-    for zone, devices in ((living, ["switch.radiator", "switch.loop"]), (bedroom, ["switch.loop"])):
-        entry = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": devices})
-        entry.add_to_hass(hass)
-        registry.async_update_entity(zone, config_entry_id=entry.entry_id)
+    zones.configure("living", underlying_entity_ids=["switch.radiator", "switch.loop"])
+    zones.configure("bedroom", underlying_entity_ids=["switch.loop"])
     assert zone_devices(hass) == {"switch.loop": bedroom, "switch.radiator": living}
 
 
@@ -360,8 +360,9 @@ async def test_only_climates_of_the_boilers_devices_count_as_its_thermostat(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
     """X5.19: an ``opentherm_gw`` climate, or a climate on a device that carries a boiler
-    entity, among a zone's underlying entities. Negative: a switch of the gateway, a climate of
-    another device, an underlying climate not registered."""
+    entity, among a zone's underlying entities (its ``entry_infos``). Negative: a switch of the
+    gateway, a climate of another device, an underlying climate not registered, a zone VT has
+    not handed over."""
     from homeassistant.helpers import device_registry as dr
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -393,9 +394,7 @@ async def test_only_climates_of_the_boilers_devices_count_as_its_thermostat(
     found: dict[str, list[str]] = {}
     for name, underlying in cases.items():
         zone = zones.add(name)
-        entry = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": underlying})
-        entry.add_to_hass(hass)
-        registry.async_update_entity(zone, config_entry_id=entry.entry_id)
+        zones.configure(name, underlying_entity_ids=underlying)
         found[name] = zones_on_boiler_thermostat(hass, [zone], [flame])
     assert {name for name, zones_found in found.items() if zones_found} == {
         "gateway",
@@ -403,6 +402,9 @@ async def test_only_climates_of_the_boilers_devices_count_as_its_thermostat(
     }
     zone = zones.entities["boiler_device"]
     assert zones_on_boiler_thermostat(hass, [zone], []) == []  # no boiler entity on that device
+    late = zones.add("late", handed_over=False)
+    zones.configure("late", underlying_entity_ids=[gateway])
+    assert zones_on_boiler_thermostat(hass, [late], [flame]) == []
 
 
 async def test_zones_of_another_kind(hass: HomeAssistant, zones: FakeZones) -> None:
@@ -495,15 +497,19 @@ async def test_vts_central_boiler_settings_come_from_the_newest_thermostat(
     this run stand. Nothing of VT is written."""
     from custom_components.vtherm_smart_boiler.vtherm_link import VtCentralBoiler, vt_central_boiler
 
+    handed: list[Any] = []
+
+    def hand(thermostat: Any) -> None:
+        handed.append(thermostat)
+        register_thermostat(hass, thermostat)
+
     assert vt_central_boiler(hass) is None
-    register_thermostat(hass, FakeVtThermostat(entry_infos=None, unique_id="first"))  # type: ignore[arg-type]
+    hand(FakeVtThermostat(entry_infos=None, unique_id="first"))  # type: ignore[arg-type]
     assert vt_central_boiler(hass) is None  # none gives them
-    older = FakeVtThermostat(unique_id="older")
-    register_thermostat(hass, older)
+    hand(FakeVtThermostat(unique_id="older"))
     assert vt_central_boiler(hass) == VtCentralBoiler(True, ON, OFF)
     unticked = vt_central_settings(use_central_boiler_feature=False)
-    newer = FakeVtThermostat(entry_infos=unticked, unique_id="newer")
-    register_thermostat(hass, newer)
+    hand(FakeVtThermostat(entry_infos=unticked, unique_id="newer"))
     assert vt_central_boiler(hass) == VtCentralBoiler(False, ON, OFF)
 
     class Broken:
@@ -513,15 +519,16 @@ async def test_vts_central_boiler_settings_come_from_the_newest_thermostat(
         def entry_infos(self) -> dict:
             raise RuntimeError("VT's property failed")
 
-    register_thermostat(hass, Broken())
-    register_thermostat(hass, FakeVtThermostat(entry_infos=None, unique_id="none"))  # type: ignore[arg-type]
+    hand(Broken())
+    hand(FakeVtThermostat(entry_infos=None, unique_id="none"))  # type: ignore[arg-type]
     assert vt_central_boiler(hass) == VtCentralBoiler(False, ON, OFF)  # passed over
-    blank = FakeVtThermostat(
-        entry_infos={"central_boiler_activation_service": "  ", "other": 1}, unique_id="blank"
+    hand(
+        FakeVtThermostat(
+            entry_infos={"central_boiler_activation_service": "  ", "other": 1}, unique_id="blank"
+        )
     )
-    register_thermostat(hass, blank)
     assert vt_central_boiler(hass) == VtCentralBoiler(False, None, None)
-    for thermostat in list(hass.data["vtherm_smart_boiler_vt_thermostats"]):
+    for thermostat in handed:
         unregister_thermostat(hass, thermostat)
     assert vt_central_boiler(hass) == VtCentralBoiler(False, None, None)  # the last, this run
     hass.data.pop("vtherm_smart_boiler_vt_central_boiler")  # a new run
@@ -568,21 +575,24 @@ def test_vts_central_boiler_event_is_named_as_vtherm_api_names_it(
     assert central_boiler_event() == CENTRAL_BOILER_EVENT
 
 
-async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_is_found(hass: HomeAssistant) -> None:
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
+async def test_a_relay_a_vt_zone_drives_or_of_the_gateway_is_found(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """R2: a device any thermostat VT handed over lists in its ``entry_infos`` (I12.7) — a zone
+    of the plugin's or not; a thermostat VT has not handed over is not seen."""
     from custom_components.vtherm_smart_boiler.vtherm_link import (
         relay_of_boiler_interface,
         relay_used_by_zone,
     )
 
     registry = er.async_get(hass)
-    zone = registry.async_get_or_create("climate", VT_PLATFORM, "room").entity_id
-    vt = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": ["switch.heater"]})
-    vt.add_to_hass(hass)
-    registry.async_update_entity(zone, config_entry_id=vt.entry_id)
+    zone = zones.add("room")
+    zones.configure("room", underlying_entity_ids=["switch.heater"])
+    zones.add("late", handed_over=False)
+    zones.configure("late", underlying_entity_ids=["switch.other_heater"])
     assert relay_used_by_zone(hass, "switch.heater")
     assert not relay_used_by_zone(hass, "switch.relay")
+    assert not relay_used_by_zone(hass, "switch.other_heater")
     gateway = registry.async_get_or_create("switch", "opentherm_gw", "ch").entity_id
     assert relay_of_boiler_interface(hass, gateway)
     assert relay_of_boiler_interface(hass, zone)  # a VT entity
@@ -624,8 +634,8 @@ class Runtime:
     """VT's thermostat as ``vtherm_api`` declares it (VT 10.6.5's values), with a duty cycle whose
     reading would act on the regulation — counted, so a test sees whether it was read."""
 
-    def __init__(self, unique_id: str, **values: Any) -> None:
-        self.unique_id = unique_id
+    def __init__(self, entity_id: str, **values: Any) -> None:
+        self.entity_id = entity_id
         self.values = {
             "current_temperature": 19.46,
             "target_temperature": 21.0,
@@ -633,9 +643,8 @@ class Runtime:
             "hvac_action": "heating",
             "is_device_active": True,
             "last_temperature_measure": datetime(2026, 11, 24, 9, 0, tzinfo=dt_util.UTC),
-            "is_overpowering_detected": True,
             "hvac_off_reason": None,
-            "cycle_min": 10,
+            "entry_infos": {"cycle_min": 10},
         } | values
         self.duty_reads = 0
 
@@ -654,11 +663,13 @@ class Runtime:
         return 0.9
 
 
-async def test_zone_values_come_through_vtherm_api(hass: HomeAssistant, zones: FakeZones) -> None:
-    """The user's rule (2026-11-24): where VT has handed the thermostat to the plugin, the values
-    ``vtherm_api`` declares come from it — the rest from the attributes, the duty cycle among
-    them (its reading would act on SmartPI). Negative: without the thermostat, or with VT not
-    showing it running, the attributes."""
+async def test_zone_values_come_through_vtherm_api_alone(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I12.7: where VT has handed the thermostat to the plugin, the zone is the thermostat's —
+    its members, read now; the duty and valve only from VT's power hook (unknown until VT's
+    first call), never its ``on_percent``, whose reading would act on SmartPI. Without the
+    thermostat nothing of VT's climate stands in: not known."""
     living = zones.add(
         "living",
         handed_over=False,
@@ -668,69 +679,74 @@ async def test_zone_values_come_through_vtherm_api(hass: HomeAssistant, zones: F
         on_percent=0.3,
         valve_open_percent=30,
         specific_states={"is_device_active": False, "hvac_off_reason": "hvac_off_manual"},
-        configuration={"cycle_min": 5},
     )
     link = VThermLink(hass, [living])
-    assert link.zone(living).temperature == pytest.approx(20.0)
+    assert link.zone(living).temperature is None
     assert link.zones_through_api() == []
-    thermostat = Runtime("fake_living")
+    thermostat = Runtime(living)
     register_thermostat(hass, thermostat)
+    before = dt_util.utcnow().timestamp()
     zone = link.zone(living)
-    assert zone.temperature == pytest.approx(19.5)  # to a tenth, as the attributes show it
+    assert zone.temperature == pytest.approx(19.5)  # to a tenth, as Home Assistant shows it
     assert zone.target == pytest.approx(21.0)
     assert (zone.heating_enabled, zone.calling, zone.device_active) == (True, True, True)
-    assert zone.shedding is True
     assert zone.temperature_at == datetime(2026, 11, 24, 9, 0, tzinfo=dt_util.UTC).timestamp()
-    assert zone.on_percent == pytest.approx(0.3)  # the attribute's
-    assert zone.valve_open == pytest.approx(0.3)  # not in the API: the attribute's
+    assert (zone.on_percent, zone.valve_open) == (None, None)  # no power hook yet
+    assert zone.started is False  # no ``refresh_state`` yet
+    assert zone.reported_at is not None
+    assert zone.reported_at >= before  # read now
+    assert zone.window_open is False
     assert thermostat.duty_reads == 0
-    assert link.zone_off_reason(living) is None  # the thermostat's: no reason
     assert link.zone_algorithm(living).cycle_min == 10
     assert link.zones_through_api() == [living]
-
-    zones.set("living", state="unavailable", current_temperature=20.0)
-    assert link.zone(living).temperature != pytest.approx(19.5)
-    assert link.zones_through_api() == []
-    zones.set("living", current_temperature=20.0, temperature=20.0)
     unregister_thermostat(hass, thermostat)
-    assert link.zone(living).temperature == pytest.approx(20.0)
-    assert link.zone_algorithm(living).cycle_min is None  # no cycle in these attributes
+    assert link.zone(living).temperature is None
+    assert link.zone_algorithm(living).cycle_min is None
+    assert link.zones_through_api() == []
 
 
-async def test_a_member_that_fails_or_is_missing_keeps_the_attribute(
+async def test_a_member_that_fails_or_is_missing_is_not_known(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
     """Negative: a member VT lacks, one whose property fails, or a method where ``vtherm_api``
-    declares a property gives nothing — that field keeps the attribute's value, the others
-    still come from the thermostat; another VT entity's thermostat is never taken."""
+    declares a property gives nothing — that field is not known, whatever VT's climate shows;
+    the others still come from the thermostat; another VT entity's thermostat is never taken;
+    one whose ``entity_id`` fails is passed over."""
     living = zones.add(
         "living", handed_over=False, current_temperature=20.0, temperature=20.0, hvac_action="idle"
     )
     bedroom = zones.add("bedroom", handed_over=False, current_temperature=18.0, temperature=18.0)
     thermostat = Runtime(
-        "fake_living",
+        living,
         current_temperature=RuntimeError("VT failed"),
         hvac_action=lambda: "heating",
+        entry_infos=RuntimeError("VT failed"),
     )
     del thermostat.values["target_temperature"]
     register_thermostat(hass, thermostat)
+
+    class NoEntity:
+        @property
+        def entity_id(self) -> str:
+            raise RuntimeError("VT's property failed")
+
+    register_thermostat(hass, NoEntity())
     link = VThermLink(hass, [living, bedroom])
     zone = link.zone(living)
-    assert zone.temperature == pytest.approx(20.0)
-    assert zone.target == pytest.approx(20.0)
-    assert zone.calling is False  # the attribute's "idle"
+    assert (zone.temperature, zone.target, zone.calling) == (None, None, None)
     assert zone.device_active is True  # still the thermostat's
-    assert link.zone(bedroom).temperature == pytest.approx(18.0)
+    assert link.zone(bedroom).temperature is None
     assert link.zones_through_api() == [living]
+    assert link.zone_algorithm(living) == ZoneAlgorithm(known=False)
 
 
 async def test_the_newest_thermostat_handed_over_is_read(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """VT's reload hands over a new thermostat for the same unique ID: the newest is read, as
+    """VT's reload hands over a new thermostat for the same entity: the newest is read, as
     VT's own ``get_feature_manager`` picks; one VT stopped is forgotten."""
-    living = zones.add("living", current_temperature=20.0)
-    old, new = Runtime("fake_living"), Runtime("fake_living", current_temperature=22.0)
+    living = zones.add("living", handed_over=False, current_temperature=20.0)
+    old, new = Runtime(living), Runtime(living, current_temperature=22.0)
     register_thermostat(hass, old)
     register_thermostat(hass, new)
     register_thermostat(hass, new)  # once only
@@ -738,3 +754,64 @@ async def test_the_newest_thermostat_handed_over_is_read(
     assert link.zone(living).temperature == pytest.approx(22.0)
     unregister_thermostat(hass, new)
     assert link.zone(living).temperature == pytest.approx(19.5)
+
+
+async def test_vts_refresh_and_power_hook_tell_started_duty_and_valve(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I12.7: the zone counts as started from VT's first ``refresh_state`` on the manager; its
+    duty from VT's power hook — a switch's applied share; a valve's applied share is also its
+    opening; a stop is 0 — and none of it is kept for a new thermostat VT hands over (its
+    reload) nor once VT stops the thermostat. A notification that cannot be read changes
+    nothing."""
+    from custom_components.vtherm_smart_boiler.vtherm_link import (
+        thermostat_power,
+        thermostat_started,
+    )
+
+    from .harness import power_command
+
+    living = zones.add("living", handed_over=False, on_percent=None)
+    thermostat = Runtime(living)
+    link = VThermLink(hass, [living])
+    thermostat_started(hass, thermostat)  # not handed over: nothing to note
+    thermostat_power(hass, thermostat, power_command("switch.heater", "switch", 0.4))
+    register_thermostat(hass, thermostat)
+    zone = link.zone(living)
+    assert (zone.started, zone.on_percent, zone.valve_open) == (False, None, None)
+    thermostat_started(hass, thermostat)
+    thermostat_power(hass, thermostat, power_command("switch.heater", "switch", 0.4))
+    zone = link.zone(living)
+    assert (zone.started, zone.on_percent, zone.valve_open) == (True, 0.4, None)
+    assert zone.is_known(dt_util.utcnow().timestamp(), None)
+    for kind in ("valve", "valve_regulation"):
+        thermostat_power(hass, thermostat, power_command("number.valve", kind, 0.7))
+        assert (link.zone(living).on_percent, link.zone(living).valve_open) == (0.7, 0.7)
+    thermostat_power(hass, thermostat, power_command("number.valve", "valve", 0.7, stop=True))
+    assert (link.zone(living).on_percent, link.zone(living).valve_open) == (0.0, 0.0)
+    for bad in (1.5, -0.1, float("nan"), True, "0.5", None):
+        command = replace(power_command("switch.heater", "switch", 0.4), applied_on_percent=bad)
+        thermostat_power(hass, thermostat, command)
+    thermostat_power(hass, thermostat, object())
+    assert link.zone(living).on_percent == 0.0  # unchanged
+    newer = Runtime(living)
+    register_thermostat(hass, newer)  # VT reloaded it
+    zone = link.zone(living)
+    assert (zone.started, zone.on_percent) == (False, None)
+    unregister_thermostat(hass, newer)
+    unregister_thermostat(hass, thermostat)
+    register_thermostat(hass, thermostat)  # handed over again: starts unknown
+    assert (link.zone(living).started, link.zone(living).on_percent) == (False, None)
+
+
+async def test_the_reload_repair_reads_whether_vts_climate_shows_it_running(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I12.11 keeps this read of VT's climate for the reload repair only: started — ``is_ready``
+    true — with its mode known."""
+    living = zones.add("living", handed_over=False)
+    starting = zones.add("starting", handed_over=False, is_ready=False)
+    link = VThermLink(hass, [living, starting])
+    assert link.shows_running(living)
+    assert not link.shows_running(starting)
+    assert not link.shows_running("climate.missing")

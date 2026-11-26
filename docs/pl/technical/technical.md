@@ -34,21 +34,28 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
 - **Strona HA** wokół niego zbiera dane wejściowe z encji wybranych przez użytkownika, uruchamia
   rdzeń na timerach i przy zmianach stanu, wykonuje jego zapisy i publikuje czujniki, czujniki
   binarne, przełączniki, przyciski i zgłoszenia w Naprawach.
-- **`vtherm_link.py` to jedyne wejście do danych stref.** Czyta każdą strefę przez
-  `vtherm_api` tam, gdzie API ma daną wartość: VT przekazuje każdy termostat modułowi funkcji
-  wtyczki, a pola zadeklarowane w API są czytane z niego — temperatura pokoju i czas jej pomiaru,
-  nastawa, tryb, czy strefa grzeje i czy jej urządzenie pracuje, odciążanie mocy, powód, dla
-  którego VT trzyma ją wyłączoną, i długość cyklu (zasada użytkownika, 2026-11-24). Resztę, i
-  wszystkie wartości termostatu uruchomionego przez VT przed rejestracją wtyczki, czyta z encji
-  klimatu VT; stamtąd też centralną konfigurację VT i jego centralny kocioł. Wykrywa, co jest
-  zainstalowane (VT i jego wersję, `vtherm_api`), zamiast to zakładać; nie czyta niczego ze
-  SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
+- **`vtherm_link.py` to jedyne wejście do danych stref.** Czyta każdą strefę wyłącznie przez
+  `vtherm_api` (zasada użytkownika, 2026-11-24/25; I12.7). Strefa to termostat przekazany przez
+  VT modułowi funkcji wtyczki, którego zadeklarowane `entity_id` się zgadza. Z termostatu:
+  temperatura pokoju i czas jej pomiaru przez VT, nastawa, tryb, czy strefa grzeje i czy jej
+  urządzenie pracuje oraz powód, dla którego VT trzyma ją wyłączoną (tylko okno). Z jego
+  `entry_infos`: typ, cykl i urządzenia, czy liczy go centralny kocioł VT, termometr i czujnik
+  okna pokoju oraz ustawienia centralnego kotła VT. Z wywołań VT na module funkcji: strefa liczy
+  się jako uruchomiona od pierwszego `refresh_state` od VT, a jej wypełnienie i otwarcie zaworu to
+  to, co ostatnio podał hak mocy VT jako zastosowane. Strefa, której termostatu VT nie przekazał,
+  jest nieznana; nic z encji klimatu VT jej nie zastępuje. Z encji klimatu VT czyta na razie
+  jeszcze: historię stref (aż wtyczka będzie miała własną, krok I12.7b) oraz wybór stref, nazwy
+  stref, zgłoszenie o przeładowaniu i tryb centralny VT (aż pokoje będą pochodzić z VT, krok
+  I12.11). Wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`), zamiast to zakładać;
+  nie czyta niczego ze SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
-  `register_feature_manager` z `vtherm_api`) to kanał, którym VT przekazuje każdy termostat. Nie
-  publikuje niczego na termostatach VT: dane o wodzie, które pokazywał do I12.9, usunięto, bo
+  `register_feature_manager` z `vtherm_api`) to kanał, którym VT przekazuje każdy termostat.
+  Zachowuje to, co mówi mu VT — jego `refresh_state` i hak mocy `async_on_underlying_power` — i
+  nie publikuje niczego na termostatach VT: dane o wodzie, które pokazywał do I12.9, usunięto, bo
   nikt ich nie czytał (decyzja użytkownika z 2026-11-25). Jest rejestrowany dopiero po wczytaniu
   VT; termostat, który już działa, trafia do niego dopiero po następnym przeładowaniu VT, którego
-  wtyczka nigdy sama nie wywołuje — takie strefy wymienia zgłoszenie w Naprawach.
+  wtyczka nigdy sama nie wywołuje — takie strefy wymienia zgłoszenie w Naprawach, a do tego czasu
+  są nieznane.
 - **„Nie daje ciepła”** (`binary_sensor`, klucz `no_heat`; `core/boiler_call.py`): jeden sygnał
   dla całego domu, włączony, gdy kocioł nie daje teraz pokojom ciepła, z powodem — kocioł
   centralny VT nie wzywa ciepła, trwa jego opóźnienie włączenia, ciepła woda, usterka kotła albo

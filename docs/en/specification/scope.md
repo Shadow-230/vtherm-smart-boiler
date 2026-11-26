@@ -476,8 +476,8 @@ takes the emitter types of its zones (S-33); the burner is shared.
 - Each VT zone is assigned to a circuit in the wizard; zone arbitration (the critical zone) runs
   per circuit. A zone fed by two circuits — a radiator on one, a floor loop on the other — is in
   each by its own devices (I8.8b, I8.8c): watched and counted once, its heat available through
-  either; in a circuit run by other automation it asks while VT lists one of its devices there
-  active, and in each of its circuits where VT does not say which are (the warmer side).
+  either; in a circuit run by other automation it asks whenever it wants heat — `vtherm_api` does
+  not tell which of its devices VT has on (I12.7), so the warmer side stands.
 - Anti-cycling, DHW and the modulation cap act on the boiler (shared burner); curve tuning, the
   comfort correction and the seasonal tune-up act per circuit.
 - Condensing depends on the combined return of all circuits.

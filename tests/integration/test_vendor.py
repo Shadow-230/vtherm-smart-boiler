@@ -251,34 +251,40 @@ def vt_central() -> MockConfigEntry:
 
 @dataclass(frozen=True)
 class Shown:
-    """One state a VT climate published, as recorded, and as the plugin reads it."""
+    """One state a VT climate published, as recorded, and whether the plugin then counted the
+    thermostat started (I12.7: VT had called its manager's ``refresh_state``)."""
 
     phase: str
     entity_id: str
     state: str
     is_ready: object  # the attribute, or "absent"
     specific_states: bool  # published at all
-    reported: bool  # the plugin: VT shows it started, with its mode known
+    started: bool  # the plugin: VT has started the thermostat
 
 
 async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
     hass: HomeAssistant,
 ) -> None:
     """Decision 3's rules are written against this (VT 10.4.0, 10.5.1 and the pinned 10.6.5 alike,
-    over_switch and over_climate):
+    over_switch and over_climate), with the plugin's manager registered (I12.7: a zone is
+    started from VT's first ``refresh_state`` on it, which VT calls only once the thermostat is
+    ready):
 
     - before Home Assistant has started, a thermostat shows the placeholder "off": at first with
       neither ``is_ready`` nor ``specific_states`` (before VT's first refresh), later — once an
-      underlying device reports — with ``is_ready`` false; never "reported";
-    - once started, ``is_ready`` true with its ``specific_states``: reported;
-    - a thermostat's reload: unavailable, the placeholder "off" with neither, then its restored
-      mode with ``is_ready`` true — the placeholder is VT's, not the user's "off";
+      underlying device reports — with ``is_ready`` false; never started;
+    - once started, ``is_ready`` true with its ``specific_states``: started;
+    - a thermostat's reload: unavailable, the placeholder "off" with neither — a new thermostat,
+      not started: the placeholder is VT's, not the user's "off" — then its restored mode with
+      ``is_ready`` true, started;
     - a reload of VT's central entry changes no thermostat's state.
     """
     from homeassistant.const import EVENT_STATE_CHANGED
     from homeassistant.core import Event
 
-    from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
+    from custom_components.vtherm_smart_boiler.feature_manager import SmartBoilerFeatureFactory
+    from custom_components.vtherm_smart_boiler.vtherm_link import THERMOSTATS_KEY, VThermLink
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_thermostat as handed_over
 
     celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
     for sensor in ("living", "office", "outdoor"):
@@ -311,7 +317,7 @@ async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
                 new.state,
                 attributes.get("is_ready", "absent"),
                 "specific_states" in attributes,
-                link.zone_from_state(entity_id, new).reported is True,
+                link.zone(entity_id).started,
             )
         )
 
@@ -319,6 +325,7 @@ async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
     hass.set_state(CoreState.starting)
     central = vt_central()
     await setup(hass, central)
+    VThermAPI.get_vtherm_api(hass).register_feature_manager(SmartBoilerFeatureFactory(hass))
     living = vt_thermostat()
     await setup(hass, living)
     await setup(hass, vt_over_climate())
@@ -332,9 +339,14 @@ async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
     hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
     await hass.async_block_till_done()
     await heat_to(hass, 21.0)
+    old = handed_over(hass, LIVING)
     phase[0] = "thermostat_reload"
     assert await hass.config_entries.async_reload(living.entry_id)
     await hass.async_block_till_done()
+    # VT stopped the old thermostat (its manager's ``stop_listening``): forgotten, a new one read.
+    assert old is not None
+    assert handed_over(hass, LIVING) is not old
+    assert all(kept.thermostat is not old for kept in hass.data[THERMOSTATS_KEY])
     phase[0] = "central_reload"
     assert await hass.config_entries.async_reload(central.entry_id)
     await hass.async_block_till_done()
@@ -345,23 +357,28 @@ async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
     for entity_id in (LIVING, OFFICE):
         before = shown("before_start", entity_id)
         assert before, entity_id
-        assert all(s.state == "off" and not s.reported for s in before)
+        assert all(s.state == "off" and not s.started for s in before)
         assert (before[0].is_ready, before[0].specific_states) == ("absent", False)
         assert all(s.is_ready is False and s.specific_states for s in before[1:])
         assert len(before) > 1, entity_id  # an underlying device reported: not ready yet
         after = shown("after_start", entity_id)
         assert after
-        assert all(s.is_ready is True and s.specific_states and s.reported for s in after)
-    reload = [(s.state, s.is_ready, s.specific_states) for s in shown("thermostat_reload", LIVING)]
-    assert reload[:2] == [("unavailable", "absent", False), ("off", "absent", False)]
+        assert all(s.is_ready is True and s.specific_states and s.started for s in after)
+    reload = [
+        (s.state, s.is_ready, s.specific_states, s.started)
+        for s in shown("thermostat_reload", LIVING)
+    ]
+    assert [item[:3] for item in reload[:2]] == [
+        ("unavailable", "absent", False),
+        ("off", "absent", False),
+    ]
+    assert reload[1][3] is False  # the placeholder: a new thermostat, not started
     assert reload[2:]
-    assert all(item == ("heat", True, True) for item in reload[2:])
+    assert all(item == ("heat", True, True, True) for item in reload[2:])
     assert shown("thermostat_reload", OFFICE) == []
     assert [s for s in seen if s.phase == "central_reload"] == []
-    for entity_id in (LIVING, OFFICE):  # the plugin reads each zone as VT shows it now
-        zone = link.zone(entity_id)
-        assert zone.reported is True
-        assert zone.started
+    for entity_id in (LIVING, OFFICE):  # the plugin reads each zone as VT has it now
+        assert link.zone(entity_id).started
 
 
 async def test_a_vt_thermostat_whose_devices_never_report_stays_unknown(
@@ -371,10 +388,13 @@ async def test_a_vt_thermostat_whose_devices_never_report_stays_unknown(
     Assistant shows their entities restored "unavailable", and no state event ever comes. VT
     (10.4.0 to the pinned 10.6.5) keeps its placeholder "off", with neither ``is_ready`` nor
     ``specific_states``, for good — through 30 minutes of its cycles and room readings; the
-    over_climate thermostat shows "off" with ``is_ready`` false. The plugin reads each as unknown
-    after the recognition period too, never as the user's "off": demand is unknown, not "no"."""
+    over_climate thermostat shows "off" with ``is_ready`` false. VT hands both to the plugin's
+    manager but never calls its ``refresh_state`` (I12.7): the plugin reads each as unknown after
+    the recognition period too, never as the user's "off": demand is unknown, not "no"."""
     from custom_components.vtherm_smart_boiler.core.demand import boiler_demand
+    from custom_components.vtherm_smart_boiler.feature_manager import SmartBoilerFeatureFactory
     from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_thermostat as handed_over
 
     celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
     for sensor in ("living", "office", "outdoor"):
@@ -383,6 +403,7 @@ async def test_a_vt_thermostat_whose_devices_never_report_stays_unknown(
     hass.states.async_set("climate.office_trv", "unavailable", {"restored": True})
     hass.set_state(CoreState.starting)
     await setup(hass, vt_central())
+    VThermAPI.get_vtherm_api(hass).register_feature_manager(SmartBoilerFeatureFactory(hass))
     await setup(hass, vt_thermostat())
     await setup(hass, vt_over_climate())
     hass.set_state(CoreState.running)
@@ -401,9 +422,11 @@ async def test_a_vt_thermostat_whose_devices_never_report_stays_unknown(
     assert (office.state, office.attributes.get("is_ready")) == ("off", False)
     link = VThermLink(hass, (LIVING, OFFICE))
     for state in (living, office):
-        zone = link.zone_from_state(state.entity_id, state)
+        assert handed_over(hass, state.entity_id) is not None
+        zone = link.zone(state.entity_id)
         now = zone.reported_at or 0.0
         assert zone.heating_enabled is False
+        assert not zone.started
         assert not zone.is_known(now, None)
         result = boiler_demand([zone], now, None, True)  # whatever VT's central boiler says
         assert (result.wanted, result.unknown) == (None, (state.entity_id,))
@@ -518,9 +541,9 @@ async def test_a_vt_safety_mode_zone_follows_vt_and_is_left_out_of_the_curve(
 
 
 async def test_vt_power_shedding_removes_demand(hass: HomeAssistant, freezer: Any) -> None:
-    """T-45: VT's power shedding holds the zone off: the zone stays known, and does not call;
-    once shedding ends, it calls again. (A test first; the plugin reads VT's own
-    ``overpowering_state``.)"""
+    """T-45: VT's power shedding holds the zone off: the zone stays known, and does not call —
+    VT turns its device off and stops its cycle, which its power hook tells (I12.7: the plugin no
+    longer reads VT's shedding itself); once shedding ends, it calls again."""
     from custom_components.versatile_thermostat import const as vt
 
     from custom_components.vtherm_smart_boiler.core.demand import boiler_demand
@@ -557,20 +580,78 @@ async def test_vt_power_shedding_removes_demand(hass: HomeAssistant, freezer: An
         return zone, boiler_demand([zone], zone.reported_at or 0.0, None, True)
 
     zone, before = demand()
-    assert (zone.shedding, zone.mean_power) == (False, pytest.approx(1.52))  # 0.76 of 2 kW
+    assert zone.on_percent == pytest.approx(0.76)  # VT's power hook: the duty applied
     assert before.zones_wanting == 1
     hass.states.async_set("sensor.house_power", "7000", watts)
     await later(hass, freezer, 30.0)
     zone, shed = demand()
-    assert zone.shedding
+    assert zone.device_active is False
+    assert zone.on_percent == 0.0  # VT stopped the cycle: its power hook's stop
     assert zone.is_known(zone.reported_at or 0.0, None)
     assert shed.fresh_zones == 1  # known
     assert shed.zones_wanting == 0
     hass.states.async_set("sensor.house_power", "500", watts)
     await later(hass, freezer, 30.0)
     zone, after = demand()
-    assert not zone.shedding
+    assert zone.device_active is True
     assert after.zones_wanting == 1
+
+
+async def test_vts_power_hook_gives_the_applied_duty_of_an_over_switch_zone(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """I12.7 against the pinned VT (10.6.5): VT calls the plugin's manager's power hook
+    ``async_on_underlying_power`` at each cycle start of an over_switch thermostat (its manager
+    is configured), and the zone's duty is the share VT applied — not what TPI asked: a request
+    shorter than VT's minimal activation delay is applied as 0. Never through VT's
+    ``on_percent``, whose reading acts on the algorithm."""
+    from custom_components.versatile_thermostat import const as vt
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_thermostat as handed_over
+
+    living = vt_thermostat(**{vt.CONF_MINIMAL_ACTIVATION_DELAY: 60})
+    entry = await started_with_the_plugin(hass, living)  # 19 °C towards 21 °C
+    link = entry.runtime_data.link
+    zone = link.zone(LIVING)
+    assert zone.started
+    assert zone.on_percent == pytest.approx(0.76)  # TPI: 0.3 · 2 K + 0.01 · 16 K, 228 s of 300
+    assert zone.valve_open is None  # a switch: no valve
+    await heat_to(hass, 19.0)  # TPI asks 0.01 · 14 K: 42 s, under VT's 60 s minimum
+    await later(hass, freezer, 300.0)  # the next cycle starts
+    thermostat = handed_over(hass, LIVING)
+    assert thermostat is not None
+    assert thermostat.prop_algorithm.on_percent == pytest.approx(0.14)  # what TPI asks
+    assert link.zone(LIVING).on_percent == 0.0  # what VT applied
+
+
+async def test_entry_infos_carry_a_thermostats_own_settings(hass: HomeAssistant) -> None:
+    """I12.7 against the pinned VT (10.6.5): the ``entry_infos`` of the thermostat VT hands the
+    plugin's manager carry its type, cycle, devices and whether VT's central boiler counts it
+    (VT 10.6.5 ``const.py``: ``thermostat_type``, ``cycle_min``, ``underlying_entity_ids``,
+    ``used_by_controls_central_boiler``) — what the short-cycle notice and the relay and
+    boiler-thermostat blockers read now, instead of VT's climate attributes and entries."""
+    from custom_components.versatile_thermostat import const as vt
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import (
+        ZoneAlgorithm,
+        relay_used_by_zone,
+        zone_underlying_entities,
+    )
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_thermostat as handed_over
+
+    living = vt_thermostat(**{vt.CONF_USED_BY_CENTRAL_BOILER: True})
+    entry = await started_with_the_plugin(hass, vt_central(), living)
+    thermostat = handed_over(hass, LIVING)
+    assert thermostat is not None
+    infos = thermostat.entry_infos
+    assert infos["thermostat_type"] == "thermostat_over_switch"
+    assert infos["cycle_min"] == 5
+    assert infos["underlying_entity_ids"] == ["input_boolean.living_valve"]
+    assert infos["used_by_controls_central_boiler"] is True
+    link = entry.runtime_data.link
+    assert link.zone_algorithm(LIVING) == ZoneAlgorithm(True, "thermostat_over_switch", 5.0, True)
+    assert zone_underlying_entities(hass, LIVING) == ("input_boolean.living_valve",)
+    assert relay_used_by_zone(hass, "input_boolean.living_valve")
 
 
 VT_HELPER = "input_boolean.vt_boiler"

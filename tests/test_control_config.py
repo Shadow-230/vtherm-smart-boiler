@@ -700,9 +700,9 @@ def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
         True,
         33.0,
     )
-    assert mixer.devices == {}
     assert control.curve_zones == frozenset({"climate.a"})
-    # I8.8b: a zone the mixer's circuit feeds in part asks in it through those devices.
+    # I8.8b, I12.7: a zone the mixer's circuit feeds in part is one of its zones — it asks in
+    # it whenever it wants heat (``vtherm_api`` does not tell which devices VT has on).
     split = replace(
         layout,
         zones=(
@@ -711,7 +711,7 @@ def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
         ),
     )
     (mixer,) = parse_control(OTGW, split, None).loop.control.other_automation
-    assert mixer.devices == {"climate.a": frozenset({"switch.loop"})}
+    assert mixer.zones == frozenset({"climate.a"})
     single = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
     assert parse_control(OTGW, single, None).loop.control.curve_zones is None
 

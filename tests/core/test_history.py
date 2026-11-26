@@ -210,8 +210,9 @@ def _full_zone(zone_id: str) -> ZoneSeries:
 
 
 def test_a_zones_state_holds_every_series_value_at_the_moment() -> None:
-    """A zone's state at a moment carries its id and every series' value then; before its first
-    samples everything but the id and the moment is unknown."""
+    """A zone's state at a moment carries its id and every series' value then — but the device
+    power, which no zone state holds (I12.7); before its first samples everything but the id and
+    the moment is unknown."""
     zone = _full_zone("a")
     assert zone.state_at(20.0) == ZoneState(
         "a",
@@ -221,7 +222,6 @@ def test_a_zones_state_holds_every_series_value_at_the_moment() -> None:
         calling=True,
         on_percent=0.4,
         valve_open=0.6,
-        power=1.5,
         reported_at=20.0,
     )
     assert zone.state_at(5.0) == ZoneState("a", reported_at=5.0)

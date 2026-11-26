@@ -10,10 +10,10 @@ anything can ask at all: with no zone known, or VT's decision unknown, nothing c
 
 A zone calls when it is in a mode that may heat and VT says one of its devices is active; without
 that, by VT's own rule — its valve open at all, or without a valve its duty cycle above 0 — else
-when VT says it is heating. A zone in "auto" or heat_cool calls only while its action says so;
-one VT's power shedding holds off calls for nothing. Only zones whose state is known count: a zone
-that is unavailable, or one VT has not started, is unknown; a zone in its grace period keeps its
-last known answer (``memory``).
+when VT says it is heating. A zone in "auto" or heat_cool calls only while its action says so
+(its devices may be cooling). VT's power shedding turns the devices off, so a zone it holds off
+does not call. Only zones whose state is known count: a zone VT has not handed over, or one VT has
+not started, is unknown; a zone in its grace period keeps its last known answer (``memory``).
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class Demand:
 
 
 def zone_wants_heat(zone: ZoneState) -> bool:
-    if zone.heating_enabled is not True or zone.shedding:
+    if zone.heating_enabled is not True:
         return False
     if zone.auto_mode:
         if zone.calling is not None:

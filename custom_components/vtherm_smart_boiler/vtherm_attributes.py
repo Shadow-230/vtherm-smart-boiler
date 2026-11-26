@@ -1,22 +1,23 @@
-"""What a VT climate entity's state and attributes mean for the plugin.
+"""What VT's thermostats tell the plugin, and what their climate entities meant for its history.
 
-Verified in VT 10.4.0 (base_thermostat.py, thermostat_switch.py, thermostat_valve.py,
-thermostat_climate*.py): the state is the HVAC mode ("sleep" is reported as "off");
-``current_temperature`` and ``temperature`` are in Home Assistant's temperature unit;
-``hvac_action`` is "heating" while the zone's device is active; ``on_percent`` is a fraction
-0–1 (over_switch, over_valve, over_climate_valve); ``valve_open_percent`` is the commanded
-opening 0–100 (valve types). These top-level keys are also kept by the recorder. Nested
-dictionaries such as ``power_manager`` are live only: in VT 10.4.0 it is published whether or
-not power management is configured, with ``device_power`` 0 when no power is set,
-``mean_cycle_power`` (the device power times the cycle's duty) in ``power_unit``, and
-``overpowering_state`` only while shedding is configured. VT's safety mode is not read here: VT's
-safety event tells it (I12.10, ``vtherm_link``).
+Live reads (I12.7) go only through the thermostat VT hands to the plugin's feature manager: the
+members ``vtherm_api`` declares (``RUNTIME_MEMBERS``), read by ``live_zone``. VT 10.6.5 fills each
+from the same field as the climate attribute the plugin used to read (``base_thermostat.py``);
+``vtherm_hvac_mode`` has the climate state's values and VT's own "sleep", which VT shows as "off"
+(``vtherm_hvac_mode.py``).
 
-Before VT's first refresh of a thermostat (at a start, or during its reload) the climate shows a
-placeholder "off" with neither ``is_ready`` nor ``specific_states``; then, once one of its
-devices has reported and before its start, ``is_ready`` false — observed with VT 10.4.0
-(``tests/integration/test_vendor.py``). While none of its devices ever reports (their
-integration not set up), VT 10.4.0 keeps the placeholder for good (check C, 2026-10-06).
+I12.7b: the zone history is still recorded from VT's climate entities (state and top-level
+attributes, which the recorder keeps) — ``zone_values``, used by the coordinator's history and the
+history importer only, until the plugin's own store replaces it. Verified in VT 10.4.0
+(base_thermostat.py, thermostat_switch.py, thermostat_valve.py, thermostat_climate*.py): the state
+is the HVAC mode ("sleep" is reported as "off"); ``current_temperature`` and ``temperature`` are in
+Home Assistant's temperature unit; ``hvac_action`` is "heating" while the zone's device is active;
+``on_percent`` is a fraction 0–1 (over_switch, over_valve, over_climate_valve);
+``valve_open_percent`` is the commanded opening 0–100 (valve types); ``power_manager`` (live only)
+has ``device_power`` 0 when no power is set, in ``power_unit``.
+
+I12.11: the reload repair still reads whether VT's climate shows the thermostat running
+(``shows_running``), and VT's central mode select (``central_mode``), until the rooms come from VT.
 
 No Home Assistant imports: the history importer uses this module too.
 """
@@ -33,77 +34,18 @@ from .units import parse_number, power_to_kw, temperature_to_celsius
 
 HEATING_MODES = frozenset({"heat"})
 AUTO_MODES = frozenset({"auto", "heat_cool"})  # may heat: the action says whether it does
-NOT_HEATING_MODES = frozenset({"off", "cool", "dry", "fan_only"})
+# VT's "sleep" (over_climate with valve regulation) is its climate "off" (VT 10.6.5
+# ``vtherm_hvac_mode.py``): read as off, as the climate's state was.
+NOT_HEATING_MODES = frozenset({"off", "cool", "dry", "fan_only", "sleep"})
 ACTIVE_ACTIONS = frozenset({"heating", "preheating"})
 INACTIVE_ACTIONS = frozenset({"idle", "off", "cooling", "drying", "fan"})
 
-
-@dataclass(frozen=True, slots=True)
-class ZoneValues:
-    temperature: float | None = None  # °C
-    target: float | None = None  # °C
-    heating_enabled: bool | None = None
-    calling: bool | None = None
-    on_percent: float | None = None  # 0 to 1
-    valve_open: float | None = None  # 0 to 1
-    power: float | None = None  # kW, live only
-    auto_mode: bool = False
-    device_active: bool | None = None  # live only
-    devices_active: frozenset[str] | None = None  # the devices VT lists active, live only
-    ready: bool | None = None  # VT's ``is_ready``; ``None``: not published
-    temperature_at: float | None = None  # epoch seconds, live only
-    max_on_percent: float | None = None  # 0 to 1, live only
-    mean_power: float | None = None  # kW, VT's mean power over the cycle, live only
-    shedding: bool = False  # VT's power shedding holds the zone off, live only
-    reported: bool = False  # VT shows it started, with its mode known
-
-
-def zone_values(
-    state: str, attributes: Mapping[str, Any], temperature_unit: object = "°C"
-) -> ZoneValues:
-    """Zone values from a VT climate entity; anything missing or implausible is ``None``."""
-    specific = attributes.get("specific_states")
-    specific = specific if isinstance(specific, Mapping) else {}
-    configuration = attributes.get("configuration")
-    configuration = configuration if isinstance(configuration, Mapping) else {}
-    active = specific.get("is_device_active")
-    ready = attributes.get("is_ready")
-    manager = attributes.get("power_manager")
-    manager = manager if isinstance(manager, Mapping) else {}
-    heating_enabled = _heating_enabled(state)
-    # VT shows it started: ``is_ready`` true, or — an older VT without the key (assumed) — its
-    # state with ``specific_states``. Neither: VT's placeholder before its first refresh.
-    started = ready is True or (
-        isinstance(attributes.get("specific_states"), Mapping) and "is_ready" not in attributes
-    )
-    return ZoneValues(
-        temperature=_temperature(attributes.get("current_temperature"), temperature_unit),
-        target=_temperature(attributes.get("temperature"), temperature_unit),
-        heating_enabled=heating_enabled,
-        calling=_calling(attributes.get("hvac_action")),
-        on_percent=_fraction(attributes.get("on_percent"), 1.0),
-        valve_open=_fraction(attributes.get("valve_open_percent"), 100.0),
-        power=_device_power(manager),
-        auto_mode=state in AUTO_MODES,
-        device_active=active if isinstance(active, bool) else None,
-        devices_active=_entity_ids(specific.get("device_actives")),
-        # Published but not VT's true (false, ``None``, a string, a number): not started — the
-        # cautious reading (SB-02). Not published: ``None``.
-        ready=ready is True if "is_ready" in attributes else None,
-        temperature_at=_moment(specific.get("last_temperature_datetime")),
-        max_on_percent=_cap(configuration.get("max_on_percent")),
-        mean_power=_power(manager, "mean_cycle_power", positive=False),
-        shedding=manager.get("overpowering_state") == "on",
-        reported=started and heating_enabled is not None,
-    )
-
-
-# What the plugin reads through ``vtherm_api`` (the user's rule, 2026-11-24): the members of VT's
-# thermostat that the API declares (``InterfaceThermostatRuntime``; ``last_temperature_measure``
-# in ``InterfaceTemperatureTimestampRuntime`` from 0.12.0) and that the plugin uses — VT 10.6.5
-# fills each from the same field as the attribute it replaces (``base_thermostat.py``). Not
-# ``on_percent``: VT 10.6.5's getter tells the algorithm the realized power whenever safety or
-# the cap clamps it (``thermostat_prop.py``), so reading it would act on the regulation.
+# What the plugin reads of a VT thermostat (the user's rule, 2026-11-24/25): the members
+# ``vtherm_api`` declares (``InterfaceThermostatRuntime``; ``last_temperature_measure`` in
+# ``InterfaceTemperatureTimestampRuntime`` from 0.12.0) that the plugin uses. Not ``on_percent``:
+# VT 10.6.5's getter tells the algorithm the realized power whenever safety or the cap clamps it
+# (``thermostat_prop.py``), so reading it would act on the regulation — VT's power hook tells the
+# duty instead (``vtherm_link``). ``hvac_off_reason`` serves the window rule only.
 RUNTIME_MEMBERS = (
     "current_temperature",
     "target_temperature",
@@ -111,15 +53,15 @@ RUNTIME_MEMBERS = (
     "hvac_action",
     "is_device_active",
     "last_temperature_measure",
-    "is_overpowering_detected",
+    "hvac_off_reason",
 )
 
 
-def runtime_zone(raw: Mapping[str, object], temperature_unit: object = "°C") -> dict[str, Any]:
-    """The zone values a VT thermostat gave through ``vtherm_api``, keyed by the ``ZoneValues``
-    field each replaces. A member it did not give, or one of another type, gives nothing: that
-    field keeps the attribute's value. Temperatures are taken to a tenth, as Home Assistant
-    shows them in the attributes; a mode or an action not known gives nothing either."""
+def live_zone(raw: Mapping[str, object], temperature_unit: object = "°C") -> dict[str, Any]:
+    """The zone values a VT thermostat gave through ``vtherm_api``, keyed by the ``ZoneState``
+    field each fills. A member it did not give, or one of another type, gives nothing: that
+    field stays not known. Temperatures are taken to a tenth, as Home Assistant shows them; a
+    mode or an action not known gives nothing either."""
     found: dict[str, Any] = {}
     for field_name, member in (
         ("temperature", "current_temperature"),
@@ -139,24 +81,50 @@ def runtime_zone(raw: Mapping[str, object], temperature_unit: object = "°C") ->
     calling = _calling(raw.get("hvac_action"))
     if calling is not None:
         found["calling"] = calling
-    for field_name, member in (
-        ("device_active", "is_device_active"),
-        ("shedding", "is_overpowering_detected"),
-    ):
-        value = raw.get(member)
-        if isinstance(value, bool):
-            found[field_name] = value
+    active = raw.get("is_device_active")
+    if isinstance(active, bool):
+        found["device_active"] = active
     moment = raw.get("last_temperature_measure")
     if isinstance(moment, datetime) and moment.tzinfo is not None:
         found["temperature_at"] = moment.timestamp()
     return found
 
 
-def _entity_ids(raw: object) -> frozenset[str] | None:
-    """A list of entity IDs, as VT 10.4.0 lists a zone's active devices; else not known."""
-    if not isinstance(raw, list) or not all(isinstance(e, str) and e for e in raw):
-        return None
-    return frozenset(raw)
+@dataclass(frozen=True, slots=True)
+class ZoneValues:
+    """A VT climate entity's state as the zone history records it (I12.7b)."""
+
+    temperature: float | None = None  # °C
+    target: float | None = None  # °C
+    heating_enabled: bool | None = None
+    calling: bool | None = None
+    on_percent: float | None = None  # 0 to 1
+    valve_open: float | None = None  # 0 to 1
+    power: float | None = None  # kW, live only
+
+
+def zone_values(
+    state: str, attributes: Mapping[str, Any], temperature_unit: object = "°C"
+) -> ZoneValues:
+    """I12.7b: the zone history's values from a VT climate entity (current or recorded);
+    anything missing or implausible is ``None``."""
+    manager = attributes.get("power_manager")
+    manager = manager if isinstance(manager, Mapping) else {}
+    return ZoneValues(
+        temperature=_temperature(attributes.get("current_temperature"), temperature_unit),
+        target=_temperature(attributes.get("temperature"), temperature_unit),
+        heating_enabled=_heating_enabled(state),
+        calling=_calling(attributes.get("hvac_action")),
+        on_percent=_fraction(attributes.get("on_percent"), 1.0),
+        valve_open=_fraction(attributes.get("valve_open_percent"), 100.0),
+        power=_device_power(manager),
+    )
+
+
+def shows_running(state: str, attributes: Mapping[str, Any]) -> bool:
+    """I12.11: VT's climate shows the thermostat started — ``is_ready`` true — in a mode the
+    plugin reads. For the reload repair only, until the rooms come from VT."""
+    return attributes.get("is_ready") is True and _heating_enabled(state) is not None
 
 
 def _temperature(raw: object, unit: object) -> float | None:
@@ -182,26 +150,6 @@ def _calling(action: object) -> bool | None:
     return None
 
 
-def _cap(raw: object) -> float | None:
-    """VT's cap on the duty cycle: a fraction, or a percentage in older setups."""
-    number = parse_number(raw)
-    if number is None or number <= 0.0:
-        return None
-    if number <= 1.0:
-        return number
-    return number / 100.0 if number <= 100.0 else None
-
-
-def _moment(raw: object) -> float | None:
-    if not isinstance(raw, str):
-        return None
-    try:
-        moment = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    return moment.timestamp() if moment.tzinfo is not None else None
-
-
 def _fraction(raw: object, full_scale: float) -> float | None:
     number = parse_number(raw)
     if number is None or not 0.0 <= number <= full_scale:
@@ -216,16 +164,10 @@ _VT_LEGACY_KILOWATT_MAX = 100.0
 
 def _device_power(manager: Mapping[str, Any]) -> float | None:
     """The zone's device power in kW; 0 or less is no data — VT 10.4.0 publishes 0 when no power
-    is configured (P-14)."""
-    return _power(manager, "device_power", positive=True)
-
-
-def _power(manager: Mapping[str, Any], key: str, *, positive: bool) -> float | None:
-    """A power of VT's power manager in kW. VT 10.4.0 publishes its unit ("W" or "kW"); older
-    versions publish none, and the power means what VT's legacy rule made of it. Negative, or
-    with ``positive`` 0, is no data."""
-    number = parse_number(manager.get(key))
-    if number is None or number < 0 or (positive and number == 0):
+    is configured (P-14). VT 10.4.0 publishes its unit ("W" or "kW"); older versions publish
+    none, and the power means what VT's legacy rule made of it."""
+    number = parse_number(manager.get("device_power"))
+    if number is None or number <= 0:
         return None
     unit = manager.get("power_unit")
     if not isinstance(unit, str):
