@@ -194,7 +194,9 @@ up to a year, only to build day summaries. The rooms come from the plugin's own 
 (`ZoneSeries.record`), and from the rooms' store after a start — never from the recorder's
 records of VT's climates (I12.7b). "Was the boiler called for heat" (`History.zone_demand`,
 `zone_calling`) is the helper's state wherever it is known — VT's own decision, with its
-thresholds — and the rooms only where it is not, or where no helper is set (monitoring only).
+thresholds — and the rooms only where it is not, or where no helper is set (monitoring only);
+a circuit run by other automation asking through its request entity (`History.circuits_asking`,
+the user's entity, from the recorder and live) counts as a call whatever VT's (I12.18).
 It tells heating burns from hot water (every day summary, the verdict, the building fit), the
 pauses the hysteresis drift may judge, the short burns unstable ignition counts and the burns the
 lowest water temperature's evidence takes. The rooms' own details — the mean target of the

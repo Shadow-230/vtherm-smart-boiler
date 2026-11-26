@@ -176,7 +176,8 @@ rooms' details — temperatures, targets, which rooms call, valve openings — a
 it notes them every time it reads the rooms and keeps the last 8 days in its own storage. It does
 not read them back from VT's thermostats in the recorder, so analyses that need room details
 start from the installation. Without a helper (monitoring only), whether the boiler was called
-also comes from the rooms the plugin noted.
+also comes from the rooms the plugin noted. A circuit run by other automation asking for heat,
+through the entity you picked for it, counts as a call too, whatever the helper shows.
 
 Then the sensor **Control verdict** shows one of:
 

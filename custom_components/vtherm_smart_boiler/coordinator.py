@@ -210,6 +210,7 @@ from .transport.entities import (
     weather_from_state,
 )
 from .transport.mqtt_reports import MqttReports, ems_esp_topics, mqtt_signals, otgw_topics
+from .units import parse_binary
 from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm, holds_thermostats
 
 if TYPE_CHECKING:
@@ -1135,6 +1136,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if entity_id == self.config.vt_boiler_helper:
             # I12.7b: VT's call, as the helper its central boiler switches shows it.
             _append(history.vt_called, t, _vt_call(state))
+        if entity_id in self.config.circuit_request_entities.values():
+            # I12.18: a circuit run by other automation asking for heat, as control reads it.
+            asking = None if state is None else parse_binary(state.state)
+            _append(history.circuits_asking.setdefault(entity_id, Series()), t, asking)
         if entity_id == self.config.weather:
             _append(history.weather, t, weather_from_state(state).value)
         if entity_id == self.config.setpoint_read_back:

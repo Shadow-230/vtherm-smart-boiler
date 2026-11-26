@@ -183,7 +183,9 @@ instalacji wtyczki. Szczegóły pokoi — temperatury, nastawy, które pokoje wz
 zaworów — są własne wtyczki: zapisuje je przy każdym odczycie pokoi i trzyma ostatnie 8 dni we
 własnym magazynie. Nie odczytuje ich z termostatów VT w rejestratorze, więc analizy, które
 potrzebują szczegółów pokoi, zaczynają się od instalacji. Bez pomocnika (samo monitorowanie) także
-to, czy kocioł był wezwany, pochodzi z pokoi zapisanych przez wtyczkę.
+to, czy kocioł był wezwany, pochodzi z pokoi zapisanych przez wtyczkę. Obieg sterowany inną
+automatyką, który prosi o ciepło przez wybraną dla niego encję, też liczy się jako wezwanie,
+cokolwiek pokazuje pomocnik.
 
 Potem czujnik **Werdykt sterowania** pokazuje jedną z wartości:
 

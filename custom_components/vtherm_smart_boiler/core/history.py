@@ -8,7 +8,8 @@ The rooms' history is the plugin's own (I12.7b, the user's decision of 2026-11-2
 of each room through ``vtherm_api``, kept about eight days in a store of its own — never rebuilt
 from the recorder's records of VT's climates. "Was the boiler called for heating" is VT's own
 decision where the helper VT's central boiler switches is known (``vt_called``, the user's
-entity, its recorder history allowed), the rooms elsewhere. ``rooms_to_stored`` and
+entity, its recorder history allowed), the rooms elsewhere; a circuit run by other automation
+asking for heat counts as a call too (I12.18, ``circuits_asking``). ``rooms_to_stored`` and
 ``rooms_from_stored`` turn the rooms into the store's data and back: each series one line of
 text, as Home Assistant writes its stores indented, one number per line otherwise.
 """
@@ -102,6 +103,9 @@ class History:
     # VT's call for heat (I12.7b): the helper VT's central boiler switches, on or off — VT's own
     # decision, from the recorder and live. Empty where no helper is set (monitoring only).
     vt_called: Series[bool] = field(default_factory=Series)
+    # I12.18: each circuit run by other automation asking for heat, by its request entity (the
+    # user's, from the recorder and live): a burn while one asks is heating, whatever VT's call.
+    circuits_asking: dict[str, Series[bool]] = field(default_factory=dict)
     # Under control without a CH setpoint signal: the control's setpoint read-back, the source
     # of the lowest water temperature's evidence (X6). Empty elsewhere.
     setpoint_read_back: Series[float] = field(default_factory=Series)
@@ -143,7 +147,8 @@ class History:
             combine([z.valve_open, z.on_percent, z.calling], start, end, _zone_wants_heat)
             for z in self._reporting()
         ]
-        return self._vt_call_or(_any_room(per_zone, start, end), start, end)
+        call = self._vt_call_or(_any_room(per_zone, start, end), start, end)
+        return self._with_circuits(call, start, end)
 
     def zone_calling(self, start: float, end: float) -> Series[bool] | None:
         """True while the boiler was called for heat at that moment; ``None`` without VT's call
@@ -155,7 +160,8 @@ class History:
         its cycle while its relay pulses, and the burns follow the relay (R6, A2).
         """
         per_zone = [z.calling_between(start, end) for z in self._reporting()]
-        return self._vt_call_or(_any_room(per_zone, start, end), start, end)
+        call = self._vt_call_or(_any_room(per_zone, start, end), start, end)
+        return self._with_circuits(call, start, end)
 
     def _reporting(self) -> list[ZoneSeries]:
         """The rooms with anything recorded of whether they ask for heat."""
@@ -174,6 +180,23 @@ class History:
         inputs = [self.vt_called] if rooms is None else [self.vt_called, rooms]
         return combine(inputs, start, end, _first_known)
 
+    def _with_circuits(
+        self, call: Series[bool] | None, start: float, end: float
+    ) -> Series[bool] | None:
+        """I12.18: true while a circuit run by other automation asks for heat, whatever VT's
+        call; ``call`` otherwise — a circuit not asking tells nothing of VT's call."""
+        asking = [series for series in self.circuits_asking.values() if len(series)]
+        if not asking:
+            return call
+        count = len(asking)
+
+        def merged(values: Sequence[bool | None]) -> bool | None:
+            if any(value is True for value in values[:count]):
+                return True
+            return values[count] if call is not None else None
+
+        return combine([*asking] if call is None else [*asking, call], start, end, merged)
+
     def copy_window(self, start: float, end: float) -> History:
         """An independent copy of ``[start, end)``, safe to analyse in another thread."""
         return History(
@@ -184,6 +207,9 @@ class History:
             },
             weather=self.weather.window(start, end),
             vt_called=self.vt_called.window(start, end),
+            circuits_asking={
+                entity: series.window(start, end) for entity, series in self.circuits_asking.items()
+            },
             setpoint_read_back=self.setpoint_read_back.window(start, end),
             control_state=self.control_state.window(start, end),
         )
@@ -201,6 +227,8 @@ class History:
                     series.prepend(earlier)
         self.weather.prepend(older.weather)
         self.vt_called.prepend(older.vt_called)
+        for entity, earlier in older.circuits_asking.items():
+            self.circuits_asking.setdefault(entity, Series()).prepend(earlier)
         self.setpoint_read_back.prepend(older.setpoint_read_back)
         self.control_state.prepend(older.control_state)
 
@@ -212,6 +240,8 @@ class History:
                 series.drop_before(t)
         self.weather.drop_before(t)
         self.vt_called.drop_before(t)
+        for series in self.circuits_asking.values():
+            series.drop_before(t)
         self.setpoint_read_back.drop_before(t)
         self.control_state.drop_before(t)
 

@@ -10683,7 +10683,8 @@ async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Ri
     """I8.8 (decisions F3, F6): the living room fed straight from the boiler, idle; a circuit
     whose mixer another automation runs asks through its entity: heating goes on for it, and
     the water holds its need, 60 °C, nothing added (2026-10-14). Its entity unavailable: it does
-    not ask, and the control state says why (the user's answer of 2026-10-12)."""
+    not ask, and the control state says why (the user's answer of 2026-10-12). The analyses
+    count its asking as a call for heating, though VT's helper is off (I12.18)."""
     rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
     rig.hass.states.async_set(FLOOR_ASKS, "on")
     floor = {
@@ -10705,11 +10706,23 @@ async def test_a_circuit_run_by_other_automation_asks_through_its_entity(rig: Ri
     assert "circuit_asks" in state.attributes["reasons"]
     assert ("ch", True) in rig.gateway.calls
     assert rig.gateway.setpoints()[-1] == 60.0 > EXPECTED
+    history = rig.entry.runtime_data.history
+    asks, called = history.circuits_asking[FLOOR_ASKS].last, history.vt_called.last
+    assert asks is not None
+    assert asks.value is True
+    assert called is not None
+    assert called.value is False  # VT's helper off: no room calls
+    demand = history.zone_demand(asks.t, asks.t + 60.0)
+    assert demand is not None
+    assert demand.value_at(asks.t + 30.0) is True
     rig.hass.states.async_set(FLOOR_ASKS, "unavailable")
     await rig.advance(30)
     state = rig.state("sensor", "control_state")
     assert state.state == "idle"
     assert "circuit_request_unknown" in state.attributes["reasons"]
+    unknown = history.circuits_asking[FLOOR_ASKS].last
+    assert unknown is not None
+    assert unknown.value is None
     assert [call for call in rig.gateway.calls if call[0] == "ch"][-1] == ("ch", False)
 
 

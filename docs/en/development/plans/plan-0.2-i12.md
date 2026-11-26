@@ -291,7 +291,7 @@ Done 2026-11-26: control's step, the page's curve and the boiler's judgement tak
 from the rooms VT hands over; with no room on the curve's circuit it stays as configured, so it
 does not jump while VT reloads; an exponent the user entered stays.
 
-#### I12.18 A circuit run by other automation in the analyses
+#### I12.18 A circuit run by other automation in the analyses ✅
 
 A burn while the helper was off counted as hot water, also while a circuit run by other automation
 asked for heat. The circuits' request entities (the user's entities) are read from the recorder

@@ -195,7 +195,10 @@ odświeżeniu (30 s) i każdym kroku sterowania (10 s), tylko zmiany (`ZoneSerie
 starcie z magazynu pokoi — nigdy z zapisów encji klimatu VT w rejestratorze (I12.7b). „Czy kocioł
 był wezwany do grzania” (`History.zone_demand`, `zone_calling`) to stan pomocnika wszędzie, gdzie
 jest znany — własna decyzja VT, z jego progami — a pokoje tylko tam, gdzie nie jest, albo gdy
-pomocnik nie jest ustawiony (samo monitorowanie). Odróżnia palenia na grzanie od ciepłej wody
+pomocnik nie jest ustawiony (samo monitorowanie); obieg sterowany inną automatyką, który prosi
+przez swoją encję żądania (`History.circuits_asking`, encja użytkownika, z rejestratora i na
+bieżąco), liczy się jako wezwanie bez względu na VT (I12.18).
+Odróżnia palenia na grzanie od ciepłej wody
 (każde podsumowanie dnia, werdykt, dopasowanie budynku), przerwy, które może ocenić dryf
 histerezy, krótkie palenia liczone przez niestabilny zapłon i palenia brane przez dowody
 najniższej temperatury wody. Własne szczegóły pokoi — średnia nastawa w raporcie, otwarcia
