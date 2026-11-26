@@ -318,10 +318,11 @@ def test_ci_canaries_run_weekly_on_demand_and_check_types() -> None:
 
 
 def test_ci_fetches_upstream_by_full_commit_and_pins_actions() -> None:
-    """PB-86: VT is fetched by the full commit, not by a tag that can move — in the shared test
-    environment (`.github/actions/test-env`), which the parts and the newest-vtherm_api canary
-    use as it is — and every action runs from a full commit, not from a branch or tag; only the
-    repository's own action is used by its path. SmartPI is no longer fetched there (I12.9)."""
+    """PB-86: VT and SmartPI are fetched by the full commit, not by a tag that can move — in the
+    shared test environment (`.github/actions/test-env`), which the parts and the newest-
+    vtherm_api canary use as it is — and every action runs from a full commit, not from a branch
+    or tag; only the repository's own action is used by its path. SmartPI only for the test
+    bench's deploy (I12.9)."""
     import yaml
 
     commit = re.compile(r"[0-9a-f]{40}")
@@ -332,7 +333,7 @@ def test_ci_fetches_upstream_by_full_commit_and_pins_actions() -> None:
     assert "archive/$commit.tar.gz" in fetch
     assert "refs/tags" not in fetch
     assert re.search(r"versatile_thermostat [0-9a-f]{40}", fetch)
-    assert "vtherm_smartpi" not in fetch
+    assert re.search(r"vtherm_smartpi [0-9a-f]{40}", fetch)
     tests = _workflow("tests.yml")
     for job in ("parts", "latest-vtherm-api"):
         local = [
