@@ -18,7 +18,7 @@ by the user, and stays off by default.
 
 ## Steps (one pull request each, in this order)
 
-### I13.1 "Gives no heat" only while a room is withheld heat
+### I13.1 "Gives no heat" only while a room is withheld heat ✅
 
 Today the sensor is on whenever the boiler stands, a room calling or not (`core/boiler_call.no_heat`:
 `vt_not_calling` while idle). Literature on supervising self-learning controllers (Hägglund and

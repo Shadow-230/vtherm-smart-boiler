@@ -494,12 +494,13 @@ doradza tych ustawień.
 #### Nie daje ciepła
 
 Przy ustawionym sterowaniu czujnik binarny **Nie daje ciepła** (`binary_sensor.boiler_gives_no_heat`
-dla wpisu o nazwie „Boiler”) jest włączony, gdy kocioł nie daje teraz pokojom ciepła, a wyłączony,
-gdy daje — na tyle, na ile wtyczka nim steruje. Jego atrybut `reason` mówi, dlaczego jest
-włączony:
+dla wpisu o nazwie „Boiler”) jest włączony, gdy pokój liczony przez VT woła o ciepło, a kocioł go
+nie daje, i wyłączony, gdy daje — na tyle, na ile wtyczka nim steruje. Gdy żaden pokój nie woła,
+jest wyłączony: żadnemu pokojowi nie brakuje ciepła, a algorytm strefy może uczyć się z postoju.
+Jego atrybut `reason` mówi, dlaczego jest włączony:
 
-- **Kocioł centralny VT nie wzywa ciepła** (`vt_not_calling`) — sterowanie działa, ale pomocnik
-  VT jest wyłączony: żaden pokój nie woła albo progi VT nie są osiągnięte;
+- **Kocioł centralny VT nie wzywa ciepła** (`vt_not_calling`) — pokój woła, ale pomocnik VT jest
+  wyłączony: progi VT nie są osiągnięte;
 - **Trwa opóźnienie włączenia VT** (`activation_delay`);
 - **Kocioł grzeje ciepłą wodę** (`hot_water`) — tylko przy priorytecie ciepłej wody;
 - **Kocioł zgłasza usterkę** (`boiler_fault`);
@@ -1298,7 +1299,7 @@ domyślnie wyłączone.
 | Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
-| Nie daje ciepła | włączone, gdy kocioł nie daje pokojom ciepła, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
+| Nie daje ciepła | włączone, gdy pokój woła o ciepło, a kocioł go nie daje, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
 | Wołające o ciepło | pokoje wołające teraz, które to są i na jakich obiegach |
 | Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, oddane, a w pomieszczeniu grozi mróz, i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |

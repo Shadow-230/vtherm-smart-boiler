@@ -164,6 +164,46 @@ def test_waiting_for_data_keeps_the_last_value(reasons: tuple[Reason, ...]) -> N
         assert no_heat(ControlMode.WAITING_DATA, reasons, previous, hot_water=True) == previous
 
 
+@pytest.mark.parametrize(
+    ("mode", "reasons", "hot_water"),
+    [
+        (ControlMode.IDLE, (), None),  # VT not calling
+        (ControlMode.IDLE, (Reason.ACTIVATION_DELAY,), None),
+        (ControlMode.HEATING, (Reason.DEMAND,), True),  # hot water with priority
+        (ControlMode.BOILER_FAULT, (), None),
+        (ControlMode.HANDED_BACK, (), None),
+        (ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), None),
+    ],
+    ids=[
+        "vt_not_calling",
+        "activation_delay",
+        "hot_water",
+        "boiler_fault",
+        "handed_back",
+        "blocked",
+    ],
+)
+def test_no_room_calling_is_no_missing_heat(
+    mode: ControlMode, reasons: tuple[Reason, ...], hot_water: bool | None
+) -> None:
+    """I13.1: while no room calls for heat, no room is withheld any — the signal is off, whatever
+    the boiler does; a zone model learns from that rest (Hägglund and Åström 2000: learning held
+    only while a controller asks for an input it does not get). With a room calling, as before;
+    rooms not known (``None``), as before."""
+    assert no_heat(mode, reasons, ON_BEFORE, hot_water=hot_water, rooms_calling=False) == GIVEN
+    calling = no_heat(mode, reasons, ON_BEFORE, hot_water=hot_water, rooms_calling=True)
+    unknown = no_heat(mode, reasons, ON_BEFORE, hot_water=hot_water)
+    assert calling == unknown
+    assert calling.on is True
+
+
+def test_no_room_calling_still_waits_and_stays_unknown_when_off() -> None:
+    """I13.1, negative: control switched off stays unknown and waiting for data keeps the last
+    value — no room calling changes neither."""
+    assert no_heat(ControlMode.DISABLED, (), ON_BEFORE, rooms_calling=False) == NO_HEAT_UNKNOWN
+    assert no_heat(ControlMode.WAITING_DATA, (), ON_BEFORE, rooms_calling=False) == ON_BEFORE
+
+
 def test_a_start_keeps_the_last_value() -> None:
     """I12.16: while the only blockers are Home Assistant starting or VT's settings not known yet,
     control is not allowed for a moment at every start — the last value stands, unknown if none,

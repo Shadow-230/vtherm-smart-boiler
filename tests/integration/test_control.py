@@ -1451,6 +1451,28 @@ async def test_a_monitor_alarm_set_to_hand_back_no_longer_hands_back(rig: Rig) -
     assert unit_of(rig).status.latched_by == ()
 
 
+async def test_gives_no_heat_only_while_a_room_calls(rig: Rig) -> None:
+    """I13.1: with no room calling the boiler stands and no room is withheld heat — "Gives no
+    heat" is off; a room calling while VT's central boiler does not ask (its threshold, say) is
+    withheld heat — on, "VT not calling"; the boiler heating it again — off."""
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(30)
+    status = rig.entry.runtime_data.control.status
+    assert status.mode is ControlMode.IDLE
+    assert status.no_heat == NoHeat(False)
+    assert rig.state("binary_sensor", "no_heat").state == "off"
+    rig.zones.set_helper("off")  # VT's central boiler holds back: the room alone is not enough
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(30)
+    status = rig.entry.runtime_data.control.status
+    assert status.no_heat == NoHeat(True, NoHeatReason.VT_NOT_CALLING)
+    rig.zones.set_helper("on")
+    await rig.advance(30)
+    assert rig.entry.runtime_data.control.status.no_heat == NoHeat(False)
+
+
 @pytest.mark.parametrize("priority", [True, False])
 async def test_hot_water_without_priority_takes_no_heat_from_the_rooms(
     rig: Rig, priority: bool

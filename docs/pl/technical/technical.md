@@ -73,7 +73,8 @@ zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   przekazany, a jego przepływ naprawy (`repairs.ReloadVtFlow`) sprawdza ponownie. Ostatni krok
   konfiguracji mówi to samo tam, gdzie to potrzebne.
 - **„Nie daje ciepła”** (`binary_sensor`, klucz `no_heat`; `core/boiler_call.py`): jeden sygnał
-  dla całego domu, włączony, gdy kocioł nie daje teraz pokojom ciepła, z powodem — kocioł
+  dla całego domu, włączony, gdy pokój liczony przez VT woła o ciepło, a kocioł go nie daje
+  (wyłączony, gdy żaden pokój nie woła, I13.1), z powodem — kocioł
   centralny VT nie wzywa ciepła, trwa jego opóźnienie włączenia, ciepła woda, usterka kotła albo
   wtyczka nie może ręczyć za ciepło. Wyliczany z decyzji sterowania w każdym kroku; niedostępny,
   gdy sterowanie jest wyłączone. Użytkownik wybiera go w ustawieniu „heating unavailable” w
