@@ -30,8 +30,8 @@ olejowy, elektryczny lub na inne paliwo, każdy, z którym Home Assistant się k
 pompę ciepła — według tego, czego pomieszczenia naprawdę potrzebują: mniej i dłuższych cykli pracy
 palnika, więcej kondensacji tam, gdzie kocioł kondensuje, mniej paliwa na stopniodzień — przy tym
 samym komforcie w pomieszczeniach i bez zaburzania własnych modeli pomieszczeń w algorytmach stref.
-Zastępuje kocioł centralny VT działający w trybie wł./wył. sterowaniem temperaturą wody w kotle i
-zawsze wie, jak oddać kocioł jego własnemu sterowaniu.
+O tym, kiedy kocioł grzeje, nadal decyduje kocioł centralny VT; wtyczka dokłada sterowanie
+temperaturą wody w kotle i zawsze wie, jak oddać kocioł jego własnemu sterowaniu.
 
 To **nie** jest regulator pomieszczeń (pomieszczenia zostają przy VT i jego algorytmach), nie
 steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Home Assistant.
@@ -44,19 +44,20 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
   pracuje jak dotąd; włączyć je możesz od pierwszego dnia.
 - **Temperatura wody zależna od pogody** według krzywej, którą wpisujesz, ograniczona najniższą
   i najwyższą temperaturą wody oraz maksimum każdego obiegu.
-- **Włączanie i wyłączanie grzania idzie za strefami VT** — według liczby wołających urządzeń
-  (albo stref), łącznej mocy albo otwarcia zaworów, tak jak w kotle centralnym VT — a tryby
-  centralne VT działają przez strefy.
+- **Grzanie włącza się i wyłącza tak, jak decyduje VT:** kocioł centralny VT, z własnymi progami
+  i opóźnieniem włączenia, przełącza pomocnika wł./wył., a wtyczka idzie za nim. Pomieszczenia to
+  termostaty VT z zaznaczonym „Używane przez kocioł centralny”; ochrona przed mrozem też należy
+  do VT.
 - **Zapisuje przez to, co masz:** wybraną encję, OpenTherm Gateway (`opentherm_gw` z Home
   Assistant albo jego firmware przez MQTT) albo przekaźnik dla kotła wł./wył.
-- **Najpierw bezpieczeństwo:** ochrona przed mrozem, ochrona przed częstym taktowaniem, odczyt
-  zwrotny każdego zapisu, nigdy walka z innym sterownikiem, nic zapisywanego do trwałej pamięci
-  kotła i bezpieczne oddanie kotła jego własnemu sterowaniu przy każdym wyjściu — ponawiane aż
-  do potwierdzenia.
+- **Najpierw bezpieczeństwo:** ochrona przed częstym taktowaniem, odczyt zwrotny każdego
+  zapisu, nigdy walka z innym sterownikiem, nic zapisywanego do trwałej pamięci kotła
+  i bezpieczne oddanie kotła jego własnemu sterowaniu przy każdym wyjściu — ponawiane aż do
+  potwierdzenia.
 - **Strona „Kocioł” w menu bocznym i karty.** Kocioł w jednym miejscu — jego stan, instalacja
-  narysowana z twoich ustawień z każdym pokojem, krzywa grzewcza z tym, gdzie jest teraz, ostatnie
-  24 h do odtworzenia — oraz palnik, zużycie gazu, analizy, dziennik tego, co wtyczka zdecydowała
-  i dlaczego, i alarmy. Nic więcej do instalowania; administrator może tam zmienić krzywą, po
+  narysowana z twoich ustawień z obiegami, które biorą wodę, krzywa grzewcza z tym, gdzie jest
+  teraz, ostatnie 24 h do odtworzenia — oraz palnik, zużycie gazu, analizy, dziennik tego, co
+  wtyczka zdecydowała i dlaczego, i alarmy. Nic więcej do instalowania; administrator może tam zmienić krzywą, po
   potwierdzeniu. Sterowanie przełącza administrator w ustawieniach wtyczki, a także automatyzacje.
 - Każda opcja ma ostrożną wartość domyślną i opis, który mówi, co robi i czym ryzykuje.
 
@@ -66,12 +67,12 @@ steruje zaworami ani pompami ciepła i nie wysyła żadnych danych poza twój Ho
   starty na godzinę, długość cykli pracy palnika, udział kondensacji i gaz na stopniodzień, a jego
   werdykt mówi, czy warto włączyć sterowanie. Nic nie trafia do kotła.
 - **Kocioł OpenTherm i VT w każdym pomieszczeniu.** Wtyczka ustawia temperaturę wody według
-  temperatury na zewnątrz i włącza oraz wyłącza grzanie według stref VT — przez OpenTherm Gateway,
-  ESPHome OpenTherm albo EMS-ESP. Z termostatem ściennym na bramce kocioł wraca do niego przy
-  każdym oddaniu sterowania.
-- **Kocioł wł./wył.** Przekaźnik na zaciskach termostatu pokojowego idzie za strefami VT zamiast
-  kotła centralnego VT; wtyczka sprawdza przekaźnik albo powtarza polecenie i oddaje sterowanie
-  do stanu przekaźnika po oddaniu.
+  temperatury na zewnątrz i włącza oraz wyłącza grzanie tak, jak decyduje kocioł centralny VT —
+  przez OpenTherm Gateway, ESPHome OpenTherm albo EMS-ESP. Z termostatem ściennym na bramce kocioł
+  wraca do niego przy każdym oddaniu sterowania.
+- **Kocioł wł./wył.** Przekaźnik na zaciskach termostatu pokojowego przełącza się tak, jak
+  decyduje kocioł centralny VT; wtyczka sprawdza przekaźnik albo powtarza polecenie i oddaje
+  sterowanie do stanu przekaźnika po oddaniu.
 - **Podłogówka bez mieszacza.** Najwyższa temperatura wody obiegu ogranicza każdą nastawę, a alarm
   mówi, gdy zmierzone zasilanie długo jest wyższe.
 
@@ -105,7 +106,7 @@ użytkownika][guide] · 🇬🇧 [User guide][guide-en]:
 | Co chcesz wiedzieć | Gdzie w przewodniku |
 |---|---|
 | Co jest potrzebne, jak zainstalować, pierwsze ustawienia | [1–3][guide] |
-| Jak to działa: werdykt, włączanie i wyłączanie grzania, temperatura wody, mróz, obiegi, algorytmy stref | [4][guide-how] |
+| Jak to działa: werdykt, włączanie i wyłączanie grzania, temperatura wody, mróz (po stronie VT), obiegi, algorytmy stref | [4][guide-how] |
 | Jak podłączyć kocioł i co robi oddanie sterowania przy każdym połączeniu | [5][guide-connect] |
 | Bezpieczeństwo: oddanie sterowania, inne sterowniki, utrata łączności, świeżość danych | [6][guide-safety] |
 | Co znaczy każdy alarm i zgłoszenie w Naprawach | [7][guide-alarms] |
@@ -137,7 +138,7 @@ z pierwszym wydaniem.
 
 | Wydanie | Zawartość |
 |---|---|
-| 0.2 Podstawa sterowania | monitor plus sterowanie temperaturą wody, bezpieczne oddanie kotła, ochrona przed mrozem |
+| 0.2 Podstawa sterowania | monitor plus sterowanie temperaturą wody, grzanie włączane i wyłączane tak, jak decyduje kocioł centralny VT, bezpieczne oddanie kotła |
 | 0.3 Ochrona przed taktowaniem i tryb jak termostat | praca cykliczna, limit modulacji, planowanie z prognozy, tryb jak termostat, podłogówka za zaworem mieszającym |
 | 0.4 Uczenie i strojenie | uczenie po stronie wody, propozycje, sezonowe dostrojenie |
 | 0.5 Prognoza | wyprzedzanie dla wolnych grzejników na podstawie zapisanych prognoz |

@@ -55,6 +55,8 @@ on do repozytorium. To, co postanowiono, jest w planie.
 | litera i liczba w kroku I8 | „F3", „A4" | [plan kroku I8](../../en/development/plans/plan-0.2-i8.md), „Decisions of 2026-10-10": grupy od A (zakres) do I (plany) |
 | „decision n of I6" | „decision 4 of I6" | [plan kroku I6](../../en/development/plans/plan-0.2-i6.md), „Decisions of 2026-10-08 and 2026-10-09" |
 | „review question n" | „review question 4" | dodatek E przeglądu, „Open questions for the user" |
+| numerowana decyzja kroku I12 | „I12, decision 4" | [plan kroku I12](../../en/development/plans/plan-0.2-i12.md), druga część, „Decisions" (decyzje użytkownika z 2026-11-24 i 2026-11-25) |
+| „gap n" w kroku I12 | „gap 19" | jedna luka między tym, co wtyczka czytała z VT, a tym, co daje `vtherm_api`; użytkownik przeszedł przez nie po kolei; notatki zostają w `research/`, a decyzja 8 planu I12 je podsumowuje |
 
 ## Kroki planów
 
@@ -63,11 +65,30 @@ Krok to litera i liczba. Każda litera należy do jednego planu:
 | Litery | Plan |
 |---|---|
 | A, B, C, D | [plan 0.1](../../en/development/plans/plan-0.1.md) |
-| F, G, H, I, J, K, S | [plan 0.2](../../en/development/plans/plan-0.2.md); kroki I6, I7, I8, I9 i G11 mają własne plany w tym samym katalogu |
+| F, G, H, I, J, K, S | [plan 0.2](../../en/development/plans/plan-0.2.md); kroki od I6 do I12 i G11 mają własne plany w tym samym katalogu (`I12.n` to jeden krok planu I12) |
 | L, M, N, O, R, U, W | [plan 0.2.1](../../en/development/plans/plan-0.2.1.md) |
 | Q, V, X, Y, Z | [plan 0.2.2](../../en/development/plans/plan-0.2.2.md); `Q3.n` to jedno pytanie kroku badawczego Q3 |
 
 Plan 0.2.3 jest podzielony na części od 1 do 4, a za kroki służą mu kody z przeglądów powyżej.
+
+## Kody, których przedmiot zniknął
+
+Krok I12 usunął części wtyczki, na które wskazują starsze kody. Kody zostają ważne, więc stare
+odwołania nadal da się odnaleźć; tego, co opisują, nie ma już we wtyczce.
+
+| Kod | Czym było | Usunięte w |
+|---|---|---|
+| decision 4 | własna ochrona przed mrozem wtyczki, grzejąca tylko strefy, które mogą przyjąć ciepło | I12.10: ochrona przed mrozem należy do VT (zamknięte zawory w symulatorze, S-05, zostają) |
+| decision 5 | opóźnienie włączenia VT przeniesione do wtyczki | I12.8: opóźnienie należy do VT |
+| S-04 | sterowanie potrzebuje co najmniej jednej strefy VT wybranej we wtyczce | I12.11: pokoje pochodzą z VT |
+| S-35 | alarm o strefie nieznanej albo bez czujnika pokojowego zbyt długo | I12.10: zamiast tego taki pokój przestaje oceniać krzywą |
+| S-36; decyzje 7 i 9 z 0.2.3 | przejście z kotła centralnego VT: jego wartości wstępnie wypełniane, czekanie na restart VT | I12.8: kocioł centralny VT zostaje |
+| PB-23; decyzja 3 z 0.2.3, jej część o kryterium zapotrzebowania | alarm „kryterium zapotrzebowania nie ma danych” | I12.8: decyduje VT; nieznane strefy z decyzji 3 zostają |
+| P-105 | karencja blokady „kocioł centralny VT nieznany” podczas przeładowania VT | I12.8 |
+| F5 (krok I8) | pytanie o strefy „zawory zamykają się po wyłączeniu” | I12.11, razem z ochroną przed mrozem, której służyło |
+| G11 C | pokój ze SmartPI oceniany względem własnej nastawy SmartPI | I12.9: każdy pokój względem nastawy VT |
+| S-41, P-89 | wstrzymywanie nauki SmartPI przez wtyczkę (ciepła woda, wahania wody) | I12.9: w zamian czujnik „nie daje ciepła” |
+| krok I9 | dane o wodzie dla algorytmów stref (atrybut `smart_boiler`) | I12.9; jego publiczne API w `hass.data` w I12.2 |
 
 ## Testy w testowym Home Assistancie (J4)
 

@@ -24,9 +24,9 @@ zapisuje, i sposób testowania. Co integracja robi dla użytkownika, opisuje
 
 ## 1. Przegląd
 
-Integracja (domena `vtherm_smart_boiler`) jest wtyczką VT. Zastępuje kocioł centralny VT
-działający w trybie wł./wył.: czyta strefy VT, decyduje, kiedy kocioł grzeje i jak ciepła jest
-jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
+Integracja (domena `vtherm_smart_boiler`) jest wtyczką VT. Kocioł centralny VT decyduje, kiedy
+kocioł grzeje, przez pomocnika, za którym idzie wtyczka; wtyczka decyduje, jak ciepła jest woda,
+zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
 
 - **Czysta logika w `core/`.** Każde prawo sterowania i uczenia, analiza monitora i werdykt to
   czysty Python bez importów HA — test parsuje importy `core/`, żeby to wymusić. Ten sam rdzeń
@@ -57,7 +57,9 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   bierze z Home Assistanta o VT, to informacja Home Assistanta, nie dane VT: czy VT jest wczytany
   i jego wersja (integracje i wpisy konfiguracji) oraz rejestr encji — czy VT ma encje klimatu
   (zgłoszenie o przeładowaniu niżej) i obszar encji (skrót obszaru w obiegu). Nie czyta niczego
-  ze SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
+  ze SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji, a test
+  (`tests/test_vt_boundary.py`) wymienia każde miejsce integracji, które czyta stan, historię
+  stanu albo wpis konfiguracji, i czyja to encja: żadna nie jest encją VT.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
   `register_feature_manager` z `vtherm_api`) to kanał, którym VT przekazuje każdy termostat.
   Zachowuje to, co mówi mu VT — jego `refresh_state` i hak mocy `async_on_underlying_power` — i
@@ -217,14 +219,14 @@ Przekaźnik ma własny krok (`core/relay.py`).
 wie, na polecenie dla kotła, w stałej kolejności pierwszeństwa: sterowanie wyłączone; zatrzask
 albo alarm ustawiony na oddanie kotła; brakujący warunek wstępny (blokada); utracona albo
 nieświeża łączność z kotłem; usterka samego kotła; w pozostałych przypadkach włączenie lub
-wyłączenie grzania z ochrony przed mrozem i zapotrzebowania stref, a temperatura wody z krzywej
-(`core/curve.py`), limitów i rampy.
+wyłączenie grzania z decyzji VT (pomocnik), a temperatura wody z krzywej (`core/curve.py`),
+limitów i rampy.
 
-**Zapotrzebowanie (`core/demand.py`, `boiler_demand`).** To, o czym decydował kocioł centralny
-VT, teraz zadanie wtyczki: wołające urządzenia albo strefy (domyślnie urządzenia VT, tak jak
-liczy je jego kocioł centralny), łączna moc albo otwarcie zaworów, przy czym każda strefa liczy
-się tylko wtedy, gdy VT podaje jej stan jednoznacznie; gdy VT nie podaje stanu urządzenia,
-zasada VT — zawór choć trochę otwarty, inaczej cykl pracy powyżej 0.
+**Zapotrzebowanie (`core/demand.py`, `boiler_demand`).** Decyzja VT — pomocnik włączony,
+wyłączony albo nieznany — i policzone pokoje: ile woła (do pokazania), które są nieznane i czy
+cokolwiek w ogóle może prosić (decyzja 3). Pokój woła, gdy VT mówi, że jedno z jego urządzeń
+działa; gdy VT nie podaje stanu urządzenia, według zasady VT — zawór choć trochę otwarty, inaczej
+cykl pracy powyżej 0.
 
 **Obiegi sterowane przez inną automatykę (`core/circuit_requests.py`, `circuits_asking`).**
 Obieg, którego mieszaczem albo pompą steruje coś innego, prosi o ciepło przez własną encję albo
@@ -259,9 +261,9 @@ zapisuje.
 
 **Konfiguracja (`config_flow.py`, `config.py`, `control_config.py`).** Formularze konfiguracji
 i opcji oraz opcje sterowania jako obiekty rdzenia, z blokadami, które nie pozwalają ruszyć
-sterowaniu. Oba przepływy to jedno menu sekcji; sterowanie to pięć jego pozycji, każda jako jeden
-formularz — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, ochrona przed mrozem,
-reakcje na alarmy (`CONTROL_ITEMS`) —, każda pokazana tam, gdzie ma zastosowanie, i otwierana
+sterowaniu. Oba przepływy to jedno menu sekcji; sterowanie to cztery jego pozycje, każda jako
+jeden formularz — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, reakcje na alarmy
+(`CONTROL_ITEMS`) —, każda pokazana tam, gdzie ma zastosowanie, i otwierana
 po sprawdzeniu ścieżki zapisu (`_control_path`). Formularz pokazuje się ponownie z polami, które
 odsłoniła odpowiedź (`entity_form_fields`, `relay_form_fields`); wartość ukrytego pola zostaje. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
 zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Pokoje są z VT
@@ -286,10 +288,10 @@ flowchart TD
     B -->|"nie"| Z["Brak decyzji w tym kroku"]
     B -->|"tak"| C["Odczyt: migawka i świeżość kotła, strefy przez vtherm_link, ciepła woda"]
     C --> D["Blokady i zatrzaski"]
-    D --> E["Zapotrzebowanie stref, prośby obiegów i ochrona przed mrozem: boiler_demand, circuits_asking, follow_zones"]
+    D --> E["Decyzja VT, prośby obiegów i strefy: boiler_demand, circuits_asking, follow_zones"]
     E --> F{"Sterownik decyduje: decide"}
     F -->|"oddanie kotła"| H["Oddanie: najniższa woda, grzanie, gdzie ktoś przejmuje, zwolnienie"]
-    F -->|"grzanie, spoczynek, mróz"| G["Zabezpieczenia oceniają odczyt: plan_write, classify"]
+    F -->|"grzanie, spoczynek"| G["Zabezpieczenia oceniają odczyt: plan_write, classify"]
     G -->|"inny sterownik"| S["Ustąpienie: oddanie kotła i zatrzask"]
     S --> H
     G -->|"dozwolone"| W["Moduł zapisu zapisuje nastawę i włączenie lub wyłączenie grzania"]
@@ -305,8 +307,8 @@ flowchart TD
   nieświeże kroki pokryją 5 minut w ciągu 10; wraca po 60 sekundach świeżych danych).
 - **Blokady i zatrzaski** idą przed zapotrzebowaniem: zatrzask albo alarm ustawiony na oddanie
   kotła oddaje kocioł, o cokolwiek proszą strefy.
-- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku — zapotrzebowanie
-  stref albo prośba obiegu sterowanego przez inną automatykę; temperatura wody co odstęp decyzji
+- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku — decyzja VT
+  (pomocnik) albo prośba obiegu sterowanego przez inną automatykę; temperatura wody co odstęp decyzji
   (domyślnie 5 minut) i od razu po końcu blokady albo usterki lub gdy zmienia się potrzeba
   obiegu: krzywa, nigdy poniżej potrzeby proszącego obiegu,
   ograniczona przez obiegi zasilane prosto z kotła i maksimum kotła. Przy kilku obiegach

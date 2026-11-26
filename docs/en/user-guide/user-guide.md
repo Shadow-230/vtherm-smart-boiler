@@ -1096,6 +1096,7 @@ not confirmed.
 | VT's decision is unknown (2 variants) | check the helper, and that VT's central boiler switches it |
 | VT's central boiler switches something other than the helper | point VT's commands at the helper |
 | Set the heat-call thresholds in VT's central boiler | after an update: set your old values in VT |
+| Frost protection is now Versatile Thermostat's alone | after an update: give every thermostat a frost preset in VT, or use VT's central mode "Frost protection" |
 | A heating circuit has no rooms | with several circuits: add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
@@ -1134,7 +1135,6 @@ When "Signals" is off, its attributes name the signal with the problem.
 | The wall thermostat would keep the house cool after a hand-back | raise its setting |
 | The wall thermostat reports no setpoint | check its setting and the signal |
 | An entity the plugin uses is gone | pick another one in the options |
-| Versatile Thermostat's central configuration is not running | fix VT's central configuration |
 | ESPHome sensors do not repeat unchanged values | add `force_update: true` to them on the ESP |
 
 ### 7.5 Monitor and the plugin itself
@@ -1240,7 +1240,7 @@ disabled by default.
 
 | Entity | What it shows or does |
 |---|---|
-| Control (experimental) | switches control on and off; its attributes say what blocks it and what a hand-back does in your installation |
+| Control (experimental) | whether control is on; it switches nothing (control is switched in the options). Its attributes say what blocks it and what a hand-back does in your installation |
 | Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
@@ -1260,7 +1260,8 @@ Problems that need you also show as repair issues under Settings → Repairs.
 
 ## 10. How often data updates
 
-- Boiler signals and zones are read when they change, and at least every **30 s**.
+- Boiler signals are read when they change, and at least every **30 s**; the rooms, through VT's
+  thermostats, every **30 s** and at every control step.
 - Control takes a step every **10 s**; an expiring setpoint is repeated every **30 s**, a held one
   on a change and every 5 minutes.
 - The monitor's metrics and verdict are computed every **5 minutes**.
@@ -1284,7 +1285,7 @@ risks. The main ones — described, not advised:
 
 | Option | Default | What it does, and what it risks |
 |---|---|---|
-| Control (switch) | off | on, the plugin writes to the boiler; off, the boiler runs as before |
+| Control on (in **Control mode**) | off | on, the plugin writes to the boiler; off, the boiler runs as before |
 | Heating curve | the design flow has no default — you enter it | too high wastes gas and makes the burner cycle; too low leaves rooms cold |
 | Lowest water temperature | 20 °C (provisional) | too low: in mild weather the boiler stops by itself again and again, and a non-condensing boiler condenses in its flue (its manual gives the value) |
 | A circuit's highest water temperature | 70 °C where empty | caps every setpoint on circuits fed straight from the boiler; the boiler may overshoot it by its own hysteresis |
@@ -1335,12 +1336,21 @@ automation:
           message: "Control verdict: {{ states('sensor.boiler_control_verdict') }}"
 ```
 
-Hand the boiler back before a service visit — switching control off does it:
+Hand the boiler back before a service visit — switching control off does it. Untick **Control
+on** in the options, or let an automation do it, here when a helper you create is switched on.
+Anyone who may switch that helper then switches control:
 
 ```yaml
-action: switch.turn_off
-target:
-  entity_id: switch.boiler_control_experimental
+automation:
+  - alias: "Boiler: control off for a service visit"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.boiler_service_visit
+        to: "on"
+    actions:
+      - action: vtherm_smart_boiler.set_control
+        data:
+          enabled: false
 ```
 
 ## 14. Troubleshooting
@@ -1351,6 +1361,10 @@ target:
 - **The control state stays "Handed back".** The plugin stepped aside — another controller, the
   boiler ignoring "heating off", an alarm set to hand back. Fix the cause, then switch control off
   and on.
+- **The plugin knows no room, or misses one.** VT hands a thermostat over only when it starts it:
+  after a first installation, restart Home Assistant or reload VT's entries once. A room counts
+  only with **Used by central boiler** ticked in its thermostat in VT; repair issues name the
+  thermostats that lack it.
 - **The verdict says "Not enough data yet", or a sensor is missing.** The sensors **Features** and
   **Signal problems** name the missing or stale signals.
 - **"Signals" is off.** Flame or flow is stale or unknown: check the boiler's integration, or the

@@ -151,8 +151,12 @@ kopiowany jest tylko `configuration.yaml`; własne pliki instancji w tym katalog
 
 Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy powiesz, że zaczynamy:
 
-1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego. Nie konfiguruj centralnego kotła
-   VT — zastępuje go wtyczka, a sterowanie odmawia uruchomienia, dopóki on istnieje.
+1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego i włączonym kotłem centralnym
+   VT, z jego progami domyślnymi i oboma poleceniami na pomocniku
+   `input_boolean.j4_vt_central_boiler` (`devenv/config/configuration.yaml`):
+   `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` i `…/input_boolean.turn_off`.
+   O tym, czy kocioł grzeje, decyduje VT; wtyczka idzie za pomocnikiem (I12.8). Nigdy nie kieruj
+   tych poleceń na symulowany kocioł.
 2. **Jeden termostat VT na każdą symulowaną strefę** (`zone_living`, `zone_bedroom`, `zone_bath`):
    typ „over switch”; przełącznik bazowy `switch.boiler_sim_<zone>_valve`; temperatura pokojowa
    `sensor.boiler_sim_<zone>_temperature`; temperatura zewnętrzna `sensor.boiler_sim_outdoor`. W
@@ -181,7 +185,8 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
    `sensor.otgw_sim_boiler_control_setpoint` (nastawa grzania, którą dostał kocioł) i
    `binary_sensor.otgw_sim_boiler_master_ch_enabled` (grzanie włączone/wyłączone); **Urządzenie sterujące** —
    ścieżka zapisu „OpenTherm Gateway”, tylko dla wpisu utworzonego przed pytaniem o połączenie;
-   **Krzywa grzewcza** — projektowa temperatura zasilania 55 °C. Program uruchamiający przywraca ten stan
+   **Krzywa grzewcza** — projektowa temperatura zasilania 55 °C; **Zachowanie sterowania** —
+   pomocnik `input_boolean.j4_vt_central_boiler`. Program uruchamiający przywraca ten stan
    bazowy po każdym scenariuszu, który go zmienia (`devenv/j4/options.py`, zapisywany pozycja po pozycji
    w menu przez `devenv/j4/walk.py`; `tests/integration/test_j4_walk.py` przeprowadza ten sam stan
    bazowy przez prawdziwy przepływ opcji), także gdy scenariusz stanie w połowie, i włącza z
