@@ -529,6 +529,35 @@ def test_vts_call_tells_a_heating_burn_where_it_is_known(
     assert _burn_kind(History(zones=rooms, vt_called=vt_called)) is kind
 
 
+@pytest.mark.parametrize(
+    ("vt_called", "asking", "kind"),
+    [
+        (Series([(0.0, False)]), Series([(0.0, True)]), BurnKind.CH),
+        (Series([(0.0, False)]), Series([(0.0, False)]), BurnKind.DHW),
+        (Series([(0.0, True)]), Series([(0.0, False)]), BurnKind.CH),
+        (Series([(0.0, False)]), Series([(0.0, None)]), BurnKind.DHW),
+        (Series(), Series([(0.0, True)]), BurnKind.CH),
+        (Series(), Series([(0.0, False)]), BurnKind.UNKNOWN),
+    ],
+    ids=[
+        "helper_off_a_circuit_asks",
+        "helper_off_no_circuit_asks",
+        "helper_on_no_circuit_asks",
+        "helper_off_the_circuit_unknown",
+        "no_helper_a_circuit_asks",
+        "no_helper_no_circuit_asks",
+    ],
+)
+def test_a_circuit_run_by_other_automation_asking_is_heating(
+    vt_called: Series[bool], asking: Series[bool], kind: BurnKind
+) -> None:
+    """I12.18: a burn while a circuit run by other automation asks for heat counts as heating,
+    whatever VT's call — it used to count as hot water while the helper was off. Otherwise VT's
+    call decides as before; a circuit not asking tells nothing of VT's call."""
+    history = History(vt_called=vt_called, circuits_asking={"switch.workshop": asking})
+    assert _burn_kind(history) is kind
+
+
 def test_vts_call_fills_the_demand_moment_by_moment() -> None:
     """VT's call where known, the rooms where it is not, for the demand and for the calls at
     each moment alike; with neither, nothing is known."""
@@ -555,3 +584,18 @@ def test_vts_call_is_copied_cut_and_backfilled_with_the_rest() -> None:
     assert _samples(history.vt_called) == [(20.0, True), (40.0, False)]
     history.prepend(History(vt_called=Series([(5.0, None), (10.0, False)])))
     assert _samples(history.vt_called) == [(5.0, None), (10.0, False), (20.0, True), (40.0, False)]
+
+
+def test_the_circuits_asking_are_copied_cut_and_backfilled_with_the_rest() -> None:
+    """I12.18: each circuit's asking goes into the analysis' copy, is cut with the rolling
+    history and takes the recorder's older states before its live ones; one only the older
+    history has is taken too."""
+    history = History(circuits_asking={"a": Series([(0.0, False), (20.0, True), (40.0, False)])})
+    copied = history.copy_window(15.0, 30.0).circuits_asking
+    assert _samples(copied["a"]) == [(15.0, False), (20.0, True)]
+    history.drop_before(30.0)
+    assert _samples(history.circuits_asking["a"]) == [(20.0, True), (40.0, False)]
+    older = History(circuits_asking={"a": Series([(10.0, False)]), "b": Series([(12.0, True)])})
+    history.prepend(older)
+    assert _samples(history.circuits_asking["a"]) == [(10.0, False), (20.0, True), (40.0, False)]
+    assert _samples(history.circuits_asking["b"]) == [(12.0, True)]
