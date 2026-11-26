@@ -69,7 +69,7 @@ simulator first.
 Built: the range from the fit (held the true loss in 186 of 194 simulated months), the change
 point, the comparison's ranges and the verdict's boiler outputs against the design load.
 
-### I13.5 The monitor's other figures
+### I13.5 The monitor's other figures ✅
 
 - The weekly gas per degree-day: shown only from a floor of degree-days, with a band from the
   house's own day-to-day scatter (Phillips and Wilson 2024).
@@ -78,6 +78,9 @@ point, the comparison's ranges and the verdict's boiler outputs against the desi
 - The hysteresis drift: a longer base, from stored daily medians, so a slow drift shows.
 - The share of burns under 3 minutes beside the 10-minute share: the efficiency cost sits under
   3 minutes (Bennett et al. 2019, from Orr 2009).
+
+Built: weeks from 14 K·day with a band from the signature's scatter, the hot-water issue, the
+drift over weeks from daily medians, and the share under 3 minutes beside the short ones.
 
 ### I13.6 A restart pause (an exception to principle 12, off by default) ✅
 

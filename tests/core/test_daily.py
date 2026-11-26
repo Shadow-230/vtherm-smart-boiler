@@ -571,6 +571,7 @@ def test_every_stored_field_round_trips_through_json() -> None:
         0.0, DAY, DAY, 10, 9, 1, HOUR, 10 * HOUR, 0.5 * HOUR, HOUR, 7.0, 12.5,
         outdoor_mean=8.0, heat_kwh=40.0, settings="abc", other_gas=0.3, controlled_s=0.0,
         outdoor_s=((7, 0.5 * DAY), (9, 0.5 * DAY)), hourly_starts=(0,) * 23 + (10,),
+        very_short_burns=2, dhw_gas=1.5, hysteresis_median=9.5,
     )  # fmt: skip
     stored = day.to_dict()
     assert set(stored) == {field.name for field in fields(DaySummary)}
@@ -776,3 +777,48 @@ def test_a_day_starting_at_the_reset_counts_for_the_new_fit() -> None:
     fit = fit_building(fit_days(10, 7, -5.0, 10.0), DEFAULT_THRESHOLD, 30 * DAY, after)
     assert fit is not None
     assert fit.days == 7
+
+
+# --- I13.5: what a day keeps for the monitor's other figures ---------------------------------
+
+
+def test_a_day_keeps_its_burns_under_three_minutes() -> None:
+    """Burns of 2 minutes every half hour: every one under 3 minutes, beside the short ones."""
+    flame = Series[bool]([(0, False)])
+    for k in range(48):
+        flame.append(k * 30 * MIN + 5 * MIN, True)
+        flame.append(k * 30 * MIN + 7 * MIN, False)
+    history = cycling(1)
+    history.signals[Signal.FLAME] = flame
+    day = summarize_day(history, PARAMETERS, 0, DAY)
+    assert (day.very_short_burns, day.short_burns, day.complete_burns) == (48, 48, 48)
+    assert summarize_day(cycling(1), PARAMETERS, 0, DAY).very_short_burns == 0  # 10 minutes
+
+
+def test_the_verdict_counts_burns_under_three_minutes_over_the_days_that_kept_them() -> None:
+    """A day kept before I13.5 has no count: the share rests on the days that have one."""
+    [new] = days_of(cycling(1), 1)
+    new = replace(new, very_short_burns=12)
+    old = replace(new, start=DAY, end=2 * DAY, very_short_burns=None)
+    result = verdict_over_days([new, old], VerdictOptions(min_days=2.0))
+    burns = next(
+        r for r in result.reasons if r.code in (ReasonCode.SHORT_BURNS, ReasonCode.LONG_BURNS)
+    )
+    assert burns.very_short_share == pytest.approx(12 / new.complete_burns)
+
+
+def test_a_day_keeps_the_metered_gas_of_its_hot_water() -> None:
+    """I13.5: a burn the hot-water signal calls hot water — its 0.1 of the meter's gas is the
+    day's hot-water gas, left out of heating."""
+    history = cycling(1)
+    meter = Series([(0, 100.0)])
+    for k in range(48):
+        meter.append(k * 30 * MIN + 15 * MIN, 100.0 + 0.1 * (k + 1))
+    history.signals[Signal.GAS_METER] = meter
+    history.signals[Signal.DHW_ACTIVE] = Series(
+        [(0, False), (10 * 30 * MIN + 5 * MIN, True), (10 * 30 * MIN + 15 * MIN, False)]
+    )
+    day = summarize_day(history, PARAMETERS, 0, DAY)
+    assert day.dhw_gas == pytest.approx(0.1)
+    assert day.gas == pytest.approx(4.7)
+    assert DaySummary.from_dict(day.to_dict()) == day

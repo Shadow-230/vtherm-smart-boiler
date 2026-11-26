@@ -12,6 +12,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     FLUE_GAS_CONDENSING_BAND,
     HELD,
     HOT_WATER_UNKNOWN,
+    LAST_DAY,
     LOW_FLOW_HOLD_S,
     NO_FLOW_READING,
     NO_ZONE_DATA,
@@ -20,6 +21,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     SUSTAINED_STARTS_PER_HOUR,
     UNKNOWN_HOLD_S,
     UNKNOWN_INPUT,
+    WEEKS,
     Alarm,
     AlarmKind,
     Band,
@@ -31,6 +33,8 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     circuit_flow,
     circuit_too_hot,
     compare_windows,
+    day_median,
+    either_drift,
     flue_excess_samples,
     frequent_starts,
     hysteresis_samples,
@@ -41,6 +45,7 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     pressure_slope,
     pressure_trend,
     settle,
+    slow_hysteresis_drift,
     trend_warning,
     unstable_ignition,
 )
@@ -1340,3 +1345,74 @@ def test_a_flow_at_the_alarm_temperature_is_not_above_it() -> None:
         alarm = circuit_too_hot(45.0, 45.0, 10 * MIN, minute * MIN, alarm)
         expected = Alarm(AlarmKind.CIRCUIT_TOO_HOT, False, None, 45.0, 45.0, known_at=minute * MIN)
         assert alarm == expected, minute
+
+
+# --- I13.5: the hysteresis drift over weeks ---------------------------------------------------
+
+DAY_S = 86400.0
+WEEKS_NOW = 100 * DAY_S
+
+
+def medians(base: list[float], recent: list[float]) -> list[tuple[float, float]]:
+    """Daily medians: ``base`` on the days from 42 days before now on, ``recent`` on the last
+    days up to now; nothing in between counts."""
+    return [
+        *((WEEKS_NOW - (42 - i) * DAY_S, m) for i, m in enumerate(base)),
+        (WEEKS_NOW - 14 * DAY_S, 99.0),  # between the windows: in neither
+        *((WEEKS_NOW - (len(recent) - i) * DAY_S, m) for i, m in enumerate(recent)),
+    ]
+
+
+def test_a_day_needs_five_pauses_for_its_median() -> None:
+    assert day_median([8.0, 9.0, 10.0, 11.0]) is None
+    assert day_median([8.0, 9.0, 10.0, 11.0, 30.0]) == 10.0
+
+
+def test_a_slow_drift_of_a_kelvin_a_week_shows_over_the_weeks() -> None:
+    """A hysteresis falling 1 K a week (1/7 K a day): the last week's medians against the base's,
+    28 days apart in the middle — 4 K, past the 3 K floor: a warning, compared over weeks."""
+    days = [(WEEKS_NOW - k * DAY_S, 10.0 + k / 7) for k in range(1, 43)]
+    alarm = slow_hysteresis_drift(days, WEEKS_NOW)
+    assert alarm.active is True
+    assert alarm.level is Level.WARNING
+    assert alarm.value == pytest.approx(-4.0)
+    assert (alarm.limit, alarm.basis) == (3.0, WEEKS)
+
+
+def test_a_steady_hysteresis_over_the_weeks_is_no_warning() -> None:
+    alarm = slow_hysteresis_drift(medians([10.0] * 21, [10.5] * 7), WEEKS_NOW)
+    assert alarm.active is False
+    assert alarm.level is None
+    assert alarm.value == pytest.approx(0.5)
+
+
+def test_a_noisy_base_raises_the_limit_above_the_floor() -> None:
+    """A base whose days scatter by ±3 K: twice its robust spread, 8.9 K, is the limit — a 4 K
+    change is no warning there."""
+    alarm = slow_hysteresis_drift(medians([7.0, 13.0] * 10 + [10.0], [14.0] * 7), WEEKS_NOW)
+    assert alarm.limit == pytest.approx(8.9)
+    assert alarm.active is False
+
+
+@pytest.mark.parametrize(("base", "recent"), [(9, 7), (21, 3)])
+def test_too_few_days_leave_the_weeks_unjudged(base: int, recent: int) -> None:
+    """Under 10 base days or 4 recent ones: unknown, with its floor."""
+    alarm = slow_hysteresis_drift(medians([10.0] * base, [20.0] * recent), WEEKS_NOW)
+    assert alarm == Alarm(
+        AlarmKind.HYSTERESIS_DRIFT, None, limit=3.0, reason=UNKNOWN_INPUT, basis=WEEKS
+    )
+
+
+def test_either_check_warns_the_fast_one_first() -> None:
+    kind = AlarmKind.HYSTERESIS_DRIFT
+    fast_on = Alarm(kind, True, Level.WARNING, 5.0, 3.0, basis=LAST_DAY)
+    fast_off = Alarm(kind, False, None, 1.0, 3.0, basis=LAST_DAY)
+    fast_unknown = Alarm(kind, None, limit=3.0, reason=NO_ZONE_DATA, basis=LAST_DAY)
+    slow_on = Alarm(kind, True, Level.WARNING, 4.0, 3.0, basis=WEEKS)
+    slow_off = Alarm(kind, False, None, 0.5, 3.0, basis=WEEKS)
+    slow_unknown = Alarm(kind, None, limit=3.0, reason=UNKNOWN_INPUT, basis=WEEKS)
+    assert either_drift(fast_on, slow_on) is fast_on
+    assert either_drift(fast_off, slow_on) is slow_on
+    assert either_drift(fast_unknown, slow_off) is slow_off
+    assert either_drift(fast_off, slow_unknown) is fast_off
+    assert either_drift(fast_unknown, slow_unknown) is fast_unknown

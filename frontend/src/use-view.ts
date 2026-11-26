@@ -6,7 +6,7 @@ import { formatNumber, numberOf } from "./format";
 import { localize } from "./localize";
 import { homeZone } from "./time";
 import type { HomeAssistant, Installation } from "./types";
-import { causeBars, degreeDaysGap, weekGap, weekScale, type WeekGap, type WeekUse } from "./use";
+import { causeBars, degreeDaysGap, weekBand, weekGap, weekScale, type WeekGap, type WeekUse } from "./use";
 
 export const USE_TAG = "vtherm-smart-boiler-use";
 
@@ -135,6 +135,7 @@ export class SmartBoilerUse extends LitElement {
                     ${weeks.map((w, i) => {
                       const value = w.per_degree_day;
                       const height = value == null ? 0 : (value / top) * 100;
+                      const band = weekBand(w);
                       return html`<div
                         class="bar-cell"
                         @mouseenter=${() => (this.hovered = this.weekText(w, unit))}
@@ -144,6 +145,13 @@ export class SmartBoilerUse extends LitElement {
                           ? html`<span class="bar-count">${formatNumber(value, lang, 2)}</span>`
                           : nothing}
                         <span class="bar ${i === weeks.length - 1 ? "now" : ""} ${value == null ? "none" : ""}" style="height: ${value == null ? 100 : height.toFixed(1)}%"></span>
+                        ${band
+                          ? html`<span
+                              class="band"
+                              aria-hidden="true"
+                              style="bottom: ${((band[0] / top) * 100).toFixed(1)}%; height: ${(((band[1] - band[0]) / top) * 100).toFixed(1)}%"
+                            ></span>`
+                          : nothing}
                       </div>`;
                     })}
                   </div>
@@ -194,9 +202,18 @@ export class SmartBoilerUse extends LitElement {
 
   private weekText(week: WeekUse, unit: string): string {
     const date = this.date(week.start);
-    return week.per_degree_day == null
-      ? this.t("use.week_none", { date, why: this.t(`use.why.${weekGap(week) ?? "other"}`) })
-      : this.t("use.week", { date, value: `${formatNumber(week.per_degree_day, this.language, 2)} ${unit}`.trim() });
+    if (week.per_degree_day == null)
+      return this.t("use.week_none", { date, why: this.t(`use.why.${weekGap(week) ?? "other"}`) });
+    const value = `${formatNumber(week.per_degree_day, this.language, 2)} ${unit}`.trim();
+    const band = weekBand(week);
+    return band
+      ? this.t("use.week_band", {
+          date,
+          value,
+          low: formatNumber(band[0], this.language, 2),
+          high: formatNumber(band[1], this.language, 2),
+        })
+      : this.t("use.week", { date, value });
   }
 
   static styles = css`
@@ -285,6 +302,14 @@ export class SmartBoilerUse extends LitElement {
       display: flex;
       flex-direction: column;
       justify-content: flex-end;
+      position: relative;
+    }
+    .band {
+      position: absolute;
+      left: calc(50% - 1px);
+      width: 2px;
+      background: var(--primary-text-color);
+      opacity: 0.5;
     }
     .bar {
       display: block;

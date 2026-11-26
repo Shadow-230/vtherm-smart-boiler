@@ -631,7 +631,7 @@ CRITERIA_LIMITS = [
         0.5,
         0.3,
         (
-            Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, 0.5, 0.5),
+            Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, 0.5, 0.5, very_short_share=0.0),
             Reason(
                 ReasonCode.LOAD_OFTEN_BELOW_MIN_POWER,
                 ReasonKind.PROBLEM,
@@ -648,7 +648,14 @@ CRITERIA_LIMITS = [
         0.1,
         (
             Reason(ReasonCode.FEW_STARTS, ReasonKind.FINE, 1.5, 1.5),
-            Reason(ReasonCode.SHORT_BURNS, ReasonKind.PROBLEM, 0.6, 0.5, changed_by_control=False),
+            Reason(
+                ReasonCode.SHORT_BURNS,
+                ReasonKind.PROBLEM,
+                0.6,
+                0.5,
+                changed_by_control=False,
+                very_short_share=0.0,  # I13.5: none of them under 3 minutes
+            ),
             Reason(ReasonCode.GOOD_CONDENSING, ReasonKind.FINE, 0.8, 0.8),
         ),
     ),
@@ -658,7 +665,7 @@ CRITERIA_LIMITS = [
         0.2,
         0.05,
         (
-            Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, 0.1, 0.5),
+            Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, 0.1, 0.5, very_short_share=0.0),
             Reason(
                 ReasonCode.LOW_CONDENSING,
                 ReasonKind.PROBLEM,

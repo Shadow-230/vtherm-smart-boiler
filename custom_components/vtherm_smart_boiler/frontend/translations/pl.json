@@ -160,6 +160,7 @@
     "median_burn_detail": "mediana palenia ogrzewania",
     "short_burn_share": "Krótkie palenia",
     "short_burn_share_detail": "palenia ogrzewania krótsze niż {value} min",
+    "under_3_min": "poniżej 3 min: {value} %",
     "burner_hours": "Godziny palnika",
     "burner_hours_detail": "ogrzewanie, ostatnie 24 h",
     "condensing_share": "Kondensacja",
@@ -189,6 +190,7 @@
     "weeks_hint": "Ile gazu dom potrzebuje na każdy stopień chłodu. Pogoda się wyrównuje, więc tygodnie da się porównać. Niżej = lepiej.",
     "week": "Tydzień od {date}: {value}",
     "week_none": "Tydzień od {date}: {why}",
+    "week_band": "Tydzień od {date}: {value} (prawdopodobnie {low}–{high}, z rozrzutu dni tego domu)",
     "why": {
       "no_week": "jeszcze nieznane — podsumowania dni przybywają dzień po dniu",
       "days": "jeszcze nieznane — potrzeba 7 pełnych dni danych",
@@ -220,6 +222,7 @@
     "verdict_hint": "Czy warto włączyć sterowanie — z dni, w których wtyczka tylko obserwowała kocioł. Powody poniżej mówią dlaczego.",
     "days": "{value} dni",
     "against": "{value} (granica {limit})",
+    "under_3_min": "poniżej 3 min: {value}",
     "sizing": "Kocioł a dom",
     "sizing_min": "najniższa moc {value} kW",
     "sizing_max": "najwyższa moc {value} kW",

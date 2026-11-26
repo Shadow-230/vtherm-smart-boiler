@@ -151,7 +151,10 @@ docs/                                     dokumentacja, osobny katalog na każdy
   potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze
   sprawdzeniami z ustawień według ich kluczy tłumaczeń; `vtherm_smart_boiler/days` — podsumowania
   dni w zapisanej postaci, razem z gazem na stopniodzień z ostatnich 12 tygodni liczonym przez
-  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora), sygnaturą
+  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora; brak też
+  poniżej 14 stopniodni; każdy z pasmem 95 %, `low` i `high`, z rozrzutu linii dni
+  obserwowanych sygnatury, a bez niej dni pod sterowaniem, z rozrzutem tygodnia liczonym
+  z powiązania dni), sygnaturą
   energetyczną dopasowaną przez `core/signature.py` — gaz na grzanie każdego dnia na 24 h wobec
   jego średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, linia
   każdej grupy przez jej dni grzania (zimniejsze niż próg grzania w użyciu, z gazem na grzanie)
@@ -219,7 +222,15 @@ magazynie), z błędu nachylenia poszerzonego o autokorelację reszt z dnia na d
 (`core/regression.py`: efektywna liczba dni, rozkład t Studenta), trzymany między ±15 % a
 ±100 %; powyżej ±50 % straty są pokazywane, ale nieużywane. Dopasowanie jest sprawdzane na
 `sim/house_days.py`, domu liczonym dzień po dniu ze znanymi stratami i powiązanymi błędami
-(`tests/sim/test_building_range.py`).
+(`tests/sim/test_building_range.py`). Każde podsumowanie dnia trzyma też swoje palenia krótsze
+niż 3 minuty (`very_short_burns`), gaz paleń ciepłej wody (`dhw_gas`) i medianę swoich próbek
+histerezy (`hysteresis_median`, od 5 przerw); dni zapisane wcześniej ich nie mają i nadal się
+wczytują. `core/dhw_check.py` dopasowuje gaz ciepłej wody z zapisanych dni do ich średniej
+temperatury zewnętrznej i zgłasza informacyjne `dhw_split_suspect`, gdy nachylenie jest
+wyraźne (28 dni, rozrzut 8 K, co najmniej 3 poszerzone błędy standardowe i 3 % średniej na K).
+Ostrzeżenie o histerezie daje ta kontrola, która ostrzega (`either_drift`): ostatni dzień wobec
+dni 4–8 wcześniej albo mediany dzienne z ostatniego tygodnia wobec tych z dni 21–42 wcześniej
+(`slow_hysteresis_drift`); jego atrybut `basis` mówi, która.
 
 **Jednostka sterowania (`control.py`, `ControlUnit`).** Strona HA sterowania: krok sterowania co
 kilka sekund, jego zapisy przez moduł zapisu, oddanie kotła przy każdym wyjściu i stan

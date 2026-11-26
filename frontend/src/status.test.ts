@@ -40,6 +40,15 @@ describe("the verdict's reasons", () => {
     ]);
   });
 
+  it("keeps the share under 3 minutes beside the short burns' (I13.5)", () => {
+    const verdict = entity("sensor.verdict", "worth_it", {
+      reasons: [{ code: "short_burns", kind: "problem", value: 0.6, limit: 0.5, very_short_share: 0.2 }],
+    });
+    expect(verdictReasons(verdict)).toEqual([
+      { code: "short_burns", kind: "problem", value: 0.6, limit: 0.5, very_short_share: 0.2 },
+    ]);
+  });
+
   it("has none without the sensor or its reasons", () => {
     expect(verdictReasons(undefined)).toEqual([]);
     expect(verdictReasons(entity("sensor.verdict", "unknown"))).toEqual([]);

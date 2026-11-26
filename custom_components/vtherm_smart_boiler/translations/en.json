@@ -1235,7 +1235,12 @@
         "name": "Heating burner hours (24 h)"
       },
       "short_burn_share": {
-        "name": "Short heating burns"
+        "name": "Short heating burns",
+        "state_attributes": {
+          "under_3_min": {
+            "name": "Under 3 minutes (%)"
+          }
+        }
       },
       "condensing_share": {
         "name": "Condensing share"
@@ -2542,6 +2547,13 @@
               "no_zone_data": "No data on calls for heat: no helper of VT's central boiler, and no room history yet"
             }
           },
+          "basis": {
+            "name": "Compared",
+            "state": {
+              "last_day": "The last day against days 4 to 8 before",
+              "weeks": "The last week against the 3 weeks ending 3 weeks before"
+            }
+          },
           "limit": {
             "name": "Limit: change (K)"
           }
@@ -2998,6 +3010,10 @@
     "vt_thermostats_not_counted": {
       "title": "Versatile Thermostat's central boiler does not count some thermostats",
       "description": "{zones}: Versatile Thermostat hands these thermostats to the plugin, but its central boiler does not count them, so they are no rooms of the plugin's and never make the boiler heat. If the boiler heats their rooms, tick “Used by central boiler” in each one's settings in VT. A circuit that lists one of them gets nothing from it until then."
+    },
+    "dhw_split_suspect": {
+      "title": "Hot water and heating may be told apart wrongly",
+      "description": "The gas the plugin counts as hot water changes with the outdoor temperature: by {change} % of its daily mean for each degree warmer, over {days} days. Hot water is used about the same all year, so some heating burns may be counted as hot water, or the other way round. The building's heat loss and the gas per degree-day take the same error. Check that the hot-water and heating signals are mapped to the right entities and that they report. This is information only: nothing changes in control. It goes once the hot-water gas no longer follows the weather."
     },
     "entity_removed": {
       "title": "An entity the plugin uses is gone",

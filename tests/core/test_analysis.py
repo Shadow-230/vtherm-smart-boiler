@@ -14,8 +14,10 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     DEFAULT_HYSTERESIS_DRIFT_K,
     DEFAULT_PRESSURE_DROP_BAR,
     HELD,
+    LAST_DAY,
     NO_ZONE_DATA,
     UNKNOWN_INPUT,
+    WEEKS,
     Alarm,
     AlarmKind,
     Level,
@@ -154,13 +156,23 @@ JUDGED = {
         -5.0,
         DEFAULT_HYSTERESIS_DRIFT_K,
         known_at=NOW,
+        basis=LAST_DAY,
     ),
 }
+# I13.5: with no kept days the weeks cannot judge; the last day's check speaks.
 UNKNOWN_HYSTERESIS = Alarm(
-    AlarmKind.HYSTERESIS_DRIFT, None, limit=DEFAULT_HYSTERESIS_DRIFT_K, reason=UNKNOWN_INPUT
+    AlarmKind.HYSTERESIS_DRIFT,
+    None,
+    limit=DEFAULT_HYSTERESIS_DRIFT_K,
+    reason=UNKNOWN_INPUT,
+    basis=LAST_DAY,
 )
 NO_ZONES_HYSTERESIS = Alarm(
-    AlarmKind.HYSTERESIS_DRIFT, None, limit=DEFAULT_HYSTERESIS_DRIFT_K, reason=NO_ZONE_DATA
+    AlarmKind.HYSTERESIS_DRIFT,
+    None,
+    limit=DEFAULT_HYSTERESIS_DRIFT_K,
+    reason=NO_ZONE_DATA,
+    basis=LAST_DAY,
 )
 
 
@@ -523,3 +535,49 @@ def test_the_outdoor_sensor_is_checked_only_against_the_weather(history: History
     """Negative: without the boiler's outdoor sensor, or without the weather to compare it
     with, there is no outdoor check."""
     assert _outdoor(history, DAY) is None
+
+
+# --- I13.5: the hysteresis drift over weeks --------------------------------------------------
+
+
+def test_a_day_keeps_the_median_of_its_hysteresis_samples() -> None:
+    """Each day's pauses with the zone calling: 10 K before day 5, 5 K from it — the medians a
+    day keeps; a day with fewer than 5 pauses keeps none, nor one without the flow."""
+    history = trend_history([*half_hourly(DAY, 48), *half_hourly(6 * DAY, 48)])
+    early = summarize_day(history, PARAMETERS, DAY, 2 * DAY, known_until=NOW)
+    late = summarize_day(history, PARAMETERS, 6 * DAY, 7 * DAY, known_until=NOW)
+    assert (early.hysteresis_median, late.hysteresis_median) == (10.0, 5.0)
+    few = summarize_day(trend_history(half_hourly(DAY, 5)), PARAMETERS, DAY, 2 * DAY)
+    assert few.hysteresis_median is None  # 4 pauses
+    history.signals.pop(Signal.FLOW)
+    assert summarize_day(history, PARAMETERS, DAY, 2 * DAY).hysteresis_median is None
+
+
+def _kept(first_day: int, count: int, median: float) -> list[DaySummary]:
+    return [
+        replace(DaySummary.empty(d * DAY, (d + 1) * DAY), hysteresis_median=median)
+        for d in range(first_day, first_day + count)
+    ]
+
+
+def test_a_slow_drift_warns_from_the_kept_days_where_the_last_day_cannot() -> None:
+    """Without the rooms' calls the last day cannot be judged; the kept days' medians, 10 K in
+    the base and 6 K in the last week, warn over the weeks."""
+    now = 50 * DAY
+    history = trend_history(half_hourly(49 * DAY, 4))
+    history.zones.clear()
+    days = [*_kept(8, 21, 10.0), *_kept(43, 7, 6.0)]
+    full = summarize(history, PARAMETERS, now - HISTORY_DAYS * DAY, now)
+    alarm = _trends(history, full, now, True, None, days)[AlarmKind.HYSTERESIS_DRIFT]
+    assert (alarm.active, alarm.value, alarm.basis) == (True, -4.0, WEEKS)
+
+
+def test_the_analysis_passes_its_kept_days_to_the_slow_check() -> None:
+    """The analysis judges the weeks from every day it keeps: steady medians give a judged
+    "no", where the last day alone could not say."""
+    now = 50 * DAY
+    history = trend_history(half_hourly(49 * DAY, 4))
+    kept = [*_kept(8, 21, 10.0), *_kept(43, 7, 10.5)]
+    result = analyse(history, PARAMETERS, MonitorOptions(), now, kept=kept)
+    alarm = result.trends[AlarmKind.HYSTERESIS_DRIFT]
+    assert (alarm.active, alarm.basis) == (False, WEEKS)
