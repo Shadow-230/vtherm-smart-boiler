@@ -1532,6 +1532,17 @@ liczone po godzinach, w których było ogrzewanie.
   c.w.u.
 - Pierwsza opublikowana wersja i zawartość repozytorium (decyzja 16): wersja po niezależnym
   sprawdzeniu 0.2.2 i przy K4 — tymczasowo wersja wstępna 0.2.2b1, potem 0.2.2; zawartość przy K5.
+- Przerwa przed ponownym startem (I13.6, 2026-11-26): sprawdzona w symulatorze i niezbudowana, więc
+  zasada 12 nie ma takiego wyjątku. Przerwa 3 minut po zatrzymaniu grzania nie zmniejszyła liczby
+  startów w żadnym przypadku: cykle VT 5, 10 i 15 minut, −5 °C i +8 °C z dobowym wahaniem, cykle
+  stref zgrane lub nie, z własnym 3-minutowym zegarem kotła i bez niego. TPI w VT uruchamia kocioł
+  raz na cykl, a przerwa krótsza od cyklu tylko skraca następny impuls; kocioł z własnym 3-minutowym
+  zegarem i tak tyle trzyma palnik. Przy skracaniu, gdy pokojowi brakuje 1 K, przerwa 5 minut
+  zmniejszyła liczbę startów tylko przy 5-minutowym cyklu VT, tak jak cykl 10-minutowy, który daje
+  przy tym cieplejsze pokoje; przy cyklu 10-minutowym nie zmniejszyła jej wcale, a pokoje były
+  chłodniejsze o najwyżej 0,13 K. Mniej startów daje dłuższy cykl VT (10–15 minut, rada wtyczki).
+  Nadal otwarte: czy własny zegar kotła działa po „wyłączeniu grzania” przez OpenTherm, oraz pokoje
+  z konwektorami z wentylatorem (niesymulowane).
 - Tymczasowe decyzje poniżej, oznaczone (K4), użytkownik potwierdza lub zmienia na przeglądzie
   przed tym, zanim cokolwiek trafi do prawdziwego kotła (`docs/en/development/plans/plan-0.2.md`,
   K4).

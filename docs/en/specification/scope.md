@@ -1457,6 +1457,16 @@ Starts per hour count the hours with heating.
 - The first published version and the repository's content (decision 16): the version after
   the independent check of 0.2.2 and at K4 — provisionally pre-release 0.2.2b1, then 0.2.2; the
   content at K5.
+- A restart pause (I13.6, 2026-11-26): tried on the simulator and not built, so principle 12 has no
+  such exception. A pause of 3 minutes after a heating stop cut no start in any case: VT's cycles of
+  5, 10 and 15 minutes, −5 °C and +8 °C with the daily swing, the zones' cycles in step or not, with
+  or without the boiler's own 3-minute timer. VT's TPI starts the boiler once per cycle, and a pause
+  shorter than the cycle only shortens the next pulse; a boiler with its own 3-minute timer already
+  holds the burner that long. With its cut-short at a room 1 K short, a 5-minute pause cut starts
+  only at VT's 5-minute cycle, as a 10-minute cycle does with warmer rooms; at a 10-minute cycle it
+  cut none and left the rooms up to 0.13 K colder. Fewer starts come from a longer VT cycle (10–15
+  minutes, the plugin's advice). Still open: whether a boiler's own timer acts after an OpenTherm
+  "heating off", and rooms with fan convectors (not simulated).
 - The provisional decisions below, marked (K4), are confirmed or changed by the user at the
   review before anything reaches a real boiler (`docs/en/development/plans/plan-0.2.md`, K4).
 

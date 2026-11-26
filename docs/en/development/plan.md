@@ -163,7 +163,8 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
   a large shortfall or hot water, never delaying a stop (Siemens LMS14,
   Vaillant's anti-cycle time; about 0.04 K at −5 °C) — and hysteresis on the heat call
   (ASHRAE Guideline 36). Both go against principle 12 (heating follows VT at once): the user's
-  decision.
+  decision. The restart pause was tried on the simulator at I13.6 (2026-11-26) and not built: it
+  cut no start (scope §11).
 - **Device templates** (the user's decisions of 2026-11-22): what differs between boiler
   connections moves into one YAML file per device, in three layers: protocol, behaviour and the
   routes to the device. After the first release, before the work on 0.3:
@@ -216,7 +217,7 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
 - 0.2, step I13 — `docs/en/development/plans/plan-0.2-i13.md`: the corrections from the
   literature — "Gives no heat" only while a room is withheld heat, the boiler link without
   chatter, the comfort correction's pace, the building's range and the verdict, the monitor's
-  figures, a restart pause (off by default), the modulation cap (opt-in), a longer outdoor mean
+  figures, a restart pause (tried, not built), the modulation cap (opt-in), a longer outdoor mean
   for heavy houses, the documents (the user's decision of 2026-11-26)
 - Device templates — `docs/en/development/plans/plan-device-templates.md`: one parameter file per
   boiler device, after the first release (the user's decisions of 2026-11-22)

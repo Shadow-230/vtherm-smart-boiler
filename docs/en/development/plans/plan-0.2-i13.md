@@ -76,13 +76,16 @@ simulator first.
 - The share of burns under 3 minutes beside the 10-minute share: the efficiency cost sits under
   3 minutes (Bennett et al. 2019, from Orr 2009).
 
-### I13.6 A restart pause (an exception to principle 12, off by default)
+### I13.6 A restart pause (an exception to principle 12, off by default) ✅
 
 Boilers' own anti-cycling timers wait 1–3 minutes and give way to a large deficit; a panel radiator
 keeps most of its output through 3–5 minutes, a fan convector far less (Boháč 2019, Bartusek
 2014). First a study on the simulator: 0, 3 and 5 minutes against VT cycles of 5, 10 and 15 minutes
 (starts, comfort, gas). If it helps: 3 minutes after a heating stop before the next start, cut short
 by a large shortfall or hot water, never delaying a stop, off by default, with its risk described.
+Not built: on the simulator the 3-minute pause cut no start in any case, and 5 minutes cut starts
+only at VT's 5-minute cycle, as a 10-minute cycle does with warmer rooms
+(`research/2026-11-26-i13-6-sim.md`; scope §11).
 
 ### I13.7 The modulation cap, opt-in
 
