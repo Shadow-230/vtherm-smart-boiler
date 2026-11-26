@@ -284,7 +284,7 @@ zasady bezpieczeństwa.
     usterkę; nieznane, gdy nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany)
     albo jeszcze nie wie. Jego atrybuty pokazują wołające pokoje i to, kiedy kończy się
     opóźnienie włączenia VT.
-  - **Wołające o ciepło** — pokoje wołające teraz i które to są.
+  - **Wołające o ciepło** — pokoje wołające teraz, które to są i na jakich obiegach.
   - Zdarzenie `vtherm_smart_boiler_boiler_call`, wysyłane przy zmianie wezwania i gdy kocioł
     centralny VT zaczyna czekać na opóźnienie włączenia, do twoich automatyzacji (`boiler_called`,
     `call_reason`, `activation_at`).
@@ -563,7 +563,7 @@ potwierdzenie.
 
 | Zakładka | Co pokazuje |
 |---|---|
-| Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i wołającymi pokojami. Instalację narysowaną z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat, pokoje i krzywa ją pokażą |
+| Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i liczbą wołających pokoi, tak jak liczy je wtyczka; administrator dostaje też odnośnik do strony Versatile Thermostat, gdzie są pokoje. Instalację narysowaną z ustawień, z obiegami, które teraz biorą wodę: tymi z wołającym pokojem, gdy wtyczka wzywa kocioł albo palnik pali na grzanie. W wąskiej karcie obiegi są wymienione z nazwy pod rysunkiem. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat i krzywa ją pokażą |
 | Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
 | Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn. Przy nieznanej wartości mówi, dlaczego |
 | Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze. Starty grzania palnika według godzin z ostatnich 4 tygodni |
@@ -584,8 +584,10 @@ sterowania**, **Sterowanie włączone**), dokąd strona prowadzi administratora.
 
 **Co pokazuje, a czego nie.** Strona pokazuje tylko to, co wtyczka i Home Assistant już wiedzą.
 Punkty krzywej, palenia, tygodnie, sygnatura i dziennik pochodzą z wtyczki, a nie z drugiej kopii
-jej zasad. Wartości, której encja nie jest wybrana w ustawieniach, strona nie pokazuje. Nieznana
-wartość to luka, nigdy ostatnia znana przeniesiona dalej. Ostatnie 24 h i ostatnie 7 dni
+jej zasad. Strona nie czyta niczego z VT: nie ma listy pokoi ani temperatur i nastaw
+termostatów; są na własnej stronie VT. Wartości, której encja nie jest wybrana w ustawieniach,
+strona nie pokazuje. Nieznana wartość to luka, nigdy ostatnia znana przeniesiona dalej. Ostatnie
+24 h i ostatnie 7 dni
 pochodzą z recordera Home Assistanta (domyślnie 10 dni). Strona używa języka twojego profilu
 (angielski i polski; inne języki widzą angielski) oraz jasnego albo ciemnego motywu i działa na
 telefonie. Godziny idą za ustawieniem strefy czasowej w twoim profilu. Dni liczone przez wtyczkę
@@ -1294,7 +1296,7 @@ domyślnie wyłączone.
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
 | Nie daje ciepła | włączone, gdy kocioł nie daje pokojom ciepła, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
-| Wołające o ciepło | pokoje wołające teraz i które to są |
+| Wołające o ciepło | pokoje wołające teraz, które to są i na jakich obiegach |
 | Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, oddane, a w pomieszczeniu grozi mróz, i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
 | Wyzeruj zmierzone straty ciepła, Wyzeruj zmierzony próg grzania | zapominają zmierzone wartości budynku |

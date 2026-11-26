@@ -271,7 +271,7 @@ temperature and its safety rules.
     delay, the boiler reports a fault; unknown while it does not control the boiler (control off,
     blocked, handed back) or cannot tell yet. Its attributes show the rooms calling and when VT's
     activation delay ends.
-  - **Calling for heat** — the rooms calling now, and which.
+  - **Calling for heat** — the rooms calling now, which they are, and the circuits they are on.
   - The event `vtherm_smart_boiler_boiler_call`, fired when the call changes and when VT's
     central boiler begins to wait its activation delay, for your automations (`boiler_called`,
     `call_reason`, `activation_at`).
@@ -535,7 +535,7 @@ Only an administrator can change anything on it, and every change asks for confi
 
 | Tab | What it shows |
 |---|---|
-| Overview | The status with its reasons and whether **Control** is on — an administrator gets **Change in settings**, which opens the plugin's page in Home Assistant's settings, where control is switched; its flame is filled while the burner burns, and outlined in the heating colour while the boiler is called for heat between burns. Tiles for the water the plugin asks, flow, return, outdoor, flame and the rooms calling. The installation drawn from the settings, with each circuit's rooms and whether they take heat. The heating curve with "where we are", the last 7 days' decisions and a preview of changes, drawn as boiler manuals draw it: warmer on the left, colder on the right. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic, the rooms and the curve show it |
+| Overview | The status with its reasons and whether **Control** is on — an administrator gets **Change in settings**, which opens the plugin's page in Home Assistant's settings, where control is switched; its flame is filled while the burner burns, and outlined in the heating colour while the boiler is called for heat between burns. Tiles for the water the plugin asks, flow, return, outdoor, flame and how many rooms call, as the plugin counts them; an administrator also gets a link to Versatile Thermostat's page, where the rooms are. The installation drawn from the settings, with the circuits taking water now: those with a room calling, while the plugin calls the boiler or the burner burns for heating. In a narrow card the circuits are listed by name below the drawing. The heating curve with "where we are", the last 7 days' decisions and a preview of changes, drawn as boiler manuals draw it: warmer on the left, colder on the right. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic and the curve show it |
 | Burner | The burner's metrics; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
 | Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day; the change against yesterday, cause by cause. A value not known says why |
 | Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature. The burner's heating starts by hour over the last 4 weeks |
@@ -555,9 +555,11 @@ Control is not switched from the page: it is switched in the plugin's settings (
 
 **What it shows, and what not.** The page shows only what the plugin and Home Assistant already
 know. The curve's points, the burns, the weeks, the signature and the journal come from the
-plugin, not from a second copy of its rules. A value whose entity is not picked in the settings
-is not shown. An unknown value is a gap, never the last one carried on. The last 24 h and the
-last 7 days come from Home Assistant's recorder (10 days by default). The page follows your
+plugin, not from a second copy of its rules. The page reads nothing of VT: it has no list of
+rooms, and no thermostat's temperature or target; those are on VT's own page. A value whose
+entity is not picked in the settings is not shown. An unknown value is a gap, never the last one
+carried on. The last 24 h and the last 7 days come from Home Assistant's recorder (10 days by
+default). The page follows your
 profile's language (English and Polish; other languages show English) and the light or dark
 theme, and it works on a phone. Times follow your profile's time zone setting. The days the plugin
 counts, and the starts by hour, are days in Home Assistant's time zone; where your profile's zone
@@ -1243,7 +1245,7 @@ disabled by default.
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
 | Gives no heat | on while the boiler gives the rooms no heat, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
-| Calling for heat | the rooms calling now, and which |
+| Calling for heat | the rooms calling now, which they are, and the circuits they are on |
 | Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, handed back while a room is near freezing and the others |
 | Reset comfort correction | sets the comfort correction back to 0 |
 | Reset measured heat loss, Reset measured heating threshold | forget the measured building values |

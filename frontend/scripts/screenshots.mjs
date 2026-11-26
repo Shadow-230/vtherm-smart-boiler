@@ -204,6 +204,8 @@ for (const view of VIEWS) {
     await page.locator("vtherm-smart-boiler-curve button.outline").click();
     await page.locator("vtherm-smart-boiler-curve button.handle").waitFor();
     const handle = page.locator("vtherm-smart-boiler-curve button.handle");
+    // The mouse reaches only what is on the screen: a taller part above can push the point below.
+    await handle.scrollIntoViewIfNeeded();
     const box = await handle.boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();

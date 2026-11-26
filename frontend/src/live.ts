@@ -1,6 +1,8 @@
 // What the overview shows now, from Home Assistant's entity states: the status with its reasons,
 // the Control switch, and the tiles. A pure function: the component draws what it returns. A value
-// whose entity is not picked in the settings is not shown; nothing is filled in.
+// whose entity is not picked in the settings is not shown; nothing is filled in. Nothing of VT is
+// read (plan-0.2-i12.md, decision 6): the rooms calling are the plugin's own count, with a link to
+// VT's own page for the rooms themselves.
 import { formatNumber, formatTemperature, numberOf } from "./format";
 import type { HassEntity, Installation } from "./types";
 
@@ -11,7 +13,12 @@ export interface Tile {
   label: string;
   value: string;
   detail: string;
+  /** A page of Home Assistant the tile leads to, in Home Assistant's settings: an administrator's. */
+  link?: { path: string; text: string };
 }
+
+/** VT's own page in Home Assistant's settings, where its thermostats — the rooms — are. */
+export const VT_PATH = "/config/integrations/integration/versatile_thermostat";
 
 export interface StatusView {
   title: string;
@@ -62,15 +69,11 @@ function plugin(inputs: LiveInputs, key: string): HassEntity | undefined {
   return state(inputs, inputs.installation.entities[key]);
 }
 
-/** Every zone of the installation, once — a zone in two circuits counts once. */
-export function zoneIds(installation: Installation): string[] {
-  return [...new Set(installation.circuits.flatMap((c) => c.zones.map((z) => z.entity_id)))];
-}
-
-/** The zones calling for heat, as the plugin counts them ("Calling for heat"). */
-export function callingZones(inputs: LiveInputs): string[] {
-  const calling = plugin(inputs, "demand_count")?.attributes.calling_zones;
-  return Array.isArray(calling) ? calling.filter((z): z is string => typeof z === "string") : [];
+/** The circuits the rooms calling are on, as the plugin names them ("Calling for heat"): the
+ * circuits that take the water while the boiler heats. None where the plugin does not say. */
+export function callingCircuits(inputs: LiveInputs): string[] {
+  const calling = plugin(inputs, "demand_count")?.attributes.calling_circuits;
+  return Array.isArray(calling) ? calling.filter((c): c is string => typeof c === "string") : [];
 }
 
 function flameOn(inputs: LiveInputs): boolean {
@@ -208,16 +211,15 @@ function tiles(inputs: LiveInputs): Tile[] {
     });
   }
 
-  const zones = zoneIds(installation);
-  if (zones.length && plugin(inputs, "demand_count")) {
+  // How many rooms call, as the plugin counts them; the rooms themselves are VT's, on its page.
+  const calling = plugin(inputs, "demand_count");
+  if (calling) {
     out.push({
       key: "rooms",
       label: t("tiles.rooms"),
-      value: t("tiles.rooms_value", {
-        calling: String(callingZones(inputs).filter((z) => zones.includes(z)).length),
-        total: String(zones.length),
-      }),
+      value: formatNumber(numberOf(calling.state), language, 0),
       detail: t("tiles.rooms_detail"),
+      link: { path: VT_PATH, text: t("tiles.rooms_link") },
     });
   }
   return out;

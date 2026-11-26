@@ -125,13 +125,22 @@ docs/                                     the documentation, one folder per lang
   entry runs, `panel.py` also
   has Home Assistant load the same module on every page (`frontend.add_extra_js_url`, taken
   back at unload, an older address replaced after an update), so the overview's parts are in the
-  card picker as four cards — status and tiles, schematic and rooms, the curve, the last 24 h —
+  card picker as four cards — status and tiles, the schematic, the curve, the last 24 h —
   each the page's own part (`frontend/src/cards.ts`), with no settings: each finds the running
   entry through `vtherm_smart_boiler/installation`. Without Home Assistant's frontend running
-  nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
+  nothing is registered. The page reads nothing of VT and shows no rooms
+  ([`plan-0.2-i12.md`](../development/plans/plan-0.2-i12.md), decision 6): the tile of the rooms
+  shows the plugin's own count, **Calling for heat** (`demand_count`), with a link to VT's page
+  in the settings for an administrator; the schematic draws the water flowing while **Heat call**
+  (`boiler_called`) is on or the flame burns for heating, into the circuits that sensor's
+  attribute `calling_circuits` names — the circuits of the rooms calling, recorded, unlike the
+  rooms themselves (`calling_zones`), so the last 24 h replay them. The last 24 h read the
+  recorder's history of the boiler's signals, the plugin's own entities and the weather only.
+  Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
   `websocket_api.py` holds what the page reads, five read-only WebSocket commands for any
   signed-in user, each answering from the running entry (else the error `not_running`):
-  `vtherm_smart_boiler/installation` — the boiler, the circuits with their zones and emitters,
+  `vtherm_smart_boiler/installation` — the boiler, the circuits with their rooms and emitters
+  (the page draws the emitters; the rooms' IDs serve J4's check),
   the picked entity of every signal, the plugin's entities by key and the curve's settings;
   `vtherm_smart_boiler/curve` — the curve's points for the settings in use or for draft values,
   nothing saved, from `core/curve_view.py` (the curve at the room temperature in use, then the

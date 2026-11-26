@@ -600,7 +600,7 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
   (S-61).
 - **The Boiler page** (I10, `docs/en/development/plans/plan-0.2-i10.md`) shows what the plugin
   knows and decides, in every stage, and nothing it does not: the overview (status and the
-  Control state with a way to the settings, tiles, the installation's schematic with its rooms, the curve with "where we
+  Control state with a way to the settings, tiles, the installation's schematic with the circuits taking heat, the curve with "where we
   are", the last 24 h replayable), Burner, Use, Analyses (the energy signature, the starts by
   hour), Journal (what the plugin decided and why, 14 days) and Status and alarms; the
   overview's parts are also cards. Every law it shows is the plugin's own, sent to it — the page

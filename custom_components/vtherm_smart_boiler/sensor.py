@@ -698,8 +698,9 @@ class ControlStateSensor(ControlEntity, SensorEntity):
 
 
 class DemandCountSensor(ControlEntity, SensorEntity):
-    """The rooms calling for heat now (2026-10-14); unknown with no zone known. Which they are in
-    its attributes."""
+    """The rooms calling for heat now (2026-10-14); unknown with no zone known. Which they are,
+    and the circuits they are on, in its attributes. The circuits are recorded: the Boiler page
+    replays from them which circuits took water (I12.12); the rooms are not."""
 
     _unrecorded_attributes = frozenset({"calling_zones"})
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -714,7 +715,10 @@ class DemandCountSensor(ControlEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
-        return {"calling_zones": list(status.calling_zones)}
+        return {
+            "calling_zones": list(status.calling_zones),
+            "calling_circuits": list(status.calling_circuits),
+        }
 
 
 class ControlSetpointSensor(ControlEntity, SensorEntity):

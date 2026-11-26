@@ -1698,6 +1698,9 @@
         "state_attributes": {
           "calling_zones": {
             "name": "Wołające strefy"
+          },
+          "calling_circuits": {
+            "name": "Wołające obiegi"
           }
         }
       },

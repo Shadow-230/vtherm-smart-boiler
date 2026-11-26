@@ -632,7 +632,7 @@ wersja podrzędna 14), co właśnie robił.
   miejscu (S-61).
 - **Strona „Kocioł”** (I10, `docs/en/development/plans/plan-0.2-i10.md`) pokazuje, co wtyczka wie
   i decyduje, na każdym etapie, i nic poza tym: przegląd (stan i to, czy sterowanie jest włączone, z drogą do ustawień, kafelki,
-  schemat instalacji z pokojami, krzywa z „gdzie jesteśmy”, ostatnie 24 h do odtworzenia), Palnik,
+  schemat instalacji z obiegami biorącymi ciepło, krzywa z „gdzie jesteśmy”, ostatnie 24 h do odtworzenia), Palnik,
   Zużycie, Analizy (sygnatura energetyczna, starty według godzin), Dziennik (co wtyczka
   zdecydowała i dlaczego, 14 dni) oraz Stan i alarmy; części przeglądu są też kartami. Każde
   prawo, które pokazuje, jest własnym prawem wtyczki, przysłanym do strony — strona nie trzyma

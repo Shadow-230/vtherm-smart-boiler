@@ -1,5 +1,5 @@
 // The overview's parts as cards for the user's own dashboards (docs/en/development/plans/
-// plan-0.2-i10.md, I10.8): status and tiles, schematic and rooms, the curve, the last 24 h. Each
+// plan-0.2-i10.md, I10.8): status and tiles, the schematic, the curve, the last 24 h. Each
 // finds the plugin's one entry by itself (vtherm_smart_boiler/installation) and needs no settings;
 // each is the page's own part, with the same rules — only an administrator switches control or
 // saves the curve, after confirming. The plugin loads this module on every page of Home

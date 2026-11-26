@@ -30,9 +30,9 @@ const INSTALLATION: Installation = {
 };
 
 describe("the entities followed", () => {
-  it("are the signals, the plugin's own the overview reads, the zones once and the weather", () => {
+  it("are the signals, the plugin's own the overview reads and the weather — never VT's rooms", () => {
     expect(watchedEntities(INSTALLATION)).toEqual([
-      "binary_sensor.flame", "sensor.flow", "sensor.state", "switch.control", "climate.a", "weather.home",
+      "binary_sensor.flame", "sensor.flow", "sensor.state", "switch.control", "weather.home",
     ]);
     expect(watchedEntities({ ...INSTALLATION, weather: null })).not.toContain("weather.home");
   });

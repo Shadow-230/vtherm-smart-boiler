@@ -40,12 +40,11 @@
   if (query.get("dark")) document.body.classList.add("dark");
   const entity = (id, state, attributes = {}) =>
     [id, { entity_id: id, state, attributes, last_changed: "", last_updated: "" }];
+  // The rooms VT hands over, as the plugin's installation names them; the page reads none of
+  // VT's states (plan-0.2-i12.md, decision 6), so the sample holds none.
   const zones = ["climate.living_room", "climate.bedroom", "climate.kids_room", "climate.kitchen", "climate.bathroom"];
-  const names = {
-    pl: ["Salon", "Sypialnia", "Pokój dziecka", "Kuchnia", "Łazienka"],
-    en: ["Living room", "Bedroom", "Kids' room", "Kitchen", "Bathroom"],
-  }[lang];
-  const rooms = [[20.6, 21, 0.64], [18.7, 19, 0.38], [20.8, 21, 0.12], [21.2, 21, 0], [22.1, 22, 0]];
+  const circuitOf = { [zones[0]]: "floor", [zones[3]]: "floor" };
+  const circuitsOf = (calls) => ["radiators", "floor"].filter((c) => calls.some((z) => (circuitOf[z] ?? "radiators") === c));
   const states = Object.fromEntries([
     entity("sensor.control_state", "heating", {
       reasons_text: lang === "pl" ? "pokoje wołają o ciepło, woda według krzywej" : "rooms call for heat, water from the curve",
@@ -61,7 +60,7 @@
     entity("binary_sensor.flame", query.get("flame") === "0" ? "off" : "on"),
     entity("sensor.modulation", "34"),
     entity("binary_sensor.dhw", query.get("dhw") ? "on" : "off"),
-    entity("sensor.calling", "2", { calling_zones: [zones[0], zones[1]] }),
+    entity("sensor.calling", "2", { calling_zones: [zones[0], zones[1]], calling_circuits: circuitsOf([zones[0], zones[1]]) }),
     entity("sensor.starts_per_hour", "1.6", { unit_of_measurement: "/h" }),
     entity("sensor.median_burn", "17", { unit_of_measurement: "min" }),
     entity("sensor.short_burn_share", "9", { unit_of_measurement: "%" }),
@@ -111,9 +110,6 @@
     }),
     entity("button.reset_loss", "unknown"),
     entity("button.reset_threshold", "unknown"),
-    ...zones.map((z, i) => entity(z, "heat", {
-      friendly_name: names[i], current_temperature: rooms[i][0], temperature: rooms[i][1], on_percent: rooms[i][2],
-    })),
   ]);
   const combi = query.get("combi");
   const installation = {
@@ -208,16 +204,13 @@
       push("binary_sensor.dhw", dhw ? "on" : "off", null, lu);
       push("sensor.modulation", on ? "34" : "0", null, lu);
       push("binary_sensor.boiler_called", calls.length ? "on" : "off", null, lu);
-      push("sensor.calling", String(calls.length), { calling_zones: calls }, lu);
+      // The rooms calling are not recorded; the circuits they are on are.
+      push("sensor.calling", String(calls.length), { calling_circuits: circuitsOf(calls) }, lu);
       push("sensor.control_setpoint", calls.length ? sp.toFixed(1) : "unknown", { requested: calls.length ? sp : null, read_back: calls.length ? sp : null }, lu);
       push("sensor.control_state", calls.length ? "heating" : "idle", {
         reasons_text: calls.length ? (lang === "pl" ? "pokoje wołają o ciepło" : "rooms call for heat") : (lang === "pl" ? "żaden pokój nie woła" : "no room calls"),
         target: calls.length ? sp : null, curve_outdoor: o, curve_room: room,
       }, lu);
-      zones.forEach((z, i) => push(z, "heat", {
-        friendly_name: names[i], current_temperature: rooms[i][1] - (calls.includes(z) ? 0.6 : 0.1),
-        temperature: night ? rooms[i][1] - 2 : rooms[i][1], on_percent: calls.includes(z) ? 0.6 : 0,
-      }, lu));
     }
     return out;
   };

@@ -1,9 +1,11 @@
 // The hydraulic schematic (docs/en/development/plans/plan-0.2-i10.md, I10.3b), drawn from the
 // entry's settings — the boiler's hot water, the circuits and their emitters — so it fits any
-// installation, and coloured by what Home Assistant's states say now. Pure: the card draws the
-// paths and labels this returns. Coordinates are in a 1000 × 500 box (x 0–1000, y 70–570).
+// installation, and coloured by what Home Assistant's states say now — the boiler's signals and
+// the plugin's own entities; nothing of VT, and no rooms (plan-0.2-i12.md, decision 6). Pure: the
+// card draws the paths and labels this returns. Coordinates are in a 1000 × 500 box (x 0–1000,
+// y 70–570).
 import { formatNumber, formatTemperature, numberOf } from "./format";
-import { callingZones, type LiveInputs } from "./live";
+import { callingCircuits, type LiveInputs } from "./live";
 import type { CircuitInfo, Installation } from "./types";
 
 export type Mode = "heat" | "dhw" | "idle";
@@ -48,7 +50,6 @@ export interface CircuitDraw {
   cx: number;
   setting: number | null;
   need: number | null;
-  zones: string[];
 }
 
 export interface Label {
@@ -57,7 +58,7 @@ export interface Label {
   x: number;
   y: number;
   text: string;
-  /** Left out of a narrow card, where it would overlap: the rooms below name the circuits. */
+  /** Left out of a narrow card, where it would overlap: the list below names the circuits. */
   minor?: boolean;
   /** Ends at `x` instead of centring on it: a label left of the boiler never reaches its body. */
   end?: boolean;
@@ -107,13 +108,15 @@ export function emitterOf(circuit: CircuitInfo): Emitter {
   return circuit.zones.some((zone) => zone.emitter === "underfloor") ? "floor" : "radiator";
 }
 
-/** What the water does now: hot water while the boiler reports it; heating while a zone calls
- * or the plugin calls the boiler; otherwise nothing. */
+/** What the water does now: hot water while the boiler reports it; heating while the plugin
+ * calls the boiler for heat ("Heat call": VT's call as the plugin passes it on) or the burner
+ * burns — the flame alone says it where the plugin does not hold the boiler; otherwise nothing.
+ * Rooms calling alone do not make the water flow: VT's central boiler may not call yet. */
 export function modeOf(inputs: LiveInputs): Mode {
   const signal = (name: string) => inputs.states[inputs.installation.signals[name] ?? ""];
   if (signal("dhw_active")?.state === "on") return "dhw";
   const called = inputs.states[inputs.installation.entities.boiler_called ?? ""]?.state === "on";
-  return called || callingZones(inputs).length > 0 ? "heat" : "idle";
+  return called || signal("flame")?.state === "on" ? "heat" : "idle";
 }
 
 function circle(x: number, y: number, r: number): string {
@@ -172,7 +175,6 @@ export function drawSchematic(installation: Installation, mode: Mode, active: Se
     cx: CIRCUITS_FROM + width * (k + 0.5),
     setting: circuit.fixed_temperature,
     need: circuit.needed,
-    zones: [...new Set(circuit.zones.map((z) => z.entity_id))],
   }));
   const lastSupply = circuits.length ? circuits[circuits.length - 1].cx - 25 : 300;
   const lastReturn = circuits.length ? circuits[circuits.length - 1].cx + 35 : 300;
@@ -248,16 +250,13 @@ export function drawSchematic(installation: Installation, mode: Mode, active: Se
 }
 
 /** The whole schematic now: the drawing, and its labels — the boiler's state, the measured
- * temperatures where their entities are picked, each circuit's name and how it is fed. */
+ * temperatures where their entities are picked, each circuit's name and how it is fed. The
+ * circuits taking water are those the plugin names with the rooms calling ("Calling for heat",
+ * recorded, so the last 24 h show them too). */
 export function schematicView(inputs: LiveInputs): Schematic {
   const { installation, states, language, t } = inputs;
   const mode = modeOf(inputs);
-  const calling = new Set(callingZones(inputs));
-  const active = new Set(
-    installation.circuits
-      .filter((c) => c.zones.some((z) => calling.has(z.entity_id)))
-      .map((c) => c.id),
-  );
+  const active = new Set(callingCircuits(inputs));
   const { paths, circuits, hotWater } = drawSchematic(installation, mode, active);
   const signal = (name: string) => states[installation.signals[name] ?? ""];
   const flame = signal("flame")?.state === "on";
@@ -311,38 +310,4 @@ export function schematicView(inputs: LiveInputs): Schematic {
     labels.push({ kind: "text", x: c.cx, y: 520, text: fed, minor: true });
   }
   return { paths, circuits, hotWater, mode, labels, flame };
-}
-
-export interface RoomView {
-  entityId: string;
-  name: string;
-  temperature: string;
-  target: string;
-  /** How hard the room's own controller heats, 0–100; `null` where VT does not say. */
-  demand: number | null;
-  calling: boolean;
-}
-
-/** The rooms of each circuit, as VT shows them, and whether the plugin counts them calling. */
-export function roomsView(inputs: LiveInputs, circuits: CircuitDraw[]): RoomView[][] {
-  const { states, language } = inputs;
-  const calling = new Set(callingZones(inputs));
-  return circuits.map((circuit) =>
-    circuit.zones.map((entityId) => {
-      const zone = states[entityId];
-      const attributes = zone?.attributes ?? {};
-      const onPercent = numberOf(String(attributes.on_percent ?? ""));
-      const valve = numberOf(String(attributes.valve_open_percent ?? ""));
-      const demand = onPercent != null ? onPercent * 100 : valve;
-      const name = attributes.friendly_name;
-      return {
-        entityId,
-        name: typeof name === "string" && name ? name : entityId,
-        temperature: formatTemperature(numberOf(String(attributes.current_temperature ?? "")), language),
-        target: formatTemperature(numberOf(String(attributes.temperature ?? "")), language),
-        demand: demand == null ? null : Math.max(0, Math.min(100, Math.round(demand))),
-        calling: calling.has(entityId),
-      };
-    }),
-  );
 }

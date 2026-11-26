@@ -40,9 +40,11 @@ describe("localize", () => {
 
 describe("localize with values", () => {
   it("puts the values in", () => {
-    expect(localize("pl", "tiles.rooms_value", { calling: "2", total: "5" })).toBe("2 z 5");
+    expect(localize("pl", "schematic.fixed_valve", { value: "35" })).toBe("zawór termostatyczny 35 °C");
   });
   it("leaves a placeholder it has no value for", () => {
-    expect(localize("en", "tiles.rooms_value", { calling: "2" })).toBe("2 of {total}");
+    expect(localize("en", "schematic.aria", { status: "idle" })).toBe(
+      "Installation: idle. Circuits taking heat: {circuits}.",
+    );
   });
 });

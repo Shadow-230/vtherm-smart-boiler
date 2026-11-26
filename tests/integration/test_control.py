@@ -13322,9 +13322,38 @@ async def test_the_rooms_calling_are_counted_and_named(rig: Rig) -> None:
     count = rig.state("sensor", "demand_count")
     assert count.state == "1"
     assert count.attributes["calling_zones"] == [rig.zones.entities["living"]]
+    assert count.attributes["calling_circuits"] == ["main"]
     assert "active_devices" not in count.attributes
     assert rig.hass.states.get("sensor.boiler_demand_power") is None
     assert rig.state("binary_sensor", "boiler_called").state == "on"
+
+
+async def test_the_circuits_of_the_rooms_calling_are_named(rig: Rig) -> None:
+    """I12.12: the circuits the rooms calling are on — what the Boiler page draws taking water,
+    with no room read — recorded, so its last 24 h replay them; the rooms are not recorded. A
+    circuit whose rooms do not call is not named; none while no room calls."""
+    rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    living, bedroom = rig.zones.entities["living"], rig.zones.entities["bedroom"]
+    floor = {"id": "floor", "control": "passive_fixed", "fixed_temperature": 35}
+    entry_options = with_circuit(rig, {"zones": [living]})
+    entry_options["circuits"].append(floor | {"zones": [bedroom], "underfloor": [bedroom]})
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    await rig.advance(20)
+    count = rig.state("sensor", "demand_count")
+    assert (count.state, count.attributes["calling_circuits"]) == ("1", ["main"])
+    rig.zones.set("bedroom", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    await rig.advance(20)
+    count = rig.state("sensor", "demand_count")
+    assert (count.state, count.attributes["calling_circuits"]) == ("2", ["main", "floor"])
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    rig.zones.set("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    await rig.advance(20)
+    count = rig.state("sensor", "demand_count")
+    assert (count.state, count.attributes["calling_circuits"]) == ("0", [])
+    from custom_components.vtherm_smart_boiler.sensor import DemandCountSensor
+
+    assert DemandCountSensor._unrecorded_attributes == frozenset({"calling_zones"})
 
 
 async def test_gives_no_heat_follows_vts_decision(rig: Rig) -> None:

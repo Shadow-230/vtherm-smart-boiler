@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { localize } from "./localize";
-import { liveView, zoneIds, type LiveInputs } from "./live";
+import { VT_PATH, liveView, type LiveInputs } from "./live";
 import type { HassEntity, Installation } from "./types";
 
 function entity(entity_id: string, state: string, attributes: Record<string, unknown> = {}): HassEntity {
@@ -67,7 +67,9 @@ const HEATING = [
   entity("binary_sensor.flame", "on"),
   entity("sensor.modulation", "34"),
   entity("binary_sensor.dhw", "off"),
-  entity("sensor.calling", "2", { calling_zones: ["climate.a", "climate.c", "climate.elsewhere"] }),
+  entity("sensor.calling", "2", { calling_zones: ["climate.a", "climate.c"], calling_circuits: ["c1", "c2"] }),
+  // VT's own: the page reads none of them.
+  entity("climate.a", "heat", { current_temperature: 19.0, temperature: 21.0, on_percent: 0.6 }),
   entity("weather.home", "cloudy", { temperature: 4.4 }),
 ];
 
@@ -100,14 +102,30 @@ describe("liveView", () => {
     expect(tiles.return.detail).toBe("below 55 °C — the boiler condenses");
     expect(tiles.outdoor).toMatchObject({ value: "3.8 °C", detail: "the boiler's sensor" });
     expect(tiles.flame).toMatchObject({ value: "On", detail: "modulation 34 %" });
-    // A zone the installation does not have is not counted; a zone in two circuits counts once.
-    expect(tiles.rooms.value).toBe("2 of 3");
+  });
+
+  it("counts the rooms calling as the plugin does, with VT's page for the rooms themselves", () => {
+    const rooms = liveView(inputs(HEATING)).tiles.find((t) => t.key === "rooms");
+    expect(rooms).toEqual({
+      key: "rooms", label: "Rooms", value: "2", detail: "calling for heat",
+      link: { path: "/config/integrations/integration/versatile_thermostat", text: "Rooms in Versatile Thermostat" },
+    });
+    expect(VT_PATH).toBe("/config/integrations/integration/versatile_thermostat");
+    // Not known: a gap, never a number filled in.
+    const unknown = liveView(inputs([entity("sensor.calling", "unknown")])).tiles;
+    expect(unknown.find((t) => t.key === "rooms")?.value).toBe("—");
+    // Without the plugin's count — control not set up — no tile, whatever VT holds.
+    const noCount = { ...INSTALLATION, entities: {} };
+    const states = HEATING.filter((e) => e.entity_id !== "sensor.calling");
+    expect(liveView(inputs(states, noCount)).tiles.map((t) => t.key)).not.toContain("rooms");
   });
 
   it("writes the numbers in the user's language", () => {
     const tiles = liveView(inputs(HEATING, INSTALLATION, "pl")).tiles;
     expect(tiles.find((t) => t.key === "flow")?.value).toBe("40,6 °C");
-    expect(tiles.find((t) => t.key === "rooms")?.value).toBe("2 z 3");
+    expect(tiles.find((t) => t.key === "rooms")).toMatchObject({
+      value: "2", detail: "wołające o ciepło", link: { text: "Pokoje w Versatile Thermostat" },
+    });
   });
 
   it("says when the boiler has not confirmed, and when nothing is asked", () => {
@@ -170,11 +188,5 @@ describe("liveView", () => {
   it("marks an unavailable Control switch", () => {
     const view = liveView(inputs([entity("switch.control", "unavailable")]));
     expect(view.control).toMatchObject({ on: false, available: false });
-  });
-});
-
-describe("zoneIds", () => {
-  it("lists each zone once", () => {
-    expect(zoneIds(INSTALLATION)).toEqual(["climate.a", "climate.b", "climate.c"]);
   });
 });
