@@ -26,6 +26,7 @@ the same place under `docs/pl/`.
 | [Scope](specification/scope.md) | current | [yes](../pl/specification/scope.md) |
 | [Boiler connections and the device template](specification/device-connections.md) | current | [yes](../pl/specification/device-connections.md) |
 | [Reference codes](specification/references.md) | current | [yes](../pl/specification/references.md) |
+| [Literature](specification/literature.md) | current | [yes](../pl/specification/literature.md) |
 | [Development plan](development/plan.md) | current | [yes](../pl/development/plan.md) |
 | [Test environment](testing/test-environment.md) | current | [yes](../pl/testing/test-environment.md) |
 | [Test reports: how they are made](testing/reports/README.md) | current | [yes](../pl/testing/reports/README.md) |

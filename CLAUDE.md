@@ -98,8 +98,9 @@ Each topic lives only in its file; do not copy it here.
   (no root) and unpacked into `.tools/chromium-libs/` (`scripts/bootstrap_browser.sh`); any
   other package needs the user's consent first. Consented 2026-11-26: useful literature is kept
   only in the git-ignored `research/literature/`, each file listed with its source and licence in
-  its `INDEX.md` — never in the repository, whatever its licence (the user, 2026-11-26); the
-  SmartPI project's documents at `/home/ai/projects/vtherm_smartpi/` may be read. Sources and documents of typical DIY boiler
+  its `INDEX.md` — never in the repository, whatever its licence; the repository holds only the
+  references, in `docs/en/specification/literature.md` (the user, 2026-11-26); the SmartPI
+  project's documents at `/home/ai/projects/vtherm_smartpi/` may be read. Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read

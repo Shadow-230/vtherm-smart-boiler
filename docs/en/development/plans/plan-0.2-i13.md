@@ -7,9 +7,10 @@ added.
 
 After the analysis of Smart Boiler's code against the literature (five reviews,
 `research/2026-11-26-lit-*.md`, summary `research/2026-11-26-lit-summary.md`; the open-licence
-sources kept locally in the git-ignored `research/literature/`, never in the repository), the user:
-"Wchodzi wszystko" — every proposal goes in. The VT issue (I12.14) stays aside. The test
-environment's move to Home Assistant 2026.11 and J4 come after these steps (I12.15).
+sources kept locally in the git-ignored `research/literature/`, never in the repository; their
+references in `docs/en/specification/literature.md`), the user: "Wchodzi wszystko" — every proposal
+goes in. The VT issue (I12.14) stays aside. The test environment's move to Home Assistant 2026.11
+and J4 come after these steps (I12.15).
 
 The restart pause (I13.6) and the modulation cap (I13.7) were planned for 0.3; they come in here.
 The restart pause is a stated exception to principle 12 (heating follows VT at once), now decided

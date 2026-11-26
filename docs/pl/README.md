@@ -26,6 +26,7 @@ samym miejscu pod `docs/pl/`.
 | [Zakres](specification/scope.md) | aktualny | [tak](../en/specification/scope.md) |
 | [Połączenia kotła i szablon urządzenia](specification/device-connections.md) | aktualny | [tak](../en/specification/device-connections.md) |
 | [Kody odniesień](specification/references.md) | aktualny | [tak](../en/specification/references.md) |
+| [Literatura](specification/literature.md) | aktualny | [tak](../en/specification/literature.md) |
 | [Plan rozwoju](development/plan.md) | aktualny | [tak](../en/development/plan.md) |
 | [Środowisko testowe](testing/test-environment.md) | aktualny | [tak](../en/testing/test-environment.md) |
 | [Raporty z testów: jak powstają](testing/reports/README.md) | aktualny | [tak](../en/testing/reports/README.md) |
