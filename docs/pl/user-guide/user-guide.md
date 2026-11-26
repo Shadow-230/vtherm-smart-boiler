@@ -216,6 +216,20 @@ Co znaczą werdykt i wartości budynku:
   szerszym niż ±50 % są pokazywane, ale nieużywane. Gdy po obu stronach progu grzania leży co
   najmniej tydzień dni, próg wyznaczają same dni. Zmierzone straty mniejsze od projektowych są
   częste: oznaczają przewymiarowany kocioł, a nie błąd pomiaru.
+- **Krótkie palenia** są liczone dwa razy: krótsze niż długość krótkiego palenia (domyślnie
+  10 minut) i krótsze niż 3 minuty — tam ginie większość sprawności traconej na startach
+  i zatrzymaniach. Oba udziały są pokazywane obok siebie.
+- **Gaz na stopniodzień z tygodnia** jest pokazywany dopiero od 14 stopniodni w tygodniu
+  (średnio dni 2 °C poniżej progu grzania). W łagodniejszym tygodniu sama niepewność progu
+  grzania, około 2 °C, mogłaby zmienić stopniodni o tyle, ile ich jest, więc wynik mówiłby mało
+  o domu. Gdy sygnatura energetyczna ma linię, każdy tydzień dostaje pasmo: gdzie
+  prawdopodobnie leży jego wartość, z tego, jak bardzo dni tego domu rozrzucone są wokół linii.
+- **Ciepła woda a pogoda.** Ciepłej wody używa się mniej więcej tyle samo przez cały rok. Jeśli
+  gaz, który wtyczka liczy jako ciepłą wodę, przez co najmniej 4 tygodnie wyraźnie idzie za
+  temperaturą zewnętrzną (spada albo rośnie o 3 % swojej średniej lub więcej na każdy stopień),
+  zgłoszenie mówi, że ciepła woda i ogrzewanie mogą być źle rozdzielone; sprawdź sygnały ciepłej
+  wody i ogrzewania. Straty ciepła i gaz na stopniodzień miałyby ten sam błąd. To tylko
+  informacja.
 - **Zużycie wobec wczoraj** porównuje dwa dni; zużycie z dnia na dzień zmienia się samo sporo
   (budynek jeszcze ciepły albo zimny po wczoraj, słońce, ludzie). Gdy część, której żadna
   przyczyna nie wyjaśnia, mieści się w 15 % zużycia z dnia poprzedniego, jest oznaczona jako
@@ -606,8 +620,8 @@ potwierdzenie.
 | Zakładka | Co pokazuje |
 |---|---|
 | Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i liczbą wołających pokoi, tak jak liczy je wtyczka; administrator dostaje też odnośnik do strony Versatile Thermostat, gdzie są pokoje. Instalację narysowaną z ustawień, z obiegami, które teraz biorą wodę: tymi z wołającym pokojem, gdy wtyczka wzywa kocioł albo palnik pali na grzanie. W wąskiej karcie obiegi są wymienione z nazwy pod rysunkiem. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat i krzywa ją pokażą |
-| Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
-| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn. Przy nieznanej wartości mówi, dlaczego |
+| Palnik | Metryki palnika, krótkie palenia z udziałem tych poniżej 3 minut obok; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
+| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni, każdy tydzień od 14 stopniodni i z prawdopodobnym pasmem z rozrzutu dni tego domu; zmianę wobec przedwczoraj według przyczyn. Przy nieznanej wartości mówi, dlaczego |
 | Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze, każda z prawdopodobnym zakresem; gdy oba zakresy na siebie zachodzą, mówi, że różnicy nie widać. Starty grzania palnika według godzin z ostatnich 4 tygodni |
 | Dziennik | Co wtyczka zdecydowała i dlaczego w ostatnich 14 dniach. Pokazuje jej starty i zatrzymania, przejęcie kotła przez sterowanie i jego oddanie, wezwanie ciepła, zapisaną nastawę wody (zmiany o 1 K i więcej), potrzebę obiegu, alarmy i zapisane ustawienia. Widać to jako pasy, które przybliża się przeciągnięciem, i jako listę z filtrami |
 | Stan i alarmy | Werdykt sterowania z powodami oraz moce kotła wobec tego, czego potrzebuje dom; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
@@ -1176,7 +1190,7 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Spaliny coraz cieplejsze od powrotu | spaliny cieplejsze od powrotu bardziej niż wcześniej | umów serwis |
 | Częste starty | alarm: więcej startów w ostatniej godzinie niż limit (12); ostrzeżenie: ponad 6 na godzinę przez ostatnie 3 godziny | sprawdź cykl w VT (10–15 min), krzywą i limity |
 | Niestabilny zapłon | w ciągu doby wiele cykli pracy palnika gaśnie wkrótce po zapłonie | zleć sprawdzenie |
-| Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
+| Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa: o więcej niż 3 K od ostatniego dnia do dni 4–8 wcześniej (usterka) albo w ciągu tygodni — mediany dzienne z ostatniego tygodnia wobec tych z 3 tygodni kończących się 3 tygodnie wcześniej, o więcej niż 3 K albo dwa razy zwykły rozrzut z dnia na dzień (powolny dryf, widać już około 1 K na tydzień). Jego atrybut mówi, które | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu przez jego czas (obieg prosto z kotła: nie podczas grzania ciepłej wody) | sprawdź jego maksimum |
 | Długie palenie bez nagrzewania | palnik pracuje 3 h — razem z przerwami do 30 min, więc liczy się też kocioł, który ciągle gaśnie i startuje — a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń (woda choć raz w ostatnich 30 minutach doszła do nastawy albo jest ponad nią, bo kocioł pracuje na minimum), kocioł na granicy mocy (płomień cały czas, poniżej nastawy przy wysokiej modulacji), czy woda za ciepła | woda za chłodna: podnieś krzywą (korekta, gdy jest włączona, ją podnosi); za ciepła: obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
@@ -1307,6 +1321,7 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Nie udało się odczytać pamięci wtyczki o kotle | dla bezpieczeństwa oddała kocioł |
 | Wtyczka nie może zapisać swojej pamięci o kotle | pełny dysk albo pamięć tylko do odczytu |
 | Kocioł może nadal trzymać wartość z Smart Boiler for Versatile Thermostat | oddaj kocioł ręcznie |
+| Ciepła woda i ogrzewanie mogą być źle rozdzielone | gaz liczony jako ciepła woda idzie za temperaturą zewnętrzną; sprawdź sygnały ciepłej wody i ogrzewania. Tylko informacja |
 
 Ostatnie pojawia się, gdy integracja została usunięta, zanim zdążyła po sobie posprzątać.
 
@@ -1379,10 +1394,10 @@ domyślnie wyłączone.
 | Starty c.o. na godzinę | starty palnika do ogrzewania, na godzinę z ostatnich 24 h; cykle, które mogły być ciepłą wodą, osobno |
 | Mediana palenia c.o. | typowa długość cyklu pracy palnika przy ogrzewaniu |
 | Godziny palnika c.o. (24 h) *ukryta* | godziny pracy palnika do ogrzewania z ostatnich 24 h |
-| Krótkie palenia c.o. *ukryta* | udział cykli krótszych niż długość krótkiego palenia (domyślnie 10 min) |
+| Krótkie palenia c.o. *ukryta* | udział cykli krótszych niż długość krótkiego palenia (domyślnie 10 min); udział tych poniżej 3 minut w atrybutach |
 | Udział kondensacji | udział czasu palenia c.o. z powrotem poniżej 55 °C |
 | Stopniodni (7 dni) *ukryta* | stopniodni z tygodnia, liczone od progu grzania |
-| Gaz na stopniodzień | gaz na stopniodzień, mierzony wskazanym licznikiem gazu, inaczej szacowany |
+| Gaz na stopniodzień | gaz na stopniodzień z ostatnich 7 dni, mierzony wskazanym licznikiem gazu, inaczej szacowany; brak w tygodniu poniżej 14 stopniodni |
 | Zużycie wobec wczoraj *ukryta* | zmiana zużycia wobec dnia poprzedniego, rozbita na pogodę, ciepłą wodę, ustawienia i resztę — reszta oznaczona, gdy to normalna zmienność z dnia na dzień |
 | Werdykt sterowania | warto włączyć, nie warto włączać albo jeszcze za mało danych — z uzasadnieniem |
 | Problemy z sygnałami | ile wskazanych sygnałów ma problem; stan każdego w atrybutach |

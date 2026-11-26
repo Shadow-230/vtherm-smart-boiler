@@ -128,7 +128,11 @@ export class SmartBoilerStatus extends LitElement {
             ? this.t("checks.days", { value: this.number(v, 1) })
             : this.number(v, 0);
     const value = shown(reason.value);
-    return reason.limit == null ? value : this.t("checks.against", { value, limit: shown(reason.limit) });
+    const against = reason.limit == null ? value : this.t("checks.against", { value, limit: shown(reason.limit) });
+    // I13.5: beside the short burns' share, the share under 3 minutes.
+    return reason.very_short_share == null
+      ? against
+      : `${against} · ${this.t("checks.under_3_min", { value: `${this.number(reason.very_short_share * 100, 0)} %` })}`;
   }
 
   private reasonNote(reason: ReasonInfo): string {

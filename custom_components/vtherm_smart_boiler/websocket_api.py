@@ -231,7 +231,8 @@ def ws_curve(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, A
 def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
     """The daily summaries kept (a year at most), oldest first, in their stored form; ``since``:
     only the days that start at or after it (a Unix time). With them, the last 12 weeks' gas per
-    degree-day as ``core.weekly`` reckons it, and the energy signature as ``core.signature``
+    degree-day as ``core.weekly`` reckons it, each with its band from the signature's scatter,
+    and the energy signature as ``core.signature``
     fits it through the heating threshold in use (I10.7), both over every day kept."""
     coordinator = _coordinator(hass)
     if coordinator is None:
@@ -248,7 +249,16 @@ def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
         msg["id"],
         {
             "days": [day.to_dict() for day in days if since is None or day.start >= since],
-            "weeks": [asdict(week) for week in weekly_use(days, WEEKS_SHOWN)],
+            "weeks": [
+                asdict(week)
+                for week in weekly_use(
+                    days,
+                    WEEKS_SHOWN,
+                    # I13.5: the band from the house's own scatter — the watched days' line,
+                    # else the controlled days'.
+                    signature.observing.fitted or signature.control.fitted,
+                )
+            ],
             "signature": _signature(signature),
             "gas_unit": _meter_unit(hass, coordinator),
         },

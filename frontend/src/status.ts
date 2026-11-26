@@ -34,6 +34,8 @@ export interface ReasonInfo {
   limit: number | null;
   changed_by_control?: boolean;
   detail?: string;
+  /** I13.5: beside the short burns' share, the share under 3 minutes (0–1). */
+  very_short_share?: number;
 }
 
 const KIND_ORDER: ReasonKind[] = ["problem", "missing", "data", "fine"];
@@ -71,6 +73,7 @@ export function verdictReasons(entity: HassEntity | undefined): ReasonInfo[] {
         limit: typeof r.limit === "number" ? r.limit : null,
         ...(typeof r.changed_by_control === "boolean" ? { changed_by_control: r.changed_by_control } : {}),
         ...(typeof r.detail === "string" ? { detail: r.detail } : {}),
+        ...(typeof r.very_short_share === "number" ? { very_short_share: r.very_short_share } : {}),
       },
     ];
   });

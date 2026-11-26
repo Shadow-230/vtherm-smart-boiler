@@ -84,6 +84,8 @@ class Reason:
     # Where a code says more: why a criterion was not judged (``ESTIMATE_ONLY``), or why a
     # problem is not changed (``WATER_NOT_CONTROLLED``).
     detail: str | None = None
+    # I13.5: beside the short burns' share, the share under 3 minutes, where known.
+    very_short_share: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +256,7 @@ def assess(
     judged = 0  # S-32: criteria whose input was known, found fine, a problem or in between
     for counted, found in (
         _starts_criterion(heating.starts_per_hour, opts),
-        _burns_criterion(heating.short_burn_share, opts),
+        _burns_criterion(heating.short_burn_share, opts, heating.very_short_burn_share),
         _condensing_criterion(condensing, opts),
         _load_criterion(load_below_min, opts, load_estimate_only),
     ):
@@ -291,9 +293,11 @@ def _starts_criterion(starts: float | None, opts: VerdictOptions) -> tuple[int, 
     return 1, []
 
 
-def _burns_criterion(short: float | None, opts: VerdictOptions) -> tuple[int, list[Reason]]:
+def _burns_criterion(
+    short: float | None, opts: VerdictOptions, very_short: float | None = None
+) -> tuple[int, list[Reason]]:
     """The share of short heating burns: judged when known; above its limit a problem control
-    does not change, else fine."""
+    does not change, else fine — the share under 3 minutes shown beside it (I13.5)."""
     if short is None:
         return 0, []
     if short > opts.short_burn_share:
@@ -303,9 +307,17 @@ def _burns_criterion(short: float | None, opts: VerdictOptions) -> tuple[int, li
             short,
             opts.short_burn_share,
             changed_by_control=False,
+            very_short_share=very_short,
         )
         return 1, [problem]
-    return 1, [Reason(ReasonCode.LONG_BURNS, ReasonKind.FINE, short, opts.short_burn_share)]
+    fine = Reason(
+        ReasonCode.LONG_BURNS,
+        ReasonKind.FINE,
+        short,
+        opts.short_burn_share,
+        very_short_share=very_short,
+    )
+    return 1, [fine]
 
 
 def _condensing_criterion(

@@ -1235,7 +1235,12 @@
         "name": "Godziny palnika c.o. (24 h)"
       },
       "short_burn_share": {
-        "name": "Krótkie palenia c.o."
+        "name": "Krótkie palenia c.o.",
+        "state_attributes": {
+          "under_3_min": {
+            "name": "Poniżej 3 minut (%)"
+          }
+        }
       },
       "condensing_share": {
         "name": "Udział kondensacji"
@@ -2542,6 +2547,13 @@
               "no_zone_data": "Brak danych o wezwaniach ciepła: brak pomocnika kotła centralnego VT i jeszcze brak historii pokoi"
             }
           },
+          "basis": {
+            "name": "Porównanie",
+            "state": {
+              "last_day": "Ostatni dzień wobec dni od 4 do 8 wcześniej",
+              "weeks": "Ostatni tydzień wobec 3 tygodni kończących się 3 tygodnie wcześniej"
+            }
+          },
           "limit": {
             "name": "Próg: zmiana (K)"
           }
@@ -2998,6 +3010,10 @@
     "vt_thermostats_not_counted": {
       "title": "Kocioł centralny Versatile Thermostat nie liczy części termostatów",
       "description": "{zones}: Versatile Thermostat przekazuje te termostaty wtyczce, ale jego kocioł centralny ich nie liczy, więc nie są pokojami wtyczki i nigdy nie włączą kotła. Jeśli kocioł grzeje te pokoje, zaznacz w VT w ustawieniach każdego z nich „Używane przez kocioł centralny”. Obieg, który ma któryś z nich na liście, do tego czasu nic z niego nie dostaje."
+    },
+    "dhw_split_suspect": {
+      "title": "Ciepła woda i ogrzewanie mogą być źle rozdzielone",
+      "description": "Gaz, który wtyczka liczy jako ciepłą wodę, zmienia się z temperaturą zewnętrzną: o {change} % swojej średniej dziennej na każdy stopień cieplej, w ciągu {days} dni. Ciepłej wody używa się mniej więcej tyle samo przez cały rok, więc część paleń ogrzewania może być liczona jako ciepła woda albo odwrotnie. Straty ciepła budynku i gaz na stopniodzień mają ten sam błąd. Sprawdź, czy sygnały ciepłej wody i ogrzewania są przypisane do właściwych encji i czy raportują. To tylko informacja: w sterowaniu nic się nie zmienia. Zniknie, gdy gaz na ciepłą wodę przestanie iść za pogodą."
     },
     "entity_removed": {
       "title": "Encja używana przez wtyczkę zniknęła",

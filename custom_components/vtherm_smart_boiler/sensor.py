@@ -44,6 +44,7 @@ from .core.signal_check import (
 )
 from .core.signals import Signal
 from .core.verdict import Reason, Verdict
+from .core.weekly import MIN_WEEK_DEGREE_DAYS
 from .core.zones import SelectionStatus
 from .entity import (
     DEMAND_ATTRIBUTES,
@@ -105,6 +106,13 @@ def _short_share(data: MonitorData) -> Value:
     return None if day is None else _percent(day.heating.short_burn_share)
 
 
+def _short_attributes(data: MonitorData) -> dict[str, Any]:
+    """I13.5: beside the short burns' share, the share under 3 minutes (%), where the
+    efficiency cost of cycling sits."""
+    day = _day(data)
+    return {} if day is None else {"under_3_min": _percent(day.heating.very_short_burn_share)}
+
+
 def _condensing(data: MonitorData) -> Value:
     day = _day(data)
     return None if day is None or day.condensing is None else _percent(day.condensing.value)
@@ -119,9 +127,15 @@ def _degree_days(data: MonitorData) -> Value:
 
 def _gas_per_degree_day(data: MonitorData) -> Value:
     """Gas per degree-day in the meter's unit; the unit is added by the sensor, which shows no
-    value until the meter's unit is known (P-75)."""
+    value until the meter's unit is known (P-75), nor over a week milder than
+    ``MIN_WEEK_DEGREE_DAYS`` (I13.5)."""
     week = _week(data)
-    return None if week is None else _round(week.gas_per_degree_day, 3)
+    if week is None or week.degree_days is None:
+        return None
+    degree_days = week.degree_days.estimated_total()
+    if degree_days is None or degree_days < MIN_WEEK_DEGREE_DAYS:
+        return None
+    return _round(week.gas_per_degree_day, 3)
 
 
 def _gas_attributes(data: MonitorData) -> dict[str, Any]:
@@ -151,6 +165,8 @@ def _reason(reason: Reason) -> dict[str, Any]:
         shown["changed_by_control"] = reason.changed_by_control
     if reason.detail is not None:
         shown["detail"] = reason.detail
+    if reason.very_short_share is not None:  # I13.5: beside the short burns' share
+        shown["very_short_share"] = round(reason.very_short_share, 3)
     return shown
 
 
@@ -329,6 +345,7 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_registry_visible_default=False,
         value_fn=_short_share,
+        attributes_fn=_short_attributes,
     ),
     BoilerSensorDescription(
         key="condensing_share",

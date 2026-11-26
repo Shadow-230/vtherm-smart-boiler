@@ -13,14 +13,17 @@ from enum import StrEnum
 from .alarms import (
     DEFAULT_FLUE_RISE_K,
     DEFAULT_HYSTERESIS_DRIFT_K,
+    LAST_DAY,
     NO_ZONE_DATA,
     Alarm,
     AlarmKind,
     compare_windows,
+    either_drift,
     flue_excess_samples,
     hysteresis_samples,
     pressure_trend,
     settle,
+    slow_hysteresis_drift,
     trend_warning,
 )
 from .building import LoadFit
@@ -130,7 +133,14 @@ def analyse(
             ),
             sizing=Sizing.from_parameters(parameters),
         ),
-        trends=_trends(history, full, now, options.verdict.condensing_boiler, previous or {}),
+        trends=_trends(
+            history,
+            full,
+            now,
+            options.verdict.condensing_boiler,
+            previous or {},
+            [*kept, *new_days],
+        ),
         report=report,
         report_unit=unit,
         outdoor=check,
@@ -145,10 +155,13 @@ def _trends(
     now: float,
     condensing: bool = True,
     previous: Mapping[AlarmKind, Alarm] | None = None,
+    days: Sequence[DaySummary] = (),
 ) -> dict[AlarmKind, Alarm]:
     """Slow drifts: falling pressure — judged with the water temperature taken into account, so
     a slow leak shows in winter too — a flue gas rising over the return, the burner's
-    hysteresis — from pauses the zones' demand filled, so the weather does not move it (P-29).
+    hysteresis — from pauses the zones' demand filled, so the weather does not move it (P-29):
+    the last day against days 4 to 8 before (a fault), and the kept ``days``' medians over weeks
+    (a slow drift, I13.5), whichever warns.
     A non-condensing boiler's flue temperature follows the return, and so the weather: its
     trend, like its absolute flue gas alarm, is left out. A trend that cannot be judged keeps
     its last state for an hour, then is unknown (S-16)."""
@@ -180,7 +193,7 @@ def _trends(
         kind = AlarmKind.HYSTERESIS_DRIFT
         demand = history.zone_calling(baseline[0], recent[1])
         if demand is None:  # no zone data: no pause can be told from one without demand
-            trends[kind] = Alarm(kind, None, limit=DEFAULT_HYSTERESIS_DRIFT_K, reason=NO_ZONE_DATA)
+            fast = Alarm(kind, None, limit=DEFAULT_HYSTERESIS_DRIFT_K, reason=NO_ZONE_DATA)
         else:
             flow = history.signal(Signal.FLOW)
             setpoint = history.signals.get(Signal.CH_SETPOINT)
@@ -189,7 +202,11 @@ def _trends(
                 hysteresis_samples(flow, burns_in(recent), setpoint, demand=demand),
                 min_samples=10,
             )
-            trends[kind] = trend_warning(kind, trend, DEFAULT_HYSTERESIS_DRIFT_K, direction=0)
+            fast = trend_warning(kind, trend, DEFAULT_HYSTERESIS_DRIFT_K, direction=0)
+        medians = [(d.start, d.hysteresis_median) for d in days if d.hysteresis_median is not None]
+        trends[kind] = either_drift(
+            replace(fast, basis=LAST_DAY), slow_hysteresis_drift(medians, now)
+        )
     before = previous or {}
     return {kind: settle(alarm, before.get(kind), now) for kind, alarm in trends.items()}
 

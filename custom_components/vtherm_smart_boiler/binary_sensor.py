@@ -224,11 +224,14 @@ class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
         alarm = self.coordinator.data.alarms.get(self.kind)
         if alarm is None:
             return {}
-        return {
+        shown = {
             "level": None if alarm.level is None else alarm.level.value,
             "limit": alarm.limit,
             "reason": alarm.reason,
         }
+        if alarm.basis is not None:  # I13.5: the hysteresis drift's last day, or its weeks
+            shown["basis"] = alarm.basis
+        return shown
 
 
 class LongBurnSensor(SmartBoilerEntity, BinarySensorEntity):

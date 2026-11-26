@@ -231,6 +231,22 @@ def test_gas_per_degree_day_leaves_hot_water_out() -> None:
     assert metered.gas.amount == pytest.approx(9.5)  # 10 on the meter, 0.5 of it hot water
 
 
+def test_the_hot_water_gas_is_kept_apart_for_its_self_check() -> None:
+    """I13.5: the gas of the burn known as hot water is given apart — from modulation its burn's
+    estimate, from a meter its share of the meter's rise; none where the heating gas is not
+    known whole."""
+    history = cycling_history(days=1)
+    history.signals[Signal.DHW_ACTIVE] = Series([(0, False), (5 * MIN, True), (15 * MIN, False)])
+    parameters = params(gas_at_min_power=0.4, gas_at_max_power=2.4)
+    assert summarize(history, parameters, 0, DAY).dhw_gas == pytest.approx(1.4 / 6)
+    history.signals[Signal.GAS_METER] = Series(
+        [(0, 100.0), (5 * MIN, 100.0), (15 * MIN, 100.5), (DAY, 110.0)]
+    )
+    assert summarize(history, parameters, 0, DAY + 1).dhw_gas == pytest.approx(0.5)
+    history.signals[Signal.GAS_METER] = Series([(HOUR, 100.0), (DAY, 110.0)])  # not from 0
+    assert summarize(history, parameters, 0, DAY + 1).dhw_gas is None
+
+
 def test_the_summary_counts_burns_of_unknown_kind_apart() -> None:
     history = History(signals={Signal.FLAME: Series([(0, False), (HOUR, True), (2 * HOUR, False)])})
     summary = summarize(history, ParameterSet(), 0, 3 * HOUR)

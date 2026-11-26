@@ -160,6 +160,7 @@
     "median_burn_detail": "the median heating burn",
     "short_burn_share": "Short burns",
     "short_burn_share_detail": "heating burns under {value} min",
+    "under_3_min": "under 3 min: {value} %",
     "burner_hours": "Burner hours",
     "burner_hours_detail": "heating, the last 24 h",
     "condensing_share": "Condensing",
@@ -189,6 +190,7 @@
     "weeks_hint": "How much gas the house needs for each degree of cold. The weather evens out, so the weeks compare. Lower is better.",
     "week": "Week of {date}: {value}",
     "week_none": "Week of {date}: {why}",
+    "week_band": "Week of {date}: {value} (likely {low}–{high}, from the house's own day-to-day scatter)",
     "why": {
       "no_week": "not known yet — the daily summaries are filled day by day",
       "days": "not known yet — it needs 7 whole days of data",
@@ -220,6 +222,7 @@
     "verdict_hint": "Whether control is worth enabling, from the days the plugin only watched the boiler. The reasons below say why.",
     "days": "{value} days",
     "against": "{value} (limit {limit})",
+    "under_3_min": "under 3 min: {value}",
     "sizing": "The boiler against the house",
     "sizing_min": "lowest output {value} kW",
     "sizing_max": "highest output {value} kW",

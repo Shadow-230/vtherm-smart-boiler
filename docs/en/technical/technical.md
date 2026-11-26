@@ -150,7 +150,10 @@ docs/                                     the documentation, one folder per lang
   limits, as control decides it before the comfort correction, a circuit's need and the ramp),
   with the settings' own checks by their translation keys; `vtherm_smart_boiler/days` — the
   daily summaries in their stored form, with the last 12 weeks' gas per degree-day reckoned by
-  `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule),
+  `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule;
+  none under 14 degree-days; each with its 95 % band, `low` and `high`, from the scatter of the
+  signature's watched line, else its controlled one, the week's spread taking the days'
+  correlation),
   the energy signature fitted by `core/signature.py` — each day's heating gas per 24 h against
   its mean outdoor temperature, the days only watched and the days under control apart, each
   group's line through its heating days (colder than the heating threshold in use, with heating
@@ -217,7 +220,15 @@ each side of the threshold in use, else below that threshold; the loss carries i
 widened by the lag-1 autocorrelation of the residuals in time order (`core/regression.py`:
 effective sample size, Student's t), held within ±15 % and ±100 %; above ±50 % the loss is
 shown, never used. The fit is checked on `sim/house_days.py`, a house by the day with a known
-loss and correlated errors (`tests/sim/test_building_range.py`).
+loss and correlated errors (`tests/sim/test_building_range.py`). Each day summary also keeps its
+burns under 3 minutes (`very_short_burns`), the gas of its hot-water burns (`dhw_gas`) and the
+median of its hysteresis samples (`hysteresis_median`, from 5 pauses); days kept before have
+none and still read. `core/dhw_check.py` fits the kept days' hot-water gas against their mean
+outdoor temperature and raises the information issue `dhw_split_suspect` while the slope is
+clear (28 days, an 8 K spread, at least 3 widened standard errors and 3 % of the mean per K).
+The hysteresis warning is either check's (`either_drift`): the last day against days 4–8
+before, or the last week's daily medians against those of days 21–42 before
+(`slow_hysteresis_drift`); its attribute `basis` says which.
 
 **Control unit (`control.py`, `ControlUnit`).** The HA side of control: a control step every
 few seconds, its writes through the writer, the hand-back on every exit, and the status the

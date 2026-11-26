@@ -9,6 +9,15 @@ export interface WeekUse {
   gas: number | null;
   degree_days: number | null;
   per_degree_day: number | null;
+  /** I13.5: where the week's gas per degree-day likely lies, from the house's own scatter;
+   * absent or `null` without a signature line to take it from. */
+  low?: number | null;
+  high?: number | null;
+}
+
+/** A week's band as two values, low first; `null` without one. */
+export function weekBand(week: WeekUse): [number, number] | null {
+  return week.per_degree_day != null && week.low != null && week.high != null ? [week.low, week.high] : null;
 }
 
 /** Why a week has no gas per degree-day, by the rule that reckons it (`core/weekly.py`). */
@@ -68,9 +77,9 @@ export function causeBars(attributes: Record<string, unknown>): CauseBar[] {
   });
 }
 
-/** The weekly bars' scale: whole steps above the largest value. */
+/** The weekly bars' scale: whole steps above the largest value, a band's top included. */
 export function weekScale(weeks: WeekUse[]): number {
-  const largest = Math.max(0, ...weeks.map((w) => w.per_degree_day ?? 0));
+  const largest = Math.max(0, ...weeks.map((w) => weekBand(w)?.[1] ?? w.per_degree_day ?? 0));
   if (largest <= 0) return 1;
   const step = largest > 5 ? 2 : largest > 1 ? 1 : 0.2;
   return Math.ceil((largest * 1.1) / step) * step;

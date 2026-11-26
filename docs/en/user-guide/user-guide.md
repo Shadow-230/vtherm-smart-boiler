@@ -208,6 +208,19 @@ What the verdict and the building values mean:
   heating threshold, the threshold is found from the days themselves. A measured loss below the
   design load is common: it means the boiler is oversized, not that the measurement is
   wrong.
+- **Short burns** are counted twice: under the short-burn length (10 minutes by default), and
+  under 3 minutes, where most of the efficiency lost to starting and stopping goes. Both shares
+  are shown side by side.
+- **Gas per degree-day over a week** is shown only from 14 degree-days in the week (on average,
+  days 2 °C below the heating threshold). In a milder week the heating threshold's own
+  uncertainty, about 2 °C, could change the degree-days as much as they are, so the figure would
+  say little about the house. Once the energy signature has a line, each week gets a band: where
+  its value likely lies, from how much the house's own days scatter around that line.
+- **Hot water against the weather.** Hot water is used about the same all year. If the gas the
+  plugin counts as hot water clearly follows the outdoor temperature over at least 4 weeks
+  (falling or rising by 3 % or more of its mean for each degree), a repair issue says that hot
+  water and heating may be told apart wrongly; check the hot-water and heating signals. The heat
+  loss and the gas per degree-day would carry the same error. It is information only.
 - **Use against yesterday** compares two days; a day's use moves a lot on its own (the building
   still warm or cold from yesterday, sun, people). When the part no cause explains stays within
   15 % of the day before, it is marked as normal variation.
@@ -577,8 +590,8 @@ Only an administrator can change anything on it, and every change asks for confi
 | Tab | What it shows |
 |---|---|
 | Overview | The status with its reasons and whether **Control** is on — an administrator gets **Change in settings**, which opens the plugin's page in Home Assistant's settings, where control is switched; its flame is filled while the burner burns, and outlined in the heating colour while the boiler is called for heat between burns. Tiles for the water the plugin asks, flow, return, outdoor, flame and how many rooms call, as the plugin counts them; an administrator also gets a link to Versatile Thermostat's page, where the rooms are. The installation drawn from the settings, with the circuits taking water now: those with a room calling, while the plugin calls the boiler or the burner burns for heating. In a narrow card the circuits are listed by name below the drawing. The heating curve with "where we are", the last 7 days' decisions and a preview of changes, drawn as boiler manuals draw it: warmer on the left, colder on the right. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic and the curve show it |
-| Burner | The burner's metrics; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
-| Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day; the change against yesterday, cause by cause. A value not known says why |
+| Burner | The burner's metrics, the short burns with the share under 3 minutes beside them; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
+| Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day, each week from 14 degree-days and with its likely band from the house's own day-to-day scatter; the change against yesterday, cause by cause. A value not known says why |
 | Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature, each with its likely range; where the two ranges overlap, it says that no difference is shown. The burner's heating starts by hour over the last 4 weeks |
 | Journal | What the plugin decided and why, over the last 14 days. It shows its starts and stops, control taking the boiler and handing it back, the heat call, the water setpoint written (changes of 1 K or more), a circuit's need, the alarms and the settings saved. You see it as lanes that zoom by dragging across them, and as a list you can filter |
 | Status and alarms | The control verdict with its reasons, and the boiler's outputs against what the house needs; every alarm, the active ones first, each opening its history; the signals' health; the building values with where they come from; the suggested lowest water temperature with its evidence |
@@ -1122,7 +1135,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Flue gas rising above return | flue gas hotter above the return than before | book a service |
 | Frequent starts | the alarm: more starts in the last hour than the limit (12); a warning: more than 6 an hour over the last 3 hours | check VT's cycle (10–15 min), the curve and the limits |
 | Unstable ignition | many burns lost soon after ignition in a day | have it checked |
-| Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
+| Heating hysteresis drifting | the boiler's on/off band drifts over time: by more than 3 K from the last day to days 4–8 before (a fault), or over weeks — the last week's daily medians against those of the 3 weeks ending 3 weeks before, by more than 3 K or twice the usual day-to-day scatter (a slow drift, about 1 K a week shows). Its attribute says which | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
 | Long burn without warming | the burner on for 3 h — gaps of up to 30 min included, so a boiler that keeps stopping and starting counts too — and the rooms not warming: its reason says the water too cool for the rooms short (the flow reached its setpoint at least once in the last half hour, or stays above it with the boiler at its minimum), the boiler at its power limit (the flame on throughout, below its setpoint at high modulation), or the water too hot | water too cool: raise the curve (the correction, where on, raises it); too hot: lower it — the curve, or on an on/off boiler its own water setting |
@@ -1252,6 +1265,7 @@ When "Signals" is off, its attributes name the signal with the problem.
 | The plugin's memory of the boiler could not be read | it handed back to be safe |
 | The plugin cannot save its memory of the boiler | full disk or read-only storage |
 | The boiler may still hold a value from Smart Boiler for Versatile Thermostat | hand back by hand |
+| Hot water and heating may be told apart wrongly | the gas counted as hot water follows the outdoor temperature; check the hot-water and heating signals. Information only |
 
 The last one appears after the integration was removed before it could finish its cleanup.
 
@@ -1323,10 +1337,10 @@ disabled by default.
 | Heating starts per hour | burner starts for heating, per hour over the last 24 h; burns that may have been hot water apart |
 | Median heating burn | the typical length of a heating burn |
 | Heating burner hours (24 h) *hidden* | burner hours for heating in the last 24 h |
-| Short heating burns *hidden* | the share of heating burns shorter than the short-burn length (10 min by default) |
+| Short heating burns *hidden* | the share of heating burns shorter than the short-burn length (10 min by default); the share under 3 minutes in its attributes |
 | Condensing share | the share of heating burn time with the return below 55 °C |
 | Degree-days (7 days) *hidden* | the week's degree-days, from the heating threshold |
-| Gas per degree-day | gas per degree-day, measured with a gas meter you map, else estimated |
+| Gas per degree-day | gas per degree-day over the last 7 days, measured with a gas meter you map, else estimated; none in a week under 14 degree-days |
 | Use against yesterday *hidden* | the change in use against the day before, split into weather, hot water, settings and the rest — the rest marked when it is normal day-to-day variation |
 | Control verdict | worth enabling, not worth enabling, or not enough data yet — with its reasons |
 | Signal problems | how many mapped signals have a problem; each one's health in the attributes |

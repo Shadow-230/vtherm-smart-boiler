@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.cycles import (
@@ -311,3 +313,16 @@ def test_a_burn_starting_as_the_outdoor_bin_changes_belongs_to_the_new_bin() -> 
     outdoor = Series([(0, 8.0), (HOUR, -2.0)])
     stats = binned_cycle_stats([ch(60, 70)], flame, outdoor, 0, 2 * HOUR)
     assert (stats[5.0].starts, stats[-5.0].starts) == (0, 1)
+
+
+def test_burns_under_three_minutes_are_counted_beside_the_short_ones() -> None:
+    """I13.5: a burn under 3 minutes counts apart; one of exactly 3 minutes does not. The share
+    is over the complete burns, or over the burns a basis names (days kept before did not count
+    them)."""
+    burns = [ch(0, 2), ch(10, 13), ch(20, 22.5), ch(30, 45)]
+    stats = cycle_stats(burns, observed_s=HOUR)
+    assert (stats.very_short_burns, stats.complete_burns) == (2, 4)
+    assert stats.very_short_burn_share == pytest.approx(0.5)
+    assert replace(stats, very_short_basis=8).very_short_burn_share == pytest.approx(0.25)
+    assert replace(stats, very_short_basis=0).very_short_burn_share is None
+    assert cycle_stats([], 0.0).very_short_burn_share is None

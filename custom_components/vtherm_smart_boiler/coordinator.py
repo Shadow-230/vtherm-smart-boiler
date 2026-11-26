@@ -155,6 +155,7 @@ from .core.daily import (
     settings_key,
     summarize_day,
 )
+from .core.dhw_check import check_dhw_split
 from .core.freshness import Rhythm, automatic_limit, observe
 from .core.heat import Heat, heat_available, heat_through_any
 from .core.history import (
@@ -247,6 +248,9 @@ REPEATABLE_SIGNALS = frozenset(
     }
 )
 LOWEST_WATER_ISSUE = "lowest_water_suggestion"
+# I13.5: the hot-water self-check's information issue, while the gas classed as hot water follows
+# the outdoor temperature (``core.dhw_check``).
+DHW_SPLIT_ISSUE = "dhw_split_suspect"
 # K4 (the user's decision of 2026-11-17): VT zones that switch their heating on and off — VT's
 # "over_switch" — in cycles shorter than this, while the plugin controls the boiler, are named in
 # a warning: each gap between their pulses stops the burner. Gas boilers' TPI convention is 6
@@ -635,6 +639,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             LOWEST_WATER_ISSUE,
             ESPHOME_REPEATS_ISSUE,
             POWER_LIMIT_ISSUE,
+            DHW_SPLIT_ISSUE,
         ):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         self._no_zone_issue = None
@@ -2284,6 +2289,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     self.parameters = self.parameters.with_estimate(key, estimate)
                 if moved:  # a fit that has not moved is not written again every five minutes
                     self.schedule_save()
+            self._check_dhw_split()
             await self._async_suggest_lowest_water(copy, now)
             # Published as of now, not as of the analysis' start: the quick path may have
             # moved on meanwhile (a reading gone stale), and must not be set back. Through the
@@ -2295,6 +2301,29 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._job_works(ANALYSIS_JOB)
         finally:
             self._analysing = False
+
+    def _check_dhw_split(self) -> None:
+        """I13.5: an information issue while the gas the plugin classes as hot water follows the
+        outdoor temperature over the kept days — the hot-water/heating split looks wrong; it goes
+        once it does not, or the days cannot tell. Nothing changes in control."""
+        check = check_dhw_split(self.daily.values())
+        issue_id = f"{DHW_SPLIT_ISSUE}_{self.config_entry.entry_id}"
+        if check is None or not check.suspect:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=DHW_SPLIT_ISSUE,
+            translation_placeholders={
+                "change": f"{check.slope_share * 100:+.1f}",
+                "days": str(check.days),
+            },
+        )
 
     async def _async_suggest_lowest_water(self, history: History, now: float) -> None:
         """X6 (decision 2): the lowest water temperature's evidence over the history, with the
