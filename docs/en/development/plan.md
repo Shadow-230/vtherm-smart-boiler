@@ -217,7 +217,6 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
   literature — "Gives no heat" only while a room is withheld heat, the boiler link without
   chatter, the comfort correction's pace, the building's range and the verdict, the monitor's
   figures, a restart pause (off by default), the modulation cap (opt-in), a longer outdoor mean
-  for heavy houses, the documents (the user's decision of 2026-11-26); the sources in
-  `literature/`
+  for heavy houses, the documents (the user's decision of 2026-11-26)
 - Device templates — `docs/en/development/plans/plan-device-templates.md`: one parameter file per
   boiler device, after the first release (the user's decisions of 2026-11-22)

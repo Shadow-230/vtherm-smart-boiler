@@ -219,7 +219,6 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
   ciepła” tylko wtedy, gdy pokojowi brakuje ciepła, połączenie z kotłem bez migania, tempo
   korekty komfortu, przedział dla budynku i werdykt, liczby monitora, przerwa przed ponownym
   startem (domyślnie wyłączona), ograniczenie modulacji (na życzenie), dłuższa średnia temperatury
-  zewnętrznej dla ciężkich domów, dokumenty (decyzja użytkownika z 2026-11-26); źródła w
-  `literature/`
+  zewnętrznej dla ciężkich domów, dokumenty (decyzja użytkownika z 2026-11-26)
 - Szablony urządzeń — `docs/en/development/plans/plan-device-templates.md`: jeden plik parametrów na
   urządzenie kotła, po pierwszym wydaniu (decyzje użytkownika z 2026-11-22)

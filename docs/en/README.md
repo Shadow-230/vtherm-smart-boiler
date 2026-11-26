@@ -16,7 +16,6 @@ the same place under `docs/pl/`.
 | [`development/`](development/plan.md) | the development plan; the plans of each release and the reviews | developers |
 | [`testing/`](testing/test-environment.md) | the test Home Assistant and the test reports | testers |
 | `../images/` | pictures shared by every language | — |
-| [`../../literature/`](../../literature/README.md) | open-licence sources behind the plugin's rules, with their licences ([Polish](../../literature/README.pl.md)) | developers, reviewers |
 
 ## The documents
 
@@ -27,6 +26,7 @@ the same place under `docs/pl/`.
 | [Scope](specification/scope.md) | current | [yes](../pl/specification/scope.md) |
 | [Boiler connections and the device template](specification/device-connections.md) | current | [yes](../pl/specification/device-connections.md) |
 | [Reference codes](specification/references.md) | current | [yes](../pl/specification/references.md) |
+| [Literature](specification/literature.md) | current | [yes](../pl/specification/literature.md) |
 | [Development plan](development/plan.md) | current | [yes](../pl/development/plan.md) |
 | [Test environment](testing/test-environment.md) | current | [yes](../pl/testing/test-environment.md) |
 | [Test reports: how they are made](testing/reports/README.md) | current | [yes](../pl/testing/reports/README.md) |
