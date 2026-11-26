@@ -132,7 +132,7 @@ def installation_view(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) 
 def _curve_settings(coordinator: SmartBoilerCoordinator) -> dict[str, Any] | None:
     """The curve's settings where control sets the water; ``None`` otherwise (monitoring only,
     or a relay that switches heating on and off)."""
-    control = coordinator.config.control
+    control = coordinator.control_now()  # the exponent from the rooms VT hands over (I12.17)
     loop = control.loop.control
     if not control.configured or loop.on_off:
         return None
@@ -187,7 +187,7 @@ def ws_curve(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, A
     if coordinator is None:
         _not_running(connection, msg)
         return
-    control = coordinator.config.control
+    control = coordinator.control_now()  # the exponent from the rooms VT hands over (I12.17)
     loop = control.loop.control
     if not control.configured or loop.on_off:
         connection.send_error(msg["id"], NO_CURVE, "control does not set the water")

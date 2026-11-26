@@ -281,12 +281,15 @@ The signal turned on (`handed_back`) for a moment at every Home Assistant start,
 yet, it keeps its last value, unavailable if none: SmartPI 1.0 no longer holds its integral at
 each start.
 
-#### I12.17 The curve's exponent with one circuit
+#### I12.17 The curve's exponent with one circuit ✅
 
 Since I12.11 the only circuit stores no room list, so the default exponent counted only the rooms
 on the underfloor and convector lists (only convectors listed: 1.4, though the other rooms have
 radiators). A room on no emitter list counts as a radiator, from VT's rooms at run time, as the
 user guide says and as before I12.11.
+Done 2026-11-26: control's step, the page's curve and the boiler's judgement take the exponent
+from the rooms VT hands over; with no room on the curve's circuit it stays as configured, so it
+does not jump while VT reloads; an exponent the user entered stays.
 
 #### I12.18 A circuit run by other automation in the analyses
 
