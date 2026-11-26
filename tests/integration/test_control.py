@@ -1565,9 +1565,9 @@ async def test_only_allowed_services_are_called(rig: Rig) -> None:
         "living",
         hvac_action="heating",
         valve_open_percent=60,
-        configuration={"proportional_function": "smartpi"},
         specific_states={"smartpi_learning_enabled": True},
     )
+    rig.zones.configure("living", proportional_function="smartpi")
     await start(rig)
     await rig.switch(True)
     rig.dhw = True
@@ -1597,15 +1597,15 @@ async def test_control_comes_back_after_a_restart(
 @pytest.mark.parametrize(
     ("kind", "cycle", "named"),
     [
-        ("over_switch", 5, True),  # VT's default cycle
-        ("over_switch", 9.5, True),
-        ("over_switch", 10, False),  # the gas-boiler convention: 6 cycles an hour
-        ("over_switch", 15, False),
-        ("over_valve", 5, False),  # a valve opens in proportion: no gaps
-        ("over_climate", 5, False),
-        (None, 5, False),  # a VT that does not say what the zone is
-        ("over_switch", None, False),  # nor its cycle
-        ("over_switch", True, False),
+        ("thermostat_over_switch", 5, True),  # VT's default cycle
+        ("thermostat_over_switch", 9.5, True),
+        ("thermostat_over_switch", 10, False),  # the gas-boiler convention: 6 cycles an hour
+        ("thermostat_over_switch", 15, False),
+        ("thermostat_over_valve", 5, False),  # a valve opens in proportion: no gaps
+        ("thermostat_over_climate", 5, False),
+        (None, 5, False),  # settings that do not say what the zone is
+        ("thermostat_over_switch", None, False),  # nor its cycle
+        ("thermostat_over_switch", True, False),
     ],
 )
 async def test_a_short_vt_cycle_is_named_while_controlling(
@@ -1613,11 +1613,11 @@ async def test_a_short_vt_cycle_is_named_while_controlling(
 ) -> None:
     """K4 (the user's decision of 2026-11-17): a zone VT switches on and off in cycles under
     10 min is named, with its cycle, in a warning while control is configured — each gap between
-    its pulses stops the burner (J4's F9; the literature's 6 cycles an hour for gas boilers)."""
-    configuration: dict[str, Any] = {"proportional_function": "tpi", "cycle_min": cycle}
-    if kind is not None:
-        configuration["type"] = kind
-    rig.zones.set("living", configuration=configuration)
+    its pulses stops the burner (J4's F9; the literature's 6 cycles an hour for gas boilers). Its
+    type and cycle from the thermostat's ``entry_infos`` (I12.7)."""
+    rig.zones.configure(
+        "living", proportional_function="tpi", thermostat_type=kind, cycle_min=cycle
+    )
     await start(rig)
     assert rig.entry is not None
     found = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"zone_cycle_short_{rig.entry.entry_id}")
@@ -1634,9 +1634,9 @@ async def test_a_short_vt_cycle_is_not_named_without_control_and_goes_once_lengt
     rig: Rig,
 ) -> None:
     """K4: the warning is the boiler's, so it needs control — not in monitor mode, where the
-    plugin starts nothing; and it goes once the cycle in VT is 10 min or more."""
-    configuration = {"type": "over_switch", "cycle_min": 5}
-    rig.zones.set("living", configuration=configuration)
+    plugin starts nothing; and it goes once the cycle in VT is 10 min or more. While VT has not
+    handed the thermostat over, its last answer stands (PB-47)."""
+    rig.zones.configure("living", thermostat_type="thermostat_over_switch", cycle_min=5)
     await set_up(rig, add_entry(rig, without_control(options(rig.zones))))
     assert rig.entry is not None
     issue_id = f"zone_cycle_short_{rig.entry.entry_id}"
@@ -1648,7 +1648,11 @@ async def test_a_short_vt_cycle_is_not_named_without_control_and_goes_once_lengt
     assert rig.entry is not None
     issue_id = f"zone_cycle_short_{rig.entry.entry_id}"
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is not None
-    rig.zones.set("living", configuration=configuration | {"cycle_min": 15})
+    rig.zones.stop("living")  # VT reloads the thermostat: its last answer stands
+    rig.entry.runtime_data.check_zone_cycles()
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is not None
+    rig.zones.configure("living", cycle_min=15)
+    rig.zones.hand("living")
     rig.entry.runtime_data.check_zone_cycles()
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is None
 
@@ -9864,10 +9868,11 @@ async def test_a_restore_at_a_start_waits_for_neither_the_helper_nor_vts_setting
 async def test_vts_settings_still_unknown_after_the_recognition_hand_back(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """Negative: the zones have reported and VT's settings are still not known — the blocker
-    counts once the recognition period is over: the restored session hands back, and control
-    waits for VT."""
-    rig.zones.withdraw()
+    """Negative: the zones have reported and VT's settings are still not known — their
+    thermostats' ``entry_infos`` cannot be read (I12.7: a zone reports only through its
+    thermostat) — the blocker counts once the recognition period is over: the restored session
+    hands back, and control waits for VT."""
+    rig.zones.stand_in.entry_infos = None  # type: ignore[assignment]
     not_started(rig)
     await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
     await rig.advance(10)
@@ -10773,32 +10778,22 @@ async def test_a_stored_latch_without_its_cause_is_no_heating_off_blocker(
     assert rig.gateway.setpoints() == [EXPECTED]
 
 
-def vt_thermostat(rig: Rig, zone_id: str, *underlying: str) -> MockConfigEntry:
-    """The zone's VT thermostat entry, listing what it drives (VT 10.4.0 keeps the list in its
-    entry's data)."""
-    entry = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": list(underlying)})
-    entry.add_to_hass(rig.hass)
-    er.async_get(rig.hass).async_update_entity(
-        rig.zones.entities[zone_id], config_entry_id=entry.entry_id
-    )
-    return entry
-
-
 async def test_a_zone_reconfigured_onto_the_boilers_thermostat_blocks_control(rig: Rig) -> None:
     """X5.19 at run time: VT is reconfigured — the plugin's options unchanged — so the zone is
-    built on the gateway's own thermostat climate: at the next step the blocker
-    ``zone_on_boiler_thermostat`` stops control with the safe hand-back; VT set back, control
-    resumes by itself. Negative: the zone's VT entry gone (cannot be read) — no blocker."""
+    built on the gateway's own thermostat climate (its thermostat's ``entry_infos``, I12.7): at
+    the next step the blocker ``zone_on_boiler_thermostat`` stops control with the safe
+    hand-back; VT set back, control resumes by itself. Negative: the zone's thermostat not handed
+    over (VT stopped it: its settings cannot be read) — no blocker."""
     registry = er.async_get(rig.hass)
     thermostat = registry.async_get_or_create(
         "climate", "opentherm_gw", "gw-thermostat", suggested_object_id="gateway_thermostat"
     ).entity_id
-    vt = vt_thermostat(rig, "living", "switch.living_valve")
+    rig.zones.configure("living", underlying_entity_ids=["switch.living_valve"])
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     assert rig.gateway.setpoints() == [EXPECTED]
-    rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": [thermostat]})
+    rig.zones.configure("living", underlying_entity_ids=[thermostat])
     await rig.advance(20)
     assert (
         "zone_on_boiler_thermostat" in rig.state("binary_sensor", "control").attributes["blockers"]
@@ -10807,15 +10802,15 @@ async def test_a_zone_reconfigured_onto_the_boilers_thermostat_blocks_control(ri
     count = len(rig.gateway.calls)
     await rig.advance(60)
     assert len(rig.gateway.calls) == count  # nothing written while it holds
-    rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": []})
+    rig.zones.configure("living", underlying_entity_ids=[])
     await rig.advance(20)
     assert (
         "zone_on_boiler_thermostat"
         not in rig.state("binary_sensor", "control").attributes["blockers"]
     )
     assert rig.gateway.setpoints()[-1] == EXPECTED  # resumed by itself
-    registry.async_update_entity(rig.zones.entities["living"], config_entry_id=None)
-    rig.hass.config_entries.async_update_entry(vt, data={"underlying_entity_ids": [thermostat]})
+    rig.zones.configure("living", underlying_entity_ids=[thermostat])
+    rig.zones.stop("living")
     await rig.advance(20)
     assert (
         "zone_on_boiler_thermostat"
@@ -12417,10 +12412,7 @@ async def test_a_relay_a_vt_zone_drives_blocks_control(rig: Rig, relay: FakeRela
     await start_relay(rig)
     await rig.switch(True)
     assert relay.calls == [True]
-    vt = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": [RELAY]})
-    vt.add_to_hass(rig.hass)
-    registry = er.async_get(rig.hass)
-    registry.async_update_entity(rig.zones.entities["living"], config_entry_id=vt.entry_id)
+    rig.zones.configure("living", underlying_entity_ids=[RELAY])  # its ``entry_infos`` (I12.7)
     await rig.advance(10)
     assert "relay_used_by_zone" in blockers(rig)
     assert relay.calls == [True, False]  # handed back: the rest state
@@ -12461,10 +12453,7 @@ async def test_a_heating_switch_a_vt_zone_drives_blocks_control(rig: Rig) -> Non
     await start(rig, **held_entity(number, ch_entity=switch.entity_id, ch_write_type="held"))
     await rig.advance(10)
     assert "entity_used_by_zone" not in blockers(rig)
-    vt = MockConfigEntry(domain=VT_PLATFORM, data={"underlying_entity_ids": [switch.entity_id]})
-    vt.add_to_hass(rig.hass)
-    registry = er.async_get(rig.hass)
-    registry.async_update_entity(rig.zones.entities["living"], config_entry_id=vt.entry_id)
+    rig.zones.configure("living", underlying_entity_ids=[switch.entity_id])
     await rig.advance(10)
     assert "entity_used_by_zone" in blockers(rig)
 

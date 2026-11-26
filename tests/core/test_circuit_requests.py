@@ -71,27 +71,12 @@ def test_a_circuit_without_its_own_entity_asks_through_its_zones_alone() -> None
     assert (found.asking, found.unknown, found.floor) == (("floor",), (), 30.0)
 
 
-def test_a_zone_split_by_its_devices_asks_through_its_devices_there() -> None:
-    """I8.8b (Claude's call): a zone listed by its devices asks in the circuit while it wants
-    heat and VT lists one of those devices active; VT's list unknown (an older VT), it asks in
-    each of its circuits — the warmer side."""
-    split = OtherAutomation(
-        "floor",
-        zones=frozenset({"climate.living"}),
-        needed=35.0,
-        devices={"climate.living": frozenset({"switch.loop"})},
-    )
-    wanting = frozenset({"climate.living"})
-
-    def asking(active: frozenset[str] | None) -> tuple[str, ...]:
-        found = circuits_asking((split,), {}, {}, wanting, {"climate.living": active})
-        return found.asking
-
-    assert asking(frozenset({"switch.loop", "switch.radiator"})) == ("floor",)
-    assert asking(frozenset({"switch.radiator"})) == ()
-    assert asking(frozenset()) == ()
-    assert asking(None) == ("floor",)
-    assert circuits_asking((split,), {}, {}, wanting).asking == ("floor",)  # nothing read
+def test_a_zone_asks_in_its_circuit_while_it_wants_heat() -> None:
+    """I8.8b, I12.7: a zone the circuit feeds — whole, or by some of its devices — asks in it
+    while it wants heat: ``vtherm_api`` does not tell which of its devices VT has on, so the
+    warmer side stands."""
+    split = OtherAutomation("floor", zones=frozenset({"climate.living"}), needed=35.0)
+    assert circuits_asking((split,), {}, {}, frozenset({"climate.living"})).asking == ("floor",)
     assert circuits_asking((split,), {}, {}, frozenset()).asking == ()  # not wanting heat
 
 
@@ -103,7 +88,7 @@ def test_any_one_of_a_circuits_zones_wanting_heat_makes_it_ask(wanting: str) -> 
     """Each of a circuit's zones is looked at: a zone of it not wanting heat does not end the
     search, so whichever one zone wants heat, the circuit asks."""
     circuit = OtherAutomation("floor", zones=frozenset({"climate.a", "climate.b", "climate.c"}))
-    assert circuit.asks_through(frozenset({wanting}), {})
+    assert circuit.asks_through(frozenset({wanting}))
     assert circuits_asking((circuit,), {}, {}, frozenset({wanting})).asking == ("floor",)
 
 

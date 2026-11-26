@@ -24,15 +24,7 @@ async def test_diagnostics_are_redacted(
 ) -> None:
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.PRESSURE))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0, Signal.PRESSURE: 1.5})
-    # I8.8b: the devices VT lists active are entity IDs too.
-    radiator = "switch.living_radiator"
-    hass.states.async_set(radiator, "on")
-    living = zones.add(
-        "living",
-        hvac_action="heating",
-        valve_open_percent=40,
-        specific_states={"device_actives": [radiator]},
-    )
+    living = zones.add("living", hvac_action="heating", valve_open_percent=40)
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Boiler",
@@ -49,10 +41,16 @@ async def test_diagnostics_are_redacted(
     await analyse_now(entry.runtime_data)
     result = await async_get_config_entry_diagnostics(hass, entry)
     text = json.dumps(result)
-    for entity in (*boiler.mapping().values(), living, WEATHER_ENTITY, radiator):
+    for entity in (*boiler.mapping().values(), living, WEATHER_ENTITY):
         assert entity not in text
     (zone,) = result["zones"].values()
-    assert [e[:7] for e in zone["state"]["devices_active"]] == ["entity_"]
+    # I12.7: the zone as its thermostat gave it — started, its duty and valve from VT's power
+    # hook; nothing VT's climate alone showed.
+    assert zone["state"]["started"] is True
+    assert zone["state"]["valve_open"] == pytest.approx(0.4)
+    for gone in ("devices_active", "power", "mean_power", "shedding", "ready", "reported"):
+        assert gone not in zone["state"], gone
+    assert result["zones_through_vtherm_api"] == [zone["state"]["zone_id"]]
     assert result["options"]["signals"]["flame"].startswith("entity_")
     assert result["signals"]["flow"]["status"] == "ok"
     assert result["parameters"]["boiler_min_power"]["effective"] == 4.0

@@ -163,6 +163,7 @@ def read_history(db: RecorderDatabase, mapping: EntityMapping, start: float, end
     for zone_id, entity in mapping.zones.items():
         zone = ZoneSeries(zone_id)
         for row in db.states(entity, start, end):
+            # I12.7b: from VT's climate attributes, until the plugin's own store replaces them.
             values = zone_values(row.state, row.attributes, mapping.temperature_unit)
             zone.temperature.append(row.t, values.temperature)
             zone.target.append(row.t, values.target)

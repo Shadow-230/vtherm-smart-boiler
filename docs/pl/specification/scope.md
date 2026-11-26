@@ -500,9 +500,9 @@ oraz przyjmuje typy odbiorników ciepła swoich stref (S-33); palnik jest wspól
 - Każda strefa VT jest przypisana do obiegu w kreatorze; wybór strefy krytycznej odbywa się osobno
   dla każdego obiegu. Strefa zasilana przez dwa obiegi — grzejnik na jednym, pętla podłogowa na
   drugim — jest w każdym z nich przez własne urządzenia (I8.8b, I8.8c): obserwowana i liczona raz,
-  jej ciepło dostępne przez któryś z nich; w obiegu sterowanym przez inną automatykę prosi o ciepło,
-  dopóki VT pokazuje tam jako aktywne jedno z jej urządzeń, oraz w każdym z jej obiegów, w których
-  VT nie mówi, które są aktywne (przyjmuje się stronę cieplejszą).
+  jej ciepło dostępne przez któryś z nich; w obiegu sterowanym przez inną automatykę prosi o ciepło
+  zawsze, gdy chce grzać — `vtherm_api` nie mówi, które z jej urządzeń VT ma włączone (I12.7), więc
+  przyjmuje się stronę cieplejszą.
 - Ochrona przed krótkimi cyklami, c.w.u. i limit modulacji działają na kocioł (wspólny palnik);
   strojenie krzywej, korekta komfortu i sezonowe dostrojenie działają dla każdego obiegu osobno.
 - Kondensacja zależy od łącznego powrotu wszystkich obiegów.

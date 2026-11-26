@@ -195,6 +195,12 @@ The zone matched by its declared `entity_id`; only what is still needed, from th
 `underlying_entity_ids` and VT's central boiler settings; `SAFETY_EVENT`, `WINDOW_AUTO_EVENT`;
 the rooms read at each refresh and water decision; their details kept in the plugin's own store
 for about 8 days. The attribute fallback and parser go.
+In two parts. **I12.7a ✅** (2026-11-26): the live reads through the thermostat's members, the
+first `refresh_state` and the power hook, and `entry_infos`; the duty cap is not read (VT caps
+the hook's request itself, and its cap is not in the API: a room counts as fully open from 95 %
+applied); the split of a room between circuits by its devices goes (VT's active devices are not
+in the API). **I12.7b**: the rooms' history in the plugin's own store and "was the boiler called"
+from the helper's history; the attribute parser and the recorder reads of VT's climates go.
 
 #### I12.8 VT decides whether to heat ✅
 

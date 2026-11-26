@@ -234,8 +234,11 @@ zasady bezpieczeństwa.
 - Wtyczka liczy pokoje, które wołają, do pokazania. Gdy VT nie podaje stanu urządzenia, pokój
   woła, gdy jego zawór jest choć trochę otwarty, a bez zaworu — gdy jego cykl pracy jest powyżej 0
   — tak jak w VT.
-- Strefa się liczy tylko wtedy, gdy VT podaje jej stan jednoznacznie. Strefa niedostępna albo
-  taka, której VT jeszcze nie uruchomił, ma stan „nieznany” — nigdy „brak zapotrzebowania”.
+- Strefa się liczy dopiero wtedy, gdy VT przekazał jej termostat wtyczce i go uruchomił. Wtyczka
+  czyta pokój tylko z termostatu VT, nigdy z tego, co pokazuje encja klimatu VT. Pokój, którego
+  termostat już działał, gdy instalowano wtyczkę, trafia do niej dopiero po przeładowaniu VT; do
+  tego czasu ma stan „nieznany”, tak jak pokój, którego VT jeszcze nie uruchomił — nigdy „brak
+  zapotrzebowania”.
 - Tryb centralny VT (Auto, Zatrzymany, Tylko grzanie, Tylko chłodzenie, Ochrona przed mrozem)
   działa przez strefy. Gdy wszystkie strefy są zatrzymane, nic nie potrzebuje ciepła, więc
   kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła i znaczy, że nikt nie grzeje:
@@ -1118,7 +1121,7 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
 | Versatile Thermostat jest za stary dla wtyczki | zaktualizuj VT; do tego czasu sterowanie jest zablokowane |
-| Część termostatów VT wymaga przeładowania, żeby trafiły do wtyczki | przeładuj VT |
+| Część termostatów VT wymaga przeładowania, żeby trafiły do wtyczki | przeładuj VT; do tego czasu te pokoje są nieznane |
 
 „3 warianty”: kocioł nie grzeje albo wrócił do swojego termostatu, albo wtyczka tylko
 monitoruje.

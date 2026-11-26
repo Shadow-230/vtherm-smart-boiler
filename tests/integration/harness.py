@@ -75,11 +75,14 @@ class FakeVtThermostat:
 
 @dataclass
 class FakeZoneThermostat:
-    """A zone's thermostat as VT hands it over (I12.10): VT's central boiler settings as the
+    """A zone's thermostat as VT hands it over (I12.7): VT's central boiler settings as the
     stand-in carries them, merged with the room's thermometer and window sensor — the user's
-    devices, in ``entry_infos`` — and VT's clock of its last measurement, ``vtherm_api``'s
-    ``last_temperature_measure``: by default a thermometer that measures all the time, so a room
-    counts once time has moved past the plugin's start; ``measured`` sets it."""
+    devices — and the thermostat's own settings (``settings``: its type, cycle, devices, whether
+    VT's central boiler counts it), all in ``entry_infos``; its live members as ``vtherm_api``
+    declares them (``members``: one not set is missing, as in a VT without it); and VT's clock of
+    its last measurement, ``vtherm_api``'s ``last_temperature_measure``: by default a thermometer
+    that measures all the time, so a room counts once time has moved past the plugin's start;
+    ``measured`` sets it."""
 
     stand_in: FakeVtThermostat
     entity_id: str
@@ -88,22 +91,73 @@ class FakeZoneThermostat:
     window_sensor: str
     name: str = "zone"
     measured: datetime | None = None
+    settings: dict[str, Any] = field(default_factory=dict)
+    members: dict[str, Any] = field(default_factory=dict)
+
+    def __getattr__(self, name: str) -> Any:
+        members = self.__dict__.get("members", {})
+        if name in members:
+            return members[name]
+        raise AttributeError(name)
 
     @property
     def entry_infos(self) -> Any:
         infos = self.stand_in.entry_infos
         if not isinstance(infos, dict):
             return infos
-        return infos | {
-            "temperature_sensor_entity_id": self.thermometer,
-            "window_sensor_entity_id": self.window_sensor,
-        }
+        return (
+            infos
+            | {
+                "temperature_sensor_entity_id": self.thermometer,
+                "window_sensor_entity_id": self.window_sensor,
+            }
+            | self.settings
+        )
 
     @property
     def last_temperature_measure(self) -> datetime:
         from homeassistant.util import dt as dt_util
 
         return self.measured or dt_util.utcnow()
+
+
+def run_now(coroutine: Any) -> Any:
+    """Run a coroutine that never waits — the plugin's manager hooks — to its end, as VT awaits
+    them, from a test's plain code."""
+    try:
+        coroutine.send(None)
+    except StopIteration as done:
+        return done.value
+    coroutine.close()
+    raise AssertionError("the coroutine waited")
+
+
+def power_command(device: str, kind: str, applied: float, *, stop: bool = False) -> Any:
+    """VT's power hook's notification for one device (``vtherm_api``'s
+    ``UnderlyingPowerCommand``): ``kind`` "switch", "valve" or "valve_regulation"; the share
+    VT applied at a cycle start, or 0 at a stop."""
+    import time
+
+    from vtherm_api.underlying_hooks import PowerCommandKind, UnderlyingPowerCommand
+
+    cycle = 300.0
+    applied = 0.0 if stop else applied
+    return UnderlyingPowerCommand(
+        underlying_entity_id=device,
+        underlying_type=kind,
+        climate_entity_id=None,
+        hvac_mode="heat",
+        kind=PowerCommandKind.STOP if stop else PowerCommandKind.CYCLE_START,
+        requested_on_percent=applied,
+        applied_on_percent=applied,
+        on_time_sec=applied * cycle,
+        off_time_sec=cycle - applied * cycle,
+        cycle_duration_sec=cycle,
+        start_offset_sec=0.0 if kind == "switch" else None,
+        is_repeat=False,
+        cycle_start_monotonic=None if stop else time.monotonic(),
+        monotonic=time.monotonic(),
+    )
 
 
 _UNITS: dict[SignalKind, dict[str, str]] = {
@@ -157,8 +211,12 @@ class FakeZones:
     boiler is on with its commands on the helper, and the helper itself, which follows the zones
     as VT's count of 1 would — on while a known zone calls, off otherwise — each time a zone is
     set, until a test takes it over (``set_helper``). Each zone's thermostat is handed over too
-    (``FakeZoneThermostat``), with its thermometer and window sensor as states: the thermometer
-    follows the zone's temperature, the window sensor reads "off"."""
+    (``FakeZoneThermostat``) through the plugin's own feature manager, with its thermometer and
+    window sensor as states: the thermometer follows the zone's temperature, the window sensor
+    reads "off". Setting a zone drives its thermostat as VT would (I12.7): its members follow the
+    state given, VT calls the manager's ``refresh_state`` once it shows the thermostat ready, and
+    its power hook with the duty (``on_percent``) or valve opening (``valve_open_percent``)
+    given."""
 
     hass: HomeAssistant
     entities: dict[str, str] = field(default_factory=dict)
@@ -166,6 +224,9 @@ class FakeZones:
     follow: bool = True
     stand_in: FakeVtThermostat = field(default_factory=FakeVtThermostat)
     thermostats: dict[str, FakeZoneThermostat] = field(default_factory=dict)
+    managers: dict[str, Any] = field(default_factory=dict)  # by zone, while handed over
+    started: set[str] = field(default_factory=set)  # zones whose manager had refresh_state
+    last: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict)  # each zone's set
 
     def __post_init__(self) -> None:
         from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
@@ -186,18 +247,64 @@ class FakeZones:
 
     def withdraw(self) -> None:
         """VT has handed no thermostat over (as at every start, until VT starts them): the
-        stand-in and every zone's thermostat taken back."""
+        stand-in taken back, and every zone's thermostat stopped (its manager's
+        ``stop_listening``)."""
         from custom_components.vtherm_smart_boiler.vtherm_link import unregister_thermostat
 
-        for thermostat in (self.stand_in, *self.thermostats.values()):
-            unregister_thermostat(self.hass, thermostat)
+        unregister_thermostat(self.hass, self.stand_in)
+        for zone_id in list(self.managers):
+            self.stop(zone_id)
 
     def hand_over(self) -> None:
-        """VT hands its thermostats over again: the stand-in and every zone's."""
+        """VT hands its thermostats over again: the stand-in, and every zone's through a new
+        manager, driven as each zone was last set."""
         from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
 
-        for thermostat in (self.stand_in, *self.thermostats.values()):
-            register_thermostat(self.hass, thermostat)
+        register_thermostat(self.hass, self.stand_in)
+        for zone_id in self.thermostats:
+            if zone_id not in self.managers:
+                self.hand(zone_id)
+
+    def hand(self, zone_id: str) -> None:
+        """VT hands one zone's thermostat to the plugin's feature manager (its factory's
+        ``create``), and drives it as the zone was last set."""
+        from custom_components.vtherm_smart_boiler.feature_manager import (
+            SmartBoilerFeatureFactory,
+        )
+
+        thermostat = self.thermostats[zone_id]
+        manager = SmartBoilerFeatureFactory(self.hass).create(thermostat)
+        manager.post_init(thermostat.entry_infos)
+        self.managers[zone_id] = manager
+        if zone_id in self.last:
+            self.drive(zone_id, *self.last[zone_id])
+
+    def stop(self, zone_id: str) -> None:
+        """VT stops one zone's thermostat (its manager's ``stop_listening``)."""
+        manager = self.managers.pop(zone_id, None)
+        self.started.discard(zone_id)
+        if manager is not None:
+            manager.stop_listening()
+
+    def configure(self, zone_id: str, **settings: Any) -> None:
+        """A zone's own settings in its thermostat's ``entry_infos`` (VT 10.6.5 ``const.py``):
+        ``thermostat_type``, ``cycle_min``, ``underlying_entity_ids``,
+        ``used_by_controls_central_boiler``; ``None`` removes one."""
+        own = self.thermostats[zone_id].settings
+        for key, value in settings.items():
+            if value is None:
+                own.pop(key, None)
+            else:
+                own[key] = value
+
+    def power(
+        self, zone_id: str, applied: float, kind: str = "switch", *, stop: bool = False
+    ) -> None:
+        """VT's power hook for a zone, as VT calls it on the plugin's manager at a cycle start
+        (or a stop: 0)."""
+        device = f"{'switch' if kind == 'switch' else 'number'}.fake_{zone_id}_device"
+        command = power_command(device, kind, applied, stop=stop)
+        run_now(self.managers[zone_id].async_on_underlying_power(command))
 
     def vt_event(self, zone_id: str, kind: str, start: bool) -> None:
         """VT's safety (``kind`` "safety") or automatic window (``kind`` "window_auto") event
@@ -227,8 +334,6 @@ class FakeZones:
             "climate", VT_PLATFORM, f"fake_{zone_id}", suggested_object_id=f"fake_{zone_id}"
         )
         self.entities[zone_id] = entry.entity_id
-        from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
-
         thermostat = FakeZoneThermostat(
             self.stand_in,
             entry.entity_id,
@@ -239,16 +344,16 @@ class FakeZones:
         )
         self.thermostats[zone_id] = thermostat
         if handed_over:
-            register_thermostat(self.hass, thermostat)
+            self.hand(zone_id)
         self.hass.states.async_set(thermostat.window_sensor, "off")
         self.set(zone_id, **attributes)
         return entry.entity_id
 
     def set(self, zone_id: str, state: str = "heat", **attributes: Any) -> None:
-        """A VT climate's state. In a mode, it shows what VT 10.4.0 shows once it has started
-        the thermostat — ``is_ready`` true and its ``specific_states``; a test sets a zone VT
-        has not started explicitly (``is_ready=False``), or gives ``None`` to leave either out,
-        as VT does before its first refresh."""
+        """A VT climate's state, and its thermostat driven as VT would (``drive``). In a mode,
+        it shows what VT shows once it has started the thermostat — ``is_ready`` true and its
+        ``specific_states``; a test sets a zone VT has not started explicitly (``is_ready=False``),
+        or gives ``None`` to leave either out, as VT does before its first refresh."""
         values: dict[str, Any] = {
             "current_temperature": 20.0,
             "temperature": 21.0,
@@ -270,8 +375,56 @@ class FakeZones:
                 {"unit_of_measurement": "°C", "device_class": "temperature"},
             )
         self.hass.states.async_set(self.entities[zone_id], state, values)
+        self.last[zone_id] = (state, values)
+        self.drive(zone_id, state, values)
         if self.follow:
             self.follow_zones()
+
+    def drive(self, zone_id: str, state: str, values: dict[str, Any]) -> None:
+        """The zone's thermostat as VT keeps it: its members from the state given — the mode
+        (none while the climate is unavailable or unknown), the temperatures, the action and,
+        from ``specific_states``, whether a device is active and why VT holds it off; then, while
+        it is handed over, ``refresh_state`` once it shows ready — VT stops a thermostat it had
+        started and hands over a new one when it no longer does —, and the power hook with the
+        duty or valve opening given."""
+        thermostat = self.thermostats.get(zone_id)
+        if thermostat is None:
+            return
+        members: dict[str, Any] = {
+            "vtherm_hvac_mode": None if state in ("unavailable", "unknown") else state
+        }
+        for member, key in (
+            ("current_temperature", "current_temperature"),
+            ("target_temperature", "temperature"),
+            ("hvac_action", "hvac_action"),
+        ):
+            if key in values:
+                members[member] = values[key]
+        specific = values.get("specific_states")
+        if isinstance(specific, dict):
+            for key in ("is_device_active", "hvac_off_reason"):
+                if key in specific:
+                    members[key] = specific[key]
+        thermostat.members = members
+        if zone_id not in self.managers:
+            return
+        ready = values.get("is_ready") is True
+        if not ready and zone_id in self.started:
+            self.stop(zone_id)
+            self.hand(zone_id)
+            return
+        if ready and zone_id not in self.started:
+            run_now(self.managers[zone_id].refresh_state())
+            self.started.add(zone_id)
+        valve, duty = values.get("valve_open_percent"), values.get("on_percent")
+        if _number(valve):
+            self.power(zone_id, valve / 100.0, "valve")
+        elif _number(duty):
+            self.power(zone_id, duty)
+
+
+def _number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 async def analysis_idle(coordinator: Any) -> None:

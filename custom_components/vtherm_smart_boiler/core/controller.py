@@ -943,16 +943,17 @@ def _want_heat(demand: Demand, fault: bool = False, asking: bool = False) -> tup
 
 def _circuits(inputs: ControlInputs, config: ControlConfig) -> CircuitsAsking:
     """The circuits run by other automation that ask now (I8, decision F3): their entity on,
-    or one of their known zones wanting heat — a zone split between circuits through the
-    devices VT lists active (I8.8b)."""
+    or one of their known zones wanting heat. A zone split between circuits by its devices asks
+    through each of them (I8.8b): ``vtherm_api`` does not tell which of its devices VT has on
+    (I12.7), so the warmer side stands."""
     now = inputs.now
     wanting = {
-        z.zone_id: z.devices_active
+        z.zone_id
         for z in inputs.zones
         if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z)
     }
     return circuits_asking(
-        config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting, wanting
+        config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting
     )
 
 

@@ -525,7 +525,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # an entity that does not change would otherwise never enter it.
         zones = set(self.config.zone_entities)
         for entity_id in self.config.watched_entities:
-            if entity_id in zones:  # zone data only through the VT link
+            if entity_id in zones:  # I12.7b: the zone history from VT's climate, for now
                 state = self.link.recorded_state(entity_id)
             else:
                 state = self.hass.states.get(entity_id)
@@ -879,7 +879,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     include_start_time_state=True,
                     significant_changes_only=False,
                     minimal_response=False,
-                    no_attributes=False,
+                    no_attributes=False,  # I12.7b: zones need their attributes, for now
                 )
                 if not states.get(flame):
                     return None  # the recorder reaches no further back
@@ -929,7 +929,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 include_start_time_state=True,
                 significant_changes_only=False,  # every change, as the live history keeps
                 minimal_response=False,
-                no_attributes=False,  # zones need their attributes
+                no_attributes=False,  # I12.7b: zones need their attributes, for now
             )
             # The downtime is marked up to now: the samples recorded live since setup follow.
             return self._rebuild(states, start.timestamp(), math.inf, down)
@@ -1016,7 +1016,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             reading = self.transport.reading_of(signal, state, outdoor)
             _append(history.signals[signal], t, reading.value)
         if entity_id in history.zones:
-            zone = self.link.zone_from_state(entity_id, state)
+            # I12.7b: recorded from VT's climate entity until the plugin's own store replaces it.
+            zone = self.link.zone_from_state(state)
             series = history.zones[entity_id]
             for target, value in (
                 (series.temperature, zone.temperature),

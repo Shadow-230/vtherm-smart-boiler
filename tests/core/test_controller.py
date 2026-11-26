@@ -483,23 +483,20 @@ def test_the_relay_heats_for_a_circuit_asking_too() -> None:
     assert Reason.CIRCUIT_REQUEST_UNKNOWN in decision.reasons
 
 
-def test_a_split_zone_asks_in_the_circuit_whose_device_runs() -> None:
-    """I8.8b: the zone feeds the mixer's circuit by its floor loop only; it heats by its
-    radiator alone — the mixer's circuit is not asked, and holds no water; its loop on — it is."""
-    split = OtherAutomation(
-        "floor", zones=frozenset({"z"}), needed=45.0, devices={"z": frozenset({"switch.loop"})}
-    )
+def test_a_split_zone_asks_in_its_circuit_whichever_device_runs() -> None:
+    """I8.8b, I12.7: the zone feeds the mixer's circuit by its floor loop only, and
+    ``vtherm_api`` does not tell which of its devices VT has on — the warmer side: while the zone
+    wants heat the mixer's circuit is asked and holds its water; once it no longer does, not."""
+    split = OtherAutomation("floor", zones=frozenset({"z"}), needed=45.0)
     config = replace(CONFIG, other_automation=(split,))
-    radiator = zone(0.0, device_active=True, devices_active=frozenset({"switch.radiator"}))
-    _state, [decision] = run([inputs(0.0, zones=(radiator,))], config)
-    assert decision.command is not None
-    assert decision.command.setpoint is not None
-    assert decision.command.setpoint < 45.0
-    assert Reason.CIRCUIT_ASKS not in decision.reasons
-    loop = replace(radiator, devices_active=frozenset({"switch.loop"}))
-    _state, [decision] = run([inputs(0.0, zones=(loop,))], config)
+    calling = zone(0.0, device_active=True)
+    _state, [decision] = run([inputs(0.0, zones=(calling,))], config)
     assert decision.command is not None
     assert decision.command.setpoint == 45.0
+    quiet = replace(calling, device_active=False, valve_open=0.0, on_percent=0.0, calling=False)
+    _state, [decision] = run([inputs(0.0, zones=(quiet,), vt_heat=False)], config)
+    assert decision.command is not None
+    assert decision.command.setpoint is None or decision.command.setpoint < 45.0
 
 
 def test_the_curves_room_reads_its_own_circuits_zones() -> None:
@@ -617,13 +614,12 @@ def test_comfort_correction_at_its_limit_for_hours_is_reported() -> None:
     assert decisions[-1].correction_at_limit  # 3 K for three hours: the curve is probably low
 
 
-def test_a_zone_capped_by_vt_counts_as_saturated() -> None:
-    """VT's max_on_percent below full: that cap is as open as the zone gets."""
-    capped = replace(WATER)
-    state, _ = run(
-        minutes(0.0, 31, lambda t: (short(t, valve_open=0.8, max_on_percent=0.8),)), capped
-    )
-    assert state.correction == pytest.approx(1.0)
+def test_a_zone_vt_caps_below_full_is_not_seen_saturated() -> None:
+    """I12.7: VT's cap on the duty cycle is not in ``vtherm_api``, and the request its power hook
+    tells is already capped — a zone VT holds at 80 % is not taken as fully open, so the
+    correction does not rise for it (no rise on a signal the plugin cannot read)."""
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t, valve_open=0.8),)), WATER)
+    assert state.correction == 0.0
 
 
 @pytest.mark.parametrize("limit", [2.0, 3.0])
@@ -1195,13 +1191,12 @@ def started(zone_id: str, t: float, **kw) -> ZoneState:
     kw.setdefault("temperature", 20.0)
     kw.setdefault("target", 21.0)
     kw.setdefault("valve_open", 0.6)
-    kw.setdefault("reported", True)
     return ZoneState(zone_id, reported_at=t, **kw)
 
 
 def placeholder(zone_id: str, t: float, **kw) -> ZoneState:
-    """What VT shows before it has started a thermostat: "off", not reported."""
-    return ZoneState(zone_id, heating_enabled=False, reported=False, reported_at=t, **kw)
+    """A thermostat VT has not started yet (no ``refresh_state`` on the manager): "off"."""
+    return ZoneState(zone_id, heating_enabled=False, started=False, reported_at=t, **kw)
 
 
 def away(zone_id: str) -> ZoneState:
@@ -1514,35 +1509,30 @@ def test_a_transient_loss_of_every_zone_does_not_start_the_boiler() -> None:
     assert decisions[-1].mode is ControlMode.IDLE
 
 
-def unstarted(
-    zone_id: str, t: float, heating_enabled: bool = False, ready: bool | None = False
-) -> ZoneState:
-    """What VT 10.4.0 shows for a thermostat it cannot start (an underlying device unavailable):
-    "off" — "heat" for over_valve — with ``is_ready`` false, or (``ready`` ``None``) its
-    placeholder with neither ``is_ready`` nor ``specific_states``, kept for good while none of
-    its devices has reported; its room temperature fresh."""
+def unstarted(zone_id: str, t: float, heating_enabled: bool = False) -> ZoneState:
+    """A thermostat VT cannot start (an underlying device unavailable): "off" — "heat" for
+    over_valve — and VT never calls the manager's ``refresh_state``, which it does only once the
+    thermostat is ready (I12.7); its room temperature fresh."""
     return ZoneState(
         zone_id,
         heating_enabled=heating_enabled,
-        ready=ready,
-        reported=False,
+        started=False,
         reported_at=t,
         temperature=19.0,
         valve_open=0.0,
     )
 
 
-@pytest.mark.parametrize("ready", [False, None], ids=["not_ready", "placeholder"])
 @pytest.mark.parametrize("heating_enabled", [False, True], ids=["off", "heat"])
 @pytest.mark.parametrize("config", [CONFIG, THERMOSTAT], ids=["off", "handed_back"])
 @pytest.mark.parametrize("how", ["restart", "one_by_one"])
 def test_zones_vt_cannot_start_end_in_decision_3s_end_state(
-    how: str, config: ControlConfig, heating_enabled: bool, ready: bool | None
+    how: str, config: ControlConfig, heating_enabled: bool
 ) -> None:
     """SB-02 (decision 1 of 2026-10-05): VT cannot start any thermostat — after a restart with
     the Zigbee or Z-Wave integration down (the recognition period), or one after another (each
-    zone's grace) — and shows each with ``is_ready`` false, or, its devices never reporting,
-    with its placeholder (check C's F1). After the recognition period and the grace every zone
+    zone's grace) — and never calls the manager's ``refresh_state`` for them (check C's F1;
+    I12.7). After the recognition period and the grace every zone
     is unknown: the usual "off" stand-alone, a hand-back to a working thermostat — never IDLE
     with ``NO_DEMAND``."""
     if how == "restart":
@@ -1550,8 +1540,8 @@ def test_zones_vt_cannot_start_end_in_decision_3s_end_state(
 
         def zones(t: float) -> tuple[ZoneState, ...]:
             return (
-                unstarted("a", t, heating_enabled, ready),
-                unstarted("b", t, heating_enabled, ready),
+                unstarted("a", t, heating_enabled),
+                unstarted("b", t, heating_enabled),
             )
 
     else:
@@ -1559,8 +1549,8 @@ def test_zones_vt_cannot_start_end_in_decision_3s_end_state(
 
         def zones(t: float) -> tuple[ZoneState, ...]:
             return (
-                started("a", t) if t < 10.0 else unstarted("a", t, heating_enabled, ready),
-                started("b", t) if t < 20.0 else unstarted("b", t, heating_enabled, ready),
+                started("a", t) if t < 10.0 else unstarted("a", t, heating_enabled),
+                started("b", t) if t < 20.0 else unstarted("b", t, heating_enabled),
             )
 
     # VT's helper still on: the graces, not VT, are what this pins (I12).

@@ -91,10 +91,13 @@ def test_within_the_demand_margin_the_colder_zone_wins() -> None:
     assert result.zone_id == "b"
 
 
-def test_a_zone_at_vts_cap_is_as_open_as_it_gets() -> None:
-    """P61: one meaning of "fully open" — VT's cap on the duty cycle counts, as in control."""
-    capped = ZoneState("a", 19.0, 21.0, True, on_percent=0.8, max_on_percent=0.8, reported_at=NOW)
-    assert pick([capped]).saturated
+def test_a_zone_vt_caps_is_not_seen_saturated() -> None:
+    """P61: one meaning of "fully open", as in control — VT's cap on the duty cycle is not in
+    ``vtherm_api`` (I12.7): a zone VT holds at 80 % is not saturated; at 95 % it is."""
+    capped = ZoneState("a", 19.0, 21.0, True, on_percent=0.8, reported_at=NOW)
+    assert not pick([capped]).saturated
+    full = ZoneState("a", 19.0, 21.0, True, on_percent=0.95, reported_at=NOW)
+    assert pick([full]).saturated
 
 
 def test_the_hysteresis_compares_demand_before_deficit() -> None:

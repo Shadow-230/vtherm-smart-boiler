@@ -38,7 +38,6 @@ class ZoneSeries:
             calling=self.calling.value_at(t),
             on_percent=self.on_percent.value_at(t),
             valve_open=self.valve_open.value_at(t),
-            power=self.power.value_at(t),
             reported_at=t,
         )
 

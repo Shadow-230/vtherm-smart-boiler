@@ -2981,7 +2981,7 @@
     },
     "vt_reload_needed": {
       "title": "Some VT thermostats need a reload to be handed to the plugin",
-      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and are handed to it only when VT reloads: {zones}. Until then the plugin reads them from their climate state. Reload Versatile Thermostat."
+      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and are handed to it only when VT reloads: {zones}. Until then the plugin does not know these rooms: they count for nothing. Reload Versatile Thermostat."
     },
     "entity_removed": {
       "title": "An entity the plugin uses is gone",

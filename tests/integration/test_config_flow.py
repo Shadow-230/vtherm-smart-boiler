@@ -1768,13 +1768,10 @@ async def test_a_circuits_zones_are_checked_and_an_area_adds_its_own(
 
 
 def built_on(hass: HomeAssistant, zone: str, *underlying: str) -> None:
-    """The VT zone drives these devices, as VT 10.4.0 keeps them in its entry."""
-    from homeassistant.helpers import entity_registry as er
+    """The VT zone drives these devices, as its thermostat's ``entry_infos`` says (I12.7)."""
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_thermostat
 
-    data = {"underlying_entity_ids": [*underlying]}
-    vt = MockConfigEntry(domain="versatile_thermostat", data=data)
-    vt.add_to_hass(hass)
-    er.async_get(hass).async_update_entity(zone, config_entry_id=vt.entry_id)
+    vt_thermostat(hass, zone).settings["underlying_entity_ids"] = [*underlying]
 
 
 async def test_a_zones_own_devices_put_it_in_two_circuits(
@@ -2378,14 +2375,9 @@ async def test_a_switch_a_vt_zone_drives_is_refused_on_the_entity_path(
     """PB-54: on the entity path the heating switch and the external-control switch are checked
     against the switches VT thermostats drive, as the relay is — VT's toggles would read as
     another controller. Negative: a switch no zone drives is accepted."""
-    from homeassistant.helpers import entity_registry as er
 
     entry_id = await create_entry(hass, entities, "simple", ("living",))
-    vt = MockConfigEntry(
-        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.room_heater"]}
-    )
-    vt.add_to_hass(hass)
-    er.async_get(hass).async_update_entity(entities["bedroom"], config_entry_id=vt.entry_id)
+    built_on(hass, entities["bedroom"], "switch.room_heater")
     hass.states.async_set("switch.room_heater", "off")
     hass.states.async_set("switch.external_control", "off")
     result = await to_control_entity(hass, entry_id)
@@ -3194,14 +3186,10 @@ async def test_a_zone_built_on_the_boilers_thermostat_is_refused(
         "climate", "mqtt", "otgw-thermostat", suggested_object_id="otgw", device_id=device.id
     ).entity_id
 
-    def built_on(zone: str, *underlying: str) -> None:
-        vt = MockConfigEntry(
-            domain="versatile_thermostat", data={"underlying_entity_ids": list(underlying)}
-        )
-        vt.add_to_hass(hass)
-        registry.async_update_entity(zone, config_entry_id=vt.entry_id)
+    def on(zone: str, *underlying: str) -> None:
+        built_on(hass, zone, *underlying)
 
-    built_on(entities["living"], "switch.living_valve", gateway)
+    on(entities["living"], "switch.living_valve", gateway)
     result = await start_setup(hass)
     for data in (
         {"name": "Boiler", "level": "simple"},
@@ -3214,10 +3202,10 @@ async def test_a_zone_built_on_the_boilers_thermostat_is_refused(
     result = await step(hass, result, both)
     assert result["errors"] == {"zones": "zone_on_boiler_thermostat"}
     assert result["description_placeholders"]["zone"] == "fake living"
-    built_on(entities["living"], firmware)  # the firmware's climate, on the flame's device
+    on(entities["living"], firmware)  # the firmware's climate, on the flame's device
     result = await step(hass, result, both | {"zones": [entities["living"]]})
     assert result["errors"] == {"zones": "zone_on_boiler_thermostat"}
-    built_on(entities["living"], "switch.living_valve")
+    on(entities["living"], "switch.living_valve")
     result = await step(hass, result, both)
     assert not result["errors"]  # bedroom's VT entry cannot be read: accepted
     assert "underfloor" in result["data_schema"].schema  # shown again with the emitters
@@ -3727,11 +3715,7 @@ async def test_a_relay_used_by_a_vt_zone_or_the_gateway_is_refused(
 
     registry = er.async_get(hass)
     entry_id = await create_entry(hass, entities, "simple", ("living",), "on_off")
-    vt = MockConfigEntry(
-        domain="versatile_thermostat", data={"underlying_entity_ids": ["switch.room_heater"]}
-    )
-    vt.add_to_hass(hass)
-    registry.async_update_entity(entities["bedroom"], config_entry_id=vt.entry_id)
+    built_on(hass, entities["bedroom"], "switch.room_heater")
     hass.states.async_set("switch.room_heater", "off")
     gateway = registry.async_get_or_create("switch", "opentherm_gw", "gw-ch-override").entity_id
     hass.states.async_set(gateway, "off")

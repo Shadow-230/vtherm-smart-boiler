@@ -34,21 +34,27 @@ writes that to the boiler and hands the boiler back on every exit.
 - **The HA side** around it gathers inputs from the entities the user picked, runs the core on
   timers and state changes, carries out its writes, and publishes sensors, binary sensors,
   switches, buttons and repair issues.
-- **`vtherm_link.py` is the only door to zone data.** It reads each zone through `vtherm_api`
-  where the API has the value: VT hands each thermostat to the plugin's feature manager, and the
-  members the API declares are read from it — the room temperature and when it was measured,
-  the target, the mode, whether the zone heats and its device is on, power shedding, why VT keeps
-  it off, its cycle (the user's rule, 2026-11-24). The rest, and every value of a thermostat VT
-  started before the plugin registered, comes from VT's climate entities; so do VT's central
-  configuration and its central boiler. It detects what is installed (VT and its version,
-  `vtherm_api`) instead of assuming it; it reads nothing of SmartPI. No other module looks up a
-  zone's state by entity name.
+- **`vtherm_link.py` is the only door to zone data.** It reads each zone only through
+  `vtherm_api` (the user's rule, 2026-11-24/25; I12.7). A zone is the thermostat VT handed to
+  the plugin's feature manager whose declared `entity_id` matches. From the thermostat: the room
+  temperature and when VT measured it, the target, the mode, whether the zone heats and its
+  device is on, and why VT keeps it off (the window only). From its `entry_infos`: its type,
+  cycle and devices, whether VT's central boiler counts it, the room's thermometer and window
+  sensor, and VT's central boiler settings. From VT's calls on the manager: the zone counts as
+  started from VT's first `refresh_state`, and its duty and valve opening are what VT's power
+  hook last said VT applied. A zone whose thermostat VT has not handed over is not known; nothing
+  of VT's climate entity stands in for it. Still read from VT's climate entities for now: the
+  zone history (until the plugin keeps its own, step I12.7b), and the zone picker, the zones'
+  names, the reload repair and VT's central mode (until the rooms come from VT, step I12.11). It
+  detects what is installed (VT and its version, `vtherm_api`) instead of assuming it; it reads
+  nothing of SmartPI. No other module looks up a zone's state by entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
-  `register_feature_manager`) is the channel VT hands each thermostat through. It publishes
+  `register_feature_manager`) is the channel VT hands each thermostat through. It keeps what VT
+  tells it — its `refresh_state` and its power hook `async_on_underlying_power` — and publishes
   nothing on VT's thermostats: the water data it showed until I12.9 went, as nothing read it
   (the user's decision of 2026-11-25). It is registered only once VT is loaded; a thermostat
   already running is handed over only after VT's next reload, which the plugin never triggers
-  itself — a repair issue names such zones.
+  itself — a repair issue names such zones, and until then they are not known.
 - **"Gives no heat"** (`binary_sensor`, key `no_heat`; `core/boiler_call.py`): one house-wide
   signal, on while the boiler gives the rooms no heat now, with its reason — VT's central boiler
   not calling, its activation delay, hot water, a boiler fault, or the plugin unable to vouch for

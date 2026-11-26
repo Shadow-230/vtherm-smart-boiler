@@ -2981,7 +2981,7 @@
     },
     "vt_reload_needed": {
       "title": "Część termostatów VT wymaga przeładowania, żeby trafiły do wtyczki",
-      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i trafią do niej dopiero po przeładowaniu VT: {zones}. Do tego czasu wtyczka czyta je ze stanu ich encji klimatu. Przeładuj Versatile Thermostat."
+      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i trafią do niej dopiero po przeładowaniu VT: {zones}. Do tego czasu wtyczka nie zna tych pokoi: nie liczą się do niczego. Przeładuj Versatile Thermostat."
     },
     "entity_removed": {
       "title": "Encja używana przez wtyczkę zniknęła",
