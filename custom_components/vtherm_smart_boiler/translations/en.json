@@ -1698,6 +1698,9 @@
         "state_attributes": {
           "calling_zones": {
             "name": "Zones calling"
+          },
+          "calling_circuits": {
+            "name": "Circuits calling"
           }
         }
       },

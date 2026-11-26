@@ -238,9 +238,13 @@ mapping, dealt with apart); a warning names the thermostats VT hands over unmark
 remembers the rooms it knew while VT holds none of them (a reload, a restart: seeded from the
 rooms' store), so the recognition period keeps the last command instead of turning heating off.
 
-#### I12.12 The page and the analyses
+#### I12.12 The page and the analyses ✅
 
 Decision 6; the analyses' "was the boiler called" from the helper's history.
+Done 2026-11-26 (the analyses at I12.7b): the rooms list goes from the Boiler page; the tile
+shows the plugin's own count of rooms calling, with a link to VT for administrators; the circuits
+taking water come from the plugin's new recorded attribute `calling_circuits`; the water flows
+while the plugin's heat call is on or the flame burns; the page reads nothing of VT.
 
 #### I12.13 Docs and a guard
 

@@ -78,11 +78,12 @@ version is decided then.
 - A page "Boiler" in Home Assistant's sidebar, for every user, in Home Assistant's language; the
   switch **Page in the sidebar** (on by default) takes it away and puts it back (the user guide,
   section 4.12). Its overview shows the status with its reasons, whether **Control** is on — with
-  "Change in settings" for an administrator — and tiles for the water asked and confirmed, flow, return, outdoor, flame and the
-  rooms calling for heat; and the schematic of the installation, drawn from the settings — the
+  "Change in settings" for an administrator — and tiles for the water asked and confirmed, flow, return, outdoor, flame and
+  how many rooms call for heat, as the plugin counts them, with a link to Versatile Thermostat's
+  page for an administrator; and the schematic of the installation, drawn from the settings — the
   boiler, its tank or its own hot water, each circuit with its valve, pump and radiators or
-  underfloor loop — with the water moving where it flows now, the measured temperatures, and
-  each circuit's rooms: how hard each one's controller heats and whether it calls for heat; and
+  underfloor loop — with the water moving where it flows now, into the circuits whose rooms call,
+  and the measured temperatures. The page reads nothing of VT and lists no rooms; and
   the heating curve as control decides the water, with "where we are" on it, the last 7 days'
   decisions and a preview of changes — drag the point at the hardest frost, shift the curve — that
   the plugin checks as the settings do, and that an administrator can save after confirming —
@@ -108,11 +109,12 @@ version is decided then.
   hour over the last 4 weeks. Each daily summary now keeps its heating starts hour by hour; days
   kept before show without them.
 - **Cards** for your own dashboards, in the card picker while the plugin runs: "Boiler: status"
-  (the status, whether control is on and the tiles), "Boiler: schematic" (the installation and its
-  rooms), "Boiler: heating curve" and "Boiler: last 24 h" — the page's own parts, with no
+  (the status, whether control is on and the tiles), "Boiler: schematic" (the installation and the
+  circuits taking heat), "Boiler: heating curve" and "Boiler: last 24 h" — the page's own parts, with no
   settings, the same rules for changes.
 - The control state's attribute **Curve's outdoor temperature**: the outdoor temperature the
-  water was decided with, as the curve reads it.
+  water was decided with, as the curve reads it; and **Calling for heat**'s **Circuits calling**,
+  the circuits the rooms calling are on, kept in the recorder for the page's last 24 h.
 
 ### Requirements
 

@@ -7,7 +7,6 @@ import {
   emitterOf,
   hotWaterOf,
   modeOf,
-  roomsView,
   schematicView,
 } from "./schematic";
 import type { CircuitInfo, HassEntity, Installation } from "./types";
@@ -51,7 +50,10 @@ function inputs(states: HassEntity[], installation = INSTALLATION, language = "e
   };
 }
 
-const calling = (...zones: string[]) => entity("sensor.calling", String(zones.length), { calling_zones: zones });
+// The plugin's "Calling for heat": how many rooms call, and the circuits they are on.
+const calling = (...circuits: string[]) =>
+  entity("sensor.calling", String(circuits.length), { calling_zones: [], calling_circuits: circuits });
+const called = (state: string) => entity("binary_sensor.called", state);
 
 describe("what the settings say", () => {
   it("draws a tank, the boiler's own hot water, or none, from the boiler's type", () => {
@@ -82,20 +84,22 @@ describe("what the settings say", () => {
 
 describe("what the water does now", () => {
   it("is hot water while the boiler reports it", () => {
-    expect(modeOf(inputs([entity("binary_sensor.dhw", "on"), calling("climate.a")]))).toBe("dhw");
+    expect(modeOf(inputs([entity("binary_sensor.dhw", "on"), called("on"), calling("radiators")]))).toBe("dhw");
   });
-  it("is heating while a zone calls or the plugin calls the boiler", () => {
-    expect(modeOf(inputs([calling("climate.a")]))).toBe("heat");
-    expect(modeOf(inputs([entity("binary_sensor.called", "on"), calling()]))).toBe("heat");
+  it("is heating while the plugin calls the boiler, or the burner burns for heating", () => {
+    expect(modeOf(inputs([called("on"), calling()]))).toBe("heat");
+    // The plugin not holding the boiler: the flame alone says it heats.
+    expect(modeOf(inputs([called("unknown"), entity("binary_sensor.flame", "on")]))).toBe("heat");
   });
-  it("is still otherwise", () => {
-    expect(modeOf(inputs([calling(), entity("binary_sensor.called", "off")]))).toBe("idle");
+  it("is still otherwise — rooms calling alone do not make the water flow", () => {
+    expect(modeOf(inputs([calling("radiators"), called("off")]))).toBe("idle");
+    expect(modeOf(inputs([calling("radiators")]))).toBe("idle");
     expect(modeOf(inputs([]))).toBe("idle");
   });
 });
 
 describe("the drawing", () => {
-  it("lets the water flow only to circuits whose rooms call", () => {
+  it("lets the water flow only to the circuits taking it", () => {
     const { paths, circuits } = drawSchematic(INSTALLATION, "heat", new Set(["radiators"]));
     expect(circuits.map((c) => [c.id, c.active])).toEqual([["radiators", true], ["floor", false]]);
     expect(paths.radOn).not.toBe("");
@@ -141,9 +145,29 @@ describe("the drawing", () => {
   });
 });
 
+describe("the circuits taking water", () => {
+  it("are those the plugin names with the rooms calling, while the boiler heats", () => {
+    const view = schematicView(inputs([called("on"), calling("floor")]));
+    expect(view.circuits.map((c) => [c.id, c.active])).toEqual([["radiators", false], ["floor", true]]);
+    const still = schematicView(inputs([called("off"), calling("floor")]));
+    expect(still.circuits.every((c) => !c.active)).toBe(true);
+  });
+
+  it("are none where the plugin does not say, whatever VT's thermostats show", () => {
+    const vt = [
+      entity("climate.a", "heat", { hvac_action: "heating", on_percent: 0.9 }),
+      entity("climate.c", "heat", { hvac_action: "heating", valve_open_percent: 80 }),
+    ];
+    const view = schematicView(inputs([called("on"), entity("sensor.calling", "2"), ...vt]));
+    expect(view.circuits.every((c) => !c.active)).toBe(true);
+    expect(view.mode).toBe("heat");
+  });
+});
+
 describe("the labels", () => {
   const heating = [
-    calling("climate.a"),
+    called("on"),
+    calling("radiators"),
     entity("binary_sensor.flame", "on"),
     entity("sensor.modulation", "34"),
     entity("sensor.flow", "41.2"),
@@ -167,7 +191,7 @@ describe("the labels", () => {
   });
 
   it("say a pause, hot water or idle", () => {
-    const pause = schematicView(inputs([calling("climate.a"), entity("binary_sensor.flame", "off")]));
+    const pause = schematicView(inputs([called("on"), entity("binary_sensor.flame", "off")]));
     expect(pause.labels.map((l) => l.text)).toContain("pause between burns");
     const hot = schematicView(inputs([entity("binary_sensor.dhw", "on"), entity("binary_sensor.flame", "on")]));
     expect(hot.labels.map((l) => l.text)).toContain("burning · hot water");
@@ -222,31 +246,5 @@ describe("the labels", () => {
     const view = schematicView(inputs(heating, INSTALLATION, "pl"));
     const wrapping = view.labels.filter((l) => l.wrap).map((l) => l.text);
     expect(wrapping).toEqual(["pali · ogrzewanie"]);
-  });
-});
-
-describe("the rooms", () => {
-  it("show each circuit's rooms as VT shows them", () => {
-    const states = [
-      calling("climate.a"),
-      entity("climate.a", "heat", { friendly_name: "Living room", current_temperature: 20.6, temperature: 21, on_percent: 0.64 }),
-      entity("climate.b", "heat", { current_temperature: 18.7, temperature: 19, valve_open_percent: 38 }),
-      entity("climate.c", "heat", { friendly_name: "Kitchen", current_temperature: 21.2, temperature: 21 }),
-    ];
-    const view = inputs(states, INSTALLATION, "pl");
-    const rooms = roomsView(view, schematicView(view).circuits);
-    expect(rooms).toEqual([
-      [
-        { entityId: "climate.a", name: "Living room", temperature: "20,6 °C", target: "21,0 °C", demand: 64, calling: true },
-        { entityId: "climate.b", name: "climate.b", temperature: "18,7 °C", target: "19,0 °C", demand: 38, calling: false },
-      ],
-      [{ entityId: "climate.c", name: "Kitchen", temperature: "21,2 °C", target: "21,0 °C", demand: null, calling: false }],
-    ]);
-  });
-
-  it("show a room Home Assistant does not know with dashes", () => {
-    const view = inputs([]);
-    const rooms = roomsView(view, schematicView(view).circuits);
-    expect(rooms[0][0]).toMatchObject({ temperature: "—", target: "—", demand: null, calling: false });
   });
 });

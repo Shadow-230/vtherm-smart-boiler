@@ -730,11 +730,13 @@ class ControlStatus:
     blocked_by: tuple[str, ...] = ()
     unknown_alarms: frozenset[ControlAlarm] = frozenset()
     # Whether the boiler is called for heat and why not (the user's decisions of 2026-10-14;
-    # ``core.boiler_call``), and the rooms that call — ``None`` with no zone known.
+    # ``core.boiler_call``), and the rooms that call — ``None`` with no zone known — and the
+    # circuits they are on (I12.12).
     boiler_called: bool | None = None
     call_reason: str | None = CallReason.NOT_CONTROLLING.value
     demand_count: int | None = None
     calling_zones: tuple[str, ...] = ()
+    calling_circuits: tuple[str, ...] = ()
     # I12.9: whether the boiler gives the rooms no heat now, and why (``core.boiler_call``).
     no_heat: NoHeat = NO_HEAT_UNKNOWN
 
@@ -4310,17 +4312,25 @@ class ControlUnit:
         self, now: float, zones: Sequence[ZoneState], decision: ControlDecision
     ) -> dict[str, Any]:
         """Whether the boiler is called and why not, and the rooms that call: their count —
-        ``None`` with no zone known — and which they are."""
+        ``None`` with no zone known — which they are, and the circuits they are on (I12.12: the
+        Boiler page draws those taking water, and reads no room)."""
         demand = decision.demand
         max_age = self.options.loop.control.zone_max_age_s
         calling = [z for z in zones if z.is_known(now, max_age) and zone_wants_heat(z)]
         call = boiler_call(decision.mode, decision.reasons, 0 if demand is None else len(calling))
         known = demand is not None and demand.fresh_zones > 0
+        wanting = {z.zone_id for z in calling}
+        installation = self._coordinator.config.installation.with_rooms([z.zone_id for z in zones])
         return {
             "boiler_called": call.called,
             "call_reason": None if call.reason is None else call.reason.value,
             "demand_count": demand.zones_wanting if demand is not None and known else None,
             "calling_zones": tuple(z.zone_id for z in calling),
+            "calling_circuits": tuple(
+                circuit.circuit_id
+                for circuit in installation.circuits
+                if any(z.zone_id in wanting for z in installation.zones_in(circuit.circuit_id))
+            ),
         }
 
     def _fire_boiler_call(self, before: ControlStatus | None, now: ControlStatus) -> None:

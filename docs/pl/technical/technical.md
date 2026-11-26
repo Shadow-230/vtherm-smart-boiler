@@ -128,14 +128,21 @@ docs/                                     dokumentacja, osobny katalog na każdy
   przełącznikiem (F17 z J4). Póki wpis działa, `panel.py` każe
   też Home Assistantowi wczytywać ten sam moduł na każdej stronie (`frontend.add_extra_js_url`,
   zabierane przy wyładowaniu, starszy adres zastępowany po aktualizacji), więc części przeglądu
-  są w wyborze kart jako cztery karty — stan i kafelki, schemat i pokoje, krzywa, ostatnie 24 h —
+  są w wyborze kart jako cztery karty — stan i kafelki, schemat, krzywa, ostatnie 24 h —
   każda to własna część strony (`frontend/src/cards.ts`), bez ustawień: każda sama znajduje
   działający wpis przez `vtherm_smart_boiler/installation`. Gdy frontend Home Assistanta nie
-  działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
-  `.tools/node/`. `websocket_api.py` to to, co strona czyta: pięć poleceń WebSocket tylko do
+  działa, nic nie jest rejestrowane. Strona nie czyta niczego z VT i nie pokazuje pokoi
+  ([`plan-0.2-i12.md`](../../en/development/plans/plan-0.2-i12.md), decyzja 6): kafelek pokoi
+  pokazuje własną liczbę wtyczki, **Wołające o ciepło** (`demand_count`), z odnośnikiem do strony
+  VT w ustawieniach dla administratora; schemat rysuje płynącą wodę, gdy **Wezwanie do grzania**
+  (`boiler_called`) jest włączone albo płomień pali na grzanie, do obiegów, które wymienia atrybut
+  tego czujnika `calling_circuits` — obiegi wołających pokoi, zapisywane w recorderze, w
+  przeciwieństwie do samych pokoi (`calling_zones`), więc ostatnie 24 h je odtwarzają. Ostatnie
+  24 h czytają z recordera historię tylko sygnałów kotła, własnych encji wtyczki i pogody.
+  Node.js instaluje `scripts/bootstrap_node.sh` do `.tools/node/`. `websocket_api.py` to to, co strona czyta: pięć poleceń WebSocket tylko do
   odczytu, dla każdego zalogowanego użytkownika, każde odpowiada z działającego wpisu (inaczej
-  błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich strefami i
-  grzejnikami, encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
+  błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich pokojami i
+  grzejnikami (strona rysuje grzejniki; identyfikatory pokoi służą sprawdzeniu J4), encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
   krzywej; `vtherm_smart_boiler/curve` — punkty krzywej dla ustawień w użyciu albo dla wartości
   roboczych, bez zapisu, z `core/curve_view.py` (krzywa przy temperaturze pokojowej w użyciu,
   potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze

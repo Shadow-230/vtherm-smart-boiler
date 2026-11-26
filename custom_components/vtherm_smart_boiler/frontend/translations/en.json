@@ -46,11 +46,11 @@
     "flame_hot_water": "hot water",
     "flame_modulation": "modulation {value} %",
     "rooms": "Rooms",
-    "rooms_value": "{calling} of {total}",
-    "rooms_detail": "calling for heat"
+    "rooms_detail": "calling for heat",
+    "rooms_link": "Rooms in Versatile Thermostat"
   },
   "schematic": {
-    "title": "Installation and rooms",
+    "title": "Installation",
     "boiler": "Boiler",
     "burning_heating": "burning · heating",
     "burning_hot_water": "burning · hot water",
@@ -64,16 +64,14 @@
     "other": "other automation",
     "other_need": "other automation · needs {value} °C",
     "boiler_mixed": "mixed by the boiler",
-    "rooms": "Who takes heat",
-    "rooms_hint": "The bar: how hard the room's own controller heats. Outlined: the room calls for heat.",
     "takes_heat": "takes heat",
-    "no_heat": "not calling",
+    "no_heat": "takes no heat",
     "legend_hot": "hot water",
     "legend_mixed": "mixed",
     "legend_return": "return",
     "legend_idle": "still",
     "legend_moving": "white dashes — the water flows · green — a pump or valve at work",
-    "aria": "Installation: {status}. Rooms taking heat: {rooms}.",
+    "aria": "Installation: {status}. Circuits taking heat: {circuits}.",
     "nobody": "none"
   },
   "curve": {
@@ -131,7 +129,7 @@
   },
   "timeline": {
     "title": "The last 24 h",
-    "hint": "Scroll or play the day back: the tiles, the schematic, the rooms and the curve show that moment.",
+    "hint": "Scroll or play the day back: the tiles, the schematic and the curve show that moment.",
     "hint_alone": "Scroll or play the day back: the chart, the burns and the legend show that moment.",
     "play": "Play the day",
     "pause": "Stop",
@@ -342,7 +340,7 @@
     "status": "Boiler: status",
     "status_detail": "Smart Boiler's status with its reasons, the Control switch and the tiles.",
     "schematic": "Boiler: schematic",
-    "schematic_detail": "The heating installation drawn from Smart Boiler's settings, with each circuit's rooms and whether they take heat.",
+    "schematic_detail": "The heating installation drawn from Smart Boiler's settings, with the circuits taking heat now.",
     "curve": "Boiler: heating curve",
     "curve_detail": "The heating curve with where Smart Boiler is now and its last 7 days; an administrator can preview and save a change.",
     "timeline": "Boiler: last 24 h",
