@@ -10,7 +10,6 @@ from custom_components.vtherm_smart_boiler.core.curve import (
     update_outdoor,
 )
 from custom_components.vtherm_smart_boiler.core.readings import (
-    SMARTPI_HYSTERESIS_K,
     UNKNOWN,
     BoilerSnapshot,
     Reading,
@@ -106,26 +105,9 @@ def test_zone_freshness() -> None:
     assert not ZoneState("z").is_fresh(0.0, None)
 
 
-# --- X3: which zones are known, which have reported, and their mean power ----------------------
+# --- X3: which zones are known and which have reported ------------------------------------------
 
 NOW = 1000.0
-
-
-@pytest.mark.parametrize(
-    ("reported", "ready", "started"),
-    [
-        (True, True, True),
-        (False, False, False),
-        (False, None, False),  # VT 10.4.0 before its first refresh: neither is_ready nor more
-        (None, None, True),  # not said (a caller without VT's attributes): as before
-        (None, False, False),
-        (None, True, True),
-    ],
-)
-def test_a_zone_is_started_as_vt_shows_it(
-    reported: bool | None, ready: bool | None, started: bool
-) -> None:
-    assert ZoneState("z", reported=reported, ready=ready).started is started
 
 
 def zone(**kw) -> ZoneState:
@@ -134,73 +116,51 @@ def zone(**kw) -> ZoneState:
 
 
 @pytest.mark.parametrize(
-    ("state", "known", "reported"),
+    ("state", "known"),
     [
-        (zone(), False, False),  # no mode: unavailable, unknown, a mode not listed
-        (zone(heating_enabled=True, reported=True), True, True),
-        (zone(heating_enabled=False, reported=True), True, True),
-        # Heat or auto that VT does not run yet: unknown.
-        (zone(heating_enabled=True, reported=False, ready=False), False, False),
-        (zone(heating_enabled=True, reported=False), False, False),
-        # "Off" that VT has not started, neither ``is_ready`` nor ``specific_states`` shown: VT's
-        # placeholder, kept for good while none of its devices has reported (VT 10.4.0) — not
-        # the user's "off": unknown after the recognition period too (SB-02, check C's F1).
-        (zone(heating_enabled=False, reported=False), False, False),
-        # VT says it has not started it (``is_ready`` false): it cannot — a device unavailable —
-        # so its "off" is not the user's: unknown after the recognition period too (SB-02).
-        (zone(heating_enabled=False, reported=False, ready=False), False, False),
-        (zone(heating_enabled=False, ready=False), False, False),
-        # Started and "off": the user's "off", known without demand (S-34).
-        (zone(heating_enabled=False, reported=True, ready=True), True, True),
-        (zone(heating_enabled=True), True, True),  # nothing said about the start: as before
-        (zone(heating_enabled=True, ready=False), False, False),
-        (zone(heating_enabled=True, reported=True, reported_at=None), False, False),  # never
+        (zone(), False),  # no mode: not handed over, or a mode not listed
+        (zone(heating_enabled=True), True),
+        (zone(heating_enabled=False), True),  # started and "off": the user's "off" (S-34)
+        # Heat, or "off", that VT has not started — no ``refresh_state`` on the manager yet
+        # (I12.7): not the user's "off", unknown after the recognition period too (SB-02, check
+        # C's F1).
+        (zone(heating_enabled=True, started=False), False),
+        (zone(heating_enabled=False, started=False), False),
+        (zone(started=True), False),  # a mode must be known too
+        (zone(heating_enabled=True, reported_at=None), False),  # never read
     ],
 )
-def test_which_zones_are_known(state: ZoneState, known: bool, reported: bool) -> None:
+def test_which_zones_are_known(state: ZoneState, known: bool) -> None:
     assert state.is_known(NOW, None) is known
-    assert state.has_reported(NOW, None) is reported  # what the recognition period waits for
+    assert state.has_reported(NOW, None) is known  # what the recognition period waits for
 
 
 def test_a_zone_beyond_its_age_limit_is_unknown() -> None:
-    state = zone(heating_enabled=True, reported=True, reported_at=NOW - 700.0)
+    state = zone(heating_enabled=True, reported_at=NOW - 700.0)
     assert state.is_known(NOW, None)
     assert not state.is_known(NOW, 600.0)
     assert not state.has_reported(NOW, 600.0)
 
 
-@pytest.mark.parametrize(
-    ("state", "reported"),
-    [
-        (zone(heating_enabled=True, reported=True), True),
-        (zone(heating_enabled=False, reported=True), True),
-        (zone(heating_enabled=False, reported=False), False),  # VT's placeholder "off"
-        (zone(heating_enabled=True, reported=False, ready=False), False),
-        (zone(reported=True), False),  # a mode must be known too
-        (zone(heating_enabled=True), True),  # nothing said about the start: as before
-    ],
-)
-def test_a_zone_has_reported_when_vt_shows_it_started_with_its_mode(
-    state: ZoneState, reported: bool
-) -> None:
-    assert state.has_reported(NOW, None) is reported
+def test_a_zone_is_fresh_when_read_whatever_its_measurement() -> None:
+    """I12.7: VT keeps the thermostat's values live; how old the room's measurement is, VT's
+    safety mode and the rooms' trust tell, not freshness."""
+    assert zone(temperature_at=NOW - 7200.0).is_fresh(NOW, 600.0)
+    assert not zone(reported_at=None, temperature_at=NOW).is_fresh(NOW, None)
 
 
 @pytest.mark.parametrize(
-    ("state", "power"),
+    ("state", "full"),
     [
-        (ZoneState("z", mean_power=1.2, power=2.0, on_percent=0.3), 1.2),  # VT's own mean
-        (ZoneState("z", mean_power=0.0, power=2.0, on_percent=0.3), 0.0),  # VT says none now
-        (ZoneState("z", power=2.0, on_percent=0.6), 1.2),  # an older VT: power times duty
-        (ZoneState("z", power=2.0, valve_open=0.5), 1.0),  # or times the valve's opening
-        (ZoneState("z", power=2.0, on_percent=0.6, valve_open=0.5), 1.2),  # the duty first
-        (ZoneState("z", power=2.0), None),  # no duty cycle: not known here
-        (ZoneState("z", on_percent=0.6), None),  # no power: not known
-        (ZoneState("z"), None),
+        (ZoneState("z", valve_open=0.95), True),
+        (ZoneState("z", valve_open=0.9, on_percent=1.0), False),  # the valve decides
+        (ZoneState("z", on_percent=1.0), True),
+        (ZoneState("z", on_percent=0.8), False),  # VT's cap is not seen (I12.7)
+        (ZoneState("z"), False),  # nothing applied yet
     ],
 )
-def test_a_zones_mean_power_over_its_cycle(state: ZoneState, power: float | None) -> None:
-    assert state.cycle_power == (None if power is None else pytest.approx(power))
+def test_a_zone_is_fully_open_at_95_percent(state: ZoneState, full: bool) -> None:
+    assert state.fully_open is full
 
 
 def _outdoor_run(values: list[float | None], step_s: float = 30 * 60) -> list[OutdoorState]:
@@ -267,20 +227,6 @@ def test_a_plausible_range_includes_its_bounds_and_may_be_open() -> None:
     assert SignalSpec(SignalKind.PRESSURE, low=0.0).plausible(1e6)
     assert SignalSpec(SignalKind.PRESSURE, high=4.0).plausible(-1e6)
     assert not SignalSpec(SignalKind.PRESSURE, high=4.0).plausible(4.01)
-
-
-@pytest.mark.parametrize(("learning", "shortfall"), [(None, 0.2), (False, 0.2), (True, 0.7)])
-def test_a_smartpi_zone_in_its_learning_phase_is_short_up_to_its_upper_hysteresis(
-    learning: bool | None, shortfall: float
-) -> None:
-    """G11 C: SmartPI 0.4.0 in its learning phase runs on/off and keeps the valve open until the
-    room is 0.5 K over VT's setpoint, so "short" is judged against that; out of it, or with the
-    phase unknown, against VT's setpoint. The deficit itself stays VT's."""
-    assert SMARTPI_HYSTERESIS_K == 0.5
-    zone = ZoneState("z", 20.8, 21.0, True, smartpi_learning_phase=learning)
-    assert zone.deficit == pytest.approx(0.2)
-    assert zone.shortfall == pytest.approx(shortfall)
-    assert ZoneState("z", None, 21.0, True, smartpi_learning_phase=True).shortfall is None
 
 
 # --- Mutation testing (2026-10-12): ages and freshness at their exact bounds ------------------

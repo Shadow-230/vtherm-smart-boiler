@@ -49,8 +49,9 @@ a heat pump controller (excluded), or anything that sends data outside.
    (the thermostat-like mode, from 0.3), or supplies a circuit that has its own controller. Zones throttle with
    their valves; information flows from the boiler to the zones. A boiler switched on and off
    by a relay (class 3) gets only heating on and off: its water temperature stays the boiler's.
-4. **Do not damage other models** — pause zone-algorithm learning through their public services
-   (SmartPI; Auto-TPI only once its service can pause without losing what it learned, §11).
+4. **Do not damage other models** — tell zone algorithms when the boiler gives no heat (one
+   "gives no heat" sensor the user picks in SmartPI 1.0 or uses in an automation); never pause or
+   change their learning (I12.9, the user's decision of 2026-11-25).
 5. **Safe** — the fixed safeguards of principle 11 always apply; the limits are set by the user,
    with cautious defaults.
 6. **Local** — nothing is sent outside.
@@ -68,8 +69,8 @@ a heat pump controller (excluded), or anything that sends data outside.
     kept settings stay active, and the simple view shows that some advanced settings differ
     from defaults.
 11. **The user decides, informed** — control choices belong to the user: write path, hand-back
-    method, control mode (flow setpoint, on/off, and from 0.3 thermostat-like), limits, curve, demand thresholds,
-    learning pauses, the days of data the verdict needs. Each has a cautious default and a
+    method, control mode (flow setpoint, on/off, and from 0.3 thermostat-like), limits, curve,
+    the days of data the verdict needs; when to heat is VT's (principle 12). Each has a cautious default and a
     description of what it does and what it risks — in the config flow and in the documentation. Fixed safeguards, not
     options, for every write (flow setpoint, CH on/off, modulation cap, the thermostat-like
     mode's values to the boiler, a relay): no write without fresh input data — water-temperature control needs flame
@@ -93,30 +94,32 @@ a heat pump controller (excluded), or anything that sends data outside.
     decides whether to heat (principle 12). A relay that reports no state of its own is
     controlled with blind repeats and shown as "controlled without confirmation"; freshness then
     applies to the inputs of the decision — the zones and the outdoor temperature.
-12. **VT decides whether to heat** — the plugin replaces VT's central boiler: heating goes on
-    and off with the zones' demand, at once and in both directions; the plugin decides only how
+12. **VT decides whether to heat** — VT's central boiler, with its own thresholds and activation
+    delay, switches a helper the plugin follows (I12): heating goes on and off as VT decides, at
+    once and in both directions; the plugin decides only how
     warm the water is — the curve, the limits and the ramp. Nothing the plugin counts or times
     holds heating off, or on, against VT: an old boiler with a high minimum output cycles a lot
     on its own, and blocking it would leave the house cold. Frequent starts are information — an
     alarm with its threshold, and the verdict. (The user's decision, 2026-09-25.) The stated
     exceptions, each with its reason (§7; the user's decisions of 2026-09-26/27):
-    1. Frost protection, a safety net — only for zones whose emitter can take heat (decision 4).
-    2. The recognition period, at most 10 min after Home Assistant starts or VT reloads: no new
+    1. The recognition period, at most 10 min after Home Assistant starts or VT reloads: no new
        decision, the last command kept. Reason: the zones report one by one.
-    3. The grace period: a zone that becomes unknown keeps its last answer for 10 min. Reason:
+    2. The grace period: a zone that becomes unknown keeps its last answer for 10 min. Reason:
        reloading one zone should neither start nor stop the boiler.
-    4. No heating when every zone is unknown, or no configured demand criterion can be judged,
-       after the grace, and no working thermostat is there (§7). Reason: nothing can ask for heat
-       (decision 3).
-    5. VT's activation delay, 0–600 s before switching on, as in VT 10.4.0. Reason: slow valves
-       (decision 5).
-    6. The usual "off" while the boiler reports a fault that stops it (a known "on" held 5 min,
+    3. No heating when every zone is unknown, or VT's decision is unknown (its helper neither on
+       nor off), after the grace, and no working thermostat is there (§7). Reason: nothing can
+       ask for heat (decision 3).
+    4. The usual "off" while the boiler reports a fault that stops it (a known "on" held 5 min,
        provisional, K4). Reason: the plugin follows the boiler's own logic.
-    7. The lost boiler link: no write from the first step without fresh data, then a hand-back
+    5. The lost boiler link: no write from the first step without fresh data, then a hand-back
        after 5 min — stand-alone, heating stops — or, for a relay, an alarm and no hand-back (the
        decision of 2026-09-25; §5 class 3). Meanwhile a stand-alone gateway's `CS` lapses within
        about a minute, so the boiler stops and starts again when the data return (an extra
        start), and a held command stays up to 5 min whatever VT asks.
+
+    Frost protection and the activation delay were exceptions too until I12; both are VT's now:
+    VT's frost preset or central mode makes a cold room call, and VT's central boiler waits its
+    own delay before it turns the helper on (I12.8, I12.10).
 
     A hand-back the rules require — another controller, an internal error, the plugin's own
     monitor failing for 5 min, the boiler ignoring "heating off" from the start of the session,
@@ -149,13 +152,13 @@ a heat pump controller (excluded), or anything that sends data outside.
 
 | Area | Regular user | Power user |
 |---|---|---|
-| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/en/development/plans/plan-0.2-i6.md`); with full or on/off control the control items in the setup too — the control device, the heating curve, the control behaviour, frost protection, the alarm reactions, each one form shown where it applies (I8 H) —, control still off (decision 11 of I6; switched later in "Control mode", I11); the "Boiler interface" item — the MQTT topics, the gateway where more than one is set up, the gateway topology and what is wired to the gateway's thermostat terminals (decision 1), the restart indicator, only what the connection and the mode use (I8 D2) —; the read-backs among the boiler signals (I8 D3); circuits — each its own menu item, named, up to four, removed by a tick, each listing the VT zones it feeds and of them those with underfloor and convectors, and of a zone it feeds only in part that zone's devices — a zone in two circuits is in each by its devices (I8 F1, F2, F4; I8.8c) — and the zones' one question, whose valves close when off (F5), the outdoor temperature at the hardest frost (the curve's point with a curve; with the design load otherwise, I8 E3) and the water-pressure limits from the boiler's manual; on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
+| Wizard | first, how the boiler is connected (the boiler class follows from it), the control mode (no default), the heat source and the boiler type with condensing and the hot-water priority (I6, `docs/en/development/plans/plan-0.2-i6.md`); with full or on/off control the control items in the setup too — the control device, the heating curve, the control behaviour, the alarm reactions, each one form shown where it applies (I8 H) —, control still off (decision 11 of I6; switched later in "Control mode", I11); the "Boiler interface" item — the MQTT topics, the gateway where more than one is set up, the gateway topology and what is wired to the gateway's thermostat terminals (decision 1), the restart indicator, only what the connection and the mode use (I8 D2) —; the read-backs among the boiler signals (I8 D3); circuits — each its own menu item, named, up to four, removed by a tick; with one circuit every room VT marks is in it, and its form asks only which rooms have underfloor or convectors; with several, each lists the rooms it feeds and of them those with underfloor and convectors, and of a room it feeds only in part that room's devices — a room in two circuits is in each by its devices (I8 F1, F2, F4; I8.8c; I12.11) —, the outdoor temperature at the hardest frost (the curve's point with a curve; with the design load otherwise, I8 E3) and the water-pressure limits from the boiler's manual; on the entity and relay paths the tick "the boiler has its own room controller" (answers F, M); on the relay path the relay's own settings and the tick "this is a separate relay contact, not a setting stored in the boiler's memory" (answer G); on ESPHome the tick "safe start values and a short API `reboot_timeout`" (decision 3 of I6) | every profile field, measured values, building load from own calculation |
 | Assessment | a verdict: control is worth enabling or not, and why | all metrics, per outdoor-temperature range, raw cycle data |
 | Control | off by default; once enabled, control runs automatically in the chosen mode; curve changes: suggestions (default) or automatic within a preset band (Low / Medium / High) | Custom band, per-parameter overrides, manual edits of learned values, reset to profile |
 | Alarms | sensible default reactions | thresholds per alarm; a reaction only where decision 7 allows one (§7) |
 | Diagnostics | hidden | model parameters, confidence, sample rejection reasons |
 | The Boiler page and cards | the page in the sidebar (on by default, a switch hides it) and four cards — status, schematic, curve, the last 24 h; everyone sees them, only an administrator changes anything there, after confirming, through the settings' own checks (I10, the user's decisions of 2026-11-18) | the same; the curve's offset is saved from the page at the advanced level only |
-| Learning | the comfort correction, so far the only learning under control, is off by default and shown at both levels (K4, the user's decision of 2026-11-17, reversing that of 2026-10-10 — an entry keeps what it stored; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows, zone-algorithm protection settings |
+| Learning | the comfort correction, so far the only learning under control, is off by default and shown at both levels (K4, the user's decision of 2026-11-17, reversing that of 2026-10-10 — an entry keeps what it stored; `docs/en/development/plans/plan-0.2-g11.md`); its limit the user's, at the advanced level; later learning on within safe bounds | pause and resume, the comfort correction, the tuning band (principle 13), learning windows |
 
 Switching advanced → simple offers "restore advanced settings to defaults" (unchecked by
 default). It never touches learned values; those have their own "restore profile defaults"
@@ -174,15 +177,15 @@ What the plugin can do depends on what the integration can write:
 |---|---|---|---|
 | 1. Flow setpoint (+ modulation cap) | OpenTherm (OTGW, DIYLess, ESPHome), EMS-ESP, some ebusd | full | 0.2 |
 | 2. Curve parameters only | BSB-LAN, ViCare | suggestions only (S-56) | later |
-| 3. On/off | a relay on the boiler's room-thermostat terminals, or a boiler thermostat entity switched between heat and off | heating on and off, as VT's own central boiler, with the plugin's safeguards | 0.2.2 |
+| 3. On/off | a relay on the boiler's room-thermostat terminals, or a boiler thermostat entity switched between heat and off | heating on and off as VT's central boiler decides, with the plugin's safeguards | 0.2.2 |
 | 4. Read-only | any | monitor | 0.2 (built as 0.1) |
 
 - Reading works with any integration: the user maps each signal to an entity in the config flow;
   capabilities follow from the filled fields.
 - Control mode, one at a time, the user's choice: **flow setpoint** (from 0.2) — the plugin
   decides the water temperature from its curve and writes the setpoint; **on/off** (from 0.2.2,
-  a relay); **thermostat-like** (from 0.3) — the plugin switches heating on and off with the
-  zones' demand and sends the boiler the room temperature and setpoint, or their difference, of
+  a relay); **thermostat-like** (from 0.3) — the plugin switches heating on and off with VT's
+  decision and sends the boiler the room temperature and setpoint, or their difference, of
   the zone asking for heat that lacks most, and the boiler's own regulation decides the water
   temperature; in this mode the plugin changes neither the curve nor the water temperature. It
   needs a device that takes these values (OpenTherm ID 24 / 16 through built-in support, or
@@ -233,8 +236,8 @@ What the plugin can do depends on what the integration can write:
   on"; oil has no gas meter). The boiler type has the standard names — single-function with or
   without a hot-water tank, combi, combi with a built-in tank — then condensing (gas and oil
   only) and, for every boiler that heats hot water, whether hot water has priority (default) or
-  not; without priority hot water neither pauses learning nor marks heat unavailable to the
-  zones.
+  not; without priority hot water neither turns "gives no heat" on nor marks heat unavailable to
+  the zones.
 - Control is enabled only with a known way to hand control back, chosen by the user: for built-in
   OTGW the safe hand-back below; for a picked entity a value, declared with its effect (the
   device's own control resumes, or heating stops) and done only once read back, the device's own
@@ -291,8 +294,7 @@ What the plugin can do depends on what the integration can write:
   anti-cycling timers or a starts cap, which VT's central boiler does not have either.
   - The write path "relay" is a switch, or a boiler thermostat entity switched between heat and
     off; an `input_boolean` is refused, as it confirms nothing. The water-temperature parts
-    (curve, limits, ramp, comfort correction) do not apply and are hidden; the activation delay
-    is shown (§7).
+    (curve, limits, ramp, comfort correction) do not apply and are hidden.
   - The plugin cannot read the relay's own settings, so the form asks for them as the user's
     declaration (the defaults provisional, K4): the tick "this is a separate relay contact, not a
     setting stored in the boiler's memory", without which control does not start, with a blocker
@@ -355,24 +357,20 @@ What the plugin can do depends on what the integration can write:
     (decision 6 of `docs/en/development/plans/plan-0.2.3.md`).
   - At hand-back the relay goes to the rest state the user chooses: "off" by default, "on" only
     when the user chose it, with its risk text; a notification rises when "off" leaves the house
-    without heating while a zone calls or frost protection is active. Stepping aside sets the
+    without heating while a zone calls. Stepping aside sets the
     relay once to its rest state, then leaves it alone (answer L); there is no return by itself
     for relays. The hand-back never switches a relay on otherwise.
   - A planned restart of Home Assistant: the rest state at the stop, then the last command
-    restored at once at the start, with no activation delay.
+    restored at once at the start.
   - Optional proof that the boiler heats — a flow-pipe temperature, the boiler's electric power,
     the gas meter — is information only, judged within 30 min after "on" (provisional, K4);
     without it the status says "controlled without confirmation that the boiler heats".
-  - Moving over from VT: the relay (where VT's commands name a switch or a boiler thermostat
-    entity; otherwise the user picks it), the activation delay, the repeat interval (only where
-    VT's keep-alive lies within 10–300 s) and the power threshold as VT rounded it are pre-filled
-    before the user unticks VT's central boiler, since VT then deletes them; VT's device-count
-    threshold only where every zone has one heating device (provisional, K4), and 0 — the count
-    off, as VT used it — where VT's count is 0 beside a power threshold (decision 7 of
-    `docs/en/development/plans/plan-0.2.3.md`). Control waits for the Home Assistant restart VT needs — also when VT's
-    central entry changed in this Home Assistant run before a plugin entry began watching VT, or
-    when VT's central-boiler sensor is a stand-in written in this run while the entry says off
-    (decision 9 of `docs/en/development/plans/plan-0.2.3.md`).
+  - Moving over from VT (I12.8): VT's central boiler stays and keeps deciding when to heat; where
+    its commands switch the boiler's relay today, the user picks that relay in the plugin and
+    points VT's commands at the helper. While they switch anything but the helper, control is
+    blocked and a repair issue names what they switch. Nothing is pre-filled from VT's settings:
+    the pre-fill of the relay, delay, repeat interval and thresholds, and the wait for VT's
+    restart (decisions 7 and 9 of `docs/en/development/plans/plan-0.2.3.md`), went at I12.8.
   - The setup texts give facts, no wiring advice (I8 C4): if Home Assistant stops, the relay
     stays as it was, and it can be switched by hand in its own app or page; a relay in the
     boiler's power supply also cuts its pump overrun and frost protection; the room-thermostat
@@ -434,8 +432,8 @@ no presence entity).
 - Hand-back stops the plugin's heating demand. Without a thermostat heating stops until the plugin
   or the user acts; the config flow states this risk, and after a stand-alone hand-back the
   Control state says that frost protection now rests on the boiler's own, if it has one; the
-  alarm "handed back in frost" rises while a watched zone reads below the frost limit, and clears
-  at or above the release (S-57; provisional, K4). A lost boiler link is no exception: in every
+  alarm "handed back in frost" rises while a room reads below 5 °C, and clears at or above 7 °C
+  (S-57; provisional, K4). A lost boiler link is no exception: in every
   gateway topology it raises an alarm and control hands back — stand-alone, heating stops (the
   user's decision, 2026-09-25). A relay is the exception: an alarm, and no hand-back (§5 class
   3).
@@ -471,52 +469,43 @@ takes the emitter types of its zones (S-33); the burner is shared.
 | Controlled by other automation (mixer, pump) | external mixing controller, a mixer driven by HA, a separate weather controller | heats while its "circuit asks for heat" entity is on or one of its zones asks — an entity that cannot be read asks nothing, and the control state says why; while it asks, keeps the boiler's water at or above its need (an entity's reading first, else the value entered), nothing added — a need is for a load hotter than the curve whatever the weather (a fan heater, a ventilation coil, a tank), not for a floor behind a mixer, which the form warns of once (2026-10-14); never drives the mixer or the pump (I8, decisions F3, F6) |
 | Passive fixed | thermostatic mixing valve | declared fixed temperature, which tells its zones what water they get; no lower bound on the boiler's flow — the curve, the valve standing open at or below its setting (2026-10-14, replacing S-42's setting + 5 K) |
 
-- Each VT zone is assigned to a circuit in the wizard; zone arbitration (the critical zone) runs
-  per circuit. A zone fed by two circuits — a radiator on one, a floor loop on the other — is in
+- The rooms are VT's (I12.11): the thermostats VT hands over and marks "used by the central
+  boiler". With one circuit every room is in it; with several, each circuit lists the rooms it
+  feeds. Zone arbitration (the critical zone) runs per circuit. A zone fed by two circuits — a radiator on one, a floor loop on the other — is in
   each by its own devices (I8.8b, I8.8c): watched and counted once, its heat available through
-  either; in a circuit run by other automation it asks while VT lists one of its devices there
-  active, and in each of its circuits where VT does not say which are (the warmer side).
+  either; in a circuit run by other automation it asks whenever it wants heat — `vtherm_api` does
+  not tell which of its devices VT has on (I12.7), so the warmer side stands.
 - Anti-cycling, DHW and the modulation cap act on the boiler (shared burner); curve tuning, the
   comfort correction and the seasonal tune-up act per circuit.
 - Condensing depends on the combined return of all circuits.
 
 ### Zone algorithms — any
 
-- Core uses VT data only: `on_percent`, valve positions, room temperature vs target, device power.
-- Detected extras: SmartPI — learning pause, and its learning phase read (G11 C); its "better
-  signal" struck by the user on 2026-10-12 (§9); Auto-TPI — detected, not paused, with a repair
-  issue (§11; S-29).
-- A learning algorithm without a pause service gets an explicit warning, which states what its
-  advice costs.
-- Per zone the plugin gives VT's thermostat, as feature-manager properties (feature manager from
-  0.2): **heat available** (`heat_available`; named "hot water available" before
-  0.2.2, P-61) — the boiler's heat is reaching the zone: yes while the flame burns and the flow
+- Core uses VT's data only, through `vtherm_api` (I12.7): the duty cycle and valve opening VT's
+  power hook reports, the room temperature against its target, whether a device is on.
+- Nothing of SmartPI or Auto-TPI is read, and the plugin pauses no zone's learning (I12.9, the
+  user's decision of 2026-11-25: pausing a zone algorithm is the user's). With control set up, one
+  binary sensor, **Gives no heat**, is on while the boiler gives the rooms no heat — VT's central
+  boiler not calling, its activation delay, hot water with priority, a boiler fault, or the
+  plugin unable to vouch for heat (handed back, blocked, another controller, VT's decision
+  unknown) — with its reason, and unavailable while control is off. The user picks it in
+  SmartPI 1.0's "heating unavailable" input, or uses it in an automation (the user guide gives
+  SmartPI 0.6.x's). SmartPI's "better signal" was struck by the user on 2026-10-12 (§9).
+- Per zone, the plugin judges **heat available** (named "hot water available" before 0.2.2,
+  P-61), shown in the diagnostics — the boiler's heat is reaching the zone: yes while the flame burns and the flow
   is clearly above the return (above the room, by a wider margin, only where no return is
   known: a mixed circuit's water goes back through its own mixing, and an installation may map
   no return); no while the flame is out or DHW is active on a boiler where hot water has
   priority; unknown while a mapped flame, the flow or what it is judged against is unknown or
-  stale. Without a flame signal the water alone decides (I8, decision C1). Since I9 (the user's
-  decisions of 2026-10-12), also **the water reaching the zone's circuit**, with why it is
-  missing, when it was measured and why heat does not reach the zone — an optional, one-way
-  interface for zone algorithms, also through a function in `hass.data` and, rounded, in the
-  `smart_boiler` attribute (`docs/en/specification/water-interface.md`). A zone algorithm that uses it
-  says so by a key in VT's `specific_states` and is then not paused for a water swing; SmartPI
-  0.4.0 does not use it. No entity of the plugin is a zone's, and a zone is no more
-  than its thermostat, its circuit, its emitter type and whether it closes when off: the
+  stale. Without a flame signal the water alone decides (I8, decision C1). The water data for
+  zone algorithms built in I9 (the `smart_boiler` attribute on VT's thermostats and the feature
+  manager's properties) went with I12.9: nothing read it. No entity of the plugin is a zone's, and a zone is no more
+  than its thermostat, its circuit and its emitter type: the
   per-zone entities, the zones' emitter output and exponent, the monitor's "near room
   temperature" (I8.1d) and the emitter power factor (I8.2) were removed
   (`docs/en/development/plans/plan-0.2-i8.md`).
-- DHW charging pauses learning only where hot water has priority (I6, decision 8), and only in
-  zones calling for heat (valve open); zones with a closed
-  valve keep learning how the room cools. Every hot-water draw pauses it, however short, on a
-  combi boiler too and also within 10 min of a resume, as the calling zones get no heat meanwhile
-  (S-41); so does the "off" control sends for a boiler fault (§7). Learning resumes when the flow
-  is back within a tolerance of its setpoint (3 K either way), and at the latest 1 h after the
-  pause began, even while its cause lasts (decision 14 of `docs/en/development/plans/plan-0.2.3.md`); a
-  pause and a resume are read back from the algorithm's flag — a pause that did not take is not
-  the plugin's, a resume is sent again every minute until the flag reads on — and learning the
-  user switched off before a pause is never resumed. A switch-off during the plugin's own pause
-  cannot be told from the pause: the flag reads off either way.
+- Hot water counts as heat the rooms miss — **Gives no heat** on, with the reason "hot water" —
+  only where it has priority (I6, decision 8), and only while heating is wanted.
 - By default the water temperature changes gradually (ramp, §7): each setpoint step stays small
   enough that the boiler does not overshoot it, and zone algorithms follow (S-47).
 
@@ -527,11 +516,10 @@ Decided by the user on 2026-10-10 (`docs/en/development/plans/plan-0.2-i8.md` G;
 entry that chose "room temperature only" before reads as monitoring only (I8.4a, minor version
 14), which is what it did.
 
-- Heating on and off follow the zones' demand, as in the other modes; never a comparison of
+- Heating on and off follow VT's decision, as in the other modes; never a comparison of
   temperatures.
 - Only zones asking for heat now count. The one that lacks most wins; its target is the highest
-  known — the VT setpoint, +0.5 K while SmartPI's learning phase heats, SmartPI's published
-  setpoint. The zone changes only on a clear difference, and at once when it stops asking.
+  known — the VT setpoint, or SmartPI's published setpoint. The zone changes only on a clear difference, and at once when it stops asking.
 - While a zone asks, the boiler sees at least a minimum deficit — its own regulation never stops
   heating a room VT still heats (provisional value, K4).
 - Two kinds, the user's choice by the device: "temperature and setpoint" (two entities, or
@@ -593,8 +581,8 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
 |---|---|---|
 | **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/en/development/plans/plan-0.2-g11.md` E); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW detection; **forecast recording** (FC0); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
-| **Curve (strategy A)** | replaces VT's on/off and user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; frost protection; learning pauses (DHW, a boiler fault, large changes — under control only, S-61) | yes |
-| **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
+| **Curve (strategy A)** | the water temperature beside VT's on/off, in place of user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; the "gives no heat" sensor for zone algorithms (under control only) | yes |
+| **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap (built earlier, in I13.7, as an opt-in, off by default: §7); **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
 | **Curve tuning (strategy B)** | tuning band Low / Medium / High / Custom (3 / 8 / 15 % defaults); manual / semi-automatic / automatic; **seasonal tune-up** — a little lower each day while rooms hold comfort; per circuit | yes |
 | **Forecast** | **anticipation for slow emitters** — raise water earlier before frost, lower it earlier before a warm or sunny day (FC3); lead time learned per circuit | yes |
 | **DHW** (optional, storage tank only) | fast charging, schedule aligned with learning windows | yes |
@@ -604,13 +592,13 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
 - **Water-side learning:** from HA history when it covers a heating season, then live; bounded
   change per day.
 - **Foreign heat** (a fireplace, a stove, an electric heater) is VT's and SmartPI's to handle:
-  the plugin neither detects it nor pauses learning for it (I8.1c, the user's decision of
-  2026-10-10). A room it warms does not ask for heat.
-- **DHW** is detected in every stage; under control it pauses learning — in zones calling for
-  heat (§5), and it holds the plugin's comfort correction at every draw (S-61).
+  the plugin does not detect it (I8.1c, the user's decision of 2026-10-10). A room it warms does not ask for heat.
+- **DHW** is detected in every stage; under control, with priority, it turns "gives no heat" on
+  while heating is wanted (§5), and it holds the plugin's comfort correction at every draw
+  (S-61).
 - **The Boiler page** (I10, `docs/en/development/plans/plan-0.2-i10.md`) shows what the plugin
   knows and decides, in every stage, and nothing it does not: the overview (status and the
-  Control state with a way to the settings, tiles, the installation's schematic with its rooms, the curve with "where we
+  Control state with a way to the settings, tiles, the installation's schematic with the circuits taking heat, the curve with "where we
   are", the last 24 h replayable), Burner, Use, Analyses (the energy signature, the starts by
   hour), Journal (what the plugin decided and why, 14 days) and Status and alarms; the
   overview's parts are also cards. Every law it shows is the plugin's own, sent to it — the page
@@ -627,7 +615,7 @@ inputs; every feature works with what it has.
   it lacks in a translated text.
 - Missing data never switches heating off by itself, and never blocks the boiler by itself —
   except the boiler link's own data, with no write while they are not fresh (principle 12,
-  exception 7).
+  exception 5).
 - A setting the form requires before control may start can keep control unavailable: the
   thermostat terminals (decision 1), a usable heating switch (decision 11), the relay's "separate
   contact" tick (answer G), and, for a gateway entry made before 0.2.2, the answer on its
@@ -635,82 +623,66 @@ inputs; every feature works with what it has.
   monitor then runs and the boiler stays with its own control or thermostat — that is not heating
   switched off by missing data.
 - When an input goes missing while the plugin controls, the feature that uses it becomes
-  inactive, and control goes on with what remains; for example, a demand criterion that no zone
-  can feed counts as having no data.
+  inactive, and control goes on with what remains; for example, a room whose thermometer is
+  unavailable no longer judges the curve, while its call still counts.
 - One entity mapped to two signals: the first signal keeps it and the later one is dropped
   (inactive and named); control gets a blocker and the form refuses it — never an error that
   stops the entry, so the monitor and an owed hand-back go on.
 - Two stated exceptions of principle 12 stop heating on missing data: the lost boiler link (a
   hand-back after 5 min, which stops heating stand-alone; a relay gets an alarm and no hand-back),
-  and every VT zone still unknown after the grace period, or no configured demand criterion that
-  can be judged, with no working thermostat (below).
+  and every VT zone still unknown after the grace period, or VT's decision unknown (its helper
+  neither on nor off), with no working thermostat (below).
 - An installation that gives no confirmation at all — neither the boiler's signals nor a relay's
   own reported state — gets only the monitor. The exception is a relay that reports no state of
   its own: it is controlled with blind repeats and shown as "controlled without confirmation".
 
 How control decides (principle 12):
 
-- Heating goes on and off with the zones' demand at every control step (10 s), at once and in
-  both directions. The decision interval (an option, default 5 min) applies only to the water
-  temperature.
-- Demand comes from the zones calling — VT's zones against thresholds: the number calling,
-  total power, valve opening — each usable alone or with the others, as in VT, and checked
-  against the configured zones. The number counts VT's devices (heads, valves, switches) as VT's
-  central boiler does, or zones, as the user picks (the user's decision of 2026-10-14; devices by
-  default for a new installation, an entry from before keeps zones): VT's own count is
-  pre-filled as it is for devices, and for zones only where every zone has one heating device
-  (S-36), or as 0 where VT used no count (§5, moving over from VT); a count of devices never
-  asks more than the known zones drive. Its source follows the VT type (valve opening, VT's
-  device state, heating action) and respects VT's minimum activation time; where VT gives no
-  device state, VT's own rule: a valve open at all, or without a valve a duty cycle above 0 —
-  the valve's opening and the zone's duty cycle judged each on its own (2026-10-14, replacing a
-  shared 5 %). Switch zones follow VT's device state, so the boiler may start once per TPI cycle (S-38).
-  The power criterion, for every write path, takes a zone's mean power over its cycle, as VT
-  counts it, but only while at least one calling zone has its valve open or its device active;
-  a VT device power of 0 or less is no data, and a criterion no zone can feed is refused in the
-  form. The opening threshold counts the calling zones only. A criterion lacks data when no zone in
-  a heating mode can feed it, whether a zone calls or not — a zone feeds the power criterion while
-  VT publishes its device power above 0 or its mean cycle power, the opening criterion while it
-  publishes an opening; with no zone in a heating mode there is no demand. With the count at 0, the
-  form refuses a zone that can feed none of the other criteria, and a calling zone that feeds none of them is named by
-  the alarm "a demand criterion has no data" (decision 3 of `docs/en/development/plans/plan-0.2.3.md`, PB-23). Control
-  needs at least one VT zone
-  (S-04).
-- A zone counts only while its state is known: a VT climate that is `unavailable`, or whose mode
-  is unknown, is unknown — never "no demand". So is a thermostat VT has not started, also after
-  the recognition period: `is_ready` not true, or neither `is_ready` nor VT's `specific_states`
-  shown (VT 10.4.0 writes them only once one of its devices has reported). VT shows such a
-  thermostat "off" (an over_valve one may show "heat") until it starts, and keeps it so while one
-  of its devices is unavailable (decision 1 of `docs/en/development/plans/plan-0.2.3.md`). A started zone whose mode is
-  "off" has no demand (S-34). Power shedding removes a zone's demand. A zone in "auto" or heat_cool heats by
-  its heating action and duty cycle.
+- Heating goes on and off with VT's decision at every control step (10 s), and at once when the
+  helper changes, in both directions. The decision interval (an option, default 5 min) applies
+  only to the water temperature.
+- **VT decides whether to heat** (I12, the user's decision of 2026-11-25). VT's central boiler,
+  set up in VT with its own thresholds (devices calling, total power) and activation delay,
+  switches a helper (an `input_boolean`) the user creates and picks in the plugin; the plugin
+  follows the helper's state and VT's central boiler event. Control is blocked without the
+  helper, while VT's central boiler is not set up (ticked, with both commands), and while its
+  commands switch anything but the helper — two controllers would drive the boiler; a repair
+  issue names what they switch, and the relay path as the way out. The plugin counts the rooms
+  that call, for display and for the heat call's reason "rooms call, VT's central boiler does
+  not": a room calls while VT says one of its devices is active; where VT gives no device state,
+  by VT's own rule — a valve open at all, or without a valve a duty cycle above 0. Its own demand
+  — the count, devices, power and opening thresholds, with their checks and the alarm "a demand
+  criterion has no data" — went at I12.8; an entry that had set any of them gets a repair notice
+  listing the values, to set in VT.
+- A room counts only while its state is known: a thermostat VT has not handed to the plugin, or
+  has not started — before VT's first `refresh_state` on the plugin's manager — is unknown, also
+  after the recognition period, never "no demand" (decision 1 of
+  `docs/en/development/plans/plan-0.2.3.md`). A started room whose mode is "off" does not call
+  (S-34). Power shedding turns its devices off, so it does not call. A room in "auto" or
+  heat_cool calls only while its action says so.
 - **The recognition period** (decision 3): after Home Assistant starts or VT reloads, until every
-  configured zone has reported — VT shows it started and its mode and demand are known — at most
-  10 min. No new decision is taken meanwhile. If the plugin controlled the boiler before the
-  restart — a clean restart that handed it back included — its last command is kept, or restored
-  at once, with its keep-alives, where the stored wish is "control on", no latch or internal
-  error holds, the control options equal those the control
-  was taken with, and no other blocker holds; until the write target and the boiler link are
-  available nothing is written and the restore waits, and a link not yet reported never turns the
-  restore into a hand-back. When a condition fails, the owed hand-back goes first; where control
-  did not hold the boiler, the plugin waits. A lost or damaged store: the plugin assumes it was
-  controlling and hands back first (answer K). A restored command gets no activation delay.
-  Frost protection acts for zones already known (provisional, K4); a frost start of a boiler that
-  is off still waits for VT's activation delay, which counts from the end of the recognition
-  period.
-- **The grace period:** a zone that becomes unknown while VT runs keeps its last answer for
-  10 min; then it drops out and the known zones decide (this changes N3 of 2026-09-25). A zone
-  still unknown when the recognition period ends has no last answer and drops out at once. The
-  grace also covers the "VT central boiler unknown" blocker during a VT reload, where VT's
-  central boiler was known to be off just before (P-105). A zone unknown for longer than a limit
-  raises an alarm, as frost protection cannot see it. So does a zone whose room sensor, as VT's
-  entry names it, is gone, unavailable or unknown for as long, or whose VT `safety_state` is on
-  (S-35): VT keeps the last temperature, and its demand counts as VT shows it — VT 10.4.0 switches
-  an over_climate zone, and a zone whose safety duty is 0, off in safety mode (no demand), and runs
-  the others at their safety duty (`state_manager.py`). An
-  implausible room temperature of a watched zone is unknown, with the same alarm after its limit;
-  one plausibility rule serves every room reading, −30 to 45 °C (S-06; provisional, K4).
-- **Every zone unknown** after that, or no configured demand criterion that can be judged:
+  room has reported — VT has started its thermostat and handed it over — at most 10 min; until
+  then the rooms are those the plugin knew (its rooms' store). No new decision is taken
+  meanwhile. If the plugin controlled the boiler before the restart — a clean restart that handed
+  it back included — its last command is kept, or restored at once, with its keep-alives, where
+  the stored wish is "control on", no latch or internal error holds, the control options equal
+  those the control was taken with, and no other blocker holds; until the write target and the
+  boiler link are available nothing is written and the restore waits, and a link not yet
+  reported never turns the restore into a hand-back. When a condition fails, the owed hand-back
+  goes first; where control did not hold the boiler, the plugin waits. A lost or damaged store:
+  the plugin assumes it was controlling and hands back first (answer K).
+- **The grace period:** a room that becomes unknown while VT runs keeps its last answer for
+  10 min; then it drops out and the known rooms decide (this changes N3 of 2026-09-25). A room
+  still unknown when the recognition period ends has no last answer and drops out at once. A
+  room's temperature judges the curve — the comfort correction, "curve too low", the long burn
+  and the critical zone — only while it is trusted (I12, decision 8): not while VT runs it in its
+  safety mode (VT's safety event), while its thermometer, as VT's settings name it, is
+  unavailable or unknown, or before VT has measured it since the plugin started. Its call still
+  counts as VT shows it; **Control state** lists it, and no alarm rises (the alarm on a zone
+  unknown or without its sensor, S-35, went at I12.10). An implausible room temperature is
+  unknown; one plausibility rule serves every room reading, −30 to 45 °C (S-06; provisional,
+  K4).
+- **Every room unknown** after that, or VT's decision unknown (its helper neither on nor off):
   nothing asks for heat (decision 3). With a **working thermostat** the boiler is handed back to
   it, or to its own control. A working thermostat is a gateway with an OpenTherm thermostat
   declared on its terminals; the entity path with the tick "the boiler has its own room
@@ -720,49 +692,44 @@ How control decides (principle 12):
   hand-back value declared "the device's own control resumes" without the tick. The tick is not
   offered on a gateway (answers F, M). Without a working thermostat the plugin does not heat —
   its usual "off", for a relay the relay off, never its rest state — with no hand-back. Either
-  way the alarm "no zone known" and a repair issue rise at once, with the monitor only too — an
-  error where heating stops, a warning after a hand-back or with the monitor only; where the zones
-  are known but no criterion can be judged, the issue names the criterion (decision 3 of
-  `docs/en/development/plans/plan-0.2.3.md`) — and control resumes by itself when a zone answers again or the
-  criterion has data again (after a hand-back: provisional, K4). This replaces "heat on the curve
-  when no zone is known", whatever the outdoor temperature.
-- VT's central mode (Auto, Stopped, Heat only, Cool only, Frost protection) acts through the
-  zones: VT applies it only to thermostats that follow it, the plugin sees the result in each
-  zone's demand, and zones outside the central mode still count. "Stopped" is not a hand-back:
-  control goes on, and with every zone stopped there is no demand, so heating stays off, while
-  frost protection still watches (the user's decision, 2026-09-25).
+  way an alarm — "no zone known", or "VT's decision unknown" — and a repair issue rise, with the
+  monitor only too — an error where heating stops, a warning after a hand-back or with the
+  monitor only — and control resumes by itself when a room or the helper answers again (after a
+  hand-back: provisional, K4). This replaces "heat on the curve when no zone is known", whatever
+  the outdoor temperature.
+- VT's central mode (Auto, Stopped, Heat only, Cool only, Frost protection) acts through VT: VT
+  applies it to the thermostats that follow it, and its central boiler decides on what they ask.
+  "Stopped" is not a hand-back (the user's decision, 2026-09-25): control goes on, and with
+  nothing calling VT keeps the helper off, so heating stays off — nothing heats against frost
+  then, as frost protection is VT's (I12.10). The plugin does not read VT's central mode.
 - Summer and winter come from VT: the plugin has no summer switch of its own. With VT's zones
-  off it does not heat; with a zone calling it heats. The monitor keeps the building's heating
+  off nothing calls, and the boiler does not heat. The monitor keeps the building's heating
   threshold, for its degree-days.
-- **Frost protection** (decision 4) heats without VT's call: when a watched zone — every zone
-  (default), or one zone the user picks — falls below the frost limit, heating runs on the curve
-  until the zone is back above the release temperature, but only for a cold zone whose emitter
-  can take heat: VT reports an opening above 0, or an active device; the mode alone is not
-  enough. A zone whose valve state cannot be read is heated as before; a per-zone option "closes
-  when VT switches it off" (off by default) makes it count as closed while VT has it off. A cold
-  zone VT keeps closed raises an error-level repair issue at once (while control is configured
-  and on; provisional, K4) and does not start the boiler: it names the room and its temperature,
-  says why the plugin cannot heat it, and what to do, worded by VT's reason for closing it
-  (`hvac_off_reason`) — for "off", VT's frost preset instead; for an open window or VT's central
-  mode "Stopped", that the room stays unheated until VT opens it; for a plugin that took the
-  thermostat out of VT's control (VT 10.6.1's inhibition), until that plugin gives it back; VT's
-  central frost mode needs a frost temperature in every thermostat. The plugin never switches VT's
-  mode. Frost heating that goes on without the zone warming raises an alarm; it is not stopped.
-  Frost heating waits for the activation delay. This changes the decision of 2026-09-25 ("the
-  safety net covers the whole house").
-- **VT's activation delay** (decision 5), carried over as in VT 10.4.0: 0–600 s in steps of 10,
-  default 0, on the relay path too. It delays switching on only. The wait starts at the first
-  real call for heat, after the recognition period; a call that drops and returns during the wait
-  neither cancels nor restarts it, and at its end the boiler starts only if demand is still
-  there. Switching a running boiler off is immediate; a hand-back, control switched off or a
-  blocker cancels a pending start. No delay where the plugin controlled the boiler before a
-  restart. It is pre-filled from VT's stored value and shown for confirmation. Its risk text
-  names TPI pulses shorter than the delay, and a pump that may run anyway without a heating
-  switch.
+- **Frost protection is VT's** (I12, decision 4): VT's frost preset on a thermostat, or VT's
+  central mode "Frost protection", makes a cold room call; VT's central boiler turns the helper
+  on, and the plugin heats as for any call. The plugin's own frost protection (decision 4 of
+  2026-09-26/27) — its limit and release, the zones it watched, the per-zone answer "closes when
+  VT switches it off" and the closed-room issue — went at I12.10, with a one-time warning where
+  control was set up. While control does not hold the boiler and nothing else heats, the alarm
+  "handed back in frost" still tells of a room below 5 °C (S-57).
+- **VT's activation delay is VT's own** (I12.8): VT's central boiler waits it out before it turns
+  the helper on; the plugin holds and times nothing. While VT waits — its event said so and the
+  helper is still off — "off" carries the reason `activation_delay` and when the delay ends. The
+  delay the plugin carried over from VT (decision 5) went at I12.8.
 - The water temperature follows the curve on the effective outdoor temperature, within the
   limits, and changes at the ramp's rate, in K per minute, at every step. The ramp is skipped
   only for installation limits — the highest water temperature, a circuit, the boiler — not for
   a falling curve (S-23).
+- **The effective outdoor temperature** is the lower of the current one and its moving mean, so
+  a cold snap is followed at once and a mild spell only slowly. The mean's time constant is 3 h;
+  12 h where the circuit the curve serves has a room with underfloor heating, read from the rooms
+  VT hands over as the curve's default exponent reads them (I13.8; provisional, K4): such rooms
+  answer over 20–70 h (Kull et al. 2017), and a weather compensator's manual filters the outdoor
+  temperature over 10–20 h for most buildings (Siemens LMS14). The other side: after a short
+  cold dip within mild days the 12-h mean still holds the mild days, so the water comes back to
+  the current temperature's sooner — never below it. The plugin records no building mass (it
+  went in I8, decision B5), so a heavy house with radiators keeps 3 h. The hold of the last value
+  when the readings are lost is its own, 3 h (decision 9).
 - **The lowest water temperature** (decision 2; the key `hard_min`) bounds the curve from below,
   10–50 °C, default 20 °C (provisional, K4), set by the user like a curve setting. Its text names
   both risks: too low — the boiler stops by itself again and again in mild weather, and a
@@ -794,12 +761,19 @@ How control decides (principle 12):
   reversing that of 2026-10-10 after J4's F8 and the literature, `docs/en/development/plan.md`; an
   entry keeps what it stored, "off" where it never stored an answer; not with on/off control;
   `docs/en/development/plans/plan-0.2-g11.md` B): while a
-  zone's valve is fully open and its room is still short of its setpoint, the water rises above the
+  zone's valve is fully open and its room is still short of its setpoint — for an hour without a
+  break and two of the room's own VT cycles (VT's `cycle_min`; 15 min where not known; I13.3) —,
+  the water rises above the
   curve — at most the user's limit (default 3 K, up to 10 K; the only bound above the curve
-  since the "correction range" went, I8 B6), never more than 3 K a day, by 1 K per 30 min and only while heat flows: the flame when it is known,
-  else the command (S-24); it falls twice as fast, and a zone without opening data does not block
-  the fall; it counts only zones taking heat, and does not rise while another zone taking heat is
-  more than 1 K over its setpoint (S-08); it freezes while a cap holds the setpoint, and does not
+  since the "correction range" went, I8 B6), never more than 3 K a day, by 1 K per four cycles of
+  the slowest room it reads and never faster than 1 K per 30 min (I13.3: a slow loop at least four
+  times slower than the rooms' own, Skogestad 2023; Hägglund 2021), and only while heat flows: the
+  flame when it is known,
+  else the command (S-24); it falls at 1 K per 15 min, and a zone without opening data does not
+  block the fall; it does not rise while a room warms back after its setpoint was raised — a
+  setback's recovery — until the room is within 0.3 K of it or has risen under 0.2 K in 30 min,
+  the window rule's test (I13.3); it counts only zones taking heat, and does not rise while
+  another zone taking heat is more than 1 K over its setpoint (S-08); it freezes while a cap holds the setpoint, and does not
   rise when the clock is set back (S-25); it rises only while the starts per hour do not rise
   against the same hours before it began, and steps back when they do (with the starts unknown it
   does not rise), and its rise freezes — a fall still passes — in extreme weather, while the outdoor
@@ -818,11 +792,25 @@ How control decides (principle 12):
   value is published, and a "Reset comfort correction" button resets it (answer J). The zones'
   own PI integrators (SmartPI, TPI) act in
   series with it; the documentation describes the interaction and the VT settings recommended with
-  it. A zone whose SmartPI is in its learning phase (on/off, off only at its setpoint + 0.5 K)
-  counts as short against VT's setpoint + 0.5 K — here, in the long-run rule and in the critical
-  zone; in calibration, or with the phase unknown, against VT's setpoint (`docs/en/development/plans/plan-0.2-g11.md`
-  C). Windows are VT's to act on (I8.1b): a zone VT turns off or lowers for a window no longer
+  it. A zone counts as short against VT's setpoint, whatever its algorithm — here, in the long-run
+  rule and in the critical zone (G11 C's +0.5 K band for SmartPI's learning phase went with
+  I12.9). Windows are VT's to act on (I8.1b): a zone VT turns off or lowers for a window no longer
   asks, nor looks short; the plugin has no window handling of its own.
+- **The trim below the curve** (I13.3; part of the comfort correction, on and off with it):
+  while heat flows and every room the correction reads is under 70 % open — its opening and its
+  temperature known, none short — the water goes below the curve: 1 K per 2 h of heat at the
+  fastest, never faster than half the rise, at most 3 K (never more than the user's limit) and
+  3 K a day (valve-driven reset: Boegli et al. 2022; ASHRAE Guideline 36's trim and respond). It
+  comes back towards the curve at 1 K per 15 min as soon as a room is short or 70 % open. Every
+  bound of the rise holds: hot water freezes it both ways; a data gap holds it — the link stale,
+  a room's opening or temperature not known; a cap holding the setpoint, or a lower limit (the
+  lowest water temperature, a circuit's need) already holding it, stops it going deeper, and
+  those lower limits always hold; extreme weather or the starts not known stop it going deeper,
+  and starts rising since it left the curve bring it back (rules 3 and 5 both ways); a hand-back
+  and the user's reset set it to 0; the day's 3 K of rise counts rises above the curve only — the
+  way back is no rise. Shown with its sign in the control state (`comfort_correction`); no
+  warning at its edge. In the simulation it seldom acts: the simulated rooms are rarely all under
+  70 % open while heat flows (−0.7 K at most, with thermostatic heads and a curve 10 K too high).
 - **The curve's room temperature: Auto or Manual** (`docs/en/development/plans/plan-0.2-g11.md` D). Auto, the default
   for new entries: the highest VT setpoint among the zones in heat mode, known and not left out by
   the user, at most 23 °C and within the curve's own checks; it follows VT's presets through the
@@ -846,8 +834,33 @@ How control decides (principle 12):
   Both stay until a sign of heat outside a hot-water draw — the flame on, the flow risen 5 K, or,
   with the flame unknown, the flow at the plugin's setpoint — or until control is switched off.
   The count starts again whenever a condition ends and after a hot-water draw; with neither the
-  flame nor the flow known, nothing is judged; heating for frost alone, with no zone calling, is
-  left to "frost not warming". The relay path has its own proof of heat (§5).
+  flame nor the flow known, nothing is judged. The relay path has its own proof of heat (§5).
+- **The modulation cap** (I13.7; off by default, the advanced level; not for a relay): while
+  control holds the boiler, the boiler's maximum modulation is capped at the user's value, 30–100 %
+  (70 % where ticked; provisional, K4), to lengthen burns at low load. The evidence is weak —
+  HEM-VAL-05 (DESNZ 2023): a boiler range-rated to its lowest output "is driven towards on/off";
+  Bennett et al. 2019: the minimum, 20–30 % of the maximum, gives more heat than a low load needs,
+  and a cap on the maximum cannot go under it — so it is offered, never imposed. Never below 30 %,
+  nor within 10 points of the boiler's minimum as a share of its maximum where both powers are
+  entered: the capacity reading of OpenTherm's percent, the one that gives less heat, so the cap
+  stays above the minimum on either reading. Released while hot water runs, and never applied on a
+  boiler that heats hot water while hot water cannot be told: OpenTherm's ID 14 is not limited to
+  heating by its specification, and a combi's tap would be starved (EMS-ESP's `selburnpow` sits in
+  the heating setpoints' telegram 0x1A, but whether a boiler applies it to hot water is not
+  documented: released all the same). Lifted for 3 h where the flow stays more than 5 K below the
+  setpoint for 10 min with the flame on — less heat in cold weather is its risk. Written through
+  the gateway's `MM=` (`set_max_modulation`, `-1` clears; the firmware's `maxmodulation`, `-`
+  clears) every 5 min, as a held value lost at a PIC reset; on the entity path to a number entity
+  the user picks (EMS-ESP's `selburnpow`, ESPHome's maximum relative modulation), every 30 s where
+  the setpoint entity is declared expiring, else every 5 min, released at 100 % (or the entity's
+  maximum) — read back on a held entity until it shows it, one write on a lapsing one.
+  Released at every hand-back, at a stop, when switched off,
+  and at the next start where the store says a cap may be in force (recorded before the first
+  write; a store that cannot be written keeps it from being written). A write that fails is shown
+  and sent again a minute later; it never holds heating back. Where the verdict finds mostly short
+  burns and the boiler's powers and the house's design load (a trusted heat loss) are known, the
+  option's text names a suggested value — the design load × 1.2 as a share of the maximum,
+  rounded up to 5 %, none at 90 % or more — never applied by itself.
 - **Boiler protection** follows the boiler's own logic. Two optional signals take binary sensors the
   user maps: "the boiler's own low-water-pressure fault" (simple level) and "another fault the
   boiler reports as stopping it" (advanced) — on `opentherm_gw` the boiler's "Low water pressure"
@@ -857,7 +870,7 @@ How control decides (principle 12):
   the fault details once per new fault and never again after it clears; without it mapped, a
   gateway's fault flag stops nothing and the feature names what it lacks (provisional, K4). While
   either reads a known "on" for 5 min (provisional, K4), control
-  sends its usual "off" — frost heating included — with no hand-back and no latch, and heats again
+  sends its usual "off" with no hand-back and no latch, and heats again
   by itself in the step where every mapped fault reads off, unknown or unavailable (an unknown fault
   counts as no fault). Without a mapped fault, low pressure raises only an "add water" notification,
   at a threshold the user takes from the boiler's manual — none by default. A broken or silent
@@ -881,7 +894,8 @@ the thermostat-like mode's values (0.3) and a relay:
   many sources report only on change — so a limit is never assumed (I6, decision 9; provisional,
   K4): the user's own (0: none), or, left empty, one a source earns once it has been seen
   repeating an unchanged value (a report with nothing changed since, by its own change time) at
-  least twice in the run — five times its median heartbeat gap, 10 to 30 min for the boiler's
+  least four times in the run — five times its median heartbeat gap and at least twice its
+  second-largest (I13.2), 10 to 30 min for the boiler's
   signals, 3 to 12 h for the weather; a change-only source never earns one, so a source that
   freezes without going unavailable is not caught, and the option's description says so. On the
   OTGW firmware over MQTT and EMS-ESP the plugin listens to the device's own MQTT repeats
@@ -958,8 +972,8 @@ the thermostat-like mode's values (0.3) and a relay:
   also raises at once a persistent error-level repair issue: the plugin did not start and the
   house is not heated (decision 12 of `docs/en/development/plans/plan-0.2.3.md`).
 - **The control state** — the "controlling" marker, an owed hand-back and the options it was taken
-  with, the latches, the user's on/off wish, the last command given to the boiler, a SmartPI zone
-  the plugin paused — is saved at once and atomically, and read cautiously. A store lost, damaged
+  with, the latches, the user's on/off wish, the last command given to the boiler — is saved at
+  once and atomically, and read cautiously. A store lost, damaged
   or unreadable for an entry that ran before means "was controlling": a full hand-back first
   (answer K). After a restart without a clean stop, a hand-back is pending until control resumes;
   after any restart control comes back as the user left it, from the stored wish (I11: the
@@ -993,7 +1007,7 @@ The four classes of a change seen in the read-back:
 - **Ignored from the start** — the boiler never takes the value: never read back as the plugin's for
   longer than 120 s after each of the session's first 3 sends (provisional, K4). The plugin stops
   sending it for the session and says "the boiler does not accept the command — check the settings";
-  the other target and frost heating go on; no block, no latch; tried again at the next session.
+  the other target goes on; no block, no latch; tried again at the next session.
   Where a hand-back stops heating — stand-alone, a value declared "heating stops" — the house is
   then not heated, and an error-level repair issue says so; it is tried again at the next session (Z4-11). A fall-back to the baseline
   without a trace after every send from the start of the session stays here. Except (answer O):
@@ -1071,9 +1085,9 @@ plugin step aside by themselves (Z4-01, Z4R-01, Z4R2-03).
 | The external-control switch never seen on after the plugin turned it on | off | as the two rows above | judged 5 min after the turn-on, as the two rows above (Z4R2-03, K4.3) |
 | A hot-water draw | a boiler-state echo goes off | — | not judged during a draw or for 2 min after it |
 | The plugin's own lapse (silence over 60 s), an expiring external-control switch's included | another value | — | sent again; not an outside change |
-| Changes no read-back can see (the boiler's panel, a lockout, the maker's app) | nothing | — | not an outside change; seen through "no sign the boiler heats" (above; decision 2 of 0.2.3) and "frost not warming"; a fault the boiler reports stops heating (boiler protection) |
+| Changes no read-back can see (the boiler's panel, a lockout, the maker's app) | nothing | — | not an outside change; seen through "no sign the boiler heats" (above; decision 2 of 0.2.3); a fault the boiler reports stops heating (boiler protection) |
 | The recognition period | anything | — | the last command restored under decision 3; a read-back not yet showing it is not counted |
-| VT's own central boiler configured | — | — | a blocker, never an outside change |
+| VT's central boiler commanding anything but the helper | — | — | a blocker (two controllers, I12.8), never an outside change |
 | R1: a relay out of reach | unavailable, unknown or missing | — | nothing written while unavailable or missing; "relay unreachable" after 5 min; no hand-back |
 | R2: a relay back in another state after a power or link loss | the other state, with a trace | lost command | the command again; "commands lost" at 3 within 24 h |
 | R2a: a relay found in its declared power-cut state without a trace (or, with "last" or "I don't know" declared, changed while available) | that state | lost command up to 3 within 24 h; the fourth: another controller | the command again; an information warning at 3; the fourth steps aside at once |
@@ -1102,7 +1116,7 @@ How control resumes after it stopped:
 | Every zone unknown | on its own, when a zone answers again |
 | The plugin's own monitor failing | on its own, once it works again, with an information note (answer I) |
 | An alarm with a hand-back reaction already active when control is switched on | blocks control at once; the refusal's text says so |
-| A blocker — a missing setting, VT's central boiler configured, Home Assistant starting | on its own, once the blocker is gone; "VT central boiler active" only after the Home Assistant restart its text asks for |
+| A blocker — a missing setting, VT's central boiler not set up or commanding anything but the helper, Home Assistant starting | on its own, once the blocker is gone |
 
 In the thermostat-like mode (0.3) the boiler runs its own regulation: the curve, ramp,
 anti-cycling and flow limit options do not apply; the fixed safeguards do.
@@ -1136,12 +1150,11 @@ Which alarms may hand back (decision 7):
 Options, each with a cautious default and its risks described (temperatures in °C, differences
 in K):
 
-- Boiler demand from the number of zones calling, total power or valve opening, each criterion
-  alone or with the others; per zone, "closes when VT switches it off" (off by default,
-  decision 4).
+- The helper VT's central boiler switches (**Control behaviour**), required for control
+  (I12.8). When to heat — VT's thresholds and its activation delay — is set in VT's central
+  boiler, not in the plugin.
 - Ramp: how fast the water temperature may change, in K per minute, so the boiler does not
   overshoot a setpoint step and zone algorithms follow.
-- VT's activation delay, 0–600 s (decision 5), shown at the simple level and on the relay path.
 - Decision interval for the water temperature.
 - A fixed fallback setpoint, replacing the curve-based one on outdoor-sensor failure.
 - The lowest water temperature (decision 2), the highest water temperature, the circuit maximum
@@ -1168,12 +1181,9 @@ in K):
   automatic, earned by a source seen repeating an unchanged value; 0 none (risk: without a limit
   a frozen source is not caught; with one shorter than the source's reporting interval, control
   stops in steady weather).
-- Frost protection: its limit and release temperature, and whether it watches every zone
-  (default) or one zone.
 - Comfort correction on or off (default off, K4); its limit (default 3 K, up to 10 K);
   the rise at most 3 K a day, fixed (principle 13).
 - The curve's room temperature: Auto (default) or Manual, and the zones Auto leaves out.
-- Learning pauses on (default) or off.
 - The reactions decision 7 allows.
 - The two boiler-fault signals, the gateway's "Fault indication", the "add water" threshold and
   the high-pressure warning and alarm (none by default).
@@ -1197,26 +1207,21 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Heating curve | none — the design flow is entered | a wrong curve under-heats or wastes gas; no silent default |
 | Emitter type | radiator — unless the circuit lists the zone as underfloor or convectors (I8 F2) | underfloor needs its own highest water temperature; a zone not listed is read as a radiator |
 | Lowest / highest water temperature | 20 °C (provisional, K4) / 70 °C where the circuit gives none (its highest water temperature, the curve's former maximum merged in — I8 F2) | the lowest bounds the curve from below — too low, the boiler stops by itself again and again in mild weather and a non-condensing boiler condenses in its flue (take the value from its manual); too high, warmer water than the rooms need (decision 2); 70 °C covers the usual radiator design points and stays under boilers' maximum |
-| Ramp | 1 K per minute | a setpoint step small enough that the boiler does not overshoot it; zone algorithms follow, and larger swings pause SmartPI's learning (S-47) |
+| Ramp | 1 K per minute | a setpoint step small enough that the boiler does not overshoot it; zone algorithms follow (S-47) |
 | Decision interval | 5 min | VT's default cycle |
-| Activation delay | 0 s | as in VT 10.4.0; a delay is for slow valves (decision 5) |
 | Write type of a picked target | unknown — control stays off until the user declares it expiring or held | the plugin cannot tell the type itself, and a wrong guess wears the boiler's memory |
 | "Off" setpoint | 10 °C — used only without a heating switch, which decision 11 blocks; with one, "off" is the switch off and the setpoint stays at the curve's value (OTGW: `CH=0`, `CS` the curve's, never below 8 °C) (Z4-07) | far below any heating value; a low setpoint alone is not "off" (decision 11) |
 | Hand-back value (entity) | none — entered with its effect | 0 may mean "no heat" on one device and "own control" on another |
 | A timeout hand-back's device timeout | 1 min (1–60), the device's own entered by the user | the release is judged only once it has run, and "hand-back failed" 3 min after it; a longer real timeout gives a false alarm that clears once the release shows (decision 5 of `docs/en/development/plans/plan-0.2.3.md`; provisional, K4) |
 | Fallback setpoint | the last effective outdoor temperature for 3 h, then the design flow, or the user's fixed value (decision 9) | never zero heat; the valves keep rooms from overheating |
-| Frost limit / release | 5 / 7 °C | above freezing with a margin, below any comfort setpoint |
-| Frost protection | every zone, heated only where its emitter can take heat | heat for a zone VT keeps closed cannot arrive; a repair issue says what to do instead (decision 4) |
-| Demand threshold | one zone calling | any zone calling heats, as with VT's central boiler |
-| What the count counts | VT's devices, as VT's central boiler (decided by the user 2026-10-14; an entry from before keeps zones) | the same as a zone at the default count of 1; a user moving over from VT keeps VT's number |
-| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: about 2 to 6 times the starts in the simulation with a daily outdoor swing, for under 0.15 K of comfort; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
-| Learning pauses | on | keep swings the plugin causes out of SmartPI's model |
+| VT's helper | none — the user picks the helper VT's central boiler switches; control waits for it | the plugin follows VT's decision and never guesses one (I12.8) |
+| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day once a room has been short for an hour; down to 3 K below the curve while every room is under 70 % open (I13.3) | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: up to about 3.5 times the starts in the simulation since I13.3's slower pace (steady −5 °C; with a daily outdoor swing x1.3 and x2.2, against x1.1 and x2.0 with it off; about 2 to 6 times before), for under 0.15 K of comfort; below the curve a room may warm up more slowly; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
 | Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information); on a circuit fed straight from the boiler, hot water with priority not counted | the boiler may overshoot the maximum; the user sees it (decision 10); the hot water does not reach that circuit (2026-10-12) |
 | "Add water" threshold | none | the value comes from the boiler's manual; a wrong default stops nothing but misleads |
 | High-pressure warning / alarm | none — entered below the safety valve's rating, read on the valve | ratings differ (often 3 bar in Europe, about 2.1 bar in North America): a default of 2.8 bar would never fire below a 2.1-bar valve (decision 13 of `docs/en/development/plans/plan-0.2.3.md`) |
 | Flue gas warning / alarm | 85 / 100 °C on a condensing boiler; none on a non-condensing one | hotter flue gas means the boiler is not condensing; too high warns too late for plastic flue pipes; a non-condensing boiler runs far hotter (reason to confirm at K4) |
-| Frequent starts | the alarm: more than 12 starts in an hour; a warning: more than 6 an hour over 3 h | the alarm: one start per 5-min cycle, VT's default; the warning (K4, the user's decision of 2026-11-17): gas boilers' TPI design value, 6 an hour (Bennett 2019: 70 % of heating starts under 10 min); too high hides short-cycling |
+| Frequent starts | the alarm: more than 12 starts in an hour; a warning: more than 6 an hour over 3 h | the alarm: one start per 5-min cycle, VT's default; the warning (K4, the user's decision of 2026-11-17): gas boilers' TPI design value, 6 an hour (Bennett 2019: 70 % of the boilers averaged heating starts under 10 min); a convention, not a harm threshold the literature gives (I13.9); too high hides short-cycling |
 | Unstable ignition | more than 10 burns under a minute in a day | a few can come from short hot-water draws; too many hides an ignition problem (reason to confirm at K4) |
 | Boiler-fault signals | none | the user maps the boiler's own fault where the integration shows it |
 | Thermostat terminals (gateway) | none — required; "I don't know" blocks control | an on/off contact could not heat the house after a crash while "off" (decision 1) |
@@ -1227,7 +1232,8 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Relay "separate contact" tick | not ticked — control does not start without it | a setting stored in the boiler's memory would be worn by every switching (answer G) |
 | Return by itself after another controller | off | the other controller may still be there; the user checks first |
 | Return by itself after an external-control switch's hand-back | off — its own option | the switch reads "off" also when a person turned external control off on purpose (decision 10 of `docs/en/development/plans/plan-0.2.3.md`) |
-| Freshness age limit | automatic: none until the source repeats an unchanged value twice, then 5 × its rhythm, 10–30 min (weather 3–12 h) (provisional, K4) | many sources report only on change; an assumed limit on such a source would stop control in steady weather |
+| Freshness age limit | automatic: none until the source repeats an unchanged value four times, then 5 × its rhythm and at least 2 × its second-largest gap (I13.2), 10–30 min (weather 3–12 h) (provisional, K4) | many sources report only on change; an assumed limit on such a source would stop control in steady weather |
+| Modulation cap (I13.7) | off; ticked, 70 % (30–100 %) (provisional, K4) | the evidence for its gain is weak (HEM-VAL-05; Bennett et al. 2019), and its risk is less heat in cold weather; 70 % is the cautious side of the range |
 | A short burn (monitor, 1–60 min) | under 10 min (provisional, K4) | the monitor's short-burn count and its suggestions use it; too short hides short-cycling, too long counts normal burns as short |
 
 Fixed values (S-37) — not options. Each row is either decided (its decision or date named) or
@@ -1235,27 +1241,35 @@ provisional, K4; a row that names no decision — "existing", "reason to confirm
 — is provisional, K4. "Reason to confirm" marks a value whose reason is not recorded yet; the user
 reviews every provisional value at K4.
 
+Checked against the literature on 2026-11-26 ([literature](literature.md); step I13): agree — the
+curve's form and the radiators' exponent 1.3, "fully open" from 95 %, the most demanding circuit
+setting the water, the circuit's cap, the boiler link's loss after 5 min within 10 and its
+recovery, the setpoint repeated every 30 s where the override expires, the alarms' hysteresis, the
+fallback at the curve's design point, the advice of a VT cycle of at least 10 min. Conventions, not
+harm thresholds the literature gives: the starts per hour (6 for the warning, 12 for the alarm), the
+10-minute short burn, unstable ignition's 10 burns under a minute a day. The underfloor exponent
+1.1 is the floor surface's; the water side is about 1.0 (Olesen 2007): the difference is under 1 K.
+
 | Value | Where | Why |
 |---|---|---|
-| Control step 10 s | `const.py` | heating follows the zones at once |
+| Control step 10 s | `const.py` | heating follows VT's decision at once |
 | Keep-alive 30 s | `control_config.py` | OTGW needs `CS` at least once a minute |
 | Lowest OTGW `CS` 8 °C | `transport/writers.py` | below 8 °C an override never lapses |
-| Confirmation timeout 120 s; tolerance 0.5 K — also a deadband on the curve's small changes, which keeps the starts down (the simulation: x1.20 at +8 °C with it, x1.36 without); a bound the water is held at (the lowest or highest water, a circuit's maximum or need, the boiler's maximum, and the comfort correction at its limit) is written exactly once the ramp has reached it, beyond 0.05 K (F14, J4 of 2026-10-14; the correction's limit: L12, the user's decision of 2026-11-22) | `core/guards.py`, `core/loop.py` | provisional, K4 (reason to confirm) |
+| Confirmation timeout 120 s; tolerance 0.5 K — also a deadband on the curve's small changes, which keeps the starts down (the simulation: x1.20 at +8 °C with it, x1.36 without); a bound the water is held at (the lowest or highest water, a circuit's maximum or need, the boiler's maximum, and the comfort correction at its limit, above the curve or below it) is written exactly once the ramp has reached it, beyond 0.05 K (F14, J4 of 2026-10-14; the correction's limit: L12, the user's decision of 2026-11-22; below the curve: I13.3) | `core/guards.py`, `core/loop.py` | provisional, K4 (reason to confirm) |
 | Write interval at least 5 s | `core/guards.py` | one write per step |
 | The plugin's own lapse after 60 s of silence | `core/guards.py` | an OTGW override lapses after about a minute |
 | Rewrite window 24 h | `core/guards.py` | decided 2026-09-25 |
 | Hand-back retry 60 s | `control.py` | existing |
-| Lost link: 5 min stale within 10 min; back after 60 s fresh | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
-| Zone-unknown alarm 30 min | `control.py` | provisional, K4 (reason to confirm) |
-| Outdoor hold 3 h; outdoor time constant 3 h | `core/curve.py` | the hold: decision 9; the time constant: provisional, K4 (reason to confirm; Open after 0.2.2, #27) |
+| Lost link: 5 min stale within 10 min; back after 60 s fresh, after 10 min following a second loss within an hour (I13.2) | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
+| Outdoor hold 3 h; outdoor time constant 3 h, 12 h where the curve's circuit has a room with underfloor heating (I13.8) | `core/curve.py` | the hold: decision 9; the time constants: provisional, K4 (3 h: reason to confirm, Open after 0.2.2, #27; 12 h: rooms with underfloor heating answer over 20–70 h, Kull et al. 2017, and a weather compensator's manual filters over 10–20 h for most buildings, Siemens LMS14 — 12 h in the lower part, as a longer mean keeps the water up longer through a mild spell) |
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
-| Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
-| Frost not warming: 2 h, 0.5 K | `core/controller.py` | provisional, K4 (reason to confirm) |
+| Modulation cap (I13.7): never below 30 %, nor within 10 points of the boiler's minimum as a share of its maximum; lifted 3 h after the flow stays more than 5 K below the setpoint for 10 min with the flame on; repeated every 30 s (an expiring entity) or every 5 min (a gateway, a held entity); a failed write, or a release its entity does not show, sent again after 60 s; the read-back judged after 120 s; the suggestion the design load × 1.2, up to 5 %, none at 90 % or more | `core/modulation_cap.py`, `core/cap_suggestion.py`, `modulation_cap.py` | provisional, K4 (the floor: boilers' minimum is 20–30 % of the maximum, Bennett 2018, and a cap at the minimum drives on/off, HEM-VAL-05; the repeats: EMS-ESP's `selburnpow` lapses within about a minute, a gateway's `MM=` is held until a reset) |
+| Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K at the fastest, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
+| The comfort correction's pace and trim (I13.3): a room counts as short after 2 of its VT cycles and 60 min without a break; the rise 1 K per 4 cycles of the slowest room it reads, never faster than 30 min per K; a cycle not known counts as 15 min; no rise while a room warms back after a raised setpoint (the window rule's 0.2 K in 30 min, back within 0.3 K); the trim below the curve at most 3 K, 1 K per 2 h of heat at the fastest and never faster than half the rise, 3 K a day, while every room is under 70 % open; back at 1 K per 15 min | `core/comfort_rules.py`, `core/controller.py` | provisional, K4: the slow loop at least 4 times slower than the rooms' own (Skogestad 2023; Hägglund 2021); the trim from valve-driven reset (Boegli et al. 2022; ASHRAE Guideline 36) |
 | Long burn without warming: a run of 3 h, the flame's gaps up to 30 min kept; a room rising under 0.2 K is not warming; the water has reached its setpoint when the flow, at some moment of the last 30 min, is under it by at most 1 K or above it, the burner stopping or not (J4's F15: a boiler at its minimum above a setpoint too low; the user's note of 2026-11-22: the boiler's own hysteresis and delays); 90 % is high modulation, with the flame on throughout for the power limit; every room 0.3 K over for 1 h is too hot; 30-min averages | `core/long_run.py` | the gaps decided at K4 (the user, 2026-11-17, J4's F10: a boiler cycling at its minimum with the rooms short is the same case); the rest provisional (G11 E) |
 | A zone takes heat above 5 % open, saturated at 95 % — for the learning, the alarms and the history; whether a zone calls follows VT's rule instead (above 0, 2026-10-14) | `core/readings.py` | existing |
 | Heat available: the flow 2 K above the return, or 3 K above the room without a return; 1 K hysteresis | `core/heat.py` | provisional, K4 (I8, decision C1) |
-| Plausible room reading −30 to 45 °C, one rule for every room reading | `core/limits.py` | a narrower range would hide a cold room from frost protection (S-06; provisional, K4) |
-| Learning pauses: a swing of 5 K in 30 min, a pause of at least 10 min (a draw or a boiler-fault "off" pauses even within 10 min of a resume), resume within 3 K, longest pause 60 min from its start, read back after 1 min | `core/learning.py` | existing; the draw and fault rules and the cap's start: decision 14 of `docs/en/development/plans/plan-0.2.3.md` |
+| Plausible room reading −30 to 45 °C, one rule for every room reading | `core/limits.py` | a narrower range would hide a cold room from the alarm "handed back in frost" and the critical zone (S-06; provisional, K4) |
 | Low-flow warning after 15 min | `core/alarms.py` | existing |
 | Recognition period at most 10 min; grace 10 min | `core/zone_watch.py` | decided (decision 3) |
 | Relay out of reach 5 min | control | decided |
@@ -1263,7 +1277,6 @@ reviews every provisional value at K4.
 | Return by itself after 60 min without a foreign value | `control.py` | decided |
 | A relay in its declared power-cut state: warning at 3 within 24 h, the fourth steps aside | control | decided (answers D, N) |
 | The plugin's own monitor failing: hand-back after 5 min | control | decided (answer I) |
-| Activation delay 0–600 s in steps of 10 | options | decided (decision 5) |
 | "Off" at least 1 K below the lowest water temperature; refused within 0.5 K of an "own control" hand-back value | limits | decided (P-43, S-49) |
 | Relay check 5 min; blind repeats every repeat interval; a declared timer's lapse within 60 s of a whole multiple of it, at most 3×, renewal every min(timer ÷ 2, repeat interval); a relay that stops taking commands: 3 checks running (about 15 min) | `core/relay.py` (decision 6 of 0.2.3) | provisional, K4 |
 | Held values resent every 5 min; the OTGW's `CH=` with every `CS` keep-alive (30 s) | control | provisional, K4; `CH=` lives in the PIC's memory, and an untraced PIC reset would otherwise lose "off" for up to 5 min |
@@ -1281,7 +1294,7 @@ reviews every provisional value at K4.
 | A relay's proof-of-heat window 30 min after "on" | control | longer than a common 20-min restart lockout; provisional, K4 |
 | "No sign the boiler heats" on the water-temperature paths: 30 min running of heating commanded while a zone calls, the flame known off (or, with it unknown, no 5-K rise of the flow) | control (decision 2 of 0.2.3) | longer than a common 20-min restart lockout, as the relay's window; provisional, K4 |
 | "Not worth it" only with at least 3 of 4 criteria judged (2 of 3 for a non-condensing boiler) | verdict | provisional, K4 (S-32) |
-| "Handed back in frost" below the frost limit, cleared at the release | alarms | provisional, K4 (S-57) |
+| "Handed back in frost" below 5 °C, cleared at 7 °C — the values the frost options had by default, fixed since I12.10 | `core/limits.py` | provisional, K4 (S-57) |
 | The lowest-water-temperature suggestion: the reference + 2 K, rounded up to 0.5 °C, below the caps | monitor | provisional, K4 |
 | J4's starts criterion: over 24 h at +8 °C and at −5 °C, each with a ±3 K daily outdoor swing, at most the boiler's own regulation's starts per hour × 1.10, or at most 6 starts an hour with a median burn of at least 10 min, with each room's mean temperature at most 0.3 K below its mean under that regulation (comfort parity); with VT's default 5-min TPI cycle the test carrying the swing stays a strict xfail, with a 15-min cycle it passes | acceptance | decided at K4 (the user, 2026-11-17): the literature measures cycling in absolute terms — 6 cycles an hour for gas boilers, burns under 10 min (S-15; decision 8 of `docs/en/development/plans/plan-0.2.3.md`) |
 | VT zones switched on and off (over_switch) in cycles under 10 min, named in a warning while control is configured (`zone_cycle_short`) | `coordinator.py` | decided at K4 (the user, 2026-11-17): each gap between their pulses stops the burner; gas boilers' convention is 6 cycles an hour |
@@ -1293,7 +1306,7 @@ reviews every provisional value at K4.
 | The "blocker stopped heating" issue after 60 s | control (V7) | provisional, K4 (reason to confirm) |
 | A joint fall-back of both targets within 20 s counted as one loss; an attempt with a trace not counted toward "ignored from the start" | guards (X1) | provisional, K4 (reason to confirm) |
 | The P-105 grace 600 s | `control.py` (X3) | provisional, K4 (reason to confirm) |
-| Circuit-alarm hysteresis 1 K; its time 1–120 min; the comfort correction at most 3 K a day; the learning pause's cap 1 h from its start (decision 14 of `docs/en/development/plans/plan-0.2.3.md`) | control (X4) | provisional, K4 (reason to confirm) |
+| Circuit-alarm hysteresis 1 K; its time 1–120 min; the comfort correction at most 3 K a day | control (X4) | provisional, K4 (reason to confirm) |
 | Extreme weather (principle 13's rule 5): the outdoor temperature below the design outdoor temperature, or changing faster than 2 K per hour | the comfort correction (decision 11 of `docs/en/development/plans/plan-0.2.3.md`) | provisional, K4: a ±3 K daily swing changes about 0.8 K per hour at most; a passing front changes faster |
 | Design flow at least the room + 5 K; design outdoor at most the room − 10 K | form (X5) | provisional, K4 (reason to confirm) |
 | The suggestion's evidence: 7 days, 20 burns, a share of 0.5, 1 K bands, 50 % opening, +2 K, 2 K under the caps; the wall-thermostat issue after 30 min; the 25 °C migration floor | monitor (X6) | provisional, K4 (reason to confirm) |
@@ -1302,16 +1315,20 @@ reviews every provisional value at K4.
 | Alarm holds 5 min; an unknown input held 1 h; 50 % known flame; the limit − 2; 2 K; a 10-K slope span; 0.05 bar/K; 40 °C; 0.1 bar; a pressure sample every 10 min, taken after 10 min without a flame | `core/alarms.py` (Y1) | provisional, K4 (reason to confirm) |
 | Hot-water inference 0.35–0.65; 12 h; 6 h; 10 min; 1 h | monitor (Y2) | provisional, K4 (reason to confirm) |
 | Building model: 8 K; 12 K; 2 K; 3 of 4; 2 of 3; outdoor readings within −30…+30 °C | monitor (Y3) | provisional, K4 (reason to confirm) |
-| A measured loss used only from 21 heating days, shown with a ±20 % range | `core/building.py` | decided at K4 (the user, 2026-11-17): published methods need about 3 weeks of heating-season data and reach about ±15 % at best (IEA EBC Annex 71; SMETER), data choices moving them up to 27 % |
+| A measured loss used only from 21 heating days | `core/building.py` | decided at K4 (the user, 2026-11-17): published methods need about 3 weeks of heating-season data (IEA EBC Annex 71; SMETER) |
+| A measured loss shown with its 95 % range from the fit, widened for days that follow each other (lag-1 autocorrelation of the residuals, effective sample size), never under ±15 %, held at ±100 %; above ±50 % shown, never used; the heating threshold from the days' change point once a week of days lies on each side of the threshold in use | `core/building.py`, `core/regression.py` | I13.4 (the user, 2026-11-26): ±15 % the best published methods reach (Annex 71); correlated daily residuals give ranges too narrow (IEA EBC Annex 58); change-point models (Meng, Mourshed, Wei 2018). ±50 % and a week on each side: provisional, K4. On `sim/house_days.py` the range held the true loss in 186 of 194 winter months |
+| A week's gas per degree-day shown from 14 K·day, with a 95 % band from the signature line's scatter (the week's spread with the days' lag-1 correlation) | `core/weekly.py` | I13.5 (the user, 2026-11-26): 14 K·day is 7 days 2 K under the threshold, the threshold's own tolerance (2 K); Phillips and Wilson 2024 for the scatter. Provisional, K4 |
+| The hot-water self-check: 28 days, an 8 K outdoor spread, a slope of 3 widened standard errors and 3 % of the mean per K | `core/dhw_check.py` | I13.5: hot water about flat through the year (Phillips and Wilson 2024); colder mains water explains 1–1.5 % per K, 3 % is twice that. Provisional, K4 |
+| The hysteresis drift over weeks: the last 7 days' daily medians against days 21–42 before; 5 pauses a day, 4 and 10 days; 3 K or twice the base's robust scatter | `core/alarms.py` | I13.5: the windows' middles 28 days apart, so 1 K a week shows as 4 K; no domestic-boiler source gives limits (general control-chart practice). Provisional, K4 |
+| Burns under 3 minutes shown beside the short ones | `core/metrics.py` | I13.5: the efficiency cost of cycling sits under 3 minutes (Bennett et al. 2019, from Orr et al. 2009) |
 | "The rest" of the day-to-day change within 15 % of the day before shown as normal variation | `core/report.py` | K4 (the user, 2026-11-17): daily figures are mostly noise and thermal lag; the 15 % provisional — no published number, 0.4's regression gives the house's own scatter |
 | Forecast call timeout 30 s | forecasts (Y4) | provisional, K4 (reason to confirm) |
 | Starts and ignition alarms unknown when the last analysis is older than 15 min; the last-run record written every 10 min | monitor (Y2) | provisional, K4 (reason to confirm) |
-| The frost "closed zone" issue updated on a 1 K move; the wish's restore waited for 60 s (given back by the setup since I11) | control (X4, V3) | provisional, K4 (reason to confirm) |
+| The wish's restore waited for 60 s (given back by the setup since I11) | control (V3) | provisional, K4 (reason to confirm) |
 | A write's timeout 10 s; a control step counts 60 s at most | control | provisional, K4 (reason to confirm) |
 | The "add water" threshold accepted within 0.1–2.0 bar | options (Y1) | provisional, K4 (reason to confirm) |
-| SmartPI's learning calls time out after 5 s, inside the stop's 15-s budget | `control.py` | provisional, K4 (reason to confirm) |
-| The minimum VT version 10.2.0 (external feature managers load from it; 10.5.1 is tested) | `vtherm_link.py` | provisional, K4 (Q3.1) |
-| A started thermostat that does not show the zone values within 15 min: the "reload VT" repair issue | `feature_manager.py` | provisional, K4 (reason to confirm) |
+| The oldest VT 10.6.5, compared as 10.6.4 — what its manifest says (10.6.5 is tested) | `vtherm_link.py` | decided 2026-11-25 (I12.6); raised when a VT change is needed |
+| A started thermostat that VT has not handed over within 15 min: the "reload VT" repair issue | `feature_manager.py` | provisional, K4 (reason to confirm) |
 | A day counts when 90 % of it is known; its degree-days need 80 % | monitor (Y2) | provisional, K4 (reason to confirm) |
 | The lowest-water-temperature suggestion never above 50 °C | monitor (X6) | provisional, K4 (reason to confirm) |
 | Control waiting for the gateway's read-back: a repair issue after 5 min, at error level where a hand-back stops heating | control (Z4-10) | provisional, K4 |
@@ -1405,18 +1422,16 @@ the thermostat: the user picks the thermostat's setpoint entity and a VT zone, o
 rounded to the thermostat's step, never stored in the thermostat's or the gateway's permanent
 memory, nothing sent in the recognition period (0.3 at the earliest; `docs/en/development/plans/plan-0.2-i8.md` I1);
 radiators and underfloor behind a mixing valve as one written circuit plus passive fixed circuits
-(0.3). The recorded "heating commanded" entity and event for users leaving VT's central boiler,
-planned for 0.3, are built in 0.2 (the user's decision of 2026-10-14: the plugin shows at least
-what VT's central boiler shows): **Heat call** (on, off with why not, unknown while not
-controlling — `core/boiler_call.py`), the devices or zones calling and their power summed
-beside the thresholds, and the event `vtherm_smart_boiler_boiler_call` when the call changes
-or a start begins to wait VT's activation delay. VT's Auto-TPI still reads only VT's own
-central boiler to skip its learning while the boiler is off: not the plugin's to change (a
-proposal for VT's authors).
+(0.3). The recorded "heating commanded" entity and event, planned for 0.3, are built in 0.2
+(the user's decision of 2026-10-14): **Heat call** (on, off with why not, unknown while not
+controlling — `core/boiler_call.py`), the rooms calling (**Calling for heat**), and the event
+`vtherm_smart_boiler_boiler_call` when the call changes or VT's central boiler begins to wait
+its activation delay. Since I12 VT's central boiler stays and decides, so VT's Auto-TPI skips
+its learning while it is off, as VT intends.
 
 **Struck by the user on 2026-10-12:** SmartPI's "better signal" — reading its controller's
-own output (`u_pi`, `u_ff`) instead of the zones' duty cycle (S-29); its learning phase is read
-since G11 C, so nothing of S-29's SmartPI part remains.
+own output (`u_pi`, `u_ff`) instead of the zones' duty cycle (S-29); nothing of SmartPI is read
+since I12.9, so nothing of S-29's SmartPI part remains.
 
 **Struck by the user on 2026-10-10** (`docs/en/development/plans/plan-0.2-i8.md` B): summer/winter switching of any
 kind (FC1), the warning for zones the boiler does not feed, the proposal to the SmartPI and
@@ -1464,8 +1479,6 @@ Starts per hour count the hours with heating.
 
 ## 11. Open decisions
 
-- Learning pause during long anti-cycling pauses (water near room temperature while a zone calls
-  for heat) — decide on data from the first installations (before 0.3).
 - The thermostat-like mode with an OTGW (0.3): with a physical thermostat (override) and without
   one (`AA` injection — does the boiler heat on its own regulation without `CS`); firmware
   version that added `RT` and `BS`; what ESPHome OpenTherm and EMS-ESP take (before 0.3).
@@ -1486,6 +1499,16 @@ Starts per hour count the hours with heating.
 - The first published version and the repository's content (decision 16): the version after
   the independent check of 0.2.2 and at K4 — provisionally pre-release 0.2.2b1, then 0.2.2; the
   content at K5.
+- A restart pause (I13.6, 2026-11-26): tried on the simulator and not built, so principle 12 has no
+  such exception. A pause of 3 minutes after a heating stop cut no start in any case: VT's cycles of
+  5, 10 and 15 minutes, −5 °C and +8 °C with the daily swing, the zones' cycles in step or not, with
+  or without the boiler's own 3-minute timer. VT's TPI starts the boiler once per cycle, and a pause
+  shorter than the cycle only shortens the next pulse; a boiler with its own 3-minute timer already
+  holds the burner that long. With its cut-short at a room 1 K short, a 5-minute pause cut starts
+  only at VT's 5-minute cycle, as a 10-minute cycle does with warmer rooms; at a 10-minute cycle it
+  cut none and left the rooms up to 0.13 K colder. Fewer starts come from a longer VT cycle (10–15
+  minutes, the plugin's advice). Still open: whether a boiler's own timer acts after an OpenTherm
+  "heating off", and rooms with fan convectors (not simulated).
 - The provisional decisions below, marked (K4), are confirmed or changed by the user at the
   review before anything reaches a real boiler (`docs/en/development/plans/plan-0.2.md`, K4).
 
@@ -1498,7 +1521,7 @@ Starts per hour count the hours with heating.
   outdoor temperature, never below 1 K; Custom for power users. Beyond the band: suggestions only
   (provisional, K4).
 - Clocks: a control step every 10 s, which checks freshness and switches heating on and off with
-  the zones' demand; the water temperature is decided every decision interval (an option,
+  VT's decision; the water temperature is decided every decision interval (an option,
   default 5 min, VT's default cycle — the plugin does not read the zones' cycles); keep-alive
   every 30 s where the write path needs it — OTGW requires `CS` at least once a minute, 30 s
   keeps a margin.
@@ -1533,19 +1556,19 @@ Starts per hour count the hours with heating.
   or its PIC resets, and applies it to any later `CS` and to an on/off thermostat's demand, while
   `TSet` still carries `CS` with `CH=0` (PIC firmware 6.6, found by the review of 2026-09-24).
   Hand-back is the safe hand-back: `CS` at the lowest water temperature, `CH=1`, then `CS=0`.
-- Auto-TPI (research F2): without VT's central boiler, Auto-TPI never learns in zones flagged
-  "used by the central boiler"; the plugin raises a repair issue naming them, which states what
-  its advice costs. It is detected, not paused, because `set_auto_tpi_mode` is not a pure pause;
-  a pause comes in a release set at K4 (S-29).
+- Auto-TPI (research F2; VT 10.6.5 checked 2026-11-26): it skips its learning while VT's central
+  boiler is off, in zones flagged "used by the central boiler"; VT's central boiler decides with
+  the plugin (I12), so Auto-TPI learns. `set_auto_tpi_mode` is not a pure pause (it wipes the
+  learning by default and rewrites the entry); the plugin neither calls it nor reads Auto-TPI.
 - VT feature manager (research F4): registered once VT's API exists; a thermostat already
   running picks it up at VT's next reload, which the plugin never triggers.
 - The user's decisions of 2026-09-25: VT decides whether to heat, nothing the plugin counts or
   times holds heating against VT, and what the plugin learns stays within firm bounds
   (principles 12 and 13); frost protection as an exception, for every zone or one picked zone
   (2026-09-26/27: one of principle 12's stated exceptions, heating only zones that can take
-  heat); summer and winter come from VT; VT's central modes act through the zones' demand, and
-  "Stopped" is not a hand-back; a lost boiler link raises an alarm and hands back in every
-  topology — stand-alone, heating stops (2026-09-26/27: a relay gets an alarm and no hand-back);
+  heat; removed at I12.10: frost protection is VT's); summer and winter come from VT; VT's
+  central modes act through the zones' demand, and "Stopped" is not a hand-back; a lost boiler
+  link raises an alarm and hands back in every topology — stand-alone, heating stops (2026-09-26/27: a relay gets an alarm and no hand-back);
   the comfort correction's bounds; nothing written to the boiler's persistent memory; a value
   never confirmed against another steady value counts as changed from outside (2026-09-26/27:
   replaced by decision 6's four classes); with some zones unknown the known ones decide, with an
@@ -1558,8 +1581,10 @@ Starts per hour count the hours with heating.
   2. One setting, the lowest water temperature, default 20 °C; 0.2.2 only suggests a value.
   3. A recognition period and a 10-min grace; with every zone unknown, a hand-back to a working
      thermostat, else no heating, with an alarm.
-  4. Frost protection heats only zones that can take heat; a repair issue for a closed one.
-  5. VT's activation delay carried over, 0–600 s, default 0.
+  4. Frost protection heats only zones that can take heat; a repair issue for a closed one
+     (removed at I12.10: frost protection is VT's).
+  5. VT's activation delay carried over, 0–600 s, default 0 (removed at I12.8: the delay is
+     VT's own).
   6. Four classes of outside change: lost command, ignored from the start, clipped, another
      controller.
   7. Only an internal error, the lost link, another controller, the monitor failing and "heating
@@ -1571,8 +1596,8 @@ Starts per hour count the hours with heating.
   12. A deviating outdoor sensor: the colder of the sensor and the weather entity.
   13. Class 3 comes into 0.2.2 without minimum times or a switching cap; anti-cycling in 0.3 is to
       be decided against principle 12.
-  14. CI fetches VT 10.5.1 (10.4.0 until 2026-10-13) and SmartPI 0.4.0 from their tags on GitHub's
-      servers.
+  14. CI fetches VT 10.6.5 (10.5.1 until 2026-11-25, 10.4.0 until 2026-10-13) and SmartPI 0.4.0
+      from their tags on GitHub's servers.
   15. J4 provokes an unclean restart and a lost link in the test container only.
   16. The first published version after the independent check and at K4; the content at K5.
   Also: the missing-data rule, boiler protection by the boiler's own fault, the safe hand-back,
@@ -1592,10 +1617,11 @@ Starts per hour count the hours with heating.
 - Provisional control decisions (K4): control for at most one circuit fed straight from the
   boiler, with circuits behind a fixed valve or run by other automation beside it (the latter
   holding the water at its need while it asks), and a boiler of the class "flow setpoint" or "on/off" (a relay); the curve's design flow is entered,
-  never defaulted; control refused while VT's own central boiler is configured (no monitoring
-  period holds it: 2026-10-08); the first setpoint of a session is the curve's value, not ramped from the
-  current flow; alarm reactions as decision 7; frost protection
-  during the recognition period for zones already known; control resuming by itself after an
+  never defaulted; control refused while VT's own central boiler is configured (reversed at
+  I12.8: VT's central boiler, its commands on the helper, is required); no monitoring period
+  holds control (2026-10-08); the first setpoint of a session is the curve's value, not ramped
+  from the current flow; alarm reactions as decision 7; frost protection during the recognition
+  period for zones already known (removed at I12.10); control resuming by itself after an
   every-zone-unknown hand-back.
 - Provisional write decisions (K4): boiler data is there while flame and flow are known — a
   steady reading is not a stale one, as many sources report only on change; its age counts only
@@ -1627,8 +1653,6 @@ Starts per hour count the hours with heating.
   monitor only and is visible and resettable; 12 — an entered design load always wins; 19 — the
   zone pick accepts only VT climates, checked on the server (the warning for zones the boiler does
   not feed comes in 0.3); 20 — diagnostics work for an entry in setup error.
-- Learning pauses (SmartPI) only while control runs; the water-swing check follows the heating
-  setpoint, not the low "off" value (K4).
 
 ## 12. Release
 

@@ -1,4 +1,4 @@
-"""Limits on the flow setpoint, a setpoint entity's grid, and frost protection.
+"""Limits on the flow setpoint, a setpoint entity's grid, and the alarm "handed back in frost".
 
 Every setpoint the plugin writes passes ``limit_flow``. Caps that protect the installation — the
 hard maximum, a circuit's maximum (underfloor on an unmixed loop), the boiler's own maximum —
@@ -10,12 +10,10 @@ bounded by its own limit. A value for an
 entity with a step is put on its grid inside the limits, in the entity's own unit, before the
 write guard compares it (P-15, P-98).
 
-Frost protection (decision 4) watches every zone, or the one the user picks, but heats only for a
-cold zone whose emitter can take heat: VT shows an opening above 0 or its device active — the
-mode alone never counts. A zone whose valve state cannot be read is heated as before, unless the
-user declared that it closes while VT has it off. A cold zone VT keeps closed is flagged instead:
-heat for it cannot arrive. The alarm "handed back in frost" watches every watched room: a
-hand-back that stops heating leaves a room near freezing, closed or not.
+The plugin has no frost protection of its own (I12, decision 4): VT's frost preset and central
+mode make the rooms call, and VT's central boiler turns its helper on. The alarm "handed back in
+frost" (S-57) watches every room: a hand-back that stops heating leaves a room near freezing
+with nothing to heat it.
 """
 
 from __future__ import annotations
@@ -203,120 +201,28 @@ class Grid:
 
 
 PLAUSIBLE_ROOM = (-30.0, 45.0)  # °C: a room reading outside is a broken sensor, not a room
-FROST_OPEN = 0.0  # decided (decision 4): an opening above this can take heat
+# S-57: the alarm "handed back in frost" rises while a room reads below this, where a hand-back
+# that stops heating holds, and clears once every room known is at or above the release
+# (provisional, K4). The values the frost options had by default: frost protection itself is
+# VT's, through its frost preset and central mode (I12, decision 4), so they are no options.
+FROST_ALARM_LIMIT = 5.0
+FROST_ALARM_RELEASE = 7.0
 
 
-@dataclass(frozen=True, slots=True)
-class FrostConfig:
-    """Frost protection: a safety net below VT's own frost presets (°C). The one case where the
-    plugin heats without VT's call; it watches every zone, VT's switched-off ones included, or
-    only the zone the user picks — and heats only for those whose emitter can take heat."""
-
-    room_limit: float = 5.0  # a watched zone below this starts frost heating
-    release: float = 7.0  # frost heating ends once every watched zone is at or above this
-    zone: str | None = None  # watch only this zone; None: every zone
-    # Zones the user declared closed while VT has them off ("closes when VT switches it off",
-    # off by default): without a published opening they then cannot take heat.
-    closes_when_off: frozenset[str] = frozenset()
-
-    def __post_init__(self) -> None:
-        if self.release < self.room_limit:
-            raise ValueError("the release temperature must not be below the frost limit")
-
-
-def can_take_heat(zone: ZoneState, config: FrostConfig) -> bool:
-    """Whether heat for the zone can reach its room (decision 4): VT shows an opening above 0 —
-    its valve, else its duty cycle — or its device active; the mode alone never counts (a heat
-    mode with its valve closed cannot, an off zone asleep with its valve at 100 % can). A zone
-    whose valve state cannot be read — no opening published, or VT has not started it (what it
-    shows is a placeholder) — can, as before; unless the user declared that it closes while VT
-    has it off, and VT has it off."""
-    if zone.device_active is True:
-        return True
-    opening = zone.demand
-    if opening is None or not zone.started:
-        return not (zone.zone_id in config.closes_when_off and zone.heating_enabled is False)
-    return opening > FROST_OPEN
-
-
-def _watched(
-    zones: Sequence[ZoneState], now: float, max_age: float | None, config: FrostConfig
-) -> list[tuple[ZoneState, float]]:
-    """The zones frost protection watches that have a fresh, plausible room temperature."""
+def room_temperatures(zones: Sequence[ZoneState], now: float, max_age: float | None) -> list[float]:
+    """The rooms' fresh, plausible temperatures."""
     low, high = PLAUSIBLE_ROOM
     return [
-        (z, z.temperature)
+        z.temperature
         for z in zones
-        if (config.zone is None or z.zone_id == config.zone)
-        and z.temperature is not None
-        and low <= z.temperature <= high
-        and z.is_fresh(now, max_age)
+        if z.temperature is not None and low <= z.temperature <= high and z.is_fresh(now, max_age)
     ]
-
-
-def watched_temperatures(
-    zones: Sequence[ZoneState],
-    now: float,
-    max_age: float | None,
-    config: FrostConfig,
-    *,
-    closed_too: bool = False,
-) -> list[float]:
-    """Fresh, plausible room temperatures of the watched zones that can take heat; with
-    ``closed_too``, of every watched zone."""
-    return [
-        temperature
-        for zone, temperature in _watched(zones, now, max_age, config)
-        if closed_too or can_take_heat(zone, config)
-    ]
-
-
-def frost_needed(
-    zones: Sequence[ZoneState],
-    now: float,
-    max_age: float | None,
-    active: bool,
-    config: FrostConfig,
-    *,
-    closed_too: bool = False,
-) -> bool:
-    """Whether a watched zone that can take heat is cold enough for frost heating, with
-    hysteresis; closed zones neither start it nor hold it. ``closed_too``: every watched zone
-    counts (the alarm "handed back in frost")."""
-    temperatures = watched_temperatures(zones, now, max_age, config, closed_too=closed_too)
-    if any(t < config.room_limit for t in temperatures):
-        return True
-    return active and any(t < config.release for t in temperatures)
-
-
-def frost_closed(
-    zones: Sequence[ZoneState],
-    now: float,
-    max_age: float | None,
-    config: FrostConfig,
-    flagged: Sequence[str] = (),
-) -> tuple[str, ...]:
-    """The watched zones below the frost limit that cannot take heat (decision 4): VT keeps
-    them closed, so frost heat cannot reach them and does not start for them. One stays
-    flagged (``flagged``: at the step before) until it is at or above the release, or can take
-    heat. A zone VT has not started is not judged: its valve state is not known yet."""
-    return tuple(
-        zone.zone_id
-        for zone, temperature in _watched(zones, now, max_age, config)
-        if zone.started
-        and not can_take_heat(zone, config)
-        and (
-            temperature < config.room_limit
-            or (zone.zone_id in flagged and temperature < config.release)
-        )
-    )
 
 
 def handed_back_in_frost(
     zones: Sequence[ZoneState],
     now: float,
     max_age: float | None,
-    config: FrostConfig,
     *,
     heating_stops: bool,
     controlling: bool,
@@ -324,13 +230,17 @@ def handed_back_in_frost(
 ) -> bool | None:
     """The alarm "handed back in frost" (S-57): control does not hold the boiler — for any
     reason, a switch-off included — where a hand-back stops heating (``heating_stops``), so
-    frost protection rests on the boiler's own, if it has one, and a watched zone reads below
-    the frost limit. Once raised (``active``) it holds until every watched zone with a known
-    temperature is at or above the release. A zone not known is not counted; with none known it
-    cannot be judged (``None``): the control unit holds its last state for an hour, then shows
-    it unknown (S-16, Y1). Information only: it never starts heating (principle 12)."""
+    neither VT's frost protection nor anything else can reach the boiler: frost protection rests
+    on the boiler's own, if it has one, and a room reads below ``FROST_ALARM_LIMIT``. Once raised
+    (``active``) it holds until every room with a known temperature is at or above
+    ``FROST_ALARM_RELEASE``. A room not known is not counted; with none known it cannot be judged
+    (``None``): the control unit holds its last state for an hour, then shows it unknown (S-16,
+    Y1). Information only: it never starts heating (principle 12)."""
     if controlling or not heating_stops:
         return False
-    if not watched_temperatures(zones, now, max_age, config, closed_too=True):
+    temperatures = room_temperatures(zones, now, max_age)
+    if not temperatures:
         return None
-    return frost_needed(zones, now, max_age, active, config, closed_too=True)
+    if any(t < FROST_ALARM_LIMIT for t in temperatures):
+        return True
+    return active and any(t < FROST_ALARM_RELEASE for t in temperatures)

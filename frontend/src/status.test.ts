@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alarmList, buildingValue, entityText, signalList, verdictReasons } from "./status";
+import { alarmList, buildingValue, entityText, signalList, verdictReasons, verdictSizing } from "./status";
 import type { HassEntity } from "./types";
 
 const entity = (entity_id: string, state: string, attributes: Record<string, unknown> = {}): HassEntity => ({
@@ -40,9 +40,35 @@ describe("the verdict's reasons", () => {
     ]);
   });
 
+  it("keeps the share under 3 minutes beside the short burns' (I13.5)", () => {
+    const verdict = entity("sensor.verdict", "worth_it", {
+      reasons: [{ code: "short_burns", kind: "problem", value: 0.6, limit: 0.5, very_short_share: 0.2 }],
+    });
+    expect(verdictReasons(verdict)).toEqual([
+      { code: "short_burns", kind: "problem", value: 0.6, limit: 0.5, very_short_share: 0.2 },
+    ]);
+  });
+
   it("has none without the sensor or its reasons", () => {
     expect(verdictReasons(undefined)).toEqual([]);
     expect(verdictReasons(entity("sensor.verdict", "unknown"))).toEqual([]);
+  });
+});
+
+describe("the boiler against the house (I13.4)", () => {
+  it("reads the outputs and the design load where known", () => {
+    const verdict = entity("sensor.verdict", "not_worth_it", {
+      sizing: { min_power_kw: 4, max_power_kw: 25, design_load_kw: 8.8, design_outdoor: -15 },
+    });
+    expect(verdictSizing(verdict)).toEqual({ minPower: 4, maxPower: 25, designLoad: 8.8, designOutdoor: -15 });
+    const partial = entity("sensor.verdict", "not_worth_it", { sizing: { min_power_kw: 4, max_power_kw: "x" } });
+    expect(verdictSizing(partial)).toEqual({ minPower: 4, maxPower: null, designLoad: null, designOutdoor: null });
+  });
+
+  it("has none without any of them", () => {
+    expect(verdictSizing(undefined)).toBeNull();
+    expect(verdictSizing(entity("sensor.verdict", "unknown", { sizing: null }))).toBeNull();
+    expect(verdictSizing(entity("sensor.verdict", "unknown", { sizing: { design_outdoor: -15 } }))).toBeNull();
   });
 });
 
@@ -51,7 +77,7 @@ describe("the alarms", () => {
     alarm_pressure_low: "binary_sensor.pressure_low",
     alarm_flue_gas_rising: "binary_sensor.flue_rising",
     alarm_write_failed: "binary_sensor.write_failed",
-    alarm_zone_unknown: "binary_sensor.zone_unknown",
+    alarm_handed_back_in_frost: "binary_sensor.in_frost",
     connection: "binary_sensor.signals",
     long_burn: "binary_sensor.long_burn",
     outdoor_sensor_problem: "binary_sensor.outdoor_problem",
@@ -64,7 +90,7 @@ describe("the alarms", () => {
         entity("binary_sensor.pressure_low", "on", { level: "alarm", limit: 0.8 }),
         entity("binary_sensor.flue_rising", "on", { level: "warning" }),
         entity("binary_sensor.write_failed", "off"),
-        entity("binary_sensor.zone_unknown", "unknown"),
+        entity("binary_sensor.in_frost", "unknown"),
         entity("binary_sensor.signals", "on", { problems: [] }),
         entity("binary_sensor.long_burn", "on", { reason: "water_too_cool" }),
         entity("binary_sensor.outdoor_problem", "off", { status: "ok" }),
@@ -75,7 +101,7 @@ describe("the alarms", () => {
       ["alarm_pressure_low", "alarm", null, 0.8],
       ["alarm_flue_gas_rising", "warning", null, null],
       ["long_burn", "warning", "water_too_cool", null],
-      ["alarm_zone_unknown", "unknown", null, null],
+      ["alarm_handed_back_in_frost", "unknown", null, null],
       ["alarm_write_failed", "clear", null, null],
       ["connection", "clear", null, null],
       ["outdoor_sensor_problem", "clear", "ok", null],

@@ -16,7 +16,7 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 START = datetime(2026, 1, 12, 8, tzinfo=UTC)
@@ -478,11 +478,15 @@ def test_the_stub_services_match_home_assistants_for_every_call_the_plugin_makes
     plugin that passes against the stub calls the real one with what it takes."""
     from homeassistant import components
 
-    from custom_components.vtherm_smart_boiler.transport.writers import OTGW_SERVICES
+    from custom_components.vtherm_smart_boiler.transport.writers import (
+        OTGW_CAP_SERVICES,
+        OTGW_SERVICES,
+    )
 
     real = Path(components.__file__).parent / "opentherm_gw/services.yaml"
     stub = COMPONENTS / "opentherm_gw/services.yaml"
-    for _domain, service in sorted(OTGW_SERVICES):
+    # I13.7: the modulation cap's ``set_max_modulation`` too.
+    for _domain, service in sorted(OTGW_SERVICES | OTGW_CAP_SERVICES):
         assert _fields(stub, service) == _fields(real, service), service
 
 

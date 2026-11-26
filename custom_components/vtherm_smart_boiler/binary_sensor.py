@@ -1,6 +1,6 @@
 """Binary sensors: the signals' connection, the monitor's alarms, a long burn without warming,
-the outdoor sensor's problem, and the alarms of control. An alarm exists only where its feature
-is not inactive (the missing-data rule, Y4)."""
+the outdoor sensor's problem, control's own ("boiler gives no heat" among them) and its alarms.
+An alarm exists only where its feature is not inactive (the missing-data rule, Y4)."""
 
 from __future__ import annotations
 
@@ -68,7 +68,8 @@ async def async_setup_entry(
         entities.append(LongBurnSensor(coordinator))
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))  # control removed: its state goes
-        entities.append(BoilerCalledSensor(coordinator))  # VT's central boiler sensor's place
+        entities.append(BoilerCalledSensor(coordinator))  # whether the boiler is called
+        entities.append(NoHeatSensor(coordinator))  # "boiler gives no heat" (I12.9)
         # Each path's own alarms (R15): the relay's only on the relay path, the boiler link's
         # and the missing confirmation not there; each only where its feature is not inactive.
         kinds = control_alarms_for(coordinator.control.options)
@@ -121,9 +122,9 @@ class ControlStateSensor(ControlEntity, BinarySensorEntity):
             "blocked_by": list(status.blocked_by),
             "blocked_by_text": self._text("blocked_by", status.blocked_by),
             "hand_back_effect": None if effect is None else effect.value,
-            # Who keeps frost protection now: the plugin while it controls, else whoever the
-            # hand-back leaves the boiler with — after a stand-alone hand-back, the boiler's own,
-            # if it has one (S-57).
+            # Who keeps frost protection now: VT, through the plugin, while it controls (I12.10),
+            # else whoever the hand-back leaves the boiler with — after a stand-alone hand-back,
+            # the boiler's own, if it has one (S-57).
             "frost_protection_by": status.frost_protection_by,
             # How "off" reaches the boiler: a heating switch or a relay really switches heating
             # off; a low setpoint may leave the boiler's CH pump running.
@@ -223,11 +224,14 @@ class AlarmSensor(SmartBoilerEntity, BinarySensorEntity):
         alarm = self.coordinator.data.alarms.get(self.kind)
         if alarm is None:
             return {}
-        return {
+        shown = {
             "level": None if alarm.level is None else alarm.level.value,
             "limit": alarm.limit,
             "reason": alarm.reason,
         }
+        if alarm.basis is not None:  # I13.5: the hysteresis drift's last day, or its weeks
+            shown["basis"] = alarm.basis
+        return shown
 
 
 class LongBurnSensor(SmartBoilerEntity, BinarySensorEntity):
@@ -290,10 +294,10 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
 
 
 class BoilerCalledSensor(ControlEntity, BinarySensorEntity):
-    """On while the plugin calls the boiler for space heating, frost protection included — what
-    VT's central boiler sensor shows (the user's decisions of 2026-10-14); off while it controls
+    """On while the plugin calls the boiler for space heating — VT's frost protection included,
+    as VT calls for it (the user's decisions of 2026-10-14); off while it controls
     the boiler and does not call it; unknown while it does not control it, or cannot tell yet.
-    Why not, and the demand against its thresholds, in its attributes."""
+    Why not, and the rooms calling, in its attributes."""
 
     _unrecorded_attributes = DEMAND_ATTRIBUTES
 
@@ -310,13 +314,37 @@ class BoilerCalledSensor(ControlEntity, BinarySensorEntity):
         return {"call_reason": status.call_reason, **demand_attributes(status)}
 
 
+class NoHeatSensor(ControlEntity, BinarySensorEntity):
+    """I12.9 (the user's decision of 2026-11-25): one house-wide "boiler gives no heat" signal —
+    on while the boiler gives the rooms no heat now, off while it does as far as the plugin
+    drives it — with its ``reason``. The user picks it in SmartPI 1.0's "heating unavailable"
+    input, which counts only "on" (``learning_block.py``, ``dev-1.0``), or uses it in an
+    automation. Unavailable while control is switched off, and while it cannot be told yet. No
+    device class: a signal for automations, not a problem."""
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "no_heat")
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.control.status.no_heat.on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.control.status.no_heat.on
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        reason = self.control.status.no_heat.reason
+        return {"reason": None if reason is None else reason.value}
+
+
 class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
     """A control alarm: a write failed or was ignored from the start, commands keep getting lost,
     the boiler's confirmation is missing, another controller changed a value, a hand-back failed,
     the boiler link was lost, control stopped on an internal error, a room is near freezing
-    while a hand-back that stops heating holds, no zone answers, or a demand criterion no zone
-    can feed. "Write ignored" and "confirmation missing" name their targets, the criterion
-    alarm its criteria."""
+    while a hand-back that stops heating holds, no zone answers, or VT's decision is unknown.
+    "Write ignored" and "confirmation missing" name their targets."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -338,16 +366,4 @@ class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
             return {"targets": list(status.ignored_targets)}
         if self.kind is ControlAlarm.CONFIRMATION_MISSING:
             return {"targets": list(status.unconfirmed_targets)}
-        if self.kind is ControlAlarm.DEMAND_CRITERION_NO_DATA:
-            return {
-                "criteria": list(status.criteria_without_data),
-                "criteria_text": coded_text(
-                    self.coordinator,
-                    "binary_sensor",
-                    self.key,
-                    "criteria",
-                    status.criteria_without_data,
-                ),
-                "zones": list(status.zones_without_data),  # calling, seen by none (PB-23)
-            }
         return None

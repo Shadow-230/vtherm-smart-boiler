@@ -28,9 +28,9 @@ back safely.
 of VT and not made by its authors — that runs a central heating boiler — gas, oil, electric or
 another fuel, any boiler Home Assistant can talk to, not a heat pump — from what the rooms actually
 need: fewer and longer burns, more condensing where the boiler condenses, less fuel per degree-day —
-with the same room comfort, and without disturbing the zone algorithms' own room models. It replaces
-VT's on/off central boiler with control of the boiler's water temperature, and always knows how to
-hand the boiler back to its own control.
+with the same room comfort, and without disturbing the zone algorithms' own room models. VT's
+central boiler still decides when the boiler heats; the plugin adds control of the boiler's water
+temperature, and always knows how to hand the boiler back to its own control.
 
 It is **not** a room controller (rooms stay with VT and its algorithms), it does not drive
 valves or heat pumps, and it sends no data outside your Home Assistant.
@@ -43,17 +43,18 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
   before; you may switch it on from the first day.
 - **Weather-compensated water temperature** on a curve you enter, bounded by the lowest and
   highest water temperature and each circuit's maximum.
-- **Heating on and off follow VT's zones** — by devices (or zones) calling, total power or valve
-  opening, as VT's central boiler does — and VT's central modes act through the zones.
+- **Heating on and off as VT decides:** VT's central boiler, with its own thresholds and
+  activation delay, switches an on/off helper, and the plugin follows it. The rooms are VT's
+  thermostats marked "Used by central boiler"; frost protection is VT's too.
 - **Writes through what you have:** an entity you pick, the OpenTherm Gateway (Home Assistant's
   `opentherm_gw` or its firmware over MQTT), or a relay for an on/off boiler.
-- **Safety first:** frost protection, protection against short cycling, read-back of every
-  write, never fighting another controller, nothing written to the boiler's permanent memory,
-  and a safe hand-back to the boiler's own control on every exit — retried until confirmed.
+- **Safety first:** protection against short cycling, read-back of every write, never fighting
+  another controller, nothing written to the boiler's permanent memory, and a safe hand-back to
+  the boiler's own control on every exit — retried until confirmed.
 - **A Boiler page in the sidebar, and cards.** The boiler at a glance — its status, the
-  installation drawn from your settings with each room, the heating curve with where it is now,
-  the last 24 h to replay — plus the burner, gas use, analyses, a journal of what the plugin
-  decided and why, and the alarms. Nothing else to install; an administrator can change the
+  installation drawn from your settings with the circuits taking water, the heating curve with
+  where it is now, the last 24 h to replay — plus the burner, gas use, analyses, a journal of what
+  the plugin decided and why, and the alarms. Nothing else to install; an administrator can change the
   curve there, after confirming. Control is switched in the plugin's settings, by an
   administrator, and by automations.
 - Every option has a cautious default and a text that says what it does and what it risks.
@@ -64,12 +65,12 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
   counts starts per hour, burn lengths, the condensing share and gas per degree-day, and its
   verdict says whether control is worth enabling. Nothing is written to the boiler.
 - **An OpenTherm boiler with VT in every room.** The plugin sets the water temperature from the
-  outdoor temperature and switches heating on and off from VT's zones, through the OpenTherm
-  Gateway, ESPHome OpenTherm or EMS-ESP. With a wall thermostat on the gateway, the boiler goes
+  outdoor temperature and switches heating on and off as VT's central boiler decides, through the
+  OpenTherm Gateway, ESPHome OpenTherm or EMS-ESP. With a wall thermostat on the gateway, the boiler goes
   back to it on every hand-back.
-- **An on/off boiler.** A relay on the boiler's room-thermostat terminals follows VT's zones in
-  place of VT's central boiler; the plugin checks the relay or repeats its command, and hands
-  back to the relay's rest state.
+- **An on/off boiler.** A relay on the boiler's room-thermostat terminals is switched as VT's
+  central boiler decides; the plugin checks the relay or repeats its command, and hands back to
+  the relay's rest state.
 - **Underfloor heating on a loop without a mixer.** The circuit's highest water temperature caps
   every setpoint, and an alarm tells you when the measured flow stays above it.
 
@@ -78,8 +79,8 @@ valves or heat pumps, and it sends no data outside your Home Assistant.
 | Requirement | Version |
 |---|---|
 | Home Assistant | 2026.10.4 or later — the newest VT (10.6.5) needs it |
-| Versatile Thermostat | 10.2.0 or later (it loads external feature managers from 10.2.0); 10.5.1 and the newest, 10.6.5, are tested — provisional until the first release. VT 10.6.5 needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0 |
-| `vtherm_api` | 0.5.0 or later, installed with the plugin |
+| Versatile Thermostat | 10.6.5 or later (it shows itself as 10.6.4 in Home Assistant); with an older VT the plugin does not control the boiler. VT 10.6.5 needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0 |
+| `vtherm_api` | 0.9.0 or later, installed with VT and the plugin |
 | SmartPI, Auto-TPI | optional; any VT zone algorithm works |
 
 Any boiler whose signals Home Assistant shows as entities can be monitored. To control it, the
@@ -103,7 +104,7 @@ Everything a user needs is in the **user guide** — 🇬🇧 [User guide][guide
 | What you want to know | Where in the guide |
 |---|---|
 | What you need, how to install, the first setup | [1–3][guide] |
-| How it works: the verdict, heating on and off, the water temperature, frost, circuits, the zone algorithms | [4][guide-how] |
+| How it works: the verdict, heating on and off, the water temperature, frost (VT's), circuits, the zone algorithms | [4][guide-how] |
 | How the boiler is connected, and what a hand-back does on each connection | [5][guide-connect] |
 | Safety: the hand-back, other controllers, a lost link, fresh data | [6][guide-safety] |
 | What each alarm and repair issue means | [7][guide-alarms] |
@@ -135,8 +136,8 @@ reaches `main` with the first release.
 
 | Release | Content |
 |---|---|
-| 0.2 Control base | the monitor plus control of the water temperature, the safe hand-back, frost protection |
-| 0.3 Anti-cycling and the thermostat-like mode | duty cycling, a modulation cap, forecast planning, the thermostat-like mode, underfloor behind a mixing valve |
+| 0.2 Control base | the monitor plus control of the water temperature, heating on and off as VT's central boiler decides, the safe hand-back, a modulation cap (opt-in) |
+| 0.3 Anti-cycling and the thermostat-like mode | duty cycling, forecast planning, the thermostat-like mode, underfloor behind a mixing valve |
 | 0.4 Learning and tuning | water-side learning, suggestions, seasonal tune-up |
 | 0.5 Forecast | anticipation for slow emitters from recorded forecasts |
 | Later | hot-water charging, the HACS default list, more devices |

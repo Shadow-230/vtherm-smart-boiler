@@ -43,11 +43,13 @@ the [technical documentation](../technical/technical.md).
 
 - **Home Assistant 2026.10.4 or later** — the newest Versatile Thermostat (10.6.5) needs it, and
   the plugin is tested on it.
-- **Versatile Thermostat 10.2.0 or later**, with its thermostats (the plugin calls them zones)
-  set up for the rooms this boiler heats. VT loads external feature managers from 10.2.0;
-  10.5.1 and the newest, 10.6.5, are tested. The minimum is provisional and is confirmed before
-  the first release. VT 10.6.5 itself needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0.
-- The `vtherm_api` library, 0.5.0 or later. Home Assistant installs it with the plugin.
+- **Versatile Thermostat 10.6.5 or later**, with its thermostats (the plugin calls them zones
+  or rooms) set up for the rooms this boiler heats, and **Used by central boiler** ticked in
+  each of them: the plugin's rooms are the thermostats VT's central boiler counts. With an older
+  VT the plugin does not control the
+  boiler and asks you to update VT. VT 10.6.5 shows itself as 10.6.4 in Home Assistant, which
+  the plugin accepts. VT 10.6.5 itself needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0.
+- The `vtherm_api` library, 0.9.0 or later. Home Assistant installs it with VT and the plugin.
 - **A boiler that Home Assistant can read**, through any integration that shows its signals as
   entities: for example the OpenTherm Gateway (OTGW), EMS-ESP or an ESPHome OpenTherm controller.
   A boiler with only on/off room-thermostat terminals can be monitored and switched by a relay.
@@ -56,19 +58,15 @@ the [technical documentation](../technical/technical.md).
   control of the water temperature needs both. Every other signal (return temperature, water
   pressure, modulation, outdoor temperature, a gas meter and others) enables more of the monitor.
 - **For control:** a way to write to the boiler and to hand it back (see
-  [Connecting the boiler](#5-connecting-the-boiler)), and VT's own central boiler switched off.
+  [Connecting the boiler](#5-connecting-the-boiler)), and VT's central boiler set up to switch a
+  helper the plugin follows (see [When heating goes on and off](#43-when-heating-goes-on-and-off)).
 
 SmartPI and VT's Auto-TPI (VT's self-learning time-proportional algorithm) are optional; the
 plugin works with any VT zone algorithm.
 
-**What VT's thermostats show.** Each thermostat of a zone the plugin serves gets the attribute
-`smart_boiler` with `heat_available`: whether the boiler's heat reaches the zone now.
-It is "yes" while the flame burns and the flow is clearly warmer than the return (than the room,
-where no return is known), "no" while the flame is out or hot water with priority takes the
-heat, and empty when it cannot be told. Beside it, `supply_temperature`: the water reaching the
-zone's circuit, rounded to 1 °C and updated after a change of 1 K, empty when it is not known.
-A zone algorithm can read the full data (the [water interface](../specification/water-interface.md)); SmartPI
-0.4.0 does not. Nothing in VT or in control depends on it.
+**What VT's thermostats show.** Nothing from the plugin. To keep a zone algorithm from learning
+while the boiler gives no heat, the plugin has one sensor, **Gives no heat** (see
+[Beside VT's zone algorithms](#411-beside-vts-zone-algorithms)).
 
 ## 2. Installation
 
@@ -89,10 +87,15 @@ Only one entry of the integration can exist: it runs one boiler.
 
 ## 3. Quick start
 
-1. **Prepare VT.** Set up VT's thermostats for the rooms. If VT's central boiler is configured,
-   untick it in VT's central configuration and restart Home Assistant: two controllers must never
-   drive the same boiler. Monitoring works without this; control waits for it. A VT central
-   configuration created or changed after Home Assistant started also needs that one restart.
+1. **Prepare VT.** Set up VT's thermostats for the rooms, and tick **Used by central boiler** in
+   each thermostat whose room this boiler heats: those are the plugin's rooms, and VT's central
+   boiler counts only them. There is no list of rooms to keep in the plugin. For control, create
+   an on/off helper
+   (Settings → Devices & services → Helpers → Toggle) and set up VT's central boiler in VT's
+   central configuration: its thresholds and activation delay, and its two commands on the helper
+   (`input_boolean.your_helper/input_boolean.turn_on` and `…/input_boolean.turn_off`). Never point
+   VT's commands at the boiler itself: two controllers must never drive the same boiler.
+   Monitoring works without this; control waits for it.
 2. **Create the entry.** Settings → Devices & services → Add integration → **Smart Boiler for
    Versatile Thermostat**. The first panels ask how the boiler is connected, its heat source and
    type, and the control mode — full control, on/off or monitoring only. Nothing is chosen for
@@ -109,14 +112,20 @@ Only one entry of the integration can exist: it runs one boiler.
      the boiler received (required) and the heating on/off read-back.
    - **Boiler** — what you know about it; leave unknown values empty.
    - **Circuit: <name>** — one item per heating circuit (up to four at the advanced level): its
-     type, the VT zones it feeds and which of them have underfloor heating or convectors, its
-     highest water temperature. A zone in no circuit is neither watched nor asked for heat.
-   - **VT zones** — whose valves close while VT has the zone off.
+     type, its highest water temperature, and which rooms have underfloor heating or
+     convectors. With one circuit every room is on it. With several, each lists its rooms; a
+     room in no circuit still counts for how many rooms call, but for no circuit's water.
    - **Building** and **Monitor thresholds** — at the advanced level, for the monitor only;
      **Days of data for the verdict** is there (7 by default).
    - **Control items** — with full control or on/off: the control device, the heating curve, the
-     control behaviour, frost protection and the alarm reactions (see
+     control behaviour and the alarm reactions (see
      [Control is opt-in](#42-control-is-opt-in)).
+   - **Reload VT once.** VT hands its thermostats to the plugin only when it starts them. If VT
+     already runs when you set up the plugin, restart Home Assistant, or reload Versatile
+     Thermostat's entries in Settings → Devices & services, once after **Create**. The setup's
+     last step says so where it applies, and a repair issue "Reload Versatile Thermostat once"
+     reminds you; it goes by itself once VT has handed a thermostat over. Until then the plugin
+     knows no room.
 4. **Read the verdict.** Once it has the days of data, the sensor **Control verdict** says whether
    control is worth enabling ([4.1](#41-monitoring-and-the-verdict)). You decide.
 5. **Switch control on** in the integration's options: **Control mode**, tick **Control on**,
@@ -159,6 +168,17 @@ example:
 The verdict needs **7 days of data** by default. You may ask for more (up to 60 days), but not
 fewer. They count calendar days from the day you created the entry.
 
+**Where the past comes from.** The boiler's signals are read back from Home Assistant's recorder:
+the last 8 days, and older days as far back as the recorder reaches, up to a year. Whether the boiler was called for heat — which tells a heating burn from a hot
+water draw — comes from the helper VT's central boiler switches: on means VT called for heat. Its
+recorder history counts too, so this works for the days before you installed the plugin. The
+rooms' details — temperatures, targets, which rooms call, valve openings — are the plugin's own:
+it notes them every time it reads the rooms and keeps the last 8 days in its own storage. It does
+not read them back from VT's thermostats in the recorder, so analyses that need room details
+start from the installation. Without a helper (monitoring only), whether the boiler was called
+also comes from the rooms the plugin noted. A circuit run by other automation asking for heat,
+through the entity you picked for it, counts as a call too, whatever the helper shows.
+
 Then the sensor **Control verdict** shows one of:
 
 | Verdict | Meaning |
@@ -172,14 +192,35 @@ pass without enough data, **Control (experimental)** says that control starts wi
 
 What the verdict and the building values mean:
 
-- **Short burns** most often come from a boiler too big for the house: its lowest output is more
-  than the house needs, so it starts and stops. The verdict says so when the building's load is
-  often below the boiler's minimum power.
+- **Short burns** are named when they are frequent. A boiler whose lowest output is more than
+  the house needs starts and stops: a common cause, and the verdict says so when the building's
+  load is often below the boiler's lowest output. It is not the only one: in a house whose rooms
+  VT switches, how long VT's cycles are counts too. Beside the reasons, the verdict shows the
+  boiler's lowest and highest output and what the house needs on the coldest day it is designed
+  for (the heat loss at the design outdoor temperature), each where it is known, so you can
+  compare them yourself.
 - **The building's heat loss**, measured from the boiler's use and the weather, counts only after
   about **3 weeks of heating** (21 heating days); before that it is shown, never used. It is
-  shown with a likely range of about ±20 % — the accuracy published methods reach. A measured
-  loss below the design load is common: it means the boiler is oversized, not that the
-  measurement is wrong.
+  shown with its likely range, from how closely the days follow the line. Days that follow each
+  other are alike (a cold spell, the building's mass), so they count for less, and the range is
+  wider. It is never narrower than ±15 %, the best published methods reach. A loss whose range
+  is wider than ±50 % is shown, never used. Once at least a week of days lies on each side of the
+  heating threshold, the threshold is found from the days themselves. A measured loss below the
+  design load is common: it means the boiler is oversized, not that the measurement is
+  wrong.
+- **Short burns** are counted twice: under the short-burn length (10 minutes by default), and
+  under 3 minutes, where most of the efficiency lost to starting and stopping goes. Both shares
+  are shown side by side.
+- **Gas per degree-day over a week** is shown only from 14 degree-days in the week (on average,
+  days 2 °C below the heating threshold). In a milder week the heating threshold's own
+  uncertainty, about 2 °C, could change the degree-days as much as they are, so the figure would
+  say little about the house. Once the energy signature has a line, each week gets a band: where
+  its value likely lies, from how much the house's own days scatter around that line.
+- **Hot water against the weather.** Hot water is used about the same all year. If the gas the
+  plugin counts as hot water clearly follows the outdoor temperature over at least 4 weeks
+  (falling or rising by 3 % or more of its mean for each degree), a repair issue says that hot
+  water and heating may be told apart wrongly; check the hot-water and heating signals. The heat
+  loss and the gas per degree-day would carry the same error. It is information only.
 - **Use against yesterday** compares two days; a day's use moves a lot on its own (the building
   still warm or cold from yesterday, sun, people). When the part no cause explains stays within
   15 % of the day before, it is marked as normal variation.
@@ -199,37 +240,42 @@ example:
 - at most one heating circuit fed straight from the boiler; beside it, circuits behind a fixed
   thermostatic mixing valve or controlled by other automation. A circuit the boiler mixes itself
   (a second heating circuit of the boiler) is not controlled yet;
-- VT's own central boiler switched off in VT, followed by a Home Assistant restart, so that two
-  controllers never drive the same boiler. A VT central configuration created or changed after
-  Home Assistant started, even without a central boiler, needs that one restart too.
+- VT's central boiler set up with its two commands on an on/off helper, and that helper picked in
+  **Control behaviour** (see [When heating goes on and off](#43-when-heating-goes-on-and-off)).
 
 When something is missing, **Control (experimental)** says what. The monitor keeps running, and the
 boiler stays with its own control or its thermostat.
 
 ### 4.3 When heating goes on and off
 
-The plugin replaces VT's central boiler. It decides heating on or off from VT's zones, in the
-same way VT's central boiler does. You choose one or more of these criteria:
+Versatile Thermostat's central boiler decides whether the boiler heats. Set it up in VT's central
+configuration, as VT's documentation describes: its thresholds (how many devices call, or how much
+power), its activation delay, and its two commands on an on/off helper (`input_boolean`) you
+create — never on the boiler itself. Then pick that helper in the plugin's **Control behaviour**.
+The plugin follows the helper: on, the boiler heats; off, it does not. It adds the water
+temperature and its safety rules. VT's activation delay is the heat call's on-delay: a room
+calling for a moment does not start the boiler. The plugin adds no pause of its own (a pause before
+the burner starts again was tried on the simulator and did not help, I13.6).
 
-| Criterion | Heating is on when |
-|---|---|
-| Calling | at least the set number of devices — or zones — call for heat (default 1) |
-| Total power | the zones' power together reaches the set threshold |
-| Valve opening | the calling zones' valve opening reaches the set threshold |
-
-- The decision is checked every 10 seconds and acts at once, in both directions.
-- **Count** (advanced): **Devices** counts VT's heads, valves and switches as VT's central boiler
-  does — the default for a new installation, and VT's own number is taken over as it is; **Zones**
-  counts each zone once, however many devices it has — what an installation from before keeps.
-  With the default number, 1, both are the same.
-- Where VT gives no device state, a zone calls with its valve open at all, or, without a valve,
-  with its duty cycle above 0 — VT's own rule; the valve's opening and the zone's duty cycle are
-  judged each on its own.
-- A zone counts only while VT reports it clearly. A zone that is unavailable, or that VT has not
-  started yet, is "unknown" — never "no demand".
+- The plugin checks every 10 seconds, and at once when the helper changes, in both directions.
+- Control is blocked without the helper, while VT's central boiler is not set up (ticked, with
+  both commands), and while its commands switch anything but the helper; a repair issue then names
+  what they switch. If VT switches your boiler's relay today, pick that relay in the plugin (the
+  relay path) and point VT's commands at the helper.
+- VT counts only the rooms marked "used by the central boiler" in VT: mark every room that should
+  call the boiler.
+- If the helper is neither on nor off, nothing can ask for heat (see
+  [After a restart](#47-after-a-restart)).
+- The plugin counts the rooms that call, for display. Where VT gives no device state, a room calls
+  with its valve open at all, or, without a valve, with its duty cycle above 0 — VT's own rule.
+- A zone counts only once VT has handed its thermostat to the plugin and started it. The plugin
+  reads the room only from VT's thermostat, never from what VT's climate entity shows. A room
+  whose thermostat was already running when the plugin was installed is handed over only when VT
+  reloads; until then it is "unknown", as is a room VT has not started yet — never "no demand".
 - VT's central mode (Auto, Stopped, Heat only, Cool only, Frost protection) acts through the
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
-  VT does not hand the boiler back; frost protection still watches.
+  VT does not hand the boiler back, and it means nobody heats: frost protection is VT's (see
+  [Frost protection](#45-frost-protection)).
 - There is no summer switch in the plugin. If VT's zones are off, the boiler does not heat.
 - **VT's cycle for rooms that call the boiler: 10 to 15 minutes.** VT switches a room's heating
   on and off in cycles (5 minutes by default). The plugin follows the rooms at once, so each gap
@@ -237,28 +283,21 @@ same way VT's central boiler does. You choose one or more of these criteria:
   in the simulation a 10–15 minute cycle cut the boiler's starts by a third to a half in mild
   weather, with the rooms as warm. While control is set up, the plugin names the rooms VT
   switches in cycles under 10 minutes ("Short cycles in VT").
-- **Valve zones whose valve may not close fully** (VT's **Max closing degree** below 100): use
-  VT 10.5 or newer. From 10.5, a valve held at that floor does not count as heating, and the zone
-  calls only once VT opens it further. VT 10.2–10.4 counted it as heating, so such a zone called
-  for heat all the time and the boiler might never switch off. With the default (100: the valve
-  closes fully) every version behaves the same.
 - A circuit controlled by other automation asks for heat while its **Circuit asks for heat**
-  entity is on, or one of its zones calls: heating goes on for it alone, whatever number of
-  zones is set — its mixer needs the water. If that entity is unavailable or unknown, the
-  circuit asks nothing (its zones still can, and frost protection still watches), and the
+  entity is on, or one of its zones calls: heating goes on for it, whatever VT's central boiler
+  says — its mixer needs the water. If that entity is unavailable or unknown, the
+  circuit asks nothing (its zones still can), and the
   control state shows the reason `circuit_request_unknown`.
-- **What VT's central boiler showed, the plugin shows** (with control set up):
-  - **Heat call** — on while the plugin calls the boiler for heat (frost protection
-    included); off while it controls the boiler and does not call it, with the reason: nothing
-    calls, zones call under the thresholds, the start waits VT's activation delay, the boiler
-    reports a fault; unknown while it does not control the boiler (control off, blocked, handed
-    back) or cannot tell yet. Its attributes show the demand against the thresholds.
-  - **Calling for heat** — the devices (or zones, as counted) calling now, with the zones
-    calling and the devices VT lists active; **Calling power** — the zones' mean power summed,
-    as VT shows it. The power counts toward its threshold only while a calling zone's valve is
-    open or its device on, so the boiler never heats against closed valves.
-  - The event `vtherm_smart_boiler_boiler_call`, fired when the call changes and when a start
-    begins to wait VT's activation delay, for your automations (`boiler_called`,
+- **What the plugin shows** (with control set up):
+  - **Heat call** — on while the plugin calls the boiler for heat (VT's frost protection
+    included, as VT calls for it); off while it controls the boiler and does not call it, with the reason: nothing
+    calls, rooms call but VT's central boiler does not, VT's central boiler waits its activation
+    delay, the boiler reports a fault; unknown while it does not control the boiler (control off,
+    blocked, handed back) or cannot tell yet. Its attributes show the rooms calling and when VT's
+    activation delay ends.
+  - **Calling for heat** — the rooms calling now, which they are, and the circuits they are on.
+  - The event `vtherm_smart_boiler_boiler_call`, fired when the call changes and when VT's
+    central boiler begins to wait its activation delay, for your automations (`boiler_called`,
     `call_reason`, `activation_at`).
 
 ### 4.4 The water temperature
@@ -304,6 +343,15 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
 The water temperature changes slowly (the ramp, default 1 K per minute). It is re-decided every
 5 minutes by default (the decision interval).
 
+The outdoor temperature the curve reads is the lower of the current one and its mean over the
+last hours: a cold morning raises the water at once, a mild afternoon lowers it only slowly. The
+mean covers about 3 hours. Where the circuit the curve serves has a room with underfloor
+heating, it covers about 12 hours (provisional): a floor takes a day or more to warm up or cool
+down, so its water should not follow a short mild spell; the water then stays a little warmer
+for longer when it gets mild. The plugin does not know how heavy your house is: a heavy house
+with radiators keeps the 3-hour mean. The control state shows the value in use
+(`curve_outdoor`).
+
 If the outdoor temperature is lost, the plugin uses the weather entity, then keeps the last
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
 outdoor sensor never means zero heat.
@@ -311,65 +359,83 @@ outdoor sensor never means zero heat.
 **Comfort correction** — **off by default** (an entry keeps what it stored). Switched on: when a
 room stays short of its setpoint with its valve fully
 open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K, set
-in **Heating curve** beside the correction; never more than 3 K a day. For a room whose SmartPI
-is in its learning phase, "short" means below its setpoint + 0.5 K, where SmartPI stops heating
-it. It does not rise while the boiler starts more often than before. One room short counts like
+in **Heating curve** beside the correction; never more than 3 K a day. "Short" means 0.3 K or
+more below VT's setpoint, whatever the zone's algorithm. It waits until a room has been short
+for an hour without a break — and for two of the room's VT cycles, where they are longer than half
+an hour. Then it rises by 1 K per four cycles of the slowest room (VT's cycle setting; 15 minutes
+where it is not known), never faster than 1 K per 30 minutes. This keeps it much slower than the
+rooms' own control, so the two do not fight. It does not rise while a room still warms up after
+its setpoint was raised — after a night setback, say — until the room is within 0.3 K of its new
+setpoint or has warmed less than 0.2 K in half an hour: the same test as after an open window. It
+does not rise while the boiler starts more often than before. One room short counts like
 any other — the water never goes higher for one room's sake. After three hours as high as it may
 go — at its limit, or once it has risen 3 K within a day — with a room still short, the correction
 holds there, and a repair issue names the room and the
-possible causes: the curve too low, the room's radiator too small, or the room losing heat. What
-it costs: more gas, and more burner starts — with VT's TPI zones it often sits at its limit and
-raises the starts several times over for almost no warmth. That is why it is off: where a room
+possible causes: the curve too low, the room's radiator too small, or the room losing heat.
+
+**Below the curve.** While heat flows and every room the correction reads is open less than 70 %,
+none short, the correction lowers the water below the curve: 1 K per 2 hours of heat at most (and
+always at half its rising speed or slower), by 3 K at most (never more than its limit) and by 3 K
+a day at most. It comes back towards the curve, 1 K per 15 minutes, as soon as a room is short or
+70 % open, or the boiler starts more often than before. It goes no lower while a room's opening
+or temperature is not known, in extreme weather, while hot water runs, or while the lowest water
+temperature or a cap already holds the water. The lowest water temperature always holds. The
+control state shows the correction with its sign: `comfort_correction` below 0 means below the
+curve.
+
+What it costs: more gas, and more burner starts — with VT's TPI zones it can sit at its limit:
+in the simulation up to about 3.5 times the starts in steady frost, for almost no warmth. Below the
+curve, a room may warm up more slowly. That is why it is off: where a room
 stays cold, raise the curve first. A "Reset comfort correction" button sets it back to zero.
+
+**Which rooms judge the curve.** A room's temperature counts for the comfort correction, its
+warning "curve too low", the long burn's "water too cool" and the critical zone only while the
+plugin can trust it. It is left out while VT runs that thermostat in its safety mode, while the
+room's thermometer (the sensor set in VT) is unavailable or unknown, and after the plugin starts
+until VT has measured the room again. The room still counts when it calls for heat. **Control
+state** lists such rooms in its attribute `room_sensor_lost_zones`; no alarm rises for them.
 
 ### 4.5 Frost protection
 
-Frost protection heats even when no zone calls for heat:
-
-- It watches every zone (default) or one zone you pick.
-- When a watched zone falls below **5 °C** (default), heating runs on the curve until every
-  watched zone is above **7 °C** (default).
-- It heats only a room whose heat can reach it: VT reports the valve open or the device on. If
-  VT keeps a cold room closed (thermostat off, open window, central mode "Stopped"), the plugin
-  does not start the boiler for it. It raises a repair issue that names the room and says what
-  to do — for example, use VT's frost preset instead of "off".
-- If frost heating runs for about 2 hours without the room warming, an alarm tells you. Heating
-  is not stopped for that.
+Frost protection is VT's job; the plugin has none of its own. Use VT's frost preset on a
+thermostat, or VT's central mode "Frost protection": VT then makes a cold room call, its central
+boiler turns the helper on, and the plugin heats as for any other call. So keep VT's central
+boiler on the helper. "Stopped" in VT means nobody heats, a cold room included. While control
+does not hold the boiler and nothing else heats, the alarm "handed back while a room is near
+freezing" tells you of a room below 5 °C ([Safety and hand-back](#6-safety-and-hand-back)).
 
 ### 4.6 VT's activation delay
 
-The plugin keeps VT's activation delay: 0 to 600 seconds, default 0. It is for slow valves
+VT's activation delay is set in VT's central boiler (0 to 600 seconds). It is for slow valves
 (for example thermoelectric heads on underfloor heating), so they open before the boiler and its
-pump start.
+pump start. The plugin has no delay of its own.
 
-- It delays **switching on** only. Switching off is never delayed.
-- The wait starts at the first real call for heat. If the call drops and returns during the
-  wait, the wait goes on; at its end the boiler starts only if demand is still there.
-- Frost heating waits for it too.
-- When you move over from VT, the value is pre-filled from VT's setting for you to confirm.
+- While VT waits it out, the plugin shows "off" with the reason `activation_delay` and when the
+  delay ends. The boiler starts when VT turns the helper on.
 
 ### 4.7 After a restart
 
 **Recognition period.** After Home Assistant starts or VT reloads, the plugin waits until every
-zone has reported, for at most 10 minutes. It takes no new decision meanwhile. If it was
+zone has reported, for at most 10 minutes. The zones are the rooms the plugin knew before — VT
+hands its thermostats over only as it starts them. It takes no new decision meanwhile. If it was
 controlling the boiler before the restart, and nothing has changed that forbids it, it keeps or
-restores its last command at once (with no activation delay). If something has changed, it hands
+restores its last command at once. If something has changed, it hands
 the boiler back first.
 
 **Grace period.** If a zone becomes unknown while VT runs, its last answer is kept for 10
-minutes. After that it drops out and the other zones decide. A zone unknown for 30 minutes
-raises an alarm, because frost protection cannot see it.
+minutes. After that it drops out and the other zones decide. **Control state** lists the zones
+it cannot see in its attribute `unknown_zones`.
 
-**No zone answers.** If every zone is unknown after these periods, or none of your demand
-criteria gets any data, nothing can ask for heat:
+**No zone answers.** If every zone is unknown after these periods, or VT's helper is neither on nor
+off, nothing can ask for heat:
 
 | Your installation | What happens |
 |---|---|
 | A working thermostat or room controller (see below) | the boiler is handed back to it |
 | No working thermostat | the plugin keeps heating off; it does **not** hand back |
 
-In both cases an alarm ("Control: no zone answers") and a repair issue appear at once. Control
-resumes by itself when a zone answers again.
+In both cases an alarm ("Control: no zone answers", or "Control: VT's decision unknown") and a
+repair issue appear. Control resumes by itself when a zone, or the helper, answers again.
 
 A **working thermostat** is one of:
 
@@ -388,21 +454,21 @@ single-function with a tank, combi (instantaneous hot water) or combi with a bui
 every boiler that heats hot water the panels ask whether **hot water has priority**:
 
 - **With priority** (default) — while the boiler heats hot water, the rooms get no heat. This is
-  usual for a combi and for a tank charged through a three-way valve. The plugin then pauses
-  SmartPI's learning in the zones during the draw, and counts the boiler's heat as not reaching
-  the rooms.
+  usual for a combi and for a tank charged through a three-way valve. **Gives no heat** is then
+  on during the draw, with the reason "hot water".
 - **Without priority** — hot water and heating run together (a tank charged in parallel, a
-  buffer, a combi that shares its heat). Hot water then neither pauses learning nor counts as
-  heat the rooms miss.
+  buffer, a combi that shares its heat). Hot water then does not count as heat the rooms miss.
 
-The wrong answer either pauses learning for nothing or lets it learn from draws that took the
-rooms' heat. How burns are told apart as heating or hot water does not depend on it.
+With the wrong answer, **Gives no heat** is wrong during hot water: a zone algorithm that reads it
+pauses its learning for nothing, or learns from draws that took the rooms' heat. How burns are
+told apart as heating or hot water does not depend on it.
 
 ### 4.9 Open windows
 
 Open windows are VT's to handle. VT's own window detection — a window sensor, or its automatic
 detection by the temperature's slope — turns the zone off or lowers its setpoint; such a zone no
-longer asks for heat. The plugin has no window handling of its own.
+longer asks for heat. The plugin has no window handling of its own; it only keeps a room with an
+open window out of its critical zone ([Entities](#9-entities)).
 
 ### 4.10 Circuits and zones
 
@@ -421,17 +487,21 @@ A circuit is the part of the heating fed one way, picked as its **Circuit type**
   raises the boiler at every call of its zones (the form warns once).
 - **Mixed through the boiler** (a second heating circuit of the boiler) — not controlled yet.
 
-Each circuit lists the VT zones it feeds, and of them those with underfloor heating or
-convectors; the rest are radiators. A room fed by two circuits — a radiator on one, a floor loop
-on the other — goes into each by its own devices (**Single devices of a zone**, advanced level);
-it stays one zone, watched and counted once. A zone in no circuit is neither watched nor asked
-for heat.
+The rooms are VT's: the thermostats VT hands to the plugin and counts for its central boiler
+(**Used by central boiler** ticked in VT). The plugin keeps no list of rooms. With one circuit
+every room is on it, and its form only asks which rooms have underfloor heating or convectors;
+the rest are radiators. With several circuits each lists the rooms it feeds (an area adds its
+rooms at the save), and of them those with underfloor heating or convectors. When you add a
+second circuit, the first keeps every room the new one does not take; when one circuit is left,
+it takes every room again. A room fed by two circuits — a radiator on one, a floor loop on the
+other — goes into each by its own devices (**Single devices of a room**, advanced level); it
+stays one room, counted once. A room in no circuit still counts for how many rooms call, but
+for no circuit's water.
 
 ### 4.11 Beside VT's zone algorithms
 
-The plugin reads VT's zones and never changes their settings or algorithms. What each zone's
-thermostat shows from the plugin, the attribute `smart_boiler`, is in
-[Prerequisites](#1-prerequisites).
+The plugin reads VT's zones and never changes their settings or algorithms, nor pauses their
+learning.
 
 The heating curve already raises the water temperature as it gets colder outside. Some zone
 algorithms count the outdoor temperature as well, so the weather then acts twice:
@@ -439,14 +509,67 @@ algorithms count the outdoor temperature as well, so the weather then acts twice
 - **TPI** (VT's time-proportional algorithm) adds `tpi_coef_ext` × (target − outdoor) to each
   zone's heating time. With the plugin's curve, colder weather brings both warmer water and longer
   heating times. The term is VT's setting, per zone; the plugin does not change it.
-- **SmartPI** (0.4.0) learns an outdoor term of its own (`u_ff1`, a learned factor ×
-  (target − outdoor)). It cannot be set or switched off; it learns with the water the plugin
-  sends.
+- **SmartPI** (checked in 0.6.7 and 1.0) learns an outdoor term of its own (`u_ff1`, a learned
+  factor × (target − outdoor)). It cannot be set or switched off; it learns with the water the
+  plugin sends.
 
 How a zone behaves with both depends on its room and its algorithm; the plugin describes this and
-gives no advice on these settings. While hot water or a large change of the water temperature
-disturbs the rooms, the plugin pauses SmartPI's learning (on by default), so the swings it causes
-stay out of SmartPI's model.
+gives no advice on these settings.
+
+#### Gives no heat
+
+With control set up, the binary sensor **Gives no heat** (`binary_sensor.boiler_gives_no_heat`
+for an entry named "Boiler") is on while a room VT counts calls for heat and the boiler gives
+none, and off while it does, as far as the plugin drives it. While no room calls, it is off: no
+room misses heat, and a zone algorithm can learn from the rest. Its attribute `reason` says why it
+is on:
+
+- **VT's central boiler does not call for heat** (`vt_not_calling`) — a room calls, but VT's
+  helper is off: VT's thresholds are not reached;
+- **VT's activation delay runs** (`activation_delay`);
+- **The boiler heats hot water** (`hot_water`) — only with hot water priority;
+- **The boiler reports a fault** (`boiler_fault`);
+- **The plugin cannot vouch for heat** (`handed_back`) — it handed the boiler back (an alarm, a
+  lost boiler link), control is blocked, another controller has the boiler, or VT's decision is
+  unknown.
+
+It is unavailable while control is off: the plugin then does not drive the boiler and cannot
+tell. While the plugin waits for data (a boiler link stale for a moment), and while Home
+Assistant starts, it keeps its last value. The plugin pauses no zone's learning itself; use the
+sensor as follows.
+
+- **SmartPI 1.0:** pick the sensor in SmartPI's per-thermostat setting **Heating unavailable
+  entity (optional)**, for each SmartPI thermostat. Nothing else to do: while it is on, SmartPI
+  stops learning and holds its integral; only "on" counts, so "unavailable" lets it learn.
+- **SmartPI 0.6.x** has no such setting. An automation can switch its learning off while the
+  sensor is on, and back on otherwise, with SmartPI's own action
+  `vtherm_smartpi.set_smartpi_learning` (field `learning_enabled`; checked in SmartPI 0.6.7). Put
+  your SmartPI thermostats in `entity_id`. `to: null` reacts to on and off, not to a change of
+  reason. It also switches learning back on that you switched off yourself.
+
+  ```yaml
+  automation:
+    - alias: "SmartPI learns only while the boiler gives heat"
+      triggers:
+        - trigger: state
+          entity_id: binary_sensor.boiler_gives_no_heat
+          to: null
+        - trigger: homeassistant
+          event: start
+      actions:
+        - action: vtherm_smartpi.set_smartpi_learning
+          target:
+            entity_id:
+              - climate.your_smartpi_thermostat
+          data:
+            learning_enabled: "{{ not is_state('binary_sensor.boiler_gives_no_heat', 'on') }}"
+  ```
+
+- **Auto-TPI** (VT 10.6.5): VT already skips Auto-TPI's learning while its central boiler is off,
+  in thermostats marked "used by the central boiler" — so "VT not calling" and its activation
+  delay need nothing. For hot water, a boiler fault or a hand-back VT offers no clean pause: its
+  action `set_auto_tpi_mode` wipes what Auto-TPI learned by default and rewrites the thermostat's
+  settings, so it is not a pause to automate.
 
 **When a sensor goes quiet.** VT puts a zone into its safety mode when it gets no new value from
 the room or outdoor sensor for its safety delay, 60 minutes by default, while the zone wants at
@@ -466,12 +589,12 @@ Only an administrator can change anything on it, and every change asks for confi
 
 | Tab | What it shows |
 |---|---|
-| Overview | The status with its reasons and whether **Control** is on — an administrator gets **Change in settings**, which opens the plugin's page in Home Assistant's settings, where control is switched; its flame is filled while the burner burns, and outlined in the heating colour while the boiler is called for heat between burns. Tiles for the water the plugin asks, flow, return, outdoor, flame and the rooms calling. The installation drawn from the settings, with each circuit's rooms and whether they take heat. The heating curve with "where we are", the last 7 days' decisions and a preview of changes, drawn as boiler manuals draw it: warmer on the left, colder on the right. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic, the rooms and the curve show it |
-| Burner | The burner's metrics; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
-| Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day; the change against yesterday, cause by cause. A value not known says why |
-| Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature. The burner's heating starts by hour over the last 4 weeks |
+| Overview | The status with its reasons and whether **Control** is on — an administrator gets **Change in settings**, which opens the plugin's page in Home Assistant's settings, where control is switched; its flame is filled while the burner burns, and outlined in the heating colour while the boiler is called for heat between burns. Tiles for the water the plugin asks, flow, return, outdoor, flame and how many rooms call, as the plugin counts them; an administrator also gets a link to Versatile Thermostat's page, where the rooms are. The installation drawn from the settings, with the circuits taking water now: those with a room calling, while the plugin calls the boiler or the burner burns for heating. In a narrow card the circuits are listed by name below the drawing. The heating curve with "where we are", the last 7 days' decisions and a preview of changes, drawn as boiler manuals draw it: warmer on the left, colder on the right. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic and the curve show it |
+| Burner | The burner's metrics, the short burns with the share under 3 minutes beside them; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
+| Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day, each week from 14 degree-days and with its likely band from the house's own day-to-day scatter; the change against yesterday, cause by cause. A value not known says why |
+| Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature, each with its likely range; where the two ranges overlap, it says that no difference is shown. The burner's heating starts by hour over the last 4 weeks |
 | Journal | What the plugin decided and why, over the last 14 days. It shows its starts and stops, control taking the boiler and handing it back, the heat call, the water setpoint written (changes of 1 K or more), a circuit's need, the alarms and the settings saved. You see it as lanes that zoom by dragging across them, and as a list you can filter |
-| Status and alarms | The control verdict with its reasons; every alarm, the active ones first, each opening its history; the signals' health; the building values with where they come from; the suggested lowest water temperature with its evidence |
+| Status and alarms | The control verdict with its reasons, and the boiler's outputs against what the house needs; every alarm, the active ones first, each opening its history; the signals' health; the building values with where they come from; the suggested lowest water temperature with its evidence |
 
 **Changes from the page.** An administrator, after confirming:
 
@@ -486,9 +609,11 @@ Control is not switched from the page: it is switched in the plugin's settings (
 
 **What it shows, and what not.** The page shows only what the plugin and Home Assistant already
 know. The curve's points, the burns, the weeks, the signature and the journal come from the
-plugin, not from a second copy of its rules. A value whose entity is not picked in the settings
-is not shown. An unknown value is a gap, never the last one carried on. The last 24 h and the
-last 7 days come from Home Assistant's recorder (10 days by default). The page follows your
+plugin, not from a second copy of its rules. The page reads nothing of VT: it has no list of
+rooms, and no thermostat's temperature or target; those are on VT's own page. A value whose
+entity is not picked in the settings is not shown. An unknown value is a gap, never the last one
+carried on. The last 24 h and the last 7 days come from Home Assistant's recorder (10 days by
+default). The page follows your
 profile's language (English and Polish; other languages show English) and the light or dark
 theme, and it works on a phone. Times follow your profile's time zone setting. The days the plugin
 counts, and the starts by hour, are days in Home Assistant's time zone; where your profile's zone
@@ -500,6 +625,66 @@ differs, **Analyses** says so.
 plugin by itself, and the same rules apply to changes. They are there while the plugin runs,
 whether the page is in the sidebar or not. After an update, reload the browser page if a card
 still shows the old version.
+
+### 4.13 The modulation cap (opt-in)
+
+At the advanced level, **Control behaviour** offers **Cap the boiler's maximum modulation**. It is
+off by default. It is not offered for a relay.
+
+**What it does.** While the plugin controls the boiler, it limits the boiler's highest power. A
+burn then heats the water more slowly, so it may last longer when the house needs little heat.
+It cannot lower the boiler's lowest power: where the house needs less than that, the boiler still
+starts and stops, cap or not.
+
+**What it risks.** Less heat in cold weather: never use it to save gas on the coldest days. The
+gain is not well proven — a laboratory test and installers' advice, no field study (HEM-VAL-05,
+DESNZ 2023; Bennett et al. 2019). Some boilers ignore it altogether.
+
+**How it is kept safe** (every number provisional):
+
+- You set 30–100 %, 70 % by default. The plugin never writes less than 30 %. Where both the
+  boiler's lowest and highest power are entered (the **Boiler** item), it never writes less
+  than the lowest as a share of the highest plus 10 points: for an 8–24 kW boiler, 44 %. A cap at
+  the lowest power would make the boiler start and stop more, not less.
+- Where the water stays more than 5 K below its setpoint for 10 minutes with the flame on, the
+  boiler cannot keep up: the plugin lifts the cap for 3 hours.
+- While hot water runs, the cap is released, within about 10 to 30 seconds of a draw starting:
+  OpenTherm does not limit the maximum modulation to heating, so on a combi the cap could starve
+  the tap. Where the boiler heats hot water and the plugin cannot tell whether it runs, the cap is
+  not applied at all — map the boiler's hot-water signal.
+- It is released at every hand-back, when Home Assistant stops, and when you switch it off. If
+  Home Assistant crashed with the cap in force, it is released at the next start.
+- It never holds heating back: a write that fails is only shown, and sent again a minute later.
+
+**Where it goes**, by connection:
+
+| Connection | What the plugin writes | How it releases it |
+|---|---|---|
+| OpenTherm Gateway | the gateway's `MM=`, through its `set_max_modulation` service, every 5 minutes | the level −1: the gateway passes the thermostat's own value on again, or 100 % without one |
+| OTGW firmware over MQTT | `MM=`, on `<top>/set/<node>/maxmodulation`, every 5 minutes | the payload `-` |
+| EMS-ESP | the number entity of its selected burner power (`selburnpow`), every 30 seconds — it lapses within about a minute, as the flow setpoint | 100 %; then it lapses by itself |
+| ESPHome OpenTherm, another writable entity | the number entity you pick, as the water temperature entity is declared: every 30 seconds where values lapse, every 5 minutes where they are held | 100 %, or its maximum where lower, until the entity shows it |
+| A relay | not offered | — |
+
+Pick only an entity the boiler does not keep in its memory. On EMS-ESP never pick the burner's
+maximum power (`burnmaxpower`): the boiler stores it. On ESPHome, the maximum-modulation number
+must start at 100 % and must not restore its last value after a restart, as for the setpoint
+([ESPHome OpenTherm](#57-esphome-opentherm)).
+
+Boilers read the percentage in two ways: as a share of the range above their lowest power (the
+OpenTherm way), or as a share of their highest power. The floor and the suggestion assume the
+second, which gives less heat for the same number: the cautious side.
+
+**A suggested value.** Where the verdict finds mostly short burns, and the boiler's lowest and
+highest power and the house's heat loss (entered, or measured with confidence) are known, the
+option's text names a value: the house's heat load at the design outdoor temperature with a 20 %
+margin, as a share of the boiler's highest power, rounded up to 5 %, never under the floor. None
+is shown where it would be 90 % or more: little to gain. It is never set by itself.
+
+**Control state** shows the cap in force (`modulation_cap`, %) and why (`modulation_cap_state`):
+applied; released while the plugin does not control the boiler, while hot water runs, or while hot
+water cannot be told; lifted for 3 hours; nothing to cap (the value allowed is 100 %); no entity
+picked for it; its write failing; the device not showing it.
 
 ## 5. Connecting the boiler
 
@@ -832,7 +1017,9 @@ minutes within the last 10, the link is lost:
 
 - the alarm "Control: boiler link lost" appears and the plugin hands back;
 - with a thermostat, the thermostat takes over; stand-alone, heating stops;
-- control resumes by itself once the data has been fresh for 60 seconds without a break.
+- control resumes by itself once the data has been fresh for 60 seconds without a break — for
+  10 minutes where the link was lost again within an hour, so a link that keeps dropping does not
+  hand the boiler back and take it again every few minutes.
 
 A failed outdoor sensor is not a lost link: the plugin uses a fallback setpoint, never zero heat.
 
@@ -844,8 +1031,8 @@ that signal must be mapped too. With the OTGW firmware over MQTT, the gateway's 
 on the same Home Assistant device as its setpoint. Entities written by hand in YAML have no device:
 they count as the gateway's when the setpoint has none either.
 
-While such a fault reads "on" for 5 minutes, the plugin keeps heating off — frost heating
-included — with no hand-back and no latch. It heats again by itself as soon as every mapped fault
+While such a fault reads "on" for 5 minutes, the plugin keeps heating off — with no hand-back
+and no latch. It heats again by itself as soon as every mapped fault
 reads off (or unknown). Read the fault on the boiler and follow its manual.
 
 Low, high or falling water pressure and hot flue gas only inform, with a notification that says
@@ -881,17 +1068,16 @@ control off.
 | "Heating off" or "on" ignored; a relay stops taking "off" | off and on, after fixing it |
 | An internal error | when you switch control off and on |
 | Any other value ignored from the start | at the next session |
-| Boiler link lost | by itself, after 60 seconds of fresh data |
+| Boiler link lost | by itself, after 60 seconds of fresh data (10 minutes after a second loss within an hour) |
 | Relay out of reach | by itself, when the relay returns |
 | The boiler's own fault | by itself, when the fault clears |
 | No zone answers | by itself, when a zone answers |
 | The plugin's own monitor failing | by itself, when it works again |
 | A blocker: a missing setting, Home Assistant starting | by itself, once it is gone |
 
-VT's central boiler still configured is a blocker too: control waits until you untick it in VT
-and restart Home Assistant. So does VT's central configuration created or changed after Home
-Assistant started (VT set up after the start, say), even without a central boiler: one restart of
-Home Assistant clears it.
+VT's central boiler not set up, or its commands switching anything but the helper, is a blocker
+too: control waits until you set it right in VT. After a start, control also waits until VT has
+handed its thermostats to the plugin.
 
 A latch survives a restart and is named in one repair issue. An alarm with a hand-back reaction
 that is already active when you switch control on blocks control at once.
@@ -906,7 +1092,8 @@ set in the options under **Freshness limits**, in minutes, one per mapped signal
 weather entity; a signal removed from **Boiler signals** takes its limit with it:
 
 - **Empty (default): automatic.** No limit until the source is seen repeating an unchanged value
-  at least twice in the run; then five times its own rhythm, 10 to 30 minutes for the boiler's
+  at least four times in the run; then five times its own rhythm and at least twice its
+  second-longest pause, 10 to 30 minutes for the boiler's
   signals and 3 to 12 hours for the weather entity. A source that reports only changes never gets
   one: a steady value is not a stale one, and a limit would stop control in steady weather.
 - **0: no limit** — only whether the entity is available counts.
@@ -948,7 +1135,7 @@ Alarms from the monitor. They inform; the plugin keeps heating.
 | Flue gas rising above return | flue gas hotter above the return than before | book a service |
 | Frequent starts | the alarm: more starts in the last hour than the limit (12); a warning: more than 6 an hour over the last 3 hours | check VT's cycle (10–15 min), the curve and the limits |
 | Unstable ignition | many burns lost soon after ignition in a day | have it checked |
-| Heating hysteresis drifting | the boiler's on/off band drifts over time | have it checked |
+| Heating hysteresis drifting | the boiler's on/off band drifts over time: by more than 3 K from the last day to days 4–8 before (a fault), or over weeks — the last week's daily medians against those of the 3 weeks ending 3 weeks before, by more than 3 K or twice the usual day-to-day scatter (a slow drift, about 1 K a week shows). Its attribute says which | have it checked |
 | Low flow: all valves closed while the pump runs | no path for the water | check valves or bypass |
 | Circuit water too hot | flow above the circuit's alarm temperature for its time (a circuit fed straight from the boiler: not while hot water is heated) | check its maximum |
 | Long burn without warming | the burner on for 3 h — gaps of up to 30 min included, so a boiler that keeps stopping and starting counts too — and the rooms not warming: its reason says the water too cool for the rooms short (the flow reached its setpoint at least once in the last half hour, or stays above it with the boiler at its minimum), the boiler at its power limit (the flame on throughout, below its setpoint at high modulation), or the water too hot | water too cool: raise the curve (the correction, where on, raises it); too hot: lower it — the curve, or on an on/off boiler its own water setting |
@@ -1016,25 +1203,23 @@ not confirmed.
 
 | Alarm | Meaning |
 |---|---|
-| Control: a zone's state is unknown | unknown for 30 minutes; frost protection cannot see it |
-| Control: frost heating does not warm the room | frost heating for 2 hours without warming |
-| Control: handed back while a room is near freezing | frost protection rests on the boiler |
+| Control: handed back while a room is near freezing | a room below 5 °C while nothing heats: frost protection rests on the boiler's own |
 | Control: no zone answers | no zone known: nothing can ask for heat |
-| Control: a demand criterion has no data | a calling zone feeds none of the criteria |
+| Control: VT's decision unknown | VT's helper is neither on nor off: nothing can ask for heat |
 
 | Repair issue | Meaning and what to do |
 |---|---|
 | Versatile Thermostat gives no answer (3 variants) | check that VT runs, thermostats on |
-| No demand criterion can be judged (3 variants) | set VT's device power, or another one |
-| A room below the frost limit cannot get heat (6 variants) | VT keeps it closed; see text |
-| A heating circuit has no rooms | add its rooms, or remove the circuit |
+| VT's decision is unknown (2 variants) | check the helper, and that VT's central boiler switches it |
+| VT's central boiler switches something other than the helper | point VT's commands at the helper |
+| Set the heat-call thresholds in VT's central boiler | after an update: set your old values in VT |
+| Frost protection is now Versatile Thermostat's alone | after an update: give every thermostat a frost preset in VT, or use VT's central mode "Frost protection" |
+| A heating circuit has no rooms | with several circuits: add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
-| Auto-TPI cannot learn in some zones | clear "used by the central boiler" in VT |
 | Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
-| The plugin cannot pause learning in some zones | information |
-| The plugin could not switch learning back on in some zones | switch SmartPI learning on |
-| VT's thermostats cannot show the plugin's zone value | update VT; nothing else depends on it |
-| Some VT thermostats need a reload to show the plugin's value | reload VT |
+| Versatile Thermostat is too old for the plugin | update VT; control is blocked meanwhile |
+| Reload Versatile Thermostat once | at a first installation while VT runs: restart Home Assistant or reload VT's entries; until then the plugin knows no room. Its "Submit" checks again |
+| Versatile Thermostat's central boiler does not count some thermostats | tick "Used by central boiler" in VT for each one whose room this boiler heats; until then it is no room |
 
 "3 variants": the boiler is not heating, or it is back on its thermostat, or the plugin only
 monitors.
@@ -1067,7 +1252,6 @@ When "Signals" is off, its attributes name the signal with the problem.
 | The wall thermostat would keep the house cool after a hand-back | raise its setting |
 | The wall thermostat reports no setpoint | check its setting and the signal |
 | An entity the plugin uses is gone | pick another one in the options |
-| Versatile Thermostat's central configuration is not running | fix VT's central configuration |
 | ESPHome sensors do not repeat unchanged values | add `force_update: true` to them on the ESP |
 
 ### 7.5 Monitor and the plugin itself
@@ -1081,9 +1265,9 @@ When "Signals" is off, its attributes name the signal with the problem.
 | The plugin's memory of the boiler could not be read | it handed back to be safe |
 | The plugin cannot save its memory of the boiler | full disk or read-only storage |
 | The boiler may still hold a value from Smart Boiler for Versatile Thermostat | hand back by hand |
-| SmartPI's learning may still be off in some zones | switch SmartPI learning on |
+| Hot water and heating may be told apart wrongly | the gas counted as hot water follows the outdoor temperature; check the hot-water and heating signals. Information only |
 
-The last two appear after the integration was removed before it could finish its cleanup.
+The last one appears after the integration was removed before it could finish its cleanup.
 
 ## 8. State diagram of control
 
@@ -1106,13 +1290,9 @@ stateDiagram-v2
     state Controlling {
         state "Idle (heating off)" as Idle
         state "Heating" as Heating
-        state "Frost heating" as Frost
         [*] --> Idle
-        Idle --> Heating: zones or circuits call, after the activation delay
+        Idle --> Heating: VT's helper on, or a circuit asks
         Heating --> Idle: demand gone
-        Idle --> Frost: a watched zone below the frost limit
-        Frost --> Idle: every watched zone warm again
-        Frost --> Heating: zones call
     }
 
     Controlling --> HandedBack: link lost, no zone answers, monitor failing, a blocker
@@ -1128,8 +1308,8 @@ stateDiagram-v2
 
 Notes on the diagram:
 
-- **Waiting** covers every blocker (a missing setting, VT's central boiler still configured,
-  Home Assistant starting) and the recognition period after a start. A command the plugin held
+- **Waiting** covers every blocker (a missing setting, VT's central boiler not set up or switching
+  the boiler itself, Home Assistant starting) and the recognition period after a start. A command the plugin held
   before a restart is kept or restored at once, without waiting.
 - **No zone answers** hands the boiler back only where a working thermostat or room controller
   takes over; without one, the plugin keeps heating off instead (see
@@ -1157,10 +1337,10 @@ disabled by default.
 | Heating starts per hour | burner starts for heating, per hour over the last 24 h; burns that may have been hot water apart |
 | Median heating burn | the typical length of a heating burn |
 | Heating burner hours (24 h) *hidden* | burner hours for heating in the last 24 h |
-| Short heating burns *hidden* | the share of heating burns shorter than the short-burn length (10 min by default) |
+| Short heating burns *hidden* | the share of heating burns shorter than the short-burn length (10 min by default); the share under 3 minutes in its attributes |
 | Condensing share | the share of heating burn time with the return below 55 °C |
 | Degree-days (7 days) *hidden* | the week's degree-days, from the heating threshold |
-| Gas per degree-day | gas per degree-day, measured with a gas meter you map, else estimated |
+| Gas per degree-day | gas per degree-day over the last 7 days, measured with a gas meter you map, else estimated; none in a week under 14 degree-days |
 | Use against yesterday *hidden* | the change in use against the day before, split into weather, hot water, settings and the rest — the rest marked when it is normal day-to-day variation |
 | Control verdict | worth enabling, not worth enabling, or not enough data yet — with its reasons |
 | Signal problems | how many mapped signals have a problem; each one's health in the attributes |
@@ -1168,7 +1348,7 @@ disabled by default.
 | Building loss coefficient, Building heating threshold *hidden* | the building values in use — yours, measured or the default — with their source; a measured loss with its likely range |
 | Suggested lowest water temperature | a suggestion only, never applied |
 | Forecast snapshots *disabled* | how many recorded forecasts are kept, for later releases |
-| Critical zone, circuit … | per circuit, the zone whose own controller works hardest now |
+| Critical zone, circuit … | per circuit, the zone whose own controller works hardest now; never a room whose temperature is not trusted, nor one with its window open — by its sensor, VT's automatic detection or VT holding it off — nor one still warming back after the window closes, until it is within 0.3 K of its target or has risen less than 0.2 K in 30 minutes |
 | Signals | on while flame and flow (and a relay) are known and fresh |
 | Outdoor sensor problem | the boiler's outdoor sensor is stuck or disagrees with the weather entity |
 | Long burn without warming | the burner on for 3 h (short gaps included) without the rooms warming, with the likely reason |
@@ -1178,12 +1358,13 @@ disabled by default.
 
 | Entity | What it shows or does |
 |---|---|
-| Control (experimental) | switches control on and off; its attributes say what blocks it and what a hand-back does in your installation |
-| Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
+| Control (experimental) | whether control is on; it switches nothing (control is switched in the options). Its attributes say what blocks it and what a hand-back does in your installation |
+| Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with; the modulation cap and why, where it is on ([4.13](#413-the-modulation-cap-opt-in)) |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
-| Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not — VT's central boiler sensor's place; an event fires when it changes |
-| Calling for heat, Calling power | the devices (or zones) calling and the zones' power summed, each beside its threshold, as VT's central boiler shows them |
-| Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, a zone unknown, frost not warming and the others |
+| Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
+| Gives no heat | on while a room calls for heat and the boiler gives none, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
+| Calling for heat | the rooms calling now, which they are, and the circuits they are on |
+| Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, handed back while a room is near freezing and the others |
 | Reset comfort correction | sets the comfort correction back to 0 |
 | Reset measured heat loss, Reset measured heating threshold | forget the measured building values |
 
@@ -1197,7 +1378,8 @@ Problems that need you also show as repair issues under Settings → Repairs.
 
 ## 10. How often data updates
 
-- Boiler signals and zones are read when they change, and at least every **30 s**.
+- Boiler signals are read when they change, and at least every **30 s**; the rooms, through VT's
+  thermostats, every **30 s** and at every control step.
 - Control takes a step every **10 s**; an expiring setpoint is repeated every **30 s**, a held one
   on a change and every 5 minutes.
 - The monitor's metrics and verdict are computed every **5 minutes**.
@@ -1209,9 +1391,9 @@ Problems that need you also show as repair issues under Settings → Repairs.
 ## 11. What stays local
 
 Everything. The plugin talks to no cloud service and sends nothing outside Home Assistant. It
-reads entities, writes only to the targets you pick, keeps its state and recorded forecasts in
-Home Assistant's own storage (`.storage`), and its sensors go to Home Assistant's recorder like
-any other. A diagnostics download (the integration's device → Download diagnostics) replaces
+reads entities, writes only to the targets you pick, keeps its state, the rooms' last 8 days and
+recorded forecasts in Home Assistant's own storage (`.storage`), and its sensors go to Home
+Assistant's recorder like any other. A diagnostics download (the integration's device → Download diagnostics) replaces
 entity IDs and the gateway's identifiers before you share it.
 
 ## 12. Options and risks
@@ -1221,19 +1403,18 @@ risks. The main ones — described, not advised:
 
 | Option | Default | What it does, and what it risks |
 |---|---|---|
-| Control (switch) | off | on, the plugin writes to the boiler; off, the boiler runs as before |
+| Control on (in **Control mode**) | off | on, the plugin writes to the boiler; off, the boiler runs as before |
 | Heating curve | the design flow has no default — you enter it | too high wastes gas and makes the burner cycle; too low leaves rooms cold |
 | Lowest water temperature | 20 °C (provisional) | too low: in mild weather the boiler stops by itself again and again, and a non-condensing boiler condenses in its flue (its manual gives the value) |
 | A circuit's highest water temperature | 70 °C where empty | caps every setpoint on circuits fed straight from the boiler; the boiler may overshoot it by its own hysteresis |
 | Its too-hot alarm | the maximum + 5 K, for 10 min | information only; too high lets a real overshoot pass unreported |
-| Comfort correction | off; switched on, up to 3 K (at most 10 K), rising at most 3 K a day | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts |
-| Activation delay | 0 s | waits before heating starts, for slow valves; meanwhile the rooms get no heat |
+| Comfort correction | off; switched on, up to 3 K (at most 10 K), rising at most 3 K a day, after a room has been short for an hour; down to 3 K below the curve while every room is well satisfied | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts; below the curve a room may warm up more slowly |
+| Helper switched by VT's central boiler | none — you pick it | VT's central boiler decides through it; pointed at the boiler instead, two controllers would fight |
 | Write type of a picked target | unknown — not written | expiring or held must be declared; a wrong declaration wears the boiler's memory or lets a value lapse |
 | Hand-back value | none — entered with its effect | the same number means "own control" on one device and "no heat" on another |
-| Frost protection | 5 °C on, 7 °C off, every zone | heats only zones whose emitters can take heat; a zone VT keeps closed gets a repair issue |
 | Alarm reactions | information — a few alarms always hand back | an alarm set to hand back stops control until you switch it off and on |
 | Return by itself after another controller | off | on, control returns 60 minutes after the last foreign value, while the other controller may still be there |
-| Learning pauses (SmartPI) | on | off, the swings the plugin causes enter SmartPI's model |
+| Modulation cap (advanced) | off; ticked, 70 % (30–100 %, provisional) | limits the boiler's highest power while the plugin controls it, which may lengthen burns at low load — the evidence is weak; less heat in cold weather, so it lifts itself when the water falls short, and is released for hot water and at every hand-back |
 
 Every default and the reason for it: the defaults table in [`docs/en/specification/scope.md`, §7](../specification/scope.md#7-features-by-stage). Values marked
 provisional are reviewed before the first release.
@@ -1274,12 +1455,21 @@ automation:
           message: "Control verdict: {{ states('sensor.boiler_control_verdict') }}"
 ```
 
-Hand the boiler back before a service visit — switching control off does it:
+Hand the boiler back before a service visit — switching control off does it. Untick **Control
+on** in the options, or let an automation do it, here when a helper you create is switched on.
+Anyone who may switch that helper then switches control:
 
 ```yaml
-action: switch.turn_off
-target:
-  entity_id: switch.boiler_control_experimental
+automation:
+  - alias: "Boiler: control off for a service visit"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.boiler_service_visit
+        to: "on"
+    actions:
+      - action: vtherm_smart_boiler.set_control
+        data:
+          enabled: false
 ```
 
 ## 14. Troubleshooting
@@ -1290,6 +1480,10 @@ target:
 - **The control state stays "Handed back".** The plugin stepped aside — another controller, the
   boiler ignoring "heating off", an alarm set to hand back. Fix the cause, then switch control off
   and on.
+- **The plugin knows no room, or misses one.** VT hands a thermostat over only when it starts it:
+  after a first installation, restart Home Assistant or reload VT's entries once. A room counts
+  only with **Used by central boiler** ticked in its thermostat in VT; repair issues name the
+  thermostats that lack it.
 - **The verdict says "Not enough data yet", or a sensor is missing.** The sensors **Features** and
   **Signal problems** name the missing or stale signals.
 - **"Signals" is off.** Flame or flow is stale or unknown: check the boiler's integration, or the
@@ -1312,19 +1506,16 @@ target:
 - **Changes no read-back can see:** heating switched off or summer mode on the boiler's panel, a
   lockout, the maker's app, another controller's modulation limit, the hot-water enable, a boiler
   that clamps the setpoint behind a gateway — the gateway still shows the plugin's value. They
-  show only through their effects: the comfort correction at its limit (after about 4.5 h), or
-  frost heating that does not warm a room (after 2 h).
+  show only through their effects: no sign the boiler heats while VT calls (after 30 minutes),
+  or the comfort correction at its limit (after about 5.5 h, longer with slower VT cycles).
 - **A boiler that clips a steady setpoint** looks like another controller: a lower value is
   recognised as the boiler's own limit only once the plugin has sent values at least 1 K apart.
   With one steady value it is written back once, and a second change within 24 h makes the plugin
   step aside.
 - One boiler per Home Assistant (one entry). No heat pumps, no valves, no hot-water control.
-- **VT zones with a valve that may not close fully** (VT's "Max closing degree" below 100) need
-  VT 10.5 or newer: VT 10.2–10.4 counts such a valve as heating at its floor, so the zone calls
-  for heat all the time and the boiler may never switch off.
 - Water-temperature control needs a heating on/off switch (except EMS-ESP); a gateway with an
   on/off thermostat on its terminals is monitor only.
-- VT's own central boiler must be off, and Home Assistant restarted once.
+- VT's central boiler must be set up, its commands on a helper the plugin follows.
 - Forecasts are recorded, not used for control yet.
 - On a Home Assistant install outside its container or OS image, Home Assistant installs the
   client libraries of the MQTT and OpenTherm Gateway integrations with the plugin, even if you use
@@ -1336,8 +1527,8 @@ target:
 1. Optionally switch control off first (**Control mode**, untick **Control on**) and check the
    boiler is back under its own control.
 2. Delete the entry: Settings → Devices & services → Smart Boiler for Versatile Thermostat →
-   Delete. The plugin hands the boiler back, resumes SmartPI learning it had paused, and deletes
-   its stored state, its journal and its forecasts. If the hand-back could not be confirmed, a repair issue stays
+   Delete. The plugin hands the boiler back and deletes its stored state, its journal, the rooms' history and its forecasts. If the hand-back could not be confirmed, a repair issue stays
    after removal: hand the boiler back by hand.
 3. Remove it in HACS (or delete its folder) and restart Home Assistant.
-4. To return to VT's own central boiler, tick it again in VT's central configuration.
+4. To let VT's central boiler drive the boiler again, point its commands back at the boiler in VT's
+   central configuration.

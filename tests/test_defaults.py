@@ -20,6 +20,7 @@ from custom_components.vtherm_smart_boiler import config_flow
 from custom_components.vtherm_smart_boiler.config import EntryConfig
 from custom_components.vtherm_smart_boiler.control_config import (
     ALWAYS_HAND_BACK_ALARMS,
+    CONTROL_BOUNDS,
     CONTROL_DEFAULTS,
     CURVE_DEFAULTS,
     OPTIONAL_HAND_BACK_ALARMS,
@@ -80,7 +81,6 @@ BARE_ENTITY = parse_control({"write_path": WritePath.ENTITY.value}, INSTALLATION
 BARE_RELAY = parse_control({"write_path": WritePath.RELAY.value}, ON_OFF, None)
 MINIMAL_OPTIONS: dict[str, Any] = {
     "signals": {Signal.FLAME.value: "binary_sensor.flame", Signal.FLOW.value: "sensor.flow"},
-    "zones": [{"entity_id": "climate.a"}],
 }
 
 
@@ -106,11 +106,12 @@ OWN_CONTROL_FORM = form_defaults(
     config_flow.control_entity_schema({"control": {"write_path": "entity", "topology": "virtual"}})
 )
 RELAY_FORM = form_defaults(config_flow.control_relay_schema({}))
-# I8 (decision F5): the zones' one question, over the zones a circuit feeds.
-ZONE_FORM = form_defaults(config_flow.zones_schema({"circuits": [{"id": "a", "zones": ["c.a"]}]}))
 CIRCUIT_FORM = form_defaults(config_flow.circuit_schema({}, {"zones": ["c.a"]}))
 BEHAVIOUR_FORM = form_defaults(config_flow.control_behaviour_schema(ADVANCED))
-FROST_FORM = form_defaults(config_flow.control_frost_schema(ADVANCED))  # I8 (decision H4)
+# I13.7: the modulation cap's fields, offered where the path can set it (a gateway).
+GATEWAY_BEHAVIOUR_FORM = form_defaults(
+    config_flow.control_behaviour_schema(ADVANCED | {"control": {"write_path": "opentherm_gw"}})
+)
 SIGNALS_FORM = form_defaults(config_flow.signals_schema({}))
 # An entity field offers its entity as a suggested value, not a default.
 SIGNALS_SUGGESTED = {
@@ -153,10 +154,9 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("decision interval", lambda: CONTROL_DEFAULTS["decision_interval_min"], 5.0),
     ("decision interval (form)", lambda: BEHAVIOUR_FORM["decision_interval_min"], 5.0),
     ("decision interval (parser)", lambda: BARE.loop.control.decision_interval_s, 300.0),
-    # Activation delay | 0 s
-    ("activation delay", lambda: CONTROL_DEFAULTS["activation_delay_s"], 0),
-    ("activation delay (form)", lambda: BEHAVIOUR_FORM["activation_delay_s"], 0),
-    ("activation delay (parser)", lambda: BARE.loop.control.activation_delay_s, 0.0),
+    # VT's central boiler's helper (I12) | none — control waits until the user picks it
+    ("VT's helper (parser)", lambda: BARE.vt_boiler_helper, None),
+    ("VT's helper (form)", lambda: BEHAVIOUR_FORM["vt_boiler_helper"], vol.UNDEFINED),
     # Write type of a picked target | unknown — control stays off until declared
     ("write type (form)", lambda: ENTITY_FORM["write_type"], WriteType.UNKNOWN.value),
     ("write type (parser)", lambda: BARE_ENTITY.write_type, WriteType.UNKNOWN),
@@ -195,38 +195,6 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
         lambda: fallback_setpoint(BARE.loop.control),
         BARE.loop.control.curve.flow(BARE.loop.control.curve.design_outdoor),
     ),
-    # Frost limit / release | 5 / 7 °C
-    ("frost limit", lambda: CONTROL_DEFAULTS["frost_limit"], 5.0),
-    ("frost limit (form)", lambda: FROST_FORM["frost_limit"], 5.0),
-    ("frost limit (parser)", lambda: BARE.loop.control.frost.room_limit, 5.0),
-    ("frost release", lambda: CONTROL_DEFAULTS["frost_release"], 7.0),
-    ("frost release (form)", lambda: FROST_FORM["frost_release"], 7.0),
-    ("frost release (parser)", lambda: BARE.loop.control.frost.release, 7.0),
-    # Frost protection | every zone, heated only where its emitter can take heat
-    ("frost protection: every zone (parser)", lambda: BARE.loop.control.frost.zone, None),
-    ("frost protection: every zone (form)", lambda: FROST_FORM["frost_zone"], vol.UNDEFINED),
-    (
-        'frost protection: no zone "closes when off"',
-        lambda: BARE.loop.control.frost.closes_when_off,
-        frozenset(),
-    ),
-    (
-        'frost protection: "closes when off" unticked (form)',
-        lambda: ZONE_FORM["closes_when_off"],
-        [],
-    ),
-    # Demand threshold | one zone calling
-    ("demand threshold", lambda: CONTROL_DEFAULTS["count_threshold"], 1),
-    ("demand threshold (form)", lambda: BEHAVIOUR_FORM["count_threshold"], 1),
-    (
-        "demand threshold (parser)",
-        lambda: _demand(BARE),
-        (1, None, None),
-    ),
-    # What the count counts | VT's devices (2026-10-14)
-    ("count by", lambda: CONTROL_DEFAULTS["count_by"], "devices"),
-    ("count by (parser)", lambda: BARE.loop.control.demand.count_by.value, "devices"),
-    ("count by (form)", lambda: BEHAVIOUR_FORM["count_by"], "devices"),
     # Comfort correction | off (K4, the user's decision of 2026-11-17); up to its limit, 3 K by
     # default (at most 10 K), rising at most 3 K a day
     ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], False),
@@ -245,10 +213,14 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ),
     ("comfort correction: its limit (parser)", lambda: BARE.loop.control.correction_max_k, 3.0),
     ("comfort correction: its limit (core)", lambda: CORRECTION_MAX_K, 3.0),
-    # Learning pauses | on
-    ("learning pauses", lambda: CONTROL_DEFAULTS["learning_pauses"], True),
-    ("learning pauses (form)", lambda: BEHAVIOUR_FORM["learning_pauses"], True),
-    ("learning pauses (parser)", lambda: BARE.learning_pauses, True),
+    # Modulation cap (I13.7) | off; ticked, 70 % (30–100 %) (provisional, K4)
+    ("modulation cap: off", lambda: CONTROL_DEFAULTS["modulation_cap"], False),
+    ("modulation cap: off (form)", lambda: GATEWAY_BEHAVIOUR_FORM["modulation_cap"], False),
+    ("modulation cap: off (parser)", lambda: BARE.modulation_cap_pct, None),
+    ("modulation cap: 70 %", lambda: CONTROL_DEFAULTS["modulation_cap_pct"], 70.0),
+    ("modulation cap: 70 % (form)", lambda: GATEWAY_BEHAVIOUR_FORM["modulation_cap_pct"], 70.0),
+    ("modulation cap: 70 % (parser)", lambda: _ticked_cap(), 70.0),
+    ("modulation cap: 30-100 %", lambda: CONTROL_BOUNDS["modulation_cap_pct"], (30.0, 100.0)),
     # Alarm reaction | information; the hand-backs of decision 7 always
     ("alarm reaction: information (parser)", lambda: dict(BARE.alarm_reactions), {}),
     (
@@ -370,11 +342,6 @@ def _gateway_blockers(**stored: Any) -> list[str]:
     return config_blockers(control, INSTALLATION, signals=(Signal.FLAME, Signal.FLOW))
 
 
-def _demand(control: ControlOptions) -> tuple[int, float | None, float | None]:
-    demand = control.loop.control.demand
-    return demand.count_threshold, demand.power_threshold_kw, demand.opening_threshold
-
-
 @pytest.mark.parametrize(("row", "read", "expected"), ROWS, ids=[row for row, _, _ in ROWS])
 def test_every_default_of_the_scope_table(row: str, read: Callable[[], Any], expected: Any) -> None:
     assert read() == expected, row
@@ -389,3 +356,9 @@ def test_the_bare_sections_parse_to_their_paths() -> None:
         WritePath.RELAY,
     )
     assert BARE_ENTITY.hand_back is not HandBack.TIMEOUT
+
+
+def _ticked_cap() -> float | None:
+    """The cap's value where only the tick is stored."""
+    data = {"write_path": WritePath.OPENTHERM_GW.value, "modulation_cap": True}
+    return parse_control(data, INSTALLATION, None).modulation_cap_pct

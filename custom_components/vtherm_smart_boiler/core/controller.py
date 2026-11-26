@@ -22,78 +22,84 @@ Order of precedence, checked on every tick:
 5. The boiler reports its own fault that stops it — its low-water-pressure fault, or another
    fault the user mapped as stopping it — held five minutes on the control clock (Y1, boiler
    protection; ``ControlInputs.boiler_fault``): the usual "off" — heating off, the water as
-   decided; the relay off — with no hand-back and no latch, frost heating included, as the
-   boiler cannot heat. It ends in the step the fault reads off, unknown or unavailable. In the
-   recognition period it takes nothing new: a command held goes on as "off", none is written.
-6. Otherwise heating on or off, decided at every step from frost protection and the zones'
-   demand — VT's central mode and summer or winter reach the plugin through the zones, and
-   nothing counted or timed holds heating against VT but VT's own activation delay, carried
-   over (decision 5); and the water temperature, decided every decision interval (and at once
-   after any of the above ends): the curve on the effective outdoor temperature, limits and
-   ramp. Without an outdoor temperature the last one holds three hours, then the fallback
-   setpoint applies (decision 9), with zones known; FALLBACK is shown only while heating is
-   wanted. Frost protection heats only for a cold zone whose emitter can take heat; a cold zone
-   VT keeps closed is flagged instead (decision 4, ``core.limits``). Decision 3
-   (``core.zone_watch``) decides what missing zone data means:
+   decided; the relay off — with no hand-back and no latch, as the boiler cannot heat. It ends
+   in the step the fault reads off, unknown or unavailable. In the recognition period it takes
+   nothing new: a command held goes on as "off", none is written.
+6. Otherwise heating on or off, decided at every step from VT's decision — VT's central boiler,
+   with its own thresholds and activation delay, switches a helper the plugin follows (I12,
+   ``ControlInputs.vt_heat``), and nothing counted or timed here holds heating against it; and
+   the water temperature, decided every decision interval (and at once after any of the above
+   ends): the curve on the effective outdoor temperature, limits and ramp. Without an outdoor
+   temperature the last one holds three hours, then the fallback setpoint applies (decision 9),
+   with zones known; FALLBACK is shown only while heating is wanted. Frost protection is VT's
+   (I12, decision 4): its frost preset and central mode make the rooms call, and its central
+   boiler turns the helper on. Decision 3 (``core.zone_watch``) decides what missing zone data
+   means:
    - in the recognition period (after a start, or when every zone went away at once: VT
      reloading) nothing new is decided: the command held before — this session's, or the last
      one V3 stored, given again at once after a restart where the control unit found every
-     condition for it — is kept with its keep-alives; without one nothing is written. Frost
-     protection, which only adds heat, still acts for the zones already known;
+     condition for it — is kept with its keep-alives; without one nothing is written;
    - a zone that went away keeps its last answer for ten minutes (its grace);
-   - with every zone unknown after that, or no configured demand criterion that can be judged,
-     nothing can ask for heat: a working thermostat — a gateway with an OpenTherm thermostat,
+   - with every zone unknown after that, or VT's decision unknown (its helper neither on nor
+     off), nothing can ask for heat: a working thermostat — a gateway with an OpenTherm thermostat,
      or the boiler's own room controller where the user ticked it — is handed the boiler at
      once, without a latch; otherwise heating is off, with the water at the lowest temperature
      where no outdoor temperature is known — never the design flow. Either way control resumes
      by itself the step a zone answers again.
 
-VT's activation delay (decision 5; 0 by default, at most 600 s, as in VT 10.4.0): a start — heating
-wanted, frost included, while the command is off or there is none — waits it out. The wait begins
-at the first step heating is wanted, after the recognition period, and counts the steps' time,
-each step a minute at most; a call that drops and returns neither cancels nor restarts it, and
-at its end heating goes on only if it is still wanted. Switching off is never delayed; a
-hand-back, control switched off or a blocker drops a pending start, and a stale link pauses it.
-Taking the boiler afresh, nothing is written while it waits; mid-session the "off" goes on (the
-first provisional, K4). A command restored after a restart, where the plugin held the boiler,
-waits for nothing.
+VT's activation delay is VT's own (I12): while VT's central boiler waits it out — its event said
+so and the helper is still off (``ControlInputs.vt_delay``) — "off" carries the reason
+``activation_delay``; nothing is held or timed here.
 
-Zone signals only correct the curve (weather is counted once). The comfort correction follows the
+Zone signals only correct the curve (weather is counted once). A room's temperature judges it only
+while trusted (I12, decision 8; ``core.zones.room_trusted``): not in VT's safety mode, its
+thermometer available, and measured since the plugin started. The comfort correction follows the
 rules of bounded learning (principle 13), each mapped:
 
-1. Band: 0 to +3 K.
-2. Rate: +1 K per 30 min of heat flow, so at most 2 K an hour; at most +3 K of rise within 24 h
-   (provisional, K4).
-3. Other criteria: the rise only for a saturated zone short of its setpoint (comfort); none while
-   another zone taking heat — an opening above 5 % or its device on — is more than 1 K too warm
-   (S-08); cycling not rising: the rise only while the boiler's heating starts since it began
-   are no more than in the same hours before it began, stepping back (the fall) while they are
-   more, no rise with the starts unknown (``core.comfort_rules``, decision 11 of 0.2.3); every
-   limit kept: no rise while an upper cap (the hard maximum, the circuit's, the boiler's) or a
-   clip holds the setpoint, the "at limit" timer paused meanwhile (S-25,
-   T-48); stepping back: the fall.
-4. Good enough: the rise stops once no zone is 0.3 K short.
-5. Freezes: hot water — neither rise nor fall; data gaps — held while the link is stale or no
-   zone is known; hand-back — reset; extreme weather — the outdoor reading below the design
-   outdoor temperature or changing faster than 2 K per hour, or unknown (``core.comfort_rules``,
+1. Band: −3 to +3 K — the rise up to the user's limit, the trim below the curve (I13.3) to 3 K and
+   never more than that limit.
+2. Rate: the rise 1 K per ``RISE_CYCLES`` cycles of the slowest room judged, of heat flow, never
+   faster than 1 K per 30 min, and at most 3 K within 24 h; the trim at most half the rise's rate
+   — 1 K per 2 h of heat flow at the fastest — and at most 3 K within 24 h (I13.3,
+   ``core.comfort_rules``; provisional, K4).
+3. Other criteria: the rise only for a room that has been fully open and short of its setpoint
+   for two of its cycles and an hour without a break (comfort, I13.3), and none while a room warms
+   back after its setpoint was raised (the window rule's test); none while another zone taking
+   heat — an opening above 5 % or its device on — is more than 1 K too warm (S-08); the trim only
+   while every room judged — each trusted, each with its opening known — is under 70 % open and
+   none is short, and back towards 0 at the fall's rate as soon as one is short or 70 % open;
+   cycling not rising: the correction moves away from 0 only while the boiler's heating starts
+   since it left 0 are no more than in the same hours before, stepping back towards 0 while they
+   are more, no move with the starts unknown (``core.comfort_rules``, decision 11 of 0.2.3);
+   every limit kept: no rise while an upper cap (the hard maximum, the circuit's, the boiler's)
+   or a clip holds the setpoint, the "at limit" timer paused meanwhile (S-25, T-48), no deeper
+   trim while a cap holds it or a lower limit (the lowest water temperature, a circuit's need)
+   already does — those limits apply to every setpoint; stepping back: the fall, and the trim's
+   return.
+4. Good enough: the rise stops once no zone is 0.3 K short; the trim stops at a room 70 % open.
+5. Freezes: hot water — no move either way; data gaps — held while the link is stale or no zone
+   is known, and no deeper trim while a room's temperature or opening is not known; hand-back —
+   reset; extreme weather — the outdoor reading below the design outdoor temperature or changing
+   faster than 2 K per hour, or unknown: no rise and no deeper trim (``core.comfort_rules``,
    decision 11 of 0.2.3).
-6. At the edge: "at limit" after 3 h at 3 K.
-7. Visible and resettable: published with each decision (the control state, diagnostics); reset
-   at hand-back, at a session's end and by the user (``reset_correction``, the "Reset comfort
-   correction" button, answer J).
+6. At the edge: "at limit" after 3 h at its limit (the rise only).
+7. Visible and resettable: published with each decision, with its sign (the control state,
+   diagnostics); reset at hand-back, at a session's end and by the user (``reset_correction``,
+   the "Reset comfort correction" button, answer J).
 
 On/off control through a relay (class 3, X8; ``ControlConfig.on_off``) decides heating on or off
-by the same rules — frost protection, the zones' demand, VT's activation delay, the recognition
-and grace periods and decision 3 — without a water temperature: the boiler sets its own, so the
-curve, limits, ramp and comfort correction do not apply, no outdoor temperature is needed, and
-FALLBACK never shows. Its link is the relay itself: the control unit keeps ``boiler_link`` true
-and ``stale_hand_back_s`` unset there, and the relay rule (``core.relay``) judges its reach.
+by the same rules — VT's decision, the recognition and grace periods and decision 3 — without a
+water temperature: the boiler sets its own, so the curve, limits, ramp and comfort correction do
+not apply, no outdoor temperature is needed, and FALLBACK never shows. Its link is the relay
+itself: the control unit keeps ``boiler_link`` true and ``stale_hand_back_s`` unset there, and the
+relay rule (``core.relay``) judges its reach.
 
 "Heat flows" (S-24) is the flame burning without hot water; with the flame unknown, heating
 commanded without hot water. The rise and the fall count the steps' time, each step a minute at
-most and never a negative one (P-46): a clock set back moves nothing. The fall is twice as fast
-as the rise, once the zones with an opening are clearly satisfied or a zone taking heat is too
-warm; a zone without an opening never blocks the fall. A clip is never learned as a limit.
+most and never a negative one (P-46): a clock set back moves nothing. The fall is 1 K per 15 min,
+once the zones with an opening are clearly satisfied or a zone taking heat is too warm; a zone
+without an opening never blocks the fall, but it holds the trim. The trim's return towards 0 goes
+at the fall's rate. A clip is never learned as a limit.
 """
 
 from __future__ import annotations
@@ -105,13 +111,21 @@ from enum import StrEnum
 
 from .circuit_requests import CircuitsAsking, OtherAutomation, circuits_asking
 from .comfort_rules import (
+    TRIM_DAY_K,
+    TRIM_MAX_K,
     Readings,
+    RoomPace,
     StartsBaseline,
+    counted_for,
     extreme_weather,
     follow_baseline,
     follow_outdoor,
+    follow_room,
+    held_short,
     may_rise,
+    rise_seconds,
     starts_rose,
+    trim_seconds,
 )
 from .curve import (
     DEFAULT_HOLD_S,
@@ -122,33 +136,23 @@ from .curve import (
     auto_room,
     update_outdoor,
 )
-from .demand import Demand, DemandConfig, boiler_demand, zone_wants_heat
-from .limits import (
-    FlowLimits,
-    FrostConfig,
-    LimitCode,
-    frost_closed,
-    frost_needed,
-    install_cap,
-    limit_flow,
-    watched_temperatures,
-)
+from .demand import Demand, boiler_demand, zone_wants_heat
+from .limits import FlowLimits, LimitCode, install_cap, limit_flow
 from .readings import ZONE_OPEN, ZoneState
 from .zone_watch import ZoneWatch, follow_zones, graced, in_recognition, unjudged_since
 
 HOUR = 3600.0
 DAY = 24 * HOUR
 CORRECTION_MAX_K = 3.0  # the correction's limit by default; the user's, 0.5 to 10 K (G11)
-CORRECTION_RISE_S = 30 * 60.0  # seconds of heat flow per kelvin of rise; the fall is twice as fast
+# The fastest rise: seconds of heat flow per kelvin (I13.3: slower with slow rooms,
+# ``comfort_rules.rise_seconds``); the fall, and the trim's return, twice as fast as this.
+CORRECTION_RISE_S = 30 * 60.0
 CORRECTION_LIMIT_S = 3 * HOUR  # at the band's edge this long: tell the user
 CORRECTION_DAY_K = 3.0  # at most this much rise within 24 h (principle 13 (2); provisional, K4)
-# The most time a single step counts — heat flow, the correction's fall, the activation delay —
-# so a clock jumping forward counts a minute at most.
+# The most time a single step counts — heat flow, the correction's fall — so a clock jumping
+# forward counts a minute at most.
 MAX_STEP_S = 60.0
-ACTIVATION_DELAY_MAX_S = 600.0  # VT 10.4.0's range: 0 to 600 s (decision 5)
 OVERHEAT_K = 1.0  # a zone this far over its setpoint stops the rise
-FROST_ALARM_S = 2 * HOUR  # frost heating this long without the room warming is reported
-FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
 # A lasting outage — the plugin's own monitor failing (V6), the boiler link gone stale (X2) — is
 # judged over a window: each check counts until the next one, at most ``MAX_STEP_S``; failed
 # checks covering ``OUTAGE_LOST_S`` within the last ``OUTAGE_WINDOW_S`` are a loss, which ends
@@ -156,9 +160,19 @@ FROST_WARMING_K = 0.5  # the watched room must have warmed by this much
 OUTAGE_LOST_S = 300.0  # decided: five minutes (the user's answer I; decision 7)
 OUTAGE_WINDOW_S = 600.0  # provisional, K4
 OUTAGE_BACK_S = 60.0  # provisional, K4
+# I13.2: a loss beginning within ``OUTAGE_REPEAT_S`` of the one before ends only after
+# ``OUTAGE_BACK_REPEAT_S`` good — a link that keeps dropping does not hand the boiler back and take
+# it again every few minutes (Adnan 2013: a longer confirmation after a repeat; provisional, K4).
+OUTAGE_REPEAT_S = 3600.0
+OUTAGE_BACK_REPEAT_S = 600.0
 # The blocker "Home Assistant is starting": it does not stop a command kept or restored in the
 # recognition period, which it keeps from ending (decision 3).
 HA_STARTING = "ha_starting"
+# The blocker "VT's central boiler settings not known yet" (I12): no thermostat handed over yet,
+# as at every start until VT starts its thermostats. Like Home Assistant starting, it does not stop
+# a command kept or restored in the recognition period, but it does not keep that period going.
+VT_SETTINGS_UNKNOWN = "vt_central_boiler_unknown"
+KEPT_IN_RECOGNITION = frozenset({HA_STARTING, VT_SETTINGS_UNKNOWN})
 
 
 class ControlMode(StrEnum):
@@ -168,7 +182,6 @@ class ControlMode(StrEnum):
     WAITING_DATA = "waiting_data"
     HEATING = "heating"
     IDLE = "idle"
-    FROST = "frost"
     FALLBACK = "fallback"
     BOILER_FAULT = "boiler_fault"  # the boiler reports its own fault: heating off (Y1)
 
@@ -187,14 +200,13 @@ class Reason(StrEnum):
     NO_DEMAND = "no_demand"
     ZONES_UNKNOWN = "zones_unknown"
     ZONES_RECOGNITION = "zones_recognition"  # the zones are still reporting: nothing new decided
-    FROST = "frost"
     RAMP = "ramp"
     LIMIT_HARD_MIN = "limit_hard_min"
     LIMIT_HARD_MAX = "limit_hard_max"
     LIMIT_CIRCUIT_MAX = "limit_circuit_max"
     LIMIT_BOILER_MAX = "limit_boiler_max"
     COMFORT_CORRECTION = "comfort_correction"
-    ACTIVATION_DELAY = "activation_delay"  # heating waits VT's activation delay (decision 5)
+    ACTIVATION_DELAY = "activation_delay"  # VT's central boiler waits its activation delay
     BOILER_FAULT = "boiler_fault"  # the boiler reports its own fault that stops it (Y1)
     # I8 (decision F3): a circuit run by other automation asks for heat; one cannot say
     # (its entity unreadable: it does not ask, the user's answer of 2026-10-12); its need
@@ -228,6 +240,7 @@ class OutageWindow:
     lost: bool = False  # bad for five minutes within ten; stays until good for a minute
     lost_from: float | None = None  # the first bad moment in the window when the loss began
     good_since: float | None = None  # the first check of the current run of good ones
+    losses: tuple[float, ...] = ()  # when the losses of the last hour began (I13.2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,8 +255,6 @@ class ControlConfig:
     # rooms read — ``None``: every zone.
     other_automation: tuple[OtherAutomation, ...] = ()
     curve_zones: frozenset[str] | None = None
-    frost: FrostConfig = field(default_factory=FrostConfig)
-    demand: DemandConfig = field(default_factory=DemandConfig)
     fallback_setpoint: float | None = None  # None: the curve at its design point
     ramp_k_per_min: float | None = 1.0  # None: no ramp
     decision_interval_s: float = 300.0
@@ -262,14 +273,15 @@ class ControlConfig:
     # The boiler link is lost once its stale steps cover this long within the last
     # ``OUTAGE_WINDOW_S`` (X2): control then hands back. ``None``: never lost (tests, simulator).
     stale_hand_back_s: float | None = OUTAGE_LOST_S
+    # The outdoor mean's time constant: 3 h, 12 h where the curve's circuit has underfloor
+    # heating (I13.8, ``core.curve.outdoor_time_constant``, which the options apply). The hold of
+    # the last value is its own (decision 9).
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S
     outdoor_hold_s: float = DEFAULT_HOLD_S
     # Decision 3: with every zone unknown, a working thermostat is handed the boiler — a gateway
     # with an OpenTherm thermostat, or the boiler's own room controller where the user ticked
     # it (answers F, M); without one, the usual "off".
     working_thermostat: bool = False
-    # VT's activation delay, carried over (decision 5): a start waits this long; 0: at once.
-    activation_delay_s: float = 0.0
     # On/off control through a relay (class 3, X8): heating on or off only — no water
     # temperature, so the curve, the limits, the ramp and the comfort correction do not apply,
     # the outdoor temperature is not needed, and FALLBACK never shows.
@@ -280,8 +292,6 @@ class ControlConfig:
             raise ValueError("the decision interval must be positive")
         if self.ramp_k_per_min is not None and self.ramp_k_per_min <= 0:
             raise ValueError("the ramp must be positive")
-        if not 0.0 <= self.activation_delay_s <= ACTIVATION_DELAY_MAX_S:
-            raise ValueError("the activation delay must be 0 to 600 s")
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +315,11 @@ class ControlInputs:
     outdoor_sensor: float | None = None
     outdoor_weather: float | None = None
     zones: Sequence[ZoneState] = ()  # every configured zone
+    # VT's decision (I12): its central boiler's helper on (heat), off (not), or neither — not
+    # known, which counts as nothing asking (decision 3). And whether VT's central boiler waits
+    # its activation delay now: its event said so and the helper is still off.
+    vt_heat: bool | None = None
+    vt_delay: bool = False
     clipped: bool = False  # the boiler holds the water lower than asked: its own limit
     # The boiler's heating starts within ``comfort_rules.STARTS_WINDOW_S`` up to ``now``
     # (``comfort_rules.heating_starts``), for the comfort correction's rule 3. ``None``: not
@@ -338,15 +353,14 @@ class ControlState:
     latched: bool = False  # an alarm handed back; stays for the session
     latched_by: tuple[str, ...] = ()  # the alarms that set the latch
     outdoor: OutdoorState = field(default_factory=OutdoorState)
-    frost: bool = False
-    frost_since: float | None = None  # when frost heating began
-    frost_from: float | None = None  # the coldest watched room then
     command: BoilerCommand | None = None
     target: float | None = None
     reasons: tuple[Reason, ...] = ()
     water_reasons: tuple[Reason, ...] = ()  # why the water temperature is what it is
     decided_at: float | None = None  # when the water temperature was last decided
-    correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
+    # K added to the curve: above 0 for a room that cannot reach its setpoint, below 0 — the trim
+    # (I13.3) — while every room is clearly satisfied.
+    correction: float = 0.0
     curve_room: float | None = None  # the curve's room temperature at the last water decision
     heat_s: float = 0.0  # seconds heat has flowed since the last water decision
     water_s: float = 0.0  # seconds counted since the last water decision (P-46)
@@ -360,19 +374,19 @@ class ControlState:
     # The correction's rises within the last day, (time, K): at most ``CORRECTION_DAY_K``. Kept
     # through a hand-back (the day's rate is not reset by one); a new session starts afresh.
     rises: tuple[tuple[float, float], ...] = ()
-    # Rule 3 (decision 11 of 0.2.3): when the correction began and the starts before it; kept
+    # The trim's moves within the last day, (time, K): at most ``TRIM_DAY_K`` (I13.3); kept as
+    # the rises are.
+    trims: tuple[tuple[float, float], ...] = ()
+    # Rule 3 (decision 11 of 0.2.3): when the correction left 0 and the starts before it; kept
     # through a hand-back, a reset and a new session until it has stayed at 0 for the window.
     starts_baseline: StartsBaseline | None = None
+    # I13.3: each room's pace — how long it has been fully open and short, whether it warms back
+    # after a raised setpoint, its recent readings —, followed at every step. A fact about the
+    # rooms, kept through a hand-back but for the run of short, which begins again with control.
+    rooms: Mapping[str, RoomPace] = field(default_factory=dict)
     # Rule 5: the outdoor readings of the last hour, at every step — a fact about the weather,
     # kept through a hand-back and a new session; empty after a restart.
     outdoor_seen: Readings = ()
-    # VT's activation delay (decision 5): seconds a pending start has waited (``None``: none
-    # pending), and the step it was last counted or paused at.
-    activation_s: float | None = None
-    activation_step_at: float | None = None
-    # The watched zones below the frost limit VT keeps closed (decision 4): a fact about the
-    # zones, held through the recognition period, kept through a hand-back.
-    frost_closed: tuple[str, ...] = ()
     # The boiler link over a window (X2): a sample at every step — stale or fresh — whether it is
     # lost, and since when it has been fresh. Kept through a hand-back and a new session (a fact
     # about the link, not the session); empty after a restart.
@@ -391,7 +405,6 @@ class ControlDecision:
     reasons: tuple[Reason, ...] = ()
     target: float | None = None  # setpoint before the ramp
     effective_outdoor: float | None = None
-    frost_stuck: bool = False  # frost heating for long without the room warming: tell the user
     correction_at_limit: bool = False  # the correction at its band's edge for hours: tell the user
     # The rooms fully open and short now — the ones the correction rises for, named by the
     # "curve too low" warning at its limit (G11 B).
@@ -402,23 +415,15 @@ class ControlDecision:
     curve_room: float | None = None  # the curve's room temperature the water was decided with
     link_lost: bool = False  # the boiler link is lost (X2): stale for five minutes within ten
     # Decision 3: every configured zone unknown after the recognition period and the graces;
-    # the zones known but no configured criterion judged (PB-03); the configured demand criteria
-    # no zone that heats can feed, and the calling zones that feed none (PB-23) — all outside
-    # the recognition period.
+    # the zones known but VT's decision unknown (PB-03, I12) — both outside the recognition
+    # period.
     zones_unknown: bool = False
-    no_criterion_judged: bool = False
-    criteria_without_data: tuple[str, ...] = ()
-    zones_without_data: tuple[str, ...] = ()
-    # Decision 4: the watched zones below the frost limit VT keeps closed (outside the
-    # recognition period); decision 5: when a pending start is due; the comfort correction.
-    frost_closed: tuple[str, ...] = ()
-    activation_at: float | None = None
-    correction: float = 0.0
-    # Decision 2 of 0.2.3 (SB-01): a zone calls for heat — the zones' demand, at every step;
-    # "no sign the boiler heats" counts only then.
+    vt_unknown: bool = False
+    correction: float = 0.0  # the comfort correction, with its sign (I13.3)
+    # Decision 2 of 0.2.3 (SB-01): VT asks for heat — at every step; "no sign the boiler heats"
+    # counts only then.
     calling: bool = False
-    # The demand judged at this step, against the thresholds — shown as VT's central boiler shows
-    # its own (the user's decision of 2026-10-14).
+    # The demand at this step: VT's decision and the zones that call.
     demand: Demand | None = None
 
 
@@ -457,8 +462,10 @@ def follow_outage(
 
     A loss begins once bad checks cover ``lost_s`` (``OUTAGE_LOST_S``) within the last
     ``OUTAGE_WINDOW_S`` — a source that keeps dropping out counts, not only one gone for good —
-    and ends once the checks have been good for ``OUTAGE_BACK_S`` without a break; its checks are
-    then cleared, so a single failure afterwards is no loss. No check yet counts as nothing bad.
+    and ends once the checks have been good for ``OUTAGE_BACK_S`` without a break —
+    ``OUTAGE_BACK_REPEAT_S`` where it began within ``OUTAGE_REPEAT_S`` of the loss before (I13.2);
+    its checks are then cleared, so a single failure afterwards is no loss. No check yet counts as
+    nothing bad.
     A check earlier than the last one means the wall clock was set back: the later ones go (C9);
     a moment taken just before the last check is judged at that check.
     """
@@ -473,15 +480,18 @@ def follow_outage(
     at = max(now, checks[-1][0]) if checks else now
     start = at - OUTAGE_WINDOW_S
     checks = tuple(check for check in checks if check[0] > start - MAX_STEP_S)
+    # A loss later than now means the clock was set back: it goes, as the later checks did (C9).
+    losses = tuple(t for t in window.losses if at - OUTAGE_REPEAT_S < t <= at)
     if window.lost:
-        if good_since is not None and at - good_since >= OUTAGE_BACK_S:
-            return OutageWindow(good_since=good_since)
-        return replace(window, checks=checks, good_since=good_since)
+        back_s = OUTAGE_BACK_REPEAT_S if len(losses) > 1 else OUTAGE_BACK_S
+        if good_since is not None and at - good_since >= back_s:
+            return OutageWindow(good_since=good_since, losses=losses)
+        return replace(window, checks=checks, good_since=good_since, losses=losses)
     if bad_time(checks, at) >= lost_s:
         spans = _spans(checks, at)
         first = min(max(t, start) for t, end, failed in spans if failed and end > start)
-        return OutageWindow(checks, True, first, good_since)
-    return OutageWindow(checks, False, None, good_since)
+        return OutageWindow(checks, True, first, good_since, (*losses, first))
+    return OutageWindow(checks, False, None, good_since, losses)
 
 
 def fallback_setpoint(config: ControlConfig) -> float:
@@ -496,9 +506,9 @@ def _release(
     state: ControlState, mode: ControlMode, reason: Reason
 ) -> tuple[ControlState, ControlDecision]:
     """No command; hand back once if we were controlling. A latch stays as it is; what the
-    session learned (the comfort correction) goes, frost heating's start with it — "frost not
-    warming" counts again from a new start (P-45) — and a pending start is dropped (decision
-    5). The day's rises stay: a hand-back does not reset the correction's daily rate."""
+    session learned (the comfort correction) goes, and so does each room's run of short (I13.3):
+    a room short under another controller's water says nothing of the curve. The day's rises and
+    trims stay: a hand-back does not reset the correction's daily rate."""
     new_state = replace(
         state,
         mode=mode,
@@ -512,11 +522,7 @@ def _release(
         last_step_at=None,
         correction_limit_s=0.0,
         correction_at_top=False,
-        frost=False,
-        frost_since=None,
-        frost_from=None,
-        activation_s=None,
-        activation_step_at=None,
+        rooms={zone_id: replace(pace, short_since=None) for zone_id, pace in state.rooms.items()},
     )
     return new_state, ControlDecision(mode, None, hand_back=state.controlling, reasons=(reason,))
 
@@ -564,7 +570,7 @@ def decide(
 ) -> tuple[ControlState, ControlDecision]:
     """One tick of the controller. The boiler link and the zones are followed first, at every
     step — switched off, latched or blocked alike — and every decision says whether the link is
-    lost (X2) and whether every zone is unknown or a criterion has no data (decision 3)."""
+    lost (X2) and whether every zone or VT's decision is unknown (decision 3)."""
     now = inputs.now
     outdoor = update_outdoor(
         state.outdoor,
@@ -576,6 +582,7 @@ def decide(
     )
     seen = follow_outdoor(state.outdoor_seen, _outdoor_reading(inputs), now)
     link = follow_link(state, inputs, config)
+    rooms = _follow_rooms(state, inputs, config)
     watch = follow_zones(
         state.zones,
         inputs.zones,
@@ -590,41 +597,24 @@ def decide(
         link=link,
         link_unreported=inputs.link_unreported,
         zones=watch,
+        rooms=rooms,
     )
     recognition = in_recognition(watch)
-    if not recognition:
-        # Decision 4: the cold zones VT keeps closed; the flag waits out the recognition period,
-        # holding what it showed before (the zones report one by one).
-        closed = frost_closed(
-            inputs.zones, now, config.zone_max_age_s, config.frost, state.frost_closed
-        )
-        state = replace(state, frost_closed=closed)
     demand = boiler_demand(
-        inputs.zones,
-        now,
-        config.zone_max_age_s,
-        config.demand,
-        memory=graced(watch),
+        inputs.zones, now, config.zone_max_age_s, inputs.vt_heat, memory=graced(watch)
     )
-    # PB-03: the zones known, and no configured criterion can be judged — decision 3's end
-    # state too, and since when, for its repair issue; held through a recognition period.
+    # PB-03, I12: the zones known, and VT's decision unknown — decision 3's end state too, and
+    # since when, for its repair issue; held through a recognition period.
     unjudged = not recognition and demand.wanted is None and demand.fresh_zones > 0
     if not recognition:
         watch = replace(watch, unjudged_since=unjudged_since(watch.unjudged_since, unjudged, now))
         state = replace(state, zones=watch)
     state, decision = _decide(state, inputs, config, demand)
-    if state.activation_s is not None:
-        # A step that did not count the pending start pauses it (a stale link, the recognition
-        # period); one that did has counted up to now.
-        state = replace(state, activation_step_at=now)
     return state, replace(
         decision,
         link_lost=link.lost,
         zones_unknown=not recognition and bool(inputs.zones) and demand.fresh_zones == 0,
-        no_criterion_judged=unjudged,
-        criteria_without_data=() if recognition else demand.criteria_without_data,
-        zones_without_data=() if recognition else demand.zones_without_data,
-        frost_closed=state.frost_closed,  # held through the recognition period
+        vt_unknown=unjudged,
         correction=state.correction,
         calling=demand.wanted is True,
         demand=demand,
@@ -646,30 +636,26 @@ def _decide(
         return waiting
     now = inputs.now
     recognition = in_recognition(state.zones)
-    max_age = config.zone_max_age_s
-    watched = [z for z in inputs.zones if not recognition or z.is_known(now, max_age)]
-    frost = frost_needed(watched, now, max_age, state.frost, config.frost)
     if inputs.boiler_fault:
-        # Boiler protection (Y1): the usual "off" while the boiler reports its own fault — frost
-        # heating waits too, as the boiler cannot heat; no hand-back, no latch.
+        # Boiler protection (Y1): the usual "off" while the boiler reports its own fault; no
+        # hand-back, no latch.
         if recognition:
             held = _held(state, inputs)
             off = None if held is None else replace(held, ch_enable=False)
             return _keep(state, now, off, fault=True)
-        return _heating_decision(state, inputs, config, frost, demand, fault=True)
-    if not frost:
-        nothing_new = _nothing_new(state, inputs, config, demand, recognition)
-        if nothing_new is not None:
-            return nothing_new
-    return _heating_decision(state, inputs, config, frost, demand)
+        return _heating_decision(state, inputs, config, demand, fault=True)
+    nothing_new = _nothing_new(state, inputs, config, demand, recognition)
+    if nothing_new is not None:
+        return nothing_new
+    return _heating_decision(state, inputs, config, demand)
 
 
 def _stopped(
     state: ControlState, inputs: ControlInputs
 ) -> tuple[ControlState, ControlDecision] | None:
     """Switched off; a latch, or an alarm set to hand back — before the blockers (P-48); the
-    blockers, but for Home Assistant starting alone while a command is kept or restored. ``None``
-    where none of them stops control."""
+    blockers, but for Home Assistant starting or VT's settings not known yet alone while a command
+    is kept or restored. ``None`` where none of them stops control."""
     if not inputs.enabled:
         return _release(state, ControlMode.DISABLED, Reason.CONTROL_OFF)
     if state.latched or inputs.hand_back_alarms:
@@ -677,10 +663,11 @@ def _stopped(
         latched_by = state.latched_by if state.latched else tuple(inputs.hand_back_alarms)
         state = replace(state, latched=True, latched_by=latched_by)
         return _release(state, ControlMode.HANDED_BACK, Reason.ALARM_HAND_BACK)
-    # Home Assistant starting alone does not stop a command kept or restored meanwhile.
+    # Home Assistant starting, or VT's settings not known yet, alone does not stop a command
+    # kept or restored meanwhile.
     held = state.command if state.controlling else inputs.restored_command
     keeps = in_recognition(state.zones) and held is not None
-    if inputs.blockers and not (keeps and set(inputs.blockers) <= {HA_STARTING}):
+    if inputs.blockers and not (keeps and set(inputs.blockers) <= KEPT_IN_RECOGNITION):
         return _release(state, ControlMode.NOT_ALLOWED, Reason.PRECONDITION)
     return None
 
@@ -732,10 +719,10 @@ def _nothing_new(
     demand: Demand,
     recognition: bool,
 ) -> tuple[ControlState, ControlDecision] | None:
-    """Without frost: the recognition period keeps what is held and decides nothing new; a
-    restored command still waiting for its write target when it ends gives way this step; and
-    nothing that can ask for heat hands the boiler to a working thermostat (decision 3).
-    ``None``: the heating decision follows."""
+    """The recognition period keeps what is held and decides nothing new; a restored command
+    still waiting for its write target when it ends gives way this step; and nothing that can ask
+    for heat hands the boiler to a working thermostat (decision 3). ``None``: the heating
+    decision follows."""
     now = inputs.now
     if recognition:
         return _keep(state, now, _held(state, inputs))
@@ -755,9 +742,7 @@ def _keep(
 ) -> tuple[ControlState, ControlDecision]:
     """The recognition period: nothing new is decided. The command held before goes on, with
     its keep-alives; without one nothing is written. ``fault``: the boiler reports its own
-    fault — the command held goes on as "off" (Y1). Frost protection's state stays as it was:
-    its hysteresis, and its start for "frost not warming" (P-45) — VT reloading is no new
-    start."""
+    fault — the command held goes on as "off" (Y1)."""
     reasons: tuple[Reason, ...] = (Reason.ZONES_RECOGNITION,)
     if fault:
         reasons = (*reasons, Reason.BOILER_FAULT)
@@ -780,25 +765,11 @@ def _keep(
     return kept, ControlDecision(mode, held, reasons=reasons, target=target)
 
 
-def _frost_stuck(state: ControlState, now: float, coldest: float | None) -> bool:
-    """Frost heating for ``FROST_ALARM_S`` without the coldest watched room warming by
-    ``FROST_WARMING_K`` since it began: reported, never stopped."""
-    return (
-        state.frost_since is not None
-        and now - state.frost_since >= FROST_ALARM_S
-        and coldest is not None
-        and state.frost_from is not None
-        and coldest < state.frost_from + FROST_WARMING_K
-    )
-
-
-def _water_due(
-    state: ControlState, now: float, config: ControlConfig, frost: bool, lowest_now: bool
-) -> bool:
+def _water_due(state: ControlState, now: float, config: ControlConfig, lowest_now: bool) -> bool:
     """Whether the water temperature is decided anew this step: nothing decided yet, the
-    decision interval passed — or the wall clock set back (C9) — frost starting or ending, or
-    (``lowest_now``) nothing asking for heat without an outdoor temperature, which takes the
-    lowest water temperature at once, never a fallback decided before (decision 3)."""
+    decision interval passed — or the wall clock set back (C9) — or (``lowest_now``) nothing
+    asking for heat without an outdoor temperature, which takes the lowest water temperature at
+    once, never a fallback decided before (decision 3)."""
     decided_at = state.decided_at
     return (
         decided_at is None
@@ -807,20 +778,15 @@ def _water_due(
         or state.upper is None
         or decided_at > now
         or now - decided_at >= config.decision_interval_s
-        or frost != state.frost
         or lowest_now
     )
 
 
-def _heating_mode(
-    fault: bool, frost_on: bool, want_heat: bool, outdoor_unknown: bool
-) -> ControlMode:
-    """A boiler fault before frost, frost before heating; FALLBACK only while heating is wanted
-    without an outdoor temperature (P-47)."""
+def _heating_mode(fault: bool, want_heat: bool, outdoor_unknown: bool) -> ControlMode:
+    """A boiler fault before heating; FALLBACK only while heating is wanted without an outdoor
+    temperature (P-47)."""
     if fault:
         return ControlMode.BOILER_FAULT
-    if frost_on:
-        return ControlMode.FROST
     if want_heat:
         return ControlMode.FALLBACK if outdoor_unknown else ControlMode.HEATING
     return ControlMode.IDLE
@@ -830,23 +796,18 @@ def _heating_decision(
     state: ControlState,
     inputs: ControlInputs,
     config: ControlConfig,
-    frost: bool,
     demand: Demand,
     *,
     fault: bool = False,
 ) -> tuple[ControlState, ControlDecision]:
-    """Heating on or off at every step — after VT's activation delay for a start — and the
-    water temperature every decision interval. ``fault``: the boiler reports its own fault that
-    stops it — heating off, frost included, the water decided as usual (Y1)."""
+    """Heating on or off at every step, and the water temperature every decision interval.
+    ``fault``: the boiler reports its own fault that stops it — heating off, the water decided as
+    usual (Y1)."""
     if config.on_off:
-        return _on_off_decision(state, inputs, config, frost, demand, fault=fault)
+        return _on_off_decision(state, inputs, config, demand, fault=fault)
     now = inputs.now
     outdoor = state.outdoor
-    coldest = min(
-        watched_temperatures(inputs.zones, now, config.zone_max_age_s, config.frost), default=None
-    )
-    # Only time under a command of the plugin's counts: a fresh start's wait for VT's activation
-    # delay writes nothing, so the heat then is the boiler's own (decision 5).
+    # Only time under a command of the plugin's counts.
     step_s = (
         0.0
         if state.last_step_at is None or state.command is None
@@ -856,43 +817,11 @@ def _heating_decision(
     # heat flow or of fall, which would move the comfort correction past its rate at once.
     counted_s = min(MAX_STEP_S, step_s)
     asks = _circuits(inputs, config)
-    wanted, heat_reason = _want_heat(demand, frost, fault, bool(asks.asking))
-    pending, want_heat = _activation(state, inputs, config, wanted)
-    waiting = pending is not None and wanted
-    activation_at = None if pending is None else now + max(0.0, config.activation_delay_s - pending)
-    state = replace(state, activation_s=pending, activation_step_at=now)
-    frost_on = frost and want_heat
-    if frost_on and state.frost_since is None:
-        state = replace(state, frost_since=now, frost_from=coldest)  # the real start
-    elif not frost_on:
-        state = replace(state, frost_since=None, frost_from=None)
-    if waiting and state.command is None:
-        # Taking the boiler afresh (a new session, a take after a hand-back): nothing is
-        # written while the start waits, so nothing is taken and nothing owed (provisional,
-        # K4). The boiler stays with what had it.
-        reasons: tuple[Reason, ...] = (
-            _OUTDOOR_REASON[outdoor.source],
-            heat_reason,
-            Reason.ACTIVATION_DELAY,
-        )
-        idle = replace(
-            state,
-            mode=ControlMode.IDLE,
-            frost=frost,
-            reasons=reasons,
-            decided_at=None,
-            last_step_at=now,
-        )
-        return idle, ControlDecision(
-            ControlMode.IDLE,
-            None,
-            reasons=reasons,
-            effective_outdoor=outdoor.effective,
-            activation_at=activation_at,
-        )
-    # Decision 3's "off": every zone unknown, or no criterion that can be judged, and no working
-    # thermostat to hand the boiler to — nothing asks for heat.
-    nobody_asks = not frost and demand.wanted is None and not asks.asking
+    want_heat, heat_reason = _want_heat(demand, fault, bool(asks.asking))
+    waiting = _vt_waits(inputs, want_heat)
+    # Decision 3's "off": every zone unknown, or VT's decision unknown, and no working thermostat
+    # to hand the boiler to — nothing asks for heat.
+    nobody_asks = demand.wanted is None and not asks.asking
     dhw = inputs.dhw is True
     # "Heat flows" (S-24): the flame burning without hot water; the flame unknown, heating
     # commanded without hot water.
@@ -903,14 +832,12 @@ def _heating_decision(
         water_s=state.water_s + counted_s,
         last_step_at=now,
     )
-    # Frost heating is never stopped; heating that does not warm the room is reported.
-    frost_stuck = frost_on and _frost_stuck(state, now, coldest)
 
     prior_target, prior_upper = state.target, state.upper
     # A circuit's need changing — one starting or ending to ask — is decided at once (I8, F3).
     need_changed = asks.floor != state.circuit_need
     lowest_now = nobody_asks and outdoor.effective is None
-    if need_changed or _water_due(state, now, config, frost, lowest_now):
+    if need_changed or _water_due(state, now, config, lowest_now):
         water: list[Reason] = [_OUTDOOR_REASON[outdoor.source]]
         room = _curve_room(state, inputs, config)
         state = replace(state, curve_room=room)
@@ -925,7 +852,13 @@ def _heating_decision(
         # An upper cap — the hard maximum, the circuit's, the boiler's — or a clip holds the
         # setpoint: a rise could not show, so it is not learned (S-25).
         held = inputs.clipped or curve_value + state.correction >= upper - _EPSILON
-        correction, rises, baseline = _correction(state, inputs, config, held)
+        # I13.3: a lower limit — the lowest water temperature, a circuit's need — already holds
+        # the setpoint: a deeper trim could not show either.
+        lower = config.limits.hard_min
+        if asks.floor is not None:
+            lower = max(lower, asks.floor)
+        floored = curve_value + state.correction <= lower + _EPSILON
+        correction, rises, trims, baseline = _correction(state, inputs, config, held, floored)
         top = correction >= config.correction_max_k or (
             config.comfort_correction and _day_spent(rises) and bool(_short_zones(inputs, config))
         )
@@ -934,11 +867,12 @@ def _heating_decision(
             heat_s=0.0,
             water_s=0.0,
             rises=rises,
+            trims=trims,
             starts_baseline=baseline,
             correction_limit_s=_limit_time(state, top, held),
             correction_at_top=top,
         )
-        if correction > 0:
+        if correction != 0.0:
             water.append(Reason.COMFORT_CORRECTION)
         limited = limit_flow(
             curve_value + correction, config.limits, config.circuit_max, config.boiler_max,
@@ -958,7 +892,7 @@ def _heating_decision(
     # A step counts a minute at most here too: a clock jumping forward is no hour of ramp (PB-28).
     setpoint, ramping = _ramp(previous, target, cap, counted_s, config.ramp_k_per_min)
 
-    mode = _heating_mode(fault, frost_on, want_heat, outdoor.effective is None)
+    mode = _heating_mode(fault, want_heat, outdoor.effective is None)
     reasons = (*water_reasons[:1], heat_reason, *water_reasons[1:])
     if asks.unknown:
         reasons = (*reasons, Reason.CIRCUIT_REQUEST_UNKNOWN)
@@ -971,7 +905,6 @@ def _heating_decision(
         state,
         mode=mode,
         controlling=True,
-        frost=frost,
         command=command,
         target=target,
         upper=upper,
@@ -986,12 +919,10 @@ def _heating_decision(
         reasons=reasons,
         target=target,
         effective_outdoor=outdoor.effective,
-        frost_stuck=frost_stuck,
         correction_at_limit=new_state.correction_limit_s >= CORRECTION_LIMIT_S,
         short_zones=_short_zones(inputs, config),
         most_short=_most_short(inputs, config),
         curve_room=new_state.curve_room,
-        activation_at=activation_at,
     )
 
 
@@ -999,46 +930,25 @@ def _on_off_decision(
     state: ControlState,
     inputs: ControlInputs,
     config: ControlConfig,
-    frost: bool,
     demand: Demand,
     *,
     fault: bool = False,
 ) -> tuple[ControlState, ControlDecision]:
     """On/off control through a relay (class 3, X8, R5): heating on or off at every step, from
-    frost protection and the zones' demand, after VT's activation delay for a start — the same
-    rules as the water-temperature path, without a water temperature: the boiler sets its own.
-    Modes FROST, HEATING and IDLE, and BOILER_FAULT with the relay off while the boiler reports
-    its own fault (Y1); never FALLBACK, as no outdoor temperature is needed."""
+    VT's decision — the same rules as the water-temperature path, without a water temperature:
+    the boiler sets its own.
+    Modes HEATING and IDLE, and BOILER_FAULT with the relay off while the boiler reports its own
+    fault (Y1); never FALLBACK, as no outdoor temperature is needed."""
     now = inputs.now
-    coldest = min(
-        watched_temperatures(inputs.zones, now, config.zone_max_age_s, config.frost), default=None
-    )
     asks = _circuits(inputs, config)
-    wanted, heat_reason = _want_heat(demand, frost, fault, bool(asks.asking))
-    pending, want_heat = _activation(state, inputs, config, wanted)
-    waiting = pending is not None and wanted
-    activation_at = None if pending is None else now + max(0.0, config.activation_delay_s - pending)
-    state = replace(state, activation_s=pending, activation_step_at=now)
-    frost_on = frost and want_heat
-    if frost_on and state.frost_since is None:
-        state = replace(state, frost_since=now, frost_from=coldest)  # the real start
-    elif not frost_on:
-        state = replace(state, frost_since=None, frost_from=None)
+    want_heat, heat_reason = _want_heat(demand, fault, bool(asks.asking))
+    waiting = _vt_waits(inputs, want_heat)
     reasons: tuple[Reason, ...] = (
         (heat_reason, Reason.ACTIVATION_DELAY) if waiting else (heat_reason,)
     )
     if asks.unknown:
         reasons = (*reasons, Reason.CIRCUIT_REQUEST_UNKNOWN)
-    if waiting and state.command is None:
-        # Taking the relay afresh: nothing is written while the start waits (as for the water).
-        idle = replace(state, mode=ControlMode.IDLE, frost=frost, reasons=reasons, last_step_at=now)
-        return idle, ControlDecision(
-            ControlMode.IDLE, None, reasons=reasons, activation_at=activation_at
-        )
-    frost_stuck = frost_on and _frost_stuck(state, now, coldest)
     mode = ControlMode.HEATING if want_heat else ControlMode.IDLE
-    if frost_on:
-        mode = ControlMode.FROST
     if fault:
         mode = ControlMode.BOILER_FAULT
     command = BoilerCommand(want_heat, None)
@@ -1046,7 +956,6 @@ def _on_off_decision(
         state,
         mode=mode,
         controlling=True,
-        frost=frost,
         command=command,
         target=None,
         upper=None,
@@ -1061,52 +970,23 @@ def _on_off_decision(
         command,
         reasons=reasons,
         effective_outdoor=state.outdoor.effective,
-        frost_stuck=frost_stuck,
-        activation_at=activation_at,
     )
 
 
-def _activation(
-    state: ControlState, inputs: ControlInputs, config: ControlConfig, wanted: bool
-) -> tuple[float | None, bool]:
-    """VT's activation delay (decision 5): the seconds a pending start has waited (``None``:
-    none pending) and whether heating is on now. A start — heating wanted while the command is
-    off or there is none — waits ``activation_delay_s``, counting the steps' time, each a
-    minute at most (a clock set back counts nothing). A call that drops and returns neither
-    cancels nor restarts it; at its end heating goes on only if it is still wanted, else the
-    pending start is dropped. Heating already on, a delay of 0, or a command restored after a
-    restart — the plugin held the boiler before — waits for nothing."""
-    restoring = not state.controlling and inputs.restored_command is not None
-    on = state.command is not None and state.command.ch_enable
-    if config.activation_delay_s <= 0 or restoring or on:
-        return None, wanted
-    waited = state.activation_s
-    if waited is None:
-        if not wanted:
-            return None, False
-        waited = 0.0  # the first call: the wait begins
-    else:
-        since = state.activation_step_at
-        if since is not None:
-            waited += min(MAX_STEP_S, max(0.0, inputs.now - since))
-    if waited >= config.activation_delay_s:
-        return None, wanted
-    return waited, False
+def _vt_waits(inputs: ControlInputs, want_heat: bool) -> bool:
+    """VT's central boiler waits its activation delay while heating is off for it: the reason
+    ``activation_delay`` beside "off" (I12). Heating on — a circuit asking — shows no wait."""
+    return inputs.vt_delay and inputs.vt_heat is False and not want_heat
 
 
-def _want_heat(
-    demand: Demand, frost: bool, fault: bool = False, asking: bool = False
-) -> tuple[bool, Reason]:
+def _want_heat(demand: Demand, fault: bool = False, asking: bool = False) -> tuple[bool, Reason]:
     """Whether to heat now and why: never while the boiler reports its own fault that stops it
-    (Y1); frost protection, else the zones' demand — VT's central mode and summer or winter act
+    (Y1); VT's decision (I12) — VT's central mode, its frost protection and summer or winter act
     on the zones themselves — else a circuit run by other automation asking (``asking``, I8,
-    decision F3: by itself, as a zone asking at the default count). Demand unknown and nothing
-    asking asks for nothing (decision 3): heating off, or the working thermostat's, before
-    this."""
+    decision F3: by itself, on top of VT's decision). VT's decision unknown and nothing asking
+    asks for nothing (decision 3): heating off, or the working thermostat's, before this."""
     if fault:
         return False, Reason.BOILER_FAULT
-    if frost:
-        return True, Reason.FROST
     if demand.wanted:
         return True, Reason.DEMAND
     if asking:
@@ -1118,16 +998,17 @@ def _want_heat(
 
 def _circuits(inputs: ControlInputs, config: ControlConfig) -> CircuitsAsking:
     """The circuits run by other automation that ask now (I8, decision F3): their entity on,
-    or one of their known zones wanting heat — a zone split between circuits through the
-    devices VT lists active (I8.8b)."""
+    or one of their known zones wanting heat. A zone split between circuits by its devices asks
+    through each of them (I8.8b): ``vtherm_api`` does not tell which of its devices VT has on
+    (I12.7), so the warmer side stands."""
     now = inputs.now
     wanting = {
-        z.zone_id: z.devices_active
+        z.zone_id
         for z in inputs.zones
         if z.is_known(now, config.zone_max_age_s) and zone_wants_heat(z)
     }
     return circuits_asking(
-        config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting, wanting
+        config.other_automation, inputs.circuit_requests, inputs.circuit_needs, wanting
     )
 
 
@@ -1154,11 +1035,19 @@ def _counted(inputs: ControlInputs, config: ControlConfig) -> list[ZoneState]:
     ]
 
 
+def _judged(inputs: ControlInputs, config: ControlConfig) -> list[ZoneState]:
+    """The counted zones whose room temperature may judge the curve (I12, decision 8): not one
+    in VT's safety mode, with its thermometer unavailable, or without a measurement since the
+    plugin started (``ZoneState.room_sensor_lost``, ``core.zones.room_trusted``). Such a room
+    still counts for whether it calls and for the curve's room temperature, which reads
+    setpoints."""
+    return [z for z in _counted(inputs, config) if not z.room_sensor_lost]
+
+
 def is_short(zone: ZoneState) -> bool:
-    """Fully open and short by at least ``SHORT_K`` of where its own controller stops heating —
-    VT's setpoint, or with SmartPI learning its upper hysteresis over it (G11 C)."""
-    shortfall = zone.shortfall
-    return _saturated(zone) and shortfall is not None and shortfall >= SHORT_K
+    """Fully open and short of VT's setpoint by at least ``SHORT_K``."""
+    deficit = zone.deficit
+    return _saturated(zone) and deficit is not None and deficit >= SHORT_K
 
 
 def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:
@@ -1177,14 +1066,14 @@ def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfi
 
 
 def _short_zones(inputs: ControlInputs, config: ControlConfig) -> tuple[str, ...]:
-    """The rooms fully open and short now (G11 B)."""
-    return tuple(z.zone_id for z in _counted(inputs, config) if is_short(z))
+    """The rooms fully open and short now (G11 B), of those whose temperature is trusted."""
+    return tuple(z.zone_id for z in _judged(inputs, config) if is_short(z))
 
 
 def _most_short(inputs: ControlInputs, config: ControlConfig) -> bool:
     """More than half of the rooms judged are short (G11, addition 3)."""
-    counted = _counted(inputs, config)
-    return 2 * sum(1 for z in counted if is_short(z)) > len(counted)
+    judged = _judged(inputs, config)
+    return 2 * sum(1 for z in judged if is_short(z)) > len(judged)
 
 
 def _taking_heat(zone: ZoneState) -> bool:
@@ -1199,62 +1088,186 @@ def _outdoor_reading(inputs: ControlInputs) -> float | None:
     return inputs.outdoor_sensor if inputs.outdoor_sensor is not None else inputs.outdoor_weather
 
 
+type Moves = tuple[tuple[float, float], ...]  # the correction's rises or trims: (time, K)
+
+
+def trim_limit(correction_max_k: float) -> float:
+    """How far below the curve the correction may trim (I13.3): ``TRIM_MAX_K``, and never more
+    than the user's limit above it."""
+    return min(TRIM_MAX_K, correction_max_k)
+
+
+def _within_day(moves: Moves, now: float) -> Moves:
+    """The moves within the last day — a clock set back keeps those a day ahead at most."""
+    return tuple((t, k) for t, k in moves if abs(now - t) < DAY)
+
+
+def _follow_rooms(
+    state: ControlState, inputs: ControlInputs, config: ControlConfig
+) -> dict[str, RoomPace]:
+    """Each room's pace after this step (I13.3): short now — a room the correction judges, its
+    temperature trusted, fully open and short — or not; its readings and setpoint."""
+    judged = {z.zone_id for z in _judged(inputs, config)}
+    return {
+        z.zone_id: follow_room(
+            state.rooms.get(z.zone_id, RoomPace()),
+            inputs.now,
+            z.zone_id in judged and is_short(z),
+            z.temperature,
+            z.target,
+        )
+        for z in inputs.zones
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class _Found:
+    """What a water decision finds for the comfort correction."""
+
+    known: list[ZoneState]  # the rooms it judges: heating enabled, known, of the curve's circuit
+    judged: list[ZoneState]  # those whose temperature is trusted
+    short: bool  # a room fully open and short now
+    rose: bool  # rule 3: the starts rose since the correction left 0
+    may_move: bool  # rules 3 and 5 let it move away from 0
+    rise_s: float  # heat flow per kelvin of rise (I13.3)
+
+
 def _correction(
-    state: ControlState, inputs: ControlInputs, config: ControlConfig, held: bool
-) -> tuple[float, tuple[tuple[float, float], ...], StartsBaseline | None]:
+    state: ControlState, inputs: ControlInputs, config: ControlConfig, held: bool, floored: bool
+) -> tuple[float, Moves, Moves, StartsBaseline | None]:
     """The comfort correction for this water decision, within its firm band (bounded learning),
-    the rises within the last day and rule 3's baseline. ``held``: a cap or a clip holds the
-    setpoint — no rise. Frozen — neither rise nor fall — while hot water runs; no rise while the
-    weather is extreme or unknown (rule 5), while every fall — rooms satisfied or too warm, rule
-    3's step back — passes, the cautious side (M1 of the part-2 check); rising only while the
-    starts are known and do not rise, stepping back while they do (rule 3)."""
+    the rises and the trims within the last day, and rule 3's baseline. ``held``: a cap or a
+    clip holds the setpoint — no rise and no deeper trim; ``floored``: a lower limit does — no
+    deeper trim. Frozen — no move either way — while hot water runs; no move away from 0 while the
+    weather is extreme or unknown (rule 5), while every step back towards 0 passes — the rooms
+    satisfied or too warm, a room short or 70 % open below the curve, rule 3's step back —, the
+    cautious side (M1 of the part-2 check); moving away from 0 only while the starts are known
+    and do not rise, stepping back while they do (rule 3). From 0 the rise comes first; with no
+    rise, the trim (I13.3)."""
     now = inputs.now
-    rises = tuple((t, k) for t, k in state.rises if abs(now - t) < DAY)
+    rises, trims = _within_day(state.rises, now), _within_day(state.trims, now)
     if not config.comfort_correction:
-        return 0.0, rises, None
+        return 0.0, rises, trims, None
     baseline = state.starts_baseline
     if inputs.dhw is True:
-        return state.correction, rises, baseline
+        return state.correction, rises, trims, baseline
     extreme = extreme_weather(
         state.outdoor_seen, _outdoor_reading(inputs), now, config.curve.design_outdoor
     )
     baseline = follow_baseline(baseline, state.correction, now)
     starts = inputs.starts
-    rose = starts is not None and baseline is not None and starts_rose(baseline, starts, now)
     known = _counted(inputs, config)
-    too_warm = any(
-        _taking_heat(z) and z.deficit is not None and z.deficit < -OVERHEAT_K for z in known
+    judged = _judged(inputs, config)  # a room's temperature only where it is trusted
+    found = _Found(
+        known,
+        judged,
+        short=any(is_short(z) for z in judged),
+        rose=starts is not None and baseline is not None and starts_rose(baseline, starts, now),
+        may_move=not extreme and starts is not None and may_rise(baseline, starts, now),
+        rise_s=rise_seconds((z.cycle_s for z in known), CORRECTION_RISE_S),
     )
-    short = any(is_short(z) for z in known)
-    opened = [z for z in known if z.demand is not None]  # no opening: never blocks the fall
-    satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
+    began = state.correction
+    correction = began
+    if began >= 0.0:
+        correction, rises, baseline = _above(state, inputs, config, found, held, rises, baseline)
+    if began < 0.0 or (began == 0.0 and correction == 0.0):
+        correction, trims, baseline = _below(
+            state, inputs, config, found, held or floored, trims, baseline
+        )
+    return correction, rises, trims, baseline
+
+
+def _first_move(baseline: StartsBaseline | None, inputs: ControlInputs) -> StartsBaseline:
+    """Rule 3's baseline: the correction's first move from 0 keeps the starts before it (a move
+    needs the starts known)."""
+    if baseline is not None:
+        return baseline
+    now = inputs.now
+    return StartsBaseline(now, tuple(t for t in inputs.starts or () if t < now))
+
+
+def _above(
+    state: ControlState,
+    inputs: ControlInputs,
+    config: ControlConfig,
+    found: _Found,
+    held: bool,
+    rises: Moves,
+    baseline: StartsBaseline | None,
+) -> tuple[float, Moves, StartsBaseline | None]:
+    """The correction at or above 0: the fall, or the rise — for a room held short (I13.3), while
+    no room warms back after a raised setpoint, at the pace of the slowest room, never past the
+    user's limit nor ``CORRECTION_DAY_K`` a day. Never below 0."""
+    now = inputs.now
     correction = state.correction
-    if too_warm or (satisfied and not short) or rose:
-        correction -= 2.0 * state.water_s / CORRECTION_RISE_S
-    elif (
-        short
-        and not held
-        and not extreme
-        and starts is not None
-        and may_rise(baseline, starts, now)
-    ):
-        # Only while heat flows; never while a cap or the boiler holds the water; at most
-        # ``CORRECTION_DAY_K`` within a day; the first rise keeps the starts before it.
-        spent = sum(k for _t, k in rises)
+    too_warm = any(
+        _taking_heat(z) and z.deficit is not None and z.deficit < -OVERHEAT_K for z in found.judged
+    )
+    opened = [z for z in found.known if z.demand is not None]  # no opening: never blocks the fall
+    satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
+    if too_warm or (satisfied and not found.short) or found.rose:
+        return max(0.0, correction - 2.0 * state.water_s / CORRECTION_RISE_S), rises, baseline
+    paces = [(z, state.rooms.get(z.zone_id, RoomPace())) for z in found.judged]
+    counted = any(held_short(pace, now, z.cycle_s) for z, pace in paces)
+    warming_back = any(pace.raised_at is not None for _z, pace in paces)
+    if counted and not warming_back and not held and found.may_move:
+        # Only while heat flows — since a room counted as short; never while a cap or the
+        # boiler holds the water; at most ``CORRECTION_DAY_K`` within a day; the first rise
+        # keeps the starts before it.
+        heat_s = min(state.heat_s, max(counted_for(pace, now, z.cycle_s) for z, pace in paces))
         rise = min(
-            state.heat_s / CORRECTION_RISE_S,
-            CORRECTION_DAY_K - spent,
+            heat_s / found.rise_s,
+            CORRECTION_DAY_K - sum(k for _t, k in rises),
             config.correction_max_k - correction,
         )
         if rise > _EPSILON:
-            if baseline is None:
-                baseline = StartsBaseline(now, tuple(t for t in starts if t < now))
+            baseline = _first_move(baseline, inputs)
             correction += rise
             rises = (*rises, (now, rise))
     limit = config.correction_max_k
     if correction > limit - _EPSILON:
         correction = limit  # the band's edge, not a rounding error below it
-    return max(0.0, correction), rises, baseline
+    return correction, rises, baseline
+
+
+def _below(
+    state: ControlState,
+    inputs: ControlInputs,
+    config: ControlConfig,
+    found: _Found,
+    held: bool,
+    trims: Moves,
+    baseline: StartsBaseline | None,
+) -> tuple[float, Moves, StartsBaseline | None]:
+    """The correction at or below 0 (I13.3): back towards 0 at the fall's rate as soon as a room
+    is short or ``SATISFIED`` open, or the starts rose (rule 3); deeper — the trim — only while
+    every room judged is trusted, with its opening known and under ``SATISFIED``, never while a
+    limit holds the setpoint (``held``), at half the rise's rate at most, never past
+    ``trim_limit`` nor ``TRIM_DAY_K`` a day. Never above 0."""
+    now = inputs.now
+    correction = state.correction
+    opened = any(z.demand is not None and z.demand >= SATISFIED for z in found.known)
+    if found.short or opened or found.rose:
+        return min(0.0, correction + 2.0 * state.water_s / CORRECTION_RISE_S), trims, baseline
+    limit = trim_limit(config.correction_max_k)
+    clear = (
+        bool(found.known)
+        and len(found.judged) == len(found.known)
+        and all(z.demand is not None for z in found.known)
+    )
+    if clear and not held and found.may_move:
+        depth = min(
+            state.heat_s / trim_seconds(found.rise_s),
+            TRIM_DAY_K - sum(k for _t, k in trims),
+            limit + correction,
+        )
+        if depth > _EPSILON:
+            baseline = _first_move(baseline, inputs)
+            correction -= depth
+            trims = (*trims, (now, depth))
+    if correction < _EPSILON - limit:
+        correction = -limit  # the band's edge, not a rounding error above it
+    return correction, trims, baseline
 
 
 def _day_spent(rises: tuple[tuple[float, float], ...]) -> bool:

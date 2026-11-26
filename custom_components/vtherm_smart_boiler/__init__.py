@@ -29,6 +29,10 @@ KIND_ISSUE = "thermostat_kind_missing"
 REMOVED_ISSUE = "entity_removed"
 # Y1's migration: stored alarm reactions decision 7 no longer offers were removed (a warning).
 REACTIONS_REMOVED_ISSUE = "reactions_removed"
+# I12's migration: demand settings VT's central boiler must be given now were set (a warning).
+VT_SETTINGS_ISSUE = "vt_settings_moved"
+# I12.10: the plugin's frost protection gone at migration 24, told once where control was set up.
+FROST_ISSUE = "frost_moved_to_vt"
 # The issues a control unit raises for a hand-back without a latch (decision 7, Y1).
 HAND_BACK_ISSUES = ("hand_back_boiler_link_lost", "hand_back_control_error")
 # SB-10 (decision 12): a setup that failed where the house goes unheated — one issue per entry,
@@ -65,14 +69,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
     from .coordinator import SmartBoilerCoordinator
     from .journal import Journal
     from .panel import async_add_cards, async_remove_cards
-    from .vtherm_link import vt_run
     from .websocket_api import async_setup_websocket
 
     try:
         async_setup_websocket(hass)  # the Boiler page's commands (I10.2), once per run
     except Exception:  # the page's matter: the monitor, control and a hand-back owed go on
         logging.getLogger(__name__).exception("The Boiler page's commands could not be registered")
-    vt_run(hass)  # this run's record for VT's restart latch, begun at the first setup (decision 9)
     try:
         # A control section that cannot be used leaves control out, not the whole entry: the
         # monitor keeps running, and a hand-back still owed goes out.
@@ -334,7 +336,16 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.minor_version < 20:
         _migrate_circuit_zones(hass, entry)
     if entry.minor_version < 21:
-        _migrate_count_by(hass, entry)
+        # The count by zones written here once went with I12's demand settings (22).
+        hass.config_entries.async_update_entry(entry, minor_version=21)
+    if entry.minor_version < 22:
+        _migrate_vt_decides(hass, entry)
+    if entry.minor_version < 23:
+        _migrate_learning_pauses(hass, entry)
+    if entry.minor_version < 24:
+        _migrate_frost(hass, entry)
+    if entry.minor_version < 25:
+        _migrate_rooms_from_vt(hass, entry)
     return True
 
 
@@ -686,17 +697,86 @@ def _migrate_circuit_zones(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options=options, minor_version=20)
 
 
-def _migrate_count_by(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Minor version 21 (the user's decision of 2026-10-14): the count criterion counts VT's
-    devices by default, as VT's central boiler. A control section from before counted zones,
-    and keeps that: "zones" is written into it unless it holds an answer. An entry without
-    control gets the new default once control is set up."""
-    from .control_config import with_count_by
+def _migrate_vt_decides(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I12 (minor version 22, the user's decision of 2026-11-25): VT's central boiler decides
+    whether the boiler heats, with its own thresholds and activation delay; the plugin's demand
+    settings go from the control section. Where one was set that VT's central boiler must now be
+    given — a power or opening threshold, a count above 1, an activation delay above 0 — one
+    warning issue says so, with the values."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .control_config import vt_settings_set, without_vt_settings
 
     options = dict(entry.options)
-    if has_control_section(options):
-        options[CONTROL] = with_count_by(options[CONTROL])
-    hass.config_entries.async_update_entry(entry, options=options, minor_version=21)
+    control = options.get(CONTROL)
+    moved = vt_settings_set(control) if has_control_section(options) else {}
+    if isinstance(control, Mapping):
+        options[CONTROL] = without_vt_settings(control)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=22)
+    if moved:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"{VT_SETTINGS_ISSUE}_{entry.entry_id}",
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=VT_SETTINGS_ISSUE,
+            translation_placeholders=moved,
+        )
+
+
+def _migrate_learning_pauses(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I12.9 (minor version 23, the user's decision of 2026-11-25): the plugin pauses no zone's
+    learning any more — that is the user's, through SmartPI 1.0's "heating unavailable" input or
+    an automation on the "boiler gives no heat" sensor — so the setting goes from the control
+    section."""
+    from .control_config import without_learning_pauses
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    if isinstance(control, Mapping):
+        options[CONTROL] = without_learning_pauses(control)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=23)
+
+
+def _migrate_frost(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I12.10 (minor version 24, the user's decision of 2026-11-25): the plugin's own frost
+    protection goes — VT's frost preset and central mode make the rooms call — so its settings go
+    from the control section. Where control was set up, one warning issue says that frost
+    protection is VT's alone now: a house that relied on the plugin's is otherwise unprotected."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .control_config import without_frost
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    tell = has_control_section(options)
+    if isinstance(control, Mapping):
+        options[CONTROL] = without_frost(control)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=24)
+    if tell:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"{FROST_ISSUE}_{entry.entry_id}",
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=FROST_ISSUE,
+        )
+
+
+def _migrate_rooms_from_vt(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I12.11 (minor version 25, the user's decision of 2026-11-25): the rooms are VT's — the
+    thermostats VT hands over and counts for its central boiler — so the zones' section goes,
+    "valves close when off" with it; the only circuit takes every room, its list of rooms (and
+    the devices it fed of them) going; several circuits keep theirs, the mapping of rooms to
+    circuits (``config.rooms_from_vt``)."""
+    from .config import rooms_from_vt
+
+    options = rooms_from_vt(entry.options)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=25)
 
 
 def _stored_float(raw: Any, default: float) -> float:
@@ -859,6 +939,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         async_read_control_state,
         control_store,
         main_store,
+        rooms_store,
     )
     from .forecasts import remove_partition_files
     from .journal import journal_store
@@ -874,16 +955,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_state_not_saved",  # the control store cannot be written (PB-16)
         "control_latched",  # the entry's one latch issue (V7)
         "no_zone_known",  # every zone unknown (decision 3, X3)
-        "frost_zone_closed",  # a cold room VT keeps closed (decision 4, X4)
         KIND_ISSUE,  # the thermostat-terminals question not answered (X6)
         "wall_thermostat_fallback",  # the wall thermostat on a gateway set low (X6)
         "lowest_water_suggestion",  # the lowest water temperature's suggestion (X6)
         "control_options_invalid",
-        "auto_tpi_blocked",
-        "learning_not_paused",
         "zone_cycle_short",  # VT zones cycling under 10 min while controlling (K4)
-        "learning_not_resumed",  # SmartPI resumes given up after a day (Y4)
-        "vt_central_entry_not_running",  # VT's central entry not running (X7)
+        "vt_command_not_helper",  # VT's central boiler commands switch anything else (I12)
         UNREADABLE_ISSUE,
         NOT_HEATED_ISSUE,  # a failed setup left the house unheated (SB-10)
         # Y1: the notifications (a reload keeps them), the hand-back issues, the migration's.
@@ -894,6 +971,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "boiler_fault",
         *HAND_BACK_ISSUES,
         REACTIONS_REMOVED_ISSUE,
+        VT_SETTINGS_ISSUE,
+        FROST_ISSUE,
         # P-94: the installation's warnings (Y3).
         *(f"{INSTALLATION_ISSUE}_{code.value}" for code in INSTALLATION_WARNINGS),
     ):
@@ -908,23 +987,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     read = await async_read_control_state(
         hass, entry.entry_id, entry.options, main=store, control=control
     )
-    # PB-51: SmartPI zones left paused are resumed and read back; any still off is told, with
-    # an issue that outlives the entry.
-    await async_import_module(hass, f"{__package__}.control")
-    from .control import async_resume_left_learning
-
-    left = await async_resume_left_learning(hass, read.state)
-    if left:
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            f"learning_left_off_after_removal_{entry.entry_id}",
-            is_fixable=False,
-            is_persistent=True,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key="learning_left_off_after_removal",
-            translation_placeholders={"zones": ", ".join(left)},
-        )
     if read.owed:
         ir.async_create_issue(
             hass,
@@ -935,11 +997,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             severity=ir.IssueSeverity.ERROR,
             translation_key="hand_back_owed_after_removal",
         )
-    # Nothing of the entry stays behind: its stores — the last-run record too — and its
-    # forecast weeks.
+    # Nothing of the entry stays behind: its stores — the last-run record and the rooms'
+    # history too — and its forecast weeks.
     await control.async_remove()
     await alive_store(hass, entry.entry_id).async_remove()
     await journal_store(hass, entry.entry_id).async_remove()
+    await rooms_store(hass, entry.entry_id).async_remove()
     await store.async_remove()
     await hass.async_add_executor_job(
         remove_partition_files, Path(hass.config.path(".storage")), entry.entry_id
@@ -1052,19 +1115,14 @@ def _hand_back_unit(
 ) -> ControlUnit | None:
     """Control is not in the options, but the last run left a hand-back owed (``stored``, the
     control state read at setup): a unit built from the options that took the boiler makes it,
-    and does nothing else but follow the SmartPI resumes it left. With nothing owed but such
-    resumes, a unit without options only follows them (C15)."""
+    and does nothing else."""
     from homeassistant.helpers import issue_registry as ir
 
     from .control import ControlUnit
-    from .control_config import ControlOptions, parse_control
+    from .control_config import parse_control
 
     if not owes_hand_back(stored):
-        if not _learning_left(stored):
-            return None
-        unit = ControlUnit(hass, coordinator, ControlOptions(), follow_learning=True)
-        unit.restore(stored)
-        return unit
+        return None
     taken_with = stored.get("taken_with")
     options = None
     if isinstance(taken_with, Mapping):
@@ -1096,7 +1154,7 @@ def _hand_back_unit(
 async def _async_forget_control_session(coordinator: SmartBoilerCoordinator) -> None:
     """Control is not in the options: the wish and the last command the last run stored go at
     once, so control added back later starts off, with nothing to give again. A unit that only
-    hands back or follows learning stores them so itself."""
+    hands back stores them so itself."""
     stored = coordinator.stored_control
     if not stored.get("enabled") and stored.get("last_command") is None:
         return
@@ -1111,13 +1169,6 @@ def _forget_latch_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     for key in ("control_latched", *HAND_BACK_ISSUES):
         ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
-
-
-def _learning_left(stored: Mapping[str, Any]) -> bool:
-    """Whether the last run left SmartPI zones paused, or resumes still to be followed."""
-    return any(
-        isinstance(stored.get(key), Mapping) and stored[key] for key in ("paused", "resuming")
-    )
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:

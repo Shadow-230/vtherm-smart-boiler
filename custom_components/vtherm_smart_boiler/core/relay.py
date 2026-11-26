@@ -1,8 +1,8 @@
 """The relay of an on/off boiler (class 3, X8): what is written to it, what its own reported state
 means, and whether the boiler shows that it heats.
 
-A boiler switched on and off by a relay is controlled as Versatile Thermostat's own central boiler
-did, with the plugin's safeguards. The relay's own settings — whether it reports its state, what
+A boiler switched on and off by a relay is switched as Versatile Thermostat's central boiler decides
+(I12), with the plugin's safeguards. The relay's own settings — whether it reports its state, what
 it does after a power cut, whether it has a switch-off timer — are the user's declaration: the
 plugin cannot read them, and each unanswered one takes its cautious reading ("I don't know").
 
@@ -131,7 +131,7 @@ RELAY_START_SENDS = 3  # the session's first sends that may all go unconfirmed (
 # taking commands: long enough for a slow link to deliver a resend, short enough that a boiler
 # stuck on, or a house left unheated, is reported within a quarter of an hour.
 RELAY_NOT_TAKEN_CHECKS = 3
-REPEAT_DEFAULT_S = 300.0  # the repeat interval without one entered or carried over from VT
+REPEAT_DEFAULT_S = 300.0  # the repeat interval without one entered
 REPEAT_MIN_S = 10.0
 REPEAT_MAX_S = 300.0  # a relay restarted in the wrong state stays so at most this long
 # Decided by the user 2026-10-03 (K4.2): the shortest switch-off timer the plugin takes for the

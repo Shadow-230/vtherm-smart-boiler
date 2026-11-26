@@ -60,7 +60,7 @@ class LongRunClass(StrEnum):
 @dataclass(frozen=True, slots=True)
 class RoomLook:
     """One counted room now: its temperature and setpoint, and whether it is short — fully open
-    and short by the comfort correction's own rule, with SmartPI's learning band."""
+    and short by the comfort correction's own rule."""
 
     zone_id: str
     temperature: float | None

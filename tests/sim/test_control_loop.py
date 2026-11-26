@@ -8,13 +8,25 @@ from functools import cache
 
 import pytest
 from custom_components.boiler_sim.plant import boiler_setpoint
-from custom_components.boiler_sim.profiles import BOILERS, HOUSES, BoilerProfile, radiator_zones
+from custom_components.boiler_sim.profiles import (
+    BOILERS,
+    HOUSES,
+    BoilerProfile,
+    light_bedroom_zones,
+    radiator_zones,
+    underfloor_zones,
+)
 
 from custom_components.vtherm_smart_boiler.control_config import parse_control
 from custom_components.vtherm_smart_boiler.core.comfort_rules import STARTS_WINDOW_S
-from custom_components.vtherm_smart_boiler.core.controller import ControlConfig, ControlInputs
+from custom_components.vtherm_smart_boiler.core.controller import (
+    OVERHEAT_K,
+    ControlConfig,
+    ControlInputs,
+)
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.cycles import find_burns
+from custom_components.vtherm_smart_boiler.core.demand import zone_wants_heat
 from custom_components.vtherm_smart_boiler.core.guards import GuardConfig, WriteType
 from custom_components.vtherm_smart_boiler.core.history import History
 from custom_components.vtherm_smart_boiler.core.installation import (
@@ -26,12 +38,21 @@ from custom_components.vtherm_smart_boiler.core.installation import (
 )
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits
 from custom_components.vtherm_smart_boiler.core.loop import LoopConfig, LoopState, loop_step
+from custom_components.vtherm_smart_boiler.core.modulation_cap import (
+    CapInputs,
+    CapReason,
+    CapState,
+    cap_floor,
+    cap_level,
+    cap_step,
+)
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from sim.simulator import (
     DAY,
     HOUR,
+    LEARNING_PHASES,
     Scenario,
     SimCommand,
     SimResult,
@@ -70,6 +91,16 @@ class LoopController:
     # the flame seen going on without hot water, within the window.
     flame_seen: bool | None = None
     started: list[float] = field(default_factory=list)
+    corrections: list[tuple[float, float]] = field(default_factory=list)  # the comfort correction
+    # The zones' cycle as VT's ``entry_infos`` gives it (I13.3: the correction's pace); ``None``:
+    # not known, as for thermostatic heads.
+    cycle_s: float | None = None
+    # I13.7: the modulation cap asked for, in % (``None``: off), as the control unit applies it
+    # (``core.modulation_cap``); what it decided, and the cap in force.
+    cap_pct: float | None = None
+    cap_state: CapState = field(default_factory=CapState)
+    capped: float | None = None
+    caps: list[tuple[float, float | None]] = field(default_factory=list)
 
     def writes(self, start: float, end: float) -> list[tuple[float, object]]:
         """Every setpoint and heating write ``loop_step`` asked for in ``[start, end)``."""
@@ -87,6 +118,7 @@ class LoopController:
 
     def __call__(self, t: float, view: SimView) -> SimCommand | None:
         link = self.link(t)
+        zones = tuple(zone_state(z, t, self.cycle_s) for z in view.zones)
         inputs = ControlInputs(
             now=t,
             enabled=self.enabled(t),
@@ -94,33 +126,61 @@ class LoopController:
             flame=view.flame if link else None,
             dhw=view.dhw if link else None,
             outdoor_sensor=view.outdoor if link else None,
-            zones=tuple(zone_state(z, t) for z in view.zones),
+            zones=zones,
             starts=self._starts(t, view, link),
+            # I12: VT's central boiler with its count of 1 switches the helper.
+            vt_heat=any(z.is_known(t, None) and zone_wants_heat(z) for z in zones),
         )
         confirmed = view.confirmed_setpoint if link else None
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)
+        self.corrections.append((t, self.state.control.correction))
         called = any(z.opening > 0.0 for z in view.zones)  # VT's rule (2026-10-14)
         self.heating.append((t, out.heating_on, called))
         if out.setpoint is not None:
             self.setpoints.append((t, out.setpoint.value))
         if out.ch_enable is not None:
             self.switches.append((t, out.ch_enable))
+        cap = self._cap(t, view, out.hand_back) if link else None
         if out.hand_back:
             self.hand_backs.append(t)
-            return SimCommand(hand_back=True)
+            return SimCommand(hand_back=True, max_modulation=cap)
         if not link:
             return None  # the gateway the plugin cannot hear gets nothing either
-        if out.setpoint is None and out.ch_enable is None:
+        if out.setpoint is None and out.ch_enable is None and cap is None:
             return None
         return SimCommand(
             ch_enable=out.ch_enable,
             setpoint=out.setpoint.value if out.setpoint is not None else None,
+            max_modulation=cap,
         )
 
+    def _cap(self, t: float, view: SimView, hand_back: bool) -> float | None:
+        """The cap's command where it changes: its level, or −1 to clear it."""
+        if self.cap_pct is None:
+            return None
+        level = cap_level(self.cap_pct, cap_floor(None, None))
+        inputs = CapInputs(
+            t,
+            self.state.control.controlling and not hand_back,
+            view.dhw,
+            flame=view.flame,
+            flow=view.flow,
+            setpoint=self.state.setpoint.written,
+            capped=self.capped is not None,
+        )
+        self.cap_state, reason = cap_step(self.cap_state, inputs, level)
+        wanted = float(level) if reason is CapReason.APPLIED else None
+        if wanted == self.capped:
+            return None
+        self.capped = wanted
+        self.caps.append((t, wanted))
+        return -1.0 if wanted is None else wanted
 
-def zone_state(zone: SimZoneView, t: float) -> ZoneState:
+
+def zone_state(zone: SimZoneView, t: float, cycle_s: float | None = None) -> ZoneState:
     """A zone as VT publishes it: a thermostatic valve's opening; a switch zone under TPI — VT's
-    over_switch — its duty (``on_percent``) and whether its device is on now, no opening."""
+    over_switch — or SmartPI, its duty (``on_percent``) and whether its device is on now, no
+    opening. Nothing of SmartPI's phase (I12.9). ``cycle_s``: its cycle in VT's settings."""
     if zone.on_percent is not None:
         on = zone.opening > 0.5
         return ZoneState(
@@ -132,6 +192,7 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
             device_active=on,
             calling=on,
             reported_at=t,
+            cycle_s=cycle_s,
         )
     return ZoneState(
         zone.zone_id,
@@ -140,6 +201,7 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
         heating_enabled=True,
         valve_open=zone.opening,
         reported_at=t,
+        cycle_s=cycle_s,
     )
 
 
@@ -185,6 +247,49 @@ def test_rooms_hold_their_setpoints_under_control(mean: float, correction: bool)
         assert min(temps) > targets[zid] - short_by, zid
         assert max(temps) < targets[zid] + 1.5, zid
     assert result.override_s > 0.95 * 2 * DAY  # control held the boiler the whole time
+
+
+# L19 (J4 of 2026-11-22/24): the light bedroom learning SmartPI from scratch, the comfort correction
+# on, at the weather the gateway's instance learned in (+3 °C, the daily swing).
+CORRECTION_ON = replace(LOOP, control=replace(LOOP.control, comfort_correction=True))
+
+
+def learning_bedroom(zones) -> tuple[SimResult, LoopController]:
+    controller = LoopController(CORRECTION_ON)
+    result = simulate(
+        scenario([3.0], controller, zones=zones, learning=frozenset({"zone_bedroom"}))
+    )
+    return result, controller
+
+
+def test_smartpi_learns_in_the_light_bedroom_with_the_correction_on_and_no_room_too_warm() -> None:
+    """Learning, the bedroom's valve is fully open down to the bottom of its band, 0.3 K under
+    its setpoint — short against VT's setpoint (I12.9: no learning band of the plugin's) — so the
+    correction rises for it; SmartPI's ten phases still end within 14 h, and no room is ever
+    ``OVERHEAT_K`` over its setpoint."""
+    result, controller = learning_bedroom(light_bedroom_zones())
+    phases = result.learning_phases["zone_bedroom"]
+    assert len(phases) == LEARNING_PHASES, phases
+    assert phases[-1][1] < 14 * HOUR
+    assert max(k for _t, k in controller.corrections) > 1.0
+    targets = {z.zone_id: z.target for z in light_bedroom_zones()}
+    for zid, temps in late_rooms(result, 0.0, DAY).items():
+        assert max(temps) < targets[zid] + OVERHEAT_K, zid
+
+
+def test_the_correction_does_not_rise_for_the_learning_bedroom() -> None:
+    """With the other rooms at the curve's room temperature only the learning bedroom is short —
+    and never for an hour without a break: its on/off phases swing it from 0.3 K under its
+    setpoint to 0.5 K over (I13.3). The correction never rises for it, while it learns or after
+    (before I13.3 it rose over 1 K and fell back within 3 h of SmartPI's last phase)."""
+    zones = tuple(
+        z if z.zone_id == "zone_bedroom" else replace(z, target=CURVE.room)
+        for z in light_bedroom_zones()
+    )
+    result, controller = learning_bedroom(zones)
+    assert len(result.learning_phases["zone_bedroom"]) == LEARNING_PHASES
+    assert controller.corrections
+    assert max(k for _t, k in controller.corrections) <= 0.0
 
 
 def test_setpoints_stay_within_the_limits_even_in_deep_frost() -> None:
@@ -405,7 +510,9 @@ def _starts_both_ways(
     controlled = simulate(
         replace(
             base,
-            controller=LoopController(own_curve_loop(boiler, comfort_correction, flow_shift)),
+            controller=LoopController(
+                own_curve_loop(boiler, comfort_correction, flow_shift), cycle_s=cycle_s
+            ),
         )
     )
     return own, controlled
@@ -524,10 +631,10 @@ CORRECTION_ON_FAILS = pytest.mark.xfail(
     reason=(
         "K4.1 (S-15): the comfort correction, when switched on, rises to +3 K while a TPI zone "
         "sits at full duty short of its target, and every zone's cycle then stops the burner: "
-        "x5.2 at -5 °C (x5 in the heavier house before L16; research/2026-10-02-z3-starts-"
-        "ratio.md) — why it is off by default. Rule 3 (decision 11 of 0.2.3) leaves it so: the "
-        "hours before the correction began, the house warming up, show as many starts as after "
-        "(research/2026-10-06-p2-4-report.md)"
+        "x3.6 at a steady -5 °C since I13.3's slower pace (x5.2 before; x5 in the heavier house "
+        "before L16; research/2026-10-02-z3-starts-ratio.md) — why it is off by default. Rule 3 "
+        "(decision 11 of 0.2.3) leaves it so: the hours before the correction began, the house "
+        "warming up, show as many starts as after (research/2026-10-06-p2-4-report.md)"
     ),
 )
 
@@ -538,8 +645,8 @@ CORRECTION_ON_FAILS = pytest.mark.xfail(
 def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) -> None:
     """The cost the option's text names: with the comfort correction switched on, the same
     house fails J4's criterion at −5 °C. At a steady +8 °C it passes in the house of 22 h
-    (L16): the correction rises to about +1.2 K, the starts rise and rule 3 brings it back
-    (x1.00); in the heavier house before, the warm-up's starts hid the rise (x1.75)."""
+    (L16): since I13.3 the correction rises to about +0.8 K, and rule 3 brings it back (x0.99);
+    in the heavier house before, the warm-up's starts hid the rise (x1.75)."""
     own, controlled = starts_both_ways(mean, comfort_correction=True)
     assert meets_starts_criterion(own, controlled)
 
@@ -547,8 +654,9 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
 @pytest.mark.parametrize("mean", [8.0, -5.0])
 def test_the_correction_buys_no_more_comfort_than_its_text_names(mean: float) -> None:
     """The option's text: "for under 0.15 K of comfort". With the daily swing, every room's mean
-    over the compared day is that close to its mean with the correction off (at most 0.12 K,
-    the bathroom at +8 °C), for the starts the next test pins."""
+    over the compared day is that close to its mean with the correction off (at most 0.02 K
+    since I13.3's slower pace; 0.12 K before, the bathroom at +8 °C), for the starts the next
+    test pins."""
     _own, off = starts_both_ways(mean, comfort_correction=False, swing=SWING_K)
     _own, on = starts_both_ways(mean, comfort_correction=True, swing=SWING_K)
     assert all(warmer < 0.15 for warmer in comfort_shortfall(on, off).values())
@@ -560,12 +668,14 @@ def test_the_correction_buys_no_more_comfort_than_its_text_names(mean: float) ->
         (8.0, False, SWING_K, 1.07, 1.17),
         (-5.0, False, SWING_K, 1.95, 2.15),
         (8.0, True, 0.0, 0.95, 1.05),
-        (-5.0, True, 0.0, 4.9, 5.4),
-        # The correction on — with the daily swing, x1.93 and x5.96 (the "about 2 to 6 times"
-        # the option's text names; x1.39 and x6.28 in the heavier house before L16): why it is
-        # off by default since K4 (2026-11-17).
-        (8.0, True, SWING_K, 1.8, 2.05),
-        (-5.0, True, SWING_K, 5.7, 6.2),
+        # I13.3's slower pace: x3.56 at a steady -5 °C (x5.2 before) — the "up to about 3.5
+        # times" the option's text names.
+        (-5.0, True, 0.0, 3.4, 3.75),
+        # The correction on — with the daily swing, x1.31 and x2.19 since I13.3 (x1.93 and x5.96
+        # before; x1.39 and x6.28 in the heavier house before L16), against x1.12 and x2.04 with
+        # it off.
+        (8.0, True, SWING_K, 1.25, 1.4),
+        (-5.0, True, SWING_K, 2.1, 2.3),
     ],
     ids=[
         "swing_plus_8",
@@ -581,11 +691,121 @@ def test_the_documented_starts_ratios_hold(
 ) -> None:
     """PB-94: the two strict xfails above fail on the starts criterion alone; this pins the
     ratios their reasons document (x1.12 and x2.04 with the daily swing and the correction off,
-    x1.00 and x5.2 with the correction on; the house of 22 h, L16), and those of the defaults
-    since G11 — the correction on with the daily swing — so a far worse ratio, or a crash,
-    shows here instead of passing as the expected failure. Comfort parity holds in each (within
-    0.05 K)."""
+    x0.99 and x3.56 with the correction on since I13.3; the house of 22 h, L16), and the
+    correction on with the daily swing — so a far worse ratio, or a crash, shows here instead of
+    passing as the expected failure. Comfort parity holds in each (within 0.05 K)."""
     own, controlled = starts_both_ways(mean, comfort_correction=correction, swing=swing)
     ratio = starts(controlled, DAY, 2 * DAY) / starts(own, DAY, 2 * DAY)
     assert low <= ratio <= high, ratio
     assert all(short <= 0.05 for short in comfort_shortfall(own, controlled).values())
+
+
+# --- I13.8: the slower outdoor mean of an underfloor circuit ---------------------------------
+
+
+def underfloor_loop() -> LoopConfig:
+    """The control the plugin runs for the underfloor house (``parse_control``): one circuit,
+    every room underfloor, its highest water 45 °C; the curve's design flow 38 °C, its lowest
+    20 °C, through 20 °C (Manual) — what its options give, the outdoor mean included."""
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main", max_flow=45.0),),
+        tuple(Zone(z.zone_id, "main", z.emitter) for z in underfloor_zones()),
+    )
+    control = {
+        "write_path": "opentherm_gw",
+        "gateway_id": "sim",
+        "confirmed_entity": "sensor.gateway_control_setpoint",
+        "topology": "gateway_standalone",
+        "thermostat_kind": "none",
+        "curve": {"design_outdoor": -15.0, "design_flow": 38.0, "room_mode": "manual"},
+        "hard_min": 20.0,
+    }
+    return parse_control(control, installation, None).loop
+
+
+def test_an_underfloor_house_on_the_slower_outdoor_mean_is_no_colder() -> None:
+    """I13.8 on the simulator: the underfloor house (22 h) on sunny days at +3 °C, a ±6 K daily
+    swing. Its options give the 12-hour outdoor mean; against the 3-hour mean the water keeps
+    nearer the night's — its lowest about 1.4 K higher (28.7 °C against 27.3 °C) — no room is
+    colder, the gas is within 1 % (185.5 kWh against 185.4 kWh over two days) and the burner
+    starts under once an hour. The simulator shows no gain either: its floors pass their heat on
+    within about 2 h (P-112), where real rooms with underfloor heating take 20–70 h (Kull et al.
+    2017) — the reason for the slower mean."""
+    slow = underfloor_loop()
+    assert slow.control.outdoor_time_constant_s == 12 * HOUR
+    assert slow.control.curve.exponent == 1.1
+    fast = replace(slow, control=replace(slow.control, outdoor_time_constant_s=3 * HOUR))
+    runs = {}
+    for loop in (fast, slow):
+        controller = LoopController(loop)
+        result = simulate(
+            scenario(
+                [3.0, 3.0, 3.0],
+                controller,
+                boiler=BOILERS["condensing_small"],
+                zones=underfloor_zones(),
+                outdoor=daily_cycle([3.0, 3.0, 3.0], amplitude=6.0),
+            )
+        )
+        lowest = min(v for t, v in controller.setpoints if t >= DAY)
+        runs[loop.control.outdoor_time_constant_s] = (result, lowest)
+    (fast_run, fast_lowest), (slow_run, slow_lowest) = runs[3 * HOUR], runs[12 * HOUR]
+    assert slow_lowest >= fast_lowest + 1.0
+    fast_rooms = late_rooms(fast_run, DAY, 3 * DAY)
+    for zid, temps in late_rooms(slow_run, DAY, 3 * DAY).items():
+        assert min(temps) >= min(fast_rooms[zid]) - 0.1, zid  # the rooms read to 0.1 K
+    fast_gas, slow_gas = sum(fast_run.daily_ch_kwh[1:]), sum(slow_run.daily_ch_kwh[1:])
+    assert abs(slow_gas / fast_gas - 1.0) <= 0.01
+    assert starts(slow_run, DAY, 3 * DAY) / 48.0 <= 1.0
+
+
+# --- I13.7: the modulation cap ------------------------------------------------------------------
+
+
+def capped_and_not(boiler: str, mean: float) -> tuple[SimResult, SimResult, LoopController]:
+    """Two days at ``mean`` with the ±3 K swing, the three TPI zones on VT's 5-min cycle, the
+    boiler under the plugin's control — without the cap, and with it at 30 % (the floor)."""
+    profile = BOILERS[boiler]
+    base = Scenario(
+        profile,
+        HOUSES["average"],
+        radiator_zones(),
+        daily_cycle([mean, mean], amplitude=SWING_K),
+        days=2,
+        step_s=10.0,
+        control_period_s=10.0,
+        tpi=TpiConfig(cycle_s=VT_DEFAULT_CYCLE_S),
+    )
+    free = simulate(replace(base, controller=LoopController(own_curve_loop(profile, None))))
+    controller = LoopController(own_curve_loop(profile, None), cap_pct=30.0)
+    return free, simulate(replace(base, controller=controller)), controller
+
+
+def test_the_cap_changes_nothing_where_the_boilers_minimum_is_the_limit() -> None:
+    """I13.7 on the simulator, at low load: the oversized boiler (8–24 kW) at +8 °C starts as
+    often capped at 30 % as not (334 times a day), with the same gas and the same rooms — its
+    minimum, not its maximum, makes it cycle (Bennett 2018). The simulator's burner modulates
+    down at once, so it shows none of the gain a boiler running near its maximum in short bursts
+    might have (HEM-VAL-05): the reason the cap is only offered."""
+    free, capped, controller = capped_and_not("short_cycling", 8.0)
+    assert controller.caps[0][1] == 30.0
+    assert starts(capped, DAY, 2 * DAY) == starts(free, DAY, 2 * DAY)
+    assert abs(capped.daily_ch_kwh[1] / free.daily_ch_kwh[1] - 1.0) <= 0.01
+    assert all(abs(short) <= 0.05 for short in comfort_shortfall(free, capped).values())
+
+
+def test_the_cap_lifts_itself_on_the_coldest_day() -> None:
+    """I13.7 on the simulator, at the design outdoor temperature (−15 °C, the 4–25 kW boiler,
+    about 8 kW needed): capped at 30 %, the water falls short while the house warms up, so the
+    cap is lifted after 10 minutes, for 3 hours, then applied again; no room is more than 0.1 K
+    colder on average, the gas is the same within 1 %, and the burner starts no more often (35
+    against 51 a day)."""
+    free, capped, controller = capped_and_not("condensing_large", -15.0)
+    levels = [level for _t, level in controller.caps]
+    assert levels[:3] == [30.0, None, 30.0]
+    lifted = controller.caps[2][0] - controller.caps[1][0]
+    assert lifted == pytest.approx(3 * HOUR, abs=60.0)
+    assert all(short <= 0.1 for short in comfort_shortfall(free, capped).values())
+    assert abs(capped.daily_ch_kwh[1] / free.daily_ch_kwh[1] - 1.0) <= 0.01
+    assert starts(capped, DAY, 2 * DAY) <= starts(free, DAY, 2 * DAY)

@@ -18,12 +18,12 @@
       "critical_zone": { "default": "mdi:radiator" },
       "control_state": { "default": "mdi:state-machine" },
       "demand_count": { "default": "mdi:radiator" },
-      "demand_power": { "default": "mdi:flash" },
       "control_setpoint": { "default": "mdi:thermometer-water" }
     },
     "binary_sensor": {
       "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } },
       "boiler_called": { "default": "mdi:fire", "state": { "off": "mdi:fire-off" } },
+      "no_heat": { "default": "mdi:radiator-off", "state": { "off": "mdi:radiator" } },
       "connection": { "default": "mdi:lan-connect", "state": { "off": "mdi:lan-disconnect" } },
       "alarm_frequent_starts": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_unstable_ignition": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
@@ -42,8 +42,6 @@
       "alarm_control_error": { "default": "mdi:alert-octagon", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_hand_back_failed": { "default": "mdi:hand-back-left-off", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_boiler_link_lost": { "default": "mdi:lan-disconnect", "state": { "off": "mdi:check-circle-outline" } },
-      "alarm_zone_unknown": { "default": "mdi:help-circle-outline", "state": { "off": "mdi:check-circle-outline" } },
-      "alarm_frost_not_warming": { "default": "mdi:snowflake-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_correction_at_limit": { "default": "mdi:chart-bell-curve-cumulative", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_outdoor_sensor_suspect": { "default": "mdi:thermometer-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_monitor_failed": { "default": "mdi:eye-off", "state": { "off": "mdi:check-circle-outline" } },
@@ -51,7 +49,7 @@
       "alarm_commands_lost": { "default": "mdi:message-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_confirmation_missing": { "default": "mdi:help-rhombus-outline", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_no_zone_known": { "default": "mdi:home-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
-      "alarm_demand_criterion_no_data": { "default": "mdi:database-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_vt_decision_unknown": { "default": "mdi:help-circle-outline", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_relay_unreachable": { "default": "mdi:electric-switch", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_boiler_not_responding": { "default": "mdi:fire-off", "state": { "off": "mdi:check-circle-outline" } }
     },

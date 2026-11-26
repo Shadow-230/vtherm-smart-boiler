@@ -7,20 +7,25 @@ import random
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core import building
 from custom_components.vtherm_smart_boiler.core.building import (
     ANNUAL_ENERGY_CONFIDENCE,
     CLAMPED_CONFIDENCE,
+    MAX_RANGE_SHARE,
     MAX_THRESHOLD_ERROR_K,
-    MEASURED_RANGE_SHARE,
+    MAX_USED_RANGE_SHARE,
     MIN_FIT_DAYS,
     MIN_KNOWN_DAYS,
     MIN_QUALITY,
+    MIN_RANGE_SHARE,
     SINGLE_PARAMETER_PENALTY,
     DayPoint,
     LoadModel,
+    change_point,
     fit_daily_load,
     loss_from_annual_energy,
     loss_from_design_load,
+    measured_range,
     threshold_error,
     trusted,
     trusted_load_model,
@@ -33,6 +38,7 @@ from custom_components.vtherm_smart_boiler.core.parameters import (
     ParameterSet,
     Source,
 )
+from custom_components.vtherm_smart_boiler.core.regression import fit_line
 
 # The threshold a fit is given: the user's entry, or the class default nothing supports (P-32).
 ENTERED_15 = Estimate(15.0, Source.ENTERED)
@@ -496,9 +502,8 @@ def test_a_fit_from_under_three_weeks_of_heating_is_shown_never_used(
     """K4 (the user's decision of 2026-11-17): published methods need about 3 weeks of
     heating-season data — a fit from fewer than ``MIN_KNOWN_DAYS`` heating days is shown at
     ``CLAMPED_CONFIDENCE``, never used, both values and either kind of fit; from 21 its
-    confidence is weighed as before (the loss alone, with its penalty, a little later). A
-    measured loss is shown with a ±20 % range."""
-    assert (MIN_KNOWN_DAYS, MEASURED_RANGE_SHARE) == (21, 0.2)
+    confidence is weighed as before (the loss alone, with its penalty, a little later)."""
+    assert MIN_KNOWN_DAYS == 21
     wide = fit_daily_load(_days(0.2, 16.0, _band(-5.0, 13.0, count)), DEFAULT_15)
     alone = fit_daily_load(_days(0.2, 15.0, _band(8.0, 11.5, count)), ENTERED_15)
     assert wide is not None
@@ -559,3 +564,214 @@ def test_the_threshold_error_by_the_delta_method() -> None:
     over any spread: s = 2, |slope| = 4, n = 3, Sxx = 0.5, the threshold 2 K from the mean."""
     error = threshold_error([0.0, 0.5, 1.0], [12.0, 7.0, 4.0], [10.0, 7.0, 4.0], -4.0, 2.5)
     assert error == pytest.approx(2.5 / math.sqrt(3.0))
+
+
+# --- I13.4: the range from the fit, the change point ------------------------------------------
+
+
+def _dated(points: list[DayPoint], apart: float = 86400.0) -> list[DayPoint]:
+    """The points with their days' starts, ``apart`` seconds after each other."""
+    return [DayPoint(p.outdoor_mean, p.energy_kwh, i * apart) for i, p in enumerate(points)]
+
+
+def _line_share(days: list[DayPoint]) -> float:
+    """The range the fit should give: t times the slope's widened error over the slope."""
+    line = fit_line([d.outdoor_mean for d in days], [d.energy_kwh for d in days])
+    assert line is not None
+    return line.t * line.slope_error / -line.slope
+
+
+def test_a_clean_fit_has_the_floor_range() -> None:
+    """Days on a perfect line: no error, the range is the ±15 % floor (I13.4)."""
+    fit = fit_daily_load(_dated(_days(0.2, 16.0, _band(-5.0, 13.0))), DEFAULT_15)
+    assert fit is not None
+    assert fit.loss is not None
+    assert fit.loss.range_share == MIN_RANGE_SHARE
+    assert measured_range(fit.loss) == pytest.approx((0.17, 0.23))
+    assert fit.threshold is not None
+    assert fit.threshold.range_share is None  # the threshold keeps its own error rule
+
+
+def test_a_noisy_fit_takes_its_range_from_the_fit() -> None:
+    """Thirty days, 15 % noise: the range is t times the slope's error over the slope, wider
+    than the floor; its days in time order."""
+    days = _dated(_noisy(0.2, 16.0, _band(-5.0, 13.0), 0.15, seed=5))
+    fit = fit_daily_load(days, DEFAULT_15)
+    assert fit is not None
+    assert fit.loss is not None
+    assert fit.loss.range_share is not None
+    assert fit.loss.range_share == pytest.approx(_line_share(days))
+    assert fit.loss.range_share > MIN_RANGE_SHARE
+
+
+def _wave(order: list[int], error: float = 12.0) -> list[DayPoint]:
+    """Thirty days of a 0.2 kW/K house over −5…13 °C, each off by ``error`` kWh either way in
+    the pattern ``order`` gives (+1 or −1 per day)."""
+    return _dated(
+        [
+            DayPoint(t, 24 * 0.2 * (16.0 - t) + error * sign)
+            for t, sign in zip(_band(-5.0, 13.0), order, strict=True)
+        ]
+    )
+
+
+def test_correlated_days_widen_the_range() -> None:
+    """The same errors, once day after day alike (a cold spell, the building's mass) and once
+    alternating: the correlated days give the wider range."""
+    alike = _wave(([1] * 3 + [-1] * 3) * 5)
+    alternating = _wave([1, -1] * 15)
+    wide = fit_daily_load(alike, DEFAULT_15)
+    narrow = fit_daily_load(alternating, DEFAULT_15)
+    assert wide is not None
+    assert narrow is not None
+    assert wide.loss is not None
+    assert narrow.loss is not None
+    assert wide.loss.range_share is not None
+    assert narrow.loss.range_share is not None
+    assert wide.loss.range_share > narrow.loss.range_share
+
+
+def test_days_are_taken_in_time_order_and_a_gap_breaks_their_pair() -> None:
+    """Days handed over in any order are put in time order; days a week apart do not follow
+    each other, so they get no allowance for correlation."""
+    alike = _wave(([1] * 3 + [-1] * 3) * 5)
+    shuffled = alike[::2] + alike[1::2]
+    apart = _dated(alike, 7 * 86400.0)
+    in_order = fit_daily_load(alike, DEFAULT_15)
+    any_order = fit_daily_load(shuffled, DEFAULT_15)
+    weekly = fit_daily_load(apart, DEFAULT_15)
+    assert in_order is not None
+    assert any_order is not None
+    assert weekly is not None
+    assert in_order.loss is not None
+    assert any_order.loss is not None
+    assert weekly.loss is not None
+    assert any_order.loss.range_share == pytest.approx(in_order.loss.range_share)
+    assert weekly.loss.range_share is not None
+    assert in_order.loss.range_share is not None
+    assert weekly.loss.range_share < in_order.loss.range_share
+
+
+def test_a_range_too_wide_is_shown_never_used() -> None:
+    """A month whose days are off by 3 kWh in three runs of ten (a long spell): the line fits
+    well, but such correlated days leave hardly a degree of freedom — the range is held at
+    ±100 %, wider than ±50 %: the loss is shown, never used."""
+    fit = fit_daily_load(_wave([1] * 10 + [-1] * 10 + [1] * 10, error=3.0), DEFAULT_15)
+    assert fit is not None
+    assert fit.quality > 0.95
+    assert fit.loss is not None
+    assert fit.loss.range_share == MAX_RANGE_SHARE
+    assert fit.loss.range_share > MAX_USED_RANGE_SHARE
+    assert fit.loss.confidence == CLAMPED_CONFIDENCE
+    assert not trusted(fit.loss)
+
+
+def test_the_loss_alone_carries_its_range_too() -> None:
+    """Fitted alone through the user's threshold, the loss has its range — the floor for clean
+    days, wider for days off by ±20 % in runs of five."""
+    clean = fit_daily_load(_dated(_days(0.2, 15.0, _band(8.0, 11.5))), ENTERED_15)
+    noisy = fit_daily_load(_runs_off(0.2, ([1] * 5 + [-1] * 5) * 3), ENTERED_15)
+    assert clean is not None
+    assert noisy is not None
+    assert clean.loss is not None
+    assert noisy.loss is not None
+    assert clean.loss.range_share == MIN_RANGE_SHARE
+    assert noisy.loss.range_share is not None
+    assert noisy.loss.range_share > MIN_RANGE_SHARE
+
+
+def test_a_loss_alone_too_uncertain_is_shown_never_used() -> None:
+    """Fitted alone over a month of days off by ±30 % in three runs of ten: its range is wider
+    than ±50 % — shown, never used."""
+    fit = fit_daily_load(_runs_off(0.3, [1] * 10 + [-1] * 10 + [1] * 10), ENTERED_15)
+    assert fit is not None
+    assert fit.loss is not None
+    assert fit.loss.range_share is not None
+    assert fit.loss.range_share > MAX_USED_RANGE_SHARE
+    assert fit.loss.confidence == CLAMPED_CONFIDENCE
+
+
+def _runs_off(share: float, order: list[int]) -> list[DayPoint]:
+    """Thirty days at 8…11.5 °C of a 0.2 kW/K house with a 15 °C threshold, each off by
+    ``share`` of its energy either way in the pattern ``order`` gives."""
+    return _dated(
+        [
+            DayPoint(t, 24 * 0.2 * (15.0 - t) * (1 + share * sign))
+            for t, sign in zip(_band(8.0, 11.5), order, strict=True)
+        ]
+    )
+
+
+def test_a_value_kept_before_ranges_has_none() -> None:
+    """A measured loss stored before I13.4 has no range until the next analysis fits one."""
+    assert measured_range(Estimate(0.2, Source.MEASURED, 0.8)) is None
+    assert measured_range(Estimate(0.2, Source.MEASURED, 0.8, None, 1.5)) == pytest.approx(
+        (0.0, 0.5)
+    )  # never below zero
+
+
+def _both_sides(warm: int) -> list[DayPoint]:
+    """A 0.2 kW/K house that needs heat below 17 °C: 30 days from −5 to 16.5 °C, and ``warm``
+    days from 18 °C up without heat."""
+    cold = _days(0.2, 17.0, _band(-5.0, 16.5))
+    return _dated([*cold, *(DayPoint(18.0 + i, 0.0) for i in range(warm))])
+
+
+def test_with_a_week_on_each_side_the_threshold_comes_from_the_days() -> None:
+    """I13.4: with at least a week of days on each side of the threshold in use (15 °C), the
+    change point is the house's own: 17 °C."""
+    assert change_point(_both_sides(10), 15.0) == pytest.approx(17.0)
+
+
+@pytest.mark.parametrize("warm", [0, 6])
+def test_without_a_week_on_each_side_no_change_point(warm: int) -> None:
+    """Six warm days are not a week: the threshold in use stays (``None``)."""
+    days = [d for d in _both_sides(warm) if d.outdoor_mean < 15.0 or d.energy_kwh == 0.0]
+    assert change_point(days, 15.0) is None
+
+
+def test_no_change_point_without_more_heat_on_colder_days() -> None:
+    """Days whose energy rises with the outdoor temperature show no heating threshold."""
+    days = [DayPoint(t, t) for t in _band(0.0, 25.0)]
+    assert change_point(days, 15.0) is None
+
+
+def test_the_change_point_keeps_cool_nights_out_of_the_heating_days() -> None:
+    """Days just above the house's threshold with a little heat (cool nights) flatten the line
+    when the threshold in use takes them in (20 °C, the user's): the change point leaves them
+    out, and the loss comes out right."""
+    cold = _days(0.2, 15.0, _band(-5.0, 14.5, 20))
+    nights = [DayPoint(15.5 + i * 0.5, 1.0) for i in range(8)]
+    summer = [DayPoint(20.5 + i, 0.0) for i in range(8)]
+    entered_20 = Estimate(20.0, Source.ENTERED)
+    found = fit_daily_load(_dated([*cold, *nights, *summer]), entered_20)
+    taken_in = fit_daily_load(_dated([*cold, *nights]), entered_20)  # no warm week: no point
+    assert found is not None
+    assert taken_in is not None
+    assert found.loss is not None
+    assert taken_in.loss is not None
+    assert found.loss.value == pytest.approx(0.2, rel=0.03)
+    assert taken_in.loss.value < 0.19
+
+
+def test_a_change_point_with_too_little_spread_below_fits_the_loss_alone() -> None:
+    """Days below the change point spread under 8 K: the loss alone, through the threshold
+    given (the user's), over the days below it."""
+    cold = _days(0.2, 15.0, _band(8.0, 14.0, 20))
+    summer = [DayPoint(16.0 + i, 0.0) for i in range(8)]
+    fit = fit_daily_load(_dated([*cold, *summer]), ENTERED_15)
+    assert fit is not None
+    assert fit.threshold is None
+    assert fit.loss is not None
+    assert fit.loss.value == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize(
+    ("fitted", "share"),
+    [(0.05, MIN_RANGE_SHARE), (0.3, 0.3), (7.0, MAX_RANGE_SHARE), (math.inf, MAX_RANGE_SHARE)],
+)
+def test_a_range_is_held_between_its_floor_and_its_cap(fitted: float, share: float) -> None:
+    """±15 % at least, ±100 % at most — an error with no degrees of freedom left (infinite, or
+    zero times infinite) is the widest."""
+    assert building._share(fitted) == share
+    assert building._share(math.nan) == MAX_RANGE_SHARE

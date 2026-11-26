@@ -151,12 +151,16 @@ kopiowany jest tylko `configuration.yaml`; własne pliki instancji w tym katalog
 
 Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy powiesz, że zaczynamy:
 
-1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego. Nie konfiguruj centralnego kotła
-   VT — zastępuje go wtyczka, a sterowanie odmawia uruchomienia, dopóki on istnieje.
+1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego i włączonym kotłem centralnym
+   VT, z jego progami domyślnymi i oboma poleceniami na pomocniku
+   `input_boolean.j4_vt_central_boiler` (`devenv/config/configuration.yaml`):
+   `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` i `…/input_boolean.turn_off`.
+   O tym, czy kocioł grzeje, decyduje VT; wtyczka idzie za pomocnikiem (I12.8). Nigdy nie kieruj
+   tych poleceń na symulowany kocioł.
 2. **Jeden termostat VT na każdą symulowaną strefę** (`zone_living`, `zone_bedroom`, `zone_bath`):
    typ „over switch”; przełącznik bazowy `switch.boiler_sim_<zone>_valve`; temperatura pokojowa
    `sensor.boiler_sim_<zone>_temperature`; temperatura zewnętrzna `sensor.boiler_sim_outdoor`. W
-   sypialni użyj SmartPI, żeby sprawdzić wstrzymania nauki. W ustawieniach zaawansowanych każdej strefy
+   sypialni użyj SmartPI, czyli algorytmu strefy, który się uczy. W ustawieniach zaawansowanych każdej strefy
    ustaw jej własne opóźnienie bezpieczeństwa 1440 min: VT uznaje za martwy czujnik, którego stan nie był
    zapisany przez czas tego opóźnienia (domyślnie 60 min), i przełącza strefę w tryb bezpieczeństwa,
    a ustabilizowane pokoje symulatora albo stała temperatura zewnętrzna trzymają jedną wartość dłużej.
@@ -168,7 +172,9 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
      `sensor.boiler_sim_ch_setpoint`, `binary_sensor.boiler_sim_ch_active` i
      `binary_sensor.boiler_sim_pump_running`.
    - Pogoda: `weather.boiler_sim_weather`.
-   - Kocioł: klasa „Nastawa zasilania”, c.w.u. „combi”; jeden obieg niemieszany; trzy strefy VT.
+   - Kocioł: klasa „Nastawa zasilania”, c.w.u. „combi”; jeden obieg niemieszany, który obejmuje
+     wszystkie pokoje: trzy strefy VT, każda z zaznaczonym w VT „Używane przez kocioł
+     centralny” (I12.11).
 4. **Symulowana bramka**: Settings → Devices & services → Add integration → „OpenTherm Gateway
    (simulator stub, test only)” → Submit. Jej wpis ma identyfikator bramki `sim`. To zamiennik tylko do
    testów, na symulatorze, w miejsce własnej integracji OpenTherm Gateway Home Assistanta, którą
@@ -179,7 +185,8 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
    `sensor.otgw_sim_boiler_control_setpoint` (nastawa grzania, którą dostał kocioł) i
    `binary_sensor.otgw_sim_boiler_master_ch_enabled` (grzanie włączone/wyłączone); **Urządzenie sterujące** —
    ścieżka zapisu „OpenTherm Gateway”, tylko dla wpisu utworzonego przed pytaniem o połączenie;
-   **Krzywa grzewcza** — projektowa temperatura zasilania 55 °C. Program uruchamiający przywraca ten stan
+   **Krzywa grzewcza** — projektowa temperatura zasilania 55 °C; **Zachowanie sterowania** —
+   pomocnik `input_boolean.j4_vt_central_boiler`. Program uruchamiający przywraca ten stan
    bazowy po każdym scenariuszu, który go zmienia (`devenv/j4/options.py`, zapisywany pozycja po pozycji
    w menu przez `devenv/j4/walk.py`; `tests/integration/test_j4_walk.py` przeprowadza ten sam stan
    bazowy przez prawdziwy przepływ opcji), także gdy scenariusz stanie w połowie, i włącza z
@@ -220,7 +227,6 @@ lekka i ma grzejnik 2.5 raza większy od jej obliczeniowego zapotrzebowania (`zo
 radiators_light_bedroom`). Nauka SmartPI od zera kończy się w niej po około 11 h w modelu
 symulatora. Sypialnia w tempie reszty domu zatrzymuje się na około 20.0 °C, na górnej granicy
 pasma nauki SmartPI, i nie kończy żadnej fazy (L15). Q5 ma wynik NOT RUN, dopóki ta nauka trwa.
-Q1 zaczyna ją od nowa: Q5 uruchamiaj przed Q1 albo pół dnia po nim.
 
 ## 5. Co działa w J4
 

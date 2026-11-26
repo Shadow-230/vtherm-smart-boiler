@@ -1,5 +1,7 @@
-"""The VT feature manager: registered only once VT's API exists, values on VT's thermostats,
-never an exception into VT, unregistered with the last installation."""
+"""The VT feature manager: registered only once VT's API exists, the channel VT hands its
+thermostats through, publishing nothing on them (I12.9), never an exception into VT,
+unregistered with the last installation. And the heat a zone gets (I8, decision C1), which the
+diagnostics show."""
 
 from __future__ import annotations
 
@@ -7,10 +9,16 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from homeassistant.config_entries import (
+    SIGNAL_CONFIG_ENTRY_CHANGED,
+    ConfigEntryChange,
+    ConfigEntryState,
+)
 from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 from vtherm_api.vtherm_api import VThermAPI
 
 from custom_components.vtherm_smart_boiler import feature_manager, vtherm_link
@@ -25,6 +33,13 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 @dataclass
 class Thermostat:
     entity_id: str | None
+
+
+@dataclass
+class Runtime:
+    """A VT thermostat as ``vtherm_api`` declares it: its entity ID, nothing else."""
+
+    entity_id: str
 
 
 @pytest.fixture(autouse=True)
@@ -45,13 +60,7 @@ async def setup(hass: HomeAssistant, zones: FakeZones) -> MockConfigEntry:
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
     entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Boiler",
-        data={},
-        options={
-            "signals": boiler.mapping(),
-            "zones": [{"entity_id": e} for e in zones.entities.values()],
-        },
+        domain=DOMAIN, title="Boiler", data={}, options={"signals": boiler.mapping()}
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -59,32 +68,40 @@ async def setup(hass: HomeAssistant, zones: FakeZones) -> MockConfigEntry:
     return entry
 
 
-async def test_values_appear_on_the_thermostat_and_go_with_the_plugin(
+async def test_the_manager_keeps_the_thermostat_and_publishes_nothing(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
+    """VT hands each thermostat to the factory; the manager keeps it for the zone reads and
+    publishes nothing on it (I12.9: no ``smart_boiler`` attribute, no water properties — VT
+    10.5.1 on calls ``add_custom_attributes`` only where a manager has it). The unload
+    unregisters the factory."""
     api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     entry = await setup(hass, zones)
     assert api.list_feature_managers() == [DOMAIN]
     factory = api.get_feature_manager(DOMAIN)
-    thermostat = Thermostat(living)
+    thermostat = Runtime(living)
     assert factory.supports(thermostat)
     manager = factory.create(thermostat)
     manager.post_init({})
     await manager.start_listening()
     assert await manager.refresh_state() is False
-    attributes: dict = {}
-    manager.add_custom_attributes(attributes)
-    assert attributes["smart_boiler"] == {"heat_available": True, "supply_temperature": 45}
-    other: dict = {}
-    factory.create(Thermostat("climate.not_ours")).add_custom_attributes(other)
-    assert other == {}
-
+    assert vtherm_link.vt_thermostat(hass, living) is thermostat
+    assert not hasattr(manager, "add_custom_attributes")
+    for gone in (
+        "heat_available",
+        "heat_reason",
+        "supply_temperature",
+        "supply_reason",
+        "supply_measured_at",
+        "boiler_called",
+        "call_reason",
+    ):
+        assert not hasattr(manager, gone), gone
+    assert not hasattr(feature_manager, "ATTRIBUTE")
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert api.list_feature_managers() == []
-    manager.add_custom_attributes(attributes)  # still attached in VT: publishes nothing
-    assert "smart_boiler" not in attributes
 
 
 async def test_no_bare_api_is_created_without_vt(hass: HomeAssistant, zones: FakeZones) -> None:
@@ -118,41 +135,48 @@ async def test_the_one_installation_registers_once_and_its_unload_unregisters(
     assert api.list_feature_managers() == []
 
 
-def test_the_manager_never_raises_into_vt(hass: HomeAssistant) -> None:
-    def broken(entity_id: str) -> dict:
+def test_the_manager_never_raises_into_vt(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-53: keeping or forgetting the thermostat, noting it started or its power failing never
+    reaches VT."""
+    from .harness import power_command, run_now
+
+    def boom(*_args: object) -> None:
         raise RuntimeError("boom")
 
-    manager = feature_manager.SmartBoilerFeatureManager(hass, Thermostat("climate.a"), broken)
-    attributes: dict = {"other": 1}
-    manager.add_custom_attributes(attributes)
-    assert attributes == {"other": 1}
-    half_built = feature_manager.SmartBoilerFeatureManager(
-        hass, Thermostat(None), lambda entity_id: {"x": 1}
-    )
-    half_built.add_custom_attributes(attributes)
-    assert attributes == {"other": 1}
+    for name in (
+        "register_thermostat",
+        "unregister_thermostat",
+        "thermostat_started",
+        "thermostat_power",
+    ):
+        monkeypatch.setattr(vtherm_link, name, boom)
+    manager = feature_manager.SmartBoilerFeatureManager(hass, Thermostat("climate.a"))
+    assert run_now(manager.refresh_state()) is False
+    command = power_command("switch.a", "switch", 0.5)
+    assert run_now(manager.async_on_underlying_power(command)) is None
+    assert manager.stop_listening() is None
     assert manager.name == DOMAIN
     assert manager.is_configured
     assert not manager.is_detected
 
 
-async def test_values_come_back_after_the_plugin_reloads(
+async def test_the_thermostats_handed_over_outlive_the_plugins_reload(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """P32: VT keeps the managers it created; they reach the plugin's data through a stable
-    access point, so a reload of the plugin (an options change) does not blank them until VT
-    reloads too."""
+    """P32: VT keeps the managers it created and hands nothing over again when the plugin
+    reloads (an options change): the thermostats it handed over stay kept for this Home
+    Assistant run, so the zones are still read through ``vtherm_api`` until VT reloads."""
     api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     entry = await setup(hass, zones)
-    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
+    thermostat = Runtime(living)
+    api.get_feature_manager(DOMAIN).create(thermostat)
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
-    attributes: dict = {}
-    manager.add_custom_attributes(attributes)
-    assert "smart_boiler" in attributes
-    assert manager.heat_available is attributes["smart_boiler"]["heat_available"]  # P92
-    assert not hasattr(manager, "emitter_power_factor")  # I8.2: the factor left the manager
+    assert vtherm_link.vt_thermostat(hass, living) is thermostat
+    assert not hasattr(feature_manager, "zone_values")  # no values of the plugin's for VT
 
 
 async def test_registered_again_after_vt_recreates_its_api(
@@ -170,21 +194,29 @@ async def test_registered_again_after_vt_recreates_its_api(
     assert new.list_feature_managers() == [DOMAIN]
 
 
-async def test_a_new_vt_api_gets_the_factory_before_its_thermostat_starts(
+async def test_a_new_vt_api_gets_the_factory_when_a_vt_entry_is_set_up(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """VT drops its API with its last entry (VT 10.4.0 ``remove_entry``); set up again, it
-    builds a thermostat, which writes its first state, and only then starts it and asks for
-    feature managers. The factory is registered with the new API at that first state — the
-    plugin's next update would come after the start, and the thermostat would never ask again
-    until the next reload, which would drop the API once more."""
+    """A real VT 10.6.4, which the floor lets through, drops its API with its last entry and
+    creates a new one when an entry is set up again. Home Assistant's signal for that entry
+    being set up gives the new API the factory at once, before VT builds its thermostats.
+    Negative: a climate's state no longer does (I12: nothing of VT's state is read), nor another
+    integration's entry."""
     api = vt_is_set_up(hass)
     await setup(hass, zones)
     assert api.list_feature_managers() == [DOMAIN]
     VThermAPI.reset_vtherm_api()
     new = VThermAPI.get_vtherm_api(hass)
+    hass.states.async_set("climate.rebuilt_thermostat", "heat")
+    other = MockConfigEntry(domain="generic_thermostat")
+    other.add_to_hass(hass)
+    other.mock_state(hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    async_dispatcher_send(hass, SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange.UPDATED, other)
     assert new.list_feature_managers() == []
-    hass.states.async_set("climate.rebuilt_thermostat", "heat")  # its first state
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.SETUP_IN_PROGRESS)
+    async_dispatcher_send(hass, SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange.UPDATED, vt_entry)
     assert new.list_feature_managers() == [DOMAIN]  # at once, with no update in between
 
 
@@ -200,26 +232,70 @@ async def test_a_vt_without_feature_managers_is_reported(
     hass.data.pop(VT_DOMAIN)  # the stand-in API cannot be reset
 
 
-async def test_thermostats_started_before_the_registration_are_reported(
+def first_installation(hass: HomeAssistant, zones: FakeZones) -> VThermAPI:
+    """A first installation while VT runs (I12.11, gap 18): VT set up, its entry loaded, and
+    nothing handed over in this Home Assistant run — the harness's stand-in taken back."""
+    api = vt_is_set_up(hass)
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.LOADED)
+    zones.withdraw()
+    hass.data.pop(vtherm_link.HANDED_OVER_KEY)
+    return api
+
+
+async def test_the_first_installation_asks_to_reload_vt_once(
     hass: HomeAssistant, zones: FakeZones, freezer
 ) -> None:
-    """P107: a thermostat already running picks the manager up only at VT's next reload."""
-    vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    """I12.11 (gap 18): VT hands its thermostats over only when it starts them — at a first
+    installation while VT runs, none comes until VT is reloaded. Once VT is loaded, Home
+    Assistant's registry lists VT climates and none has been handed over, some time after the
+    registration, one fixable issue asks to reload VT once; it goes by itself as soon as one is
+    handed over, and does not come back while VT reloads its thermostats."""
+    api = first_installation(hass, zones)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     entry = await setup(hass, zones)
-    issue_id = f"vt_reload_needed_{entry.entry_id}"
+    issue_id = f"vt_reload_once_{entry.entry_id}"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None  # give VT time
     freezer.tick(20 * 60)
-    zones.set("living", hvac_action="heating", valve_open_percent=60)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     await entry.runtime_data.async_refresh()
-    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
-    values = {"heat_available": True, "emitter_power_factor": 0.5}
-    zones.set("living", hvac_action="heating", valve_open_percent=60, smart_boiler=values)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.is_fixable
+    assert issue.translation_key == "vt_reload_once"
+    assert issue.data == {"entry_id": entry.entry_id}
+    api.get_feature_manager(DOMAIN).create(Runtime(living))  # VT reloaded
     await entry.runtime_data.async_refresh()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
-    assert living
+    zones.withdraw()  # VT reloads its thermostats: handed over in this run already
+    await entry.runtime_data.async_refresh()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+@pytest.mark.parametrize("missing", ["vt_entry", "vt_climates", "running"])
+async def test_the_reload_repair_needs_vt_loaded_with_climates_while_home_assistant_runs(
+    hass: HomeAssistant, zones: FakeZones, freezer, missing: str
+) -> None:
+    """Negative: no issue while VT has no loaded entry, while Home Assistant's registry lists no
+    VT climate (VT without thermostats), or while Home Assistant starts."""
+    from homeassistant.core import CoreState
+
+    first_installation(hass, zones)
+    if missing == "vt_entry":
+        for vt_entry in hass.config_entries.async_entries(VT_DOMAIN):
+            vt_entry.mock_state(hass, ConfigEntryState.SETUP_ERROR)
+    if missing != "vt_climates":
+        zones.add("living", handed_over=False)
+    entry = await setup(hass, zones)
+    freezer.tick(20 * 60)
+    if missing == "running":
+        hass.set_state(CoreState.starting)
+    await entry.runtime_data.async_refresh()
+    assert not feature_manager.reload_needed(hass, entry.runtime_data)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"vt_reload_once_{entry.entry_id}") is None
+    hass.set_state(CoreState.running)
 
 
 # --- X7: errors never reach VT (T-53), the reload repair (P-59), an old VT (P-60), the public
@@ -311,42 +387,13 @@ async def test_registration_errors_never_reach_vt(
     hass.data.pop(VT_DOMAIN)  # the stand-in API cannot be reset
 
 
-async def test_the_reload_repair_skips_zones_that_are_away_or_not_ready(
-    hass: HomeAssistant, zones: FakeZones, freezer
-) -> None:
-    """P-59: only a thermostat VT shows running — reported, ready, its mode known — and still
-    without the values some time after the registration needs VT's reload; one unavailable,
-    not ready, of unknown mode or away is not listed. Negative: none of them known, no
-    issue."""
-    vt_is_set_up(hass)
-    zones.add("living", hvac_action="heating")
-    zones.add("away")
-    zones.add("unavailable", state="unavailable")
-    zones.add("starting", state="off", is_ready=False)
-    zones.add("placeholder", state="off", is_ready=None, specific_states=None)
-    entry = await setup(hass, zones)
-    hass.states.async_remove(zones.entities["away"])
-    issue_id = f"vt_reload_needed_{entry.entry_id}"
-    freezer.tick(20 * 60)
-    zones.set("living", hvac_action="heating")
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-    await entry.runtime_data.async_refresh()
-    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
-    assert issue is not None
-    assert issue.translation_placeholders == {"zones": "fake living"}  # the one running
-    zones.set("living", state="unavailable")
-    await entry.runtime_data.async_refresh()
-    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
-
-
 @pytest.mark.parametrize(
     ("version", "method", "expected"),
     [
         ("10.1.0", True, feature_manager.RegistrationState.UNSUPPORTED),
-        ("10.0.2", True, feature_manager.RegistrationState.UNSUPPORTED),
-        ("10.2.0", True, feature_manager.RegistrationState.REGISTERED),
-        ("10.4.0", True, feature_manager.RegistrationState.REGISTERED),
+        ("10.6.3", True, feature_manager.RegistrationState.UNSUPPORTED),
+        ("10.6.4", True, feature_manager.RegistrationState.REGISTERED),  # 10.6.5's manifest
+        ("10.6.5", True, feature_manager.RegistrationState.REGISTERED),
         (None, True, feature_manager.RegistrationState.REGISTERED),  # detection as before
         (None, False, feature_manager.RegistrationState.UNSUPPORTED),
         ("not a version", True, feature_manager.RegistrationState.REGISTERED),
@@ -360,10 +407,9 @@ async def test_an_old_vt_is_detected_by_its_version(
     method: bool,
     expected: feature_manager.RegistrationState,
 ) -> None:
-    """P-60 (Q3.1): VT 10.0 and 10.1 take the registration — the shared ``vtherm_api`` has the
-    method — and never create the manager: their version tells, and the issue names the first
-    VT that does, 10.2.0 (provisional, K4). Negative: the version unknown or unreadable, the
-    capability decides as before."""
+    """I12.6 (P-60): a VT older than the oldest supported is not registered with, whatever its
+    API offers, and the issue names 10.6.5 — compared as 10.6.4, what its manifest says.
+    Negative: the version unknown or unreadable, the capability decides as before."""
     monkeypatch.setattr(vtherm_link, "vt_version", lambda _hass: version)
     if method:
         api = vt_is_set_up(hass)
@@ -377,7 +423,7 @@ async def test_an_old_vt_is_detected_by_its_version(
     issue = ir.async_get(hass).async_get_issue(DOMAIN, "vt_feature_manager_unsupported")
     if expected is feature_manager.RegistrationState.UNSUPPORTED:
         assert issue is not None
-        assert issue.translation_placeholders == {"version": "10.2.0"}
+        assert issue.translation_placeholders == {"version": "10.6.5"}
     else:
         assert issue is None
     if method:
@@ -385,22 +431,6 @@ async def test_an_old_vt_is_detected_by_its_version(
         assert api.list_feature_managers() == ([] if unsupported else [DOMAIN])
     else:
         hass.data.pop(VT_DOMAIN)
-
-
-async def test_the_zone_value_is_named_heat_available(
-    hass: HomeAssistant, zones: FakeZones
-) -> None:
-    """P-61: what VT's thermostats and other plugins see is "heat available" — heat reaches
-    the zone — not "hot water", which the boiler's domestic hot water is."""
-    api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
-    await setup(hass, zones)
-    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
-    attributes: dict = {}
-    manager.add_custom_attributes(attributes)
-    assert set(attributes["smart_boiler"]) == {"heat_available", "supply_temperature"}
-    assert manager.heat_available is attributes["smart_boiler"]["heat_available"]
-    assert not hasattr(manager, "hot_water")
 
 
 @pytest.mark.parametrize(
@@ -422,9 +452,8 @@ async def test_heat_available_is_the_flame_and_the_flow_against_the_return(
     returned: str,
     expected: bool | None,
 ) -> None:
-    """I8 (decision C1): what VT's thermostat is shown — the flame burning and the flow clearly
-    above the return; against the room only where no return is known."""
-    api = vt_is_set_up(hass)
+    """I8 (decision C1): the heat a zone gets, as the diagnostics show it — the flame burning
+    and the flow clearly above the return; against the room only where no return is known."""
     living = zones.add("living", current_temperature=20.0, hvac_action="heating")
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
     entry = MockConfigEntry(
@@ -439,8 +468,7 @@ async def test_heat_available_is_the_flame_and_the_flow_against_the_return(
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
-    assert manager.heat_available is expected
+    assert entry.runtime_data.data.zones[living].heat.available is expected
 
 
 async def test_a_zone_split_between_circuits_has_heat_through_either(
@@ -449,7 +477,6 @@ async def test_a_zone_split_between_circuits_has_heat_through_either(
     """I8.8b: the living room's radiator on the straight circuit — its water as warm back as
     out, no heat there — and its floor loop behind a mixer whose own sensor reads 35 °C: heat
     reaches the room through the loop. One zone, in both circuits."""
-    api = vt_is_set_up(hass)
     living = zones.add("living", current_temperature=20.0, hvac_action="heating")
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW, Signal.RETURN))
     hass.states.async_set(boiler.entity(Signal.FLAME), "on")
@@ -473,88 +500,14 @@ async def test_a_zone_split_between_circuits_has_heat_through_either(
     view = entry.runtime_data.data.zones[living]
     assert view.circuit_ids == ("main", "floor")
     assert view.heat.available is True
-    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
-    assert manager.heat_available is True
-    # I9 (water-interface.md §4.1): its two circuits' waters differ, 45 °C and 35 °C — no one
-    # water, the lasting fallback.
-    assert (manager.supply_temperature, manager.supply_reason) == (None, "several_circuits")
-
-
-def test_the_call_properties_read_their_values_defensively(hass: HomeAssistant) -> None:
-    """§4, §4.3 (SmartPI's request, 2026-10-14): the boiler's call and the demand as the
-    manager's properties, each of its type. Negative: a value of another type is "no data"."""
-    values: dict[str, Any] = {
-        "boiler_called": False,
-        "call_reason": "below_threshold",
-        "demand_count": 1,
-        "count_threshold": 2,
-        "count_by": "devices",
-        "demand_power_kw": 0.4,
-        "power_threshold_kw": 0.6,
-        "demand_opening": 0.2,
-        "opening_threshold": None,
-    }
-    manager = feature_manager.SmartBoilerFeatureManager(
-        hass, Thermostat("climate.a"), lambda _entity: dict(values)
-    )
-    assert (manager.boiler_called, manager.call_reason) == (False, "below_threshold")
-    assert (manager.demand_count, manager.count_threshold, manager.count_by) == (1, 2, "devices")
-    assert (manager.demand_power_kw, manager.power_threshold_kw) == (0.4, 0.6)
-    assert (manager.demand_opening, manager.opening_threshold) == (0.2, None)
-    values.update(boiler_called="no", demand_count=True, demand_power_kw="0.4", count_by=3)
-    assert manager.boiler_called is None
-    assert manager.demand_count is None
-    assert manager.demand_power_kw is None
-    assert manager.count_by is None
-
-
-def test_the_attribute_changes_only_when_the_value_changes(hass: HomeAssistant) -> None:
-    """P-63: VT records its thermostats' attributes, so the plugin's is replaced only when heat
-    availability changes. Negative: a value that goes away takes the attribute with it; back, it
-    is published afresh."""
-    values: dict[str, Any] | None = {"heat_available": True, "supply_temperature": 45.0}
-    manager = feature_manager.SmartBoilerFeatureManager(
-        hass, Thermostat("climate.a"), lambda _entity: None if values is None else dict(values)
-    )
-
-    def shown() -> dict[str, Any] | None:
-        attributes: dict[str, Any] = {"other": 1}
-        manager.add_custom_attributes(attributes)
-        assert attributes.pop("other") == 1
-        return attributes.get("smart_boiler")
-
-    assert shown() == {"heat_available": True, "supply_temperature": 45}
-    first = manager._published
-    assert shown() == {"heat_available": True, "supply_temperature": 45}
-    assert manager._published is first  # nothing new: the same published value
-    values = {"heat_available": False, "supply_temperature": 45.0}
-    assert shown() == {"heat_available": False, "supply_temperature": 45}  # a flip
-    values = {"heat_available": None, "supply_temperature": None}
-    assert shown() == {"heat_available": None, "supply_temperature": None}  # unknown now
-    values = None
-    assert shown() is None  # not the plugin's zone any more: no attribute
-    values = {"heat_available": None, "supply_temperature": 45.0}
-    assert shown() == {"heat_available": None, "supply_temperature": 45}  # afresh
 
 
 def test_the_manager_answers_vt_without_state_of_its_own(hass: HomeAssistant) -> None:
-    """The parts of VT's feature-manager contract the plugin has nothing to do in, and a
-    lookup that keeps failing: logged once at warning level, then quietly, never into VT."""
-    calls: list[str] = []
-
-    def broken(entity_id: str) -> dict:
-        calls.append(entity_id)
-        raise RuntimeError("boom")
-
-    manager = feature_manager.SmartBoilerFeatureManager(hass, Thermostat("climate.a"), broken)
+    """The parts of VT's feature-manager contract the plugin has nothing to do in."""
+    manager = feature_manager.SmartBoilerFeatureManager(hass, Thermostat("climate.a"))
     assert manager.hass is hass
     assert manager.add_listener(lambda: None) is None
     assert manager.restore_state(None) is None
-    for _ in range(2):
-        attributes: dict = {"other": 1}
-        manager.add_custom_attributes(attributes)
-        assert attributes == {"other": 1}
-    assert calls == ["climate.a", "climate.a"]
 
 
 def test_vt_api_lookups_that_fail_leave_the_registration_waiting_or_unsupported(
@@ -580,14 +533,18 @@ def test_vt_api_lookups_that_fail_leave_the_registration_waiting_or_unsupported(
 def test_a_registration_whose_lookups_fail_keeps_waiting(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Never into VT's state writes, never out of a check: an error leaves it waiting."""
+    """Never into Home Assistant's entry signal, never out of a check: an error leaves it
+    waiting."""
     current = feature_manager.FeatureRegistration(hass)
 
     def boom(*_args: object) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(feature_manager, "_stored_api", boom)
-    current._on_climate_state(None)  # type: ignore[arg-type]
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.LOADED)
+    current._on_entry_changed(ConfigEntryChange.UPDATED, vt_entry)
     monkeypatch.setattr(current, "_check", boom)
     assert current.check() is False
     assert current.state is feature_manager.RegistrationState.WAITING
@@ -624,7 +581,7 @@ async def test_a_refused_registration_is_not_retried_on_the_same_api(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """PB-46: an API that refuses the factory is not asked again at every climate state and
+    """PB-46: an API that refuses the factory is not asked again at every VT entry signal and
     update — one warning with its trace; a new API VT creates is asked once, its refusal logged
     at debug."""
     import logging
@@ -632,8 +589,17 @@ async def test_a_refused_registration_is_not_retried_on_the_same_api(
     caplog.set_level(logging.DEBUG, logger="custom_components.vtherm_smart_boiler")
     api = broken_vt(hass, monkeypatch, "register")
     entry = await setup(hass, zones)
-    for index in range(50):
-        hass.states.async_set("climate.other", "heat", {"n": index})
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.LOADED)
+
+    def vt_entry_set_up() -> None:
+        async_dispatcher_send(
+            hass, SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange.UPDATED, vt_entry
+        )
+
+    for _ in range(50):
+        vt_entry_set_up()
     await entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
     assert api.attempts == 1
@@ -647,8 +613,8 @@ async def test_a_refused_registration_is_not_retried_on_the_same_api(
     newer.register_feature_manager = newer.register  # type: ignore[attr-defined]
     hass.data[VT_DOMAIN] = {"vtherm_api": newer}
     monkeypatch.setattr(VThermAPI, "get_vtherm_api", staticmethod(lambda _hass=None: newer))
-    hass.states.async_set("climate.other", "heat", {"n": "new"})
-    hass.states.async_set("climate.other", "heat", {"n": "again"})
+    vt_entry_set_up()
+    vt_entry_set_up()
     assert newer.attempts == 1
     refusals = [r for r in caplog.records if "Could not register" in r.getMessage()]
     assert [r.levelno for r in refusals] == [logging.WARNING, logging.DEBUG]
@@ -686,24 +652,7 @@ async def test_an_ignored_unsupported_issue_stays_ignored(
     assert issues.async_get_issue(DOMAIN, feature_manager.UNSUPPORTED_ISSUE) is None
 
 
-async def test_a_failed_refresh_publishes_no_zone_values(
-    hass: HomeAssistant, zones: FakeZones
-) -> None:
-    """PB-48: while the monitor's refresh fails — the plugin's own entities unavailable — VT's
-    thermostat shows no stale values either; they come back with the next good refresh."""
-    vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
-    entry = await setup(hass, zones)
-    coordinator = entry.runtime_data
-    assert feature_manager.zone_values([coordinator], living) is not None
-    coordinator.last_update_success = False
-    assert feature_manager.zone_values([coordinator], living) is None
-    coordinator.last_update_success = True
-    assert feature_manager.zone_values([coordinator], living) is not None
-
-
-# --- I9.2: the water data (docs/en/specification/water-interface.md)
-# --------------------------------
+# --- The heat a zone gets (I8, decision C1), as the diagnostics show it ----------------------
 
 
 async def _refreshed(hass: HomeAssistant) -> None:
@@ -712,88 +661,65 @@ async def _refreshed(hass: HomeAssistant) -> None:
     await hass.config_entries.async_entries(DOMAIN)[0].runtime_data.async_refresh()
 
 
-def _flow_reported(hass: HomeAssistant) -> Any:
-    state = hass.states.get(FakeBoiler(hass, (Signal.FLOW,)).entity(Signal.FLOW))
-    assert state is not None
-    return state.last_reported
-
-
-async def test_the_manager_shows_the_zone_s_water(hass: HomeAssistant, zones: FakeZones) -> None:
-    """§3.1, §4: the five fields as the manager's properties — the boiler's flow reaching the
-    zone's circuit, with the time of its reading; lost for now, `None` with its momentary
-    reason, and the heat unknown with it."""
-    api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+async def test_no_public_api_outside_vtherm_api(hass: HomeAssistant, zones: FakeZones) -> None:
+    """The user's rule (2026-11-24): the public API the plugin kept in ``hass.data`` is gone; and
+    since I12.9 nothing goes out to VT's thermostats either."""
+    zones.add("living", hvac_action="heating", valve_open_percent=60)
     await setup(hass, zones)
-    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
-    assert manager.supply_temperature == 45.0
-    assert manager.supply_reason is None
-    assert manager.supply_measured_at == _flow_reported(hass)
-    assert manager.supply_measured_at.tzinfo is not None
-    assert manager.heat_available is True
-    assert manager.heat_reason is None
-    FakeBoiler(hass, (Signal.FLOW,)).set(Signal.FLOW, None)
-    await _refreshed(hass)
-    assert manager.supply_temperature is None
-    assert manager.supply_reason == "flow_unknown"
-    assert manager.supply_measured_at is None
-    assert manager.heat_available is None
-    assert manager.heat_reason == "flow_unknown"
+    assert "vtherm_smart_boiler_api" not in hass.data
+    assert not hasattr(feature_manager, "SmartBoilerApi")
 
 
-async def test_the_api_gives_the_same_fields_without_vt_s_lookup(
+async def test_vt_tells_the_manager_its_thermostat_started_and_its_power(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """§3.2: `hass.data["vtherm_smart_boiler_api"].zone_water(entity_id)` — the same fields as a
-    read-only mapping, with no VT and no manager at all (VT 10.4.0 has no
-    `get_feature_manager`); `None` for a thermostat that is not a zone; gone with the plugin."""
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
-    entry = await setup(hass, zones)
-    water = hass.data["vtherm_smart_boiler_api"].zone_water(living)
-    assert dict(water) == {
-        "supply_temperature": 45.0,
-        "supply_reason": None,
-        "supply_measured_at": _flow_reported(hass),
-        "heat_available": True,
-        "heat_reason": None,
-        # §4.3 (2026-10-14): monitoring only — the boiler is not the plugin's to call.
-        "boiler_called": None,
-        "call_reason": "not_controlling",
-        "demand_count": None,
-        "count_threshold": None,
-        "count_by": None,
-        "demand_power_kw": None,
-        "power_threshold_kw": None,
-        "demand_opening": None,
-        "opening_threshold": None,
-    }
-    with pytest.raises(TypeError):
-        water["supply_temperature"] = 20.0  # read-only
-    assert hass.data["vtherm_smart_boiler_api"].zone_water("climate.not_ours") is None
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-    assert "vtherm_smart_boiler_api" not in hass.data
+    """I12.7: VT's first ``refresh_state`` on the manager — which it calls only once the
+    thermostat is ready — starts the zone; its power hook gives the duty, which VT calls only on a
+    manager that is configured (``vtherm_api`` 0.9.0 ``underlying_hooks.py``). The hook has the
+    name and the signature ``vtherm_api`` declares."""
+    import inspect
 
+    from vtherm_api.underlying_hooks import InterfaceUnderlyingPowerHook
 
-async def test_the_api_never_raises(
-    hass: HomeAssistant, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Negative, §3.2: any error reading the data is "no data" (`None`), never an exception
-    into the consumer."""
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    from .harness import power_command
+
+    api = vt_is_set_up(hass)
+    living = zones.add("living", handed_over=False, hvac_action="heating", on_percent=None)
     await setup(hass, zones)
+    thermostat = Runtime(living)
+    manager = api.get_feature_manager(DOMAIN).create(thermostat)
+    assert isinstance(manager, InterfaceUnderlyingPowerHook)
+    assert inspect.iscoroutinefunction(manager.async_on_underlying_power)
+    assert manager.is_configured
+    link = vtherm_link.VThermLink(hass)
+    assert (link.zone(living).started, link.zone(living).on_percent) == (False, None)
+    await manager.refresh_state()
+    await manager.async_on_underlying_power(power_command("switch.heater", "switch", 0.6))
+    zone = link.zone(living)
+    assert (zone.started, zone.on_percent, zone.valve_open) == (True, 0.6, None)
+    manager.stop_listening()
+    assert link.zone(living).started is False
 
-    def broken(*_args: Any) -> dict:
-        raise RuntimeError("boom")
 
-    monkeypatch.setattr(feature_manager, "zone_values", broken)
-    assert hass.data["vtherm_smart_boiler_api"].zone_water(living) is None
+async def test_the_manager_keeps_its_thermostat_for_the_zone_reads(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """The thermostat VT hands to the manager is the one the zone is read from through
+    ``vtherm_api`` (``vtherm_link``), matched by its declared entity ID (I12.7); VT stopping it
+    (the manager's ``stop_listening``) leaves the zone not known."""
+    api = vt_is_set_up(hass)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
+    await setup(hass, zones)
+    thermostat = Runtime(living)
+    manager = api.get_feature_manager(DOMAIN).create(thermostat)
+    assert vtherm_link.vt_thermostat(hass, living) is thermostat
+    manager.stop_listening()
+    assert vtherm_link.vt_thermostat(hass, living) is None
 
 
 async def test_no_water_sensor_is_not_mapped(hass: HomeAssistant, zones: FakeZones) -> None:
-    """Negative, §5.1: no water sensor mapped at all — a lasting `not_mapped`, for the water and
-    for the heat while the flame burns; the attribute shows no temperature."""
-    api = vt_is_set_up(hass)
+    """Negative: no water sensor mapped at all — a lasting `not_mapped` for the heat while the
+    flame burns."""
     living = zones.add("living", hvac_action="heating", valve_open_percent=60)
     boiler = FakeBoiler(hass, (Signal.FLAME,))
     boiler.set(Signal.FLAME, True)
@@ -806,40 +732,7 @@ async def test_no_water_sensor_is_not_mapped(hass: HomeAssistant, zones: FakeZon
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
-    assert (manager.supply_temperature, manager.supply_reason) == (None, "not_mapped")
-    assert (manager.heat_available, manager.heat_reason) == (None, "not_mapped")
-    attributes: dict = {}
-    manager.add_custom_attributes(attributes)
-    assert attributes["smart_boiler"] == {"heat_available": None, "supply_temperature": None}
-
-
-async def test_the_attribute_publishes_the_water_rounded_on_a_change_of_1_k(
-    hass: HomeAssistant, zones: FakeZones
-) -> None:
-    """§3.3: VT records the attribute, so it shows the water rounded to 1 °C and changes only
-    when the water has moved at least 1 K since it was last published, or to or from `None`;
-    the heat on every change. The live value is the manager's."""
-    api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
-    await setup(hass, zones)
-    manager = api.get_feature_manager(DOMAIN).create(Thermostat(living))
-    boiler = FakeBoiler(hass, (Signal.FLOW,))
-
-    async def shown(flow: float | None) -> dict:
-        boiler.set(Signal.FLOW, flow)
-        await _refreshed(hass)
-        attributes: dict = {}
-        manager.add_custom_attributes(attributes)
-        return attributes["smart_boiler"]
-
-    assert (await shown(45.0))["supply_temperature"] == 45
-    assert (await shown(45.9))["supply_temperature"] == 45  # 0.9 K: not yet
-    assert manager.supply_temperature == 45.9  # the live value
-    assert (await shown(46.2))["supply_temperature"] == 46  # 1.2 K from 45.0: published
-    assert (await shown(45.4))["supply_temperature"] == 46  # 0.8 K back: kept
-    assert await shown(None) == {"heat_available": None, "supply_temperature": None}
-    assert (await shown(45.4))["supply_temperature"] == 45  # back from None: at once
+    assert _heat(hass, living) == (None, "not_mapped")
 
 
 async def _water_set_up(
@@ -870,24 +763,17 @@ async def _water_set_up(
     return living
 
 
-def _water(hass: HomeAssistant, living: str) -> tuple[Any, ...]:
-    """The public API's water and heat with their reasons; the moment of the reading known
-    exactly while the water is."""
-    water = hass.data["vtherm_smart_boiler_api"].zone_water(living)
-    assert water is not None
-    assert (water["supply_measured_at"] is None) is (water["supply_temperature"] is None)
-    return tuple(
-        water[name]
-        for name in ("supply_temperature", "supply_reason", "heat_available", "heat_reason")
-    )
+def _heat(hass: HomeAssistant, living: str) -> tuple[Any, ...]:
+    """The heat the zone gets, with its reason, as the diagnostics show it."""
+    heat = hass.config_entries.async_entries(DOMAIN)[0].runtime_data.data.zones[living].heat
+    return heat.available, None if heat.reason is None else heat.reason.value
 
 
-async def test_the_api_says_a_mixed_circuit_without_its_own_sensor_is_not_measured(
+async def test_a_mixed_circuit_without_its_own_sensor_is_not_measured(
     hass: HomeAssistant, zones: FakeZones
 ) -> None:
-    """§4.1, §4.2: a zone on a mixed circuit with no flow sensor of its own — the boiler's flow
-    says nothing about it: a lasting `circuit_not_measured`, for the water and for the heat
-    while the flame burns."""
+    """A zone on a mixed circuit with no flow sensor of its own — the boiler's flow says nothing
+    about it: a lasting `circuit_not_measured` for the heat while the flame burns."""
     living = await _water_set_up(
         hass,
         zones,
@@ -897,54 +783,53 @@ async def test_the_api_says_a_mixed_circuit_without_its_own_sensor_is_not_measur
             {"id": "floor", "control": "separate"},
         ],
     )
-    assert _water(hass, living) == (None, "circuit_not_measured", None, "circuit_not_measured")
+    assert _heat(hass, living) == (None, "circuit_not_measured")
 
 
-async def test_the_api_says_a_flow_reading_too_old_is_stale(
+async def test_a_flow_reading_too_old_is_stale(
     hass: HomeAssistant, zones: FakeZones, freezer: Any
 ) -> None:
-    """§4.1, §4.2: the boiler's flow older than its age limit (here set to 5 minutes) — a
-    momentary `flow_stale`, the heat unknown with it, never "no"; fresh again, known again."""
+    """The boiler's flow older than its age limit (here set to 5 minutes) — a momentary
+    `flow_stale`, the heat unknown, never "no"; fresh again, known again."""
     living = await _water_set_up(
         hass, zones, {Signal.FLAME: True, Signal.FLOW: 45.0}, freshness={"flow": 300.0}
     )
-    assert _water(hass, living) == (45.0, None, True, None)
+    assert _heat(hass, living) == (True, None)
     freezer.tick(400)
     await _refreshed(hass)
-    assert _water(hass, living) == (None, "flow_stale", None, "flow_stale")
+    assert _heat(hass, living) == (None, "flow_stale")
     FakeBoiler(hass, (Signal.FLOW,)).set(Signal.FLOW, 44.0)
     await _refreshed(hass)
-    assert _water(hass, living) == (44.0, None, True, None)
+    assert _heat(hass, living) == (True, None)
 
 
-async def test_the_api_says_hot_water_takes_the_heat(hass: HomeAssistant, zones: FakeZones) -> None:
-    """§4.2: hot water with priority running — the water still shown, the heat "no" for
-    `dhw_active`; over, heat again."""
+async def test_hot_water_takes_the_heat(hass: HomeAssistant, zones: FakeZones) -> None:
+    """Hot water with priority running — the heat "no" for `dhw_active`; over, heat again."""
     values = {Signal.FLAME: True, Signal.FLOW: 45.0, Signal.DHW_ACTIVE: True}
     living = await _water_set_up(hass, zones, values)
-    assert _water(hass, living) == (45.0, None, False, "dhw_active")
+    assert _heat(hass, living) == (False, "dhw_active")
     FakeBoiler(hass, (Signal.DHW_ACTIVE,)).set(Signal.DHW_ACTIVE, False)
     await _refreshed(hass)
-    assert _water(hass, living) == (45.0, None, True, None)
+    assert _heat(hass, living) == (True, None)
 
 
 @pytest.mark.parametrize(
     ("room", "flow", "expected"),
     [
-        (None, 45.0, (45.0, None, None, "room_unknown")),
-        (20.0, 22.0, (22.0, None, False, "flow_near_room")),
-        (20.0, 23.5, (23.5, None, True, None)),
+        (None, 45.0, (None, "room_unknown")),
+        (20.0, 22.0, (False, "flow_near_room")),
+        (20.0, 23.5, (True, None)),
     ],
     ids=["room_unknown", "flow_near_room", "above_the_margin"],
 )
-async def test_the_api_judges_the_flow_against_the_room_without_a_return(
+async def test_the_flow_is_judged_against_the_room_without_a_return(
     hass: HomeAssistant,
     zones: FakeZones,
     room: float | None,
     flow: float,
     expected: tuple[Any, ...],
 ) -> None:
-    """§4.2: no return mapped — the flow judged against the room: unknown without the room's
+    """No return mapped — the flow judged against the room: unknown without the room's
     temperature (`room_unknown`); "no" within 3 K of it (`flow_near_room`); heat above."""
     living = await _water_set_up(hass, zones, {Signal.FLAME: True, Signal.FLOW: flow}, room=room)
-    assert _water(hass, living) == expected
+    assert _heat(hass, living) == expected

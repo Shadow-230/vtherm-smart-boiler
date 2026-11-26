@@ -17,11 +17,16 @@ from custom_components.vtherm_smart_boiler.control_config import (
     Topology,
     WritePath,
     boiler_class_for,
+    cap_offered,
+    cap_repeat_s,
+    cap_target,
     config_blockers,
     connection_suggested_by,
     fixed_keys,
     parse_control,
+    with_rooms_curve,
 )
+from custom_components.vtherm_smart_boiler.core.curve import HOUR
 from custom_components.vtherm_smart_boiler.core.guards import WriteType
 from custom_components.vtherm_smart_boiler.core.installation import (
     Boiler,
@@ -38,6 +43,7 @@ RADIATORS = Installation(
     Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),), (Zone("climate.a", "main"),)
 )
 CURVE = {"design_outdoor": -15, "design_flow": 55}
+HELPER = "input_boolean.vt_central_boiler"  # I12: the helper VT's central boiler switches
 OTGW = {
     "write_path": "opentherm_gw",
     "gateway_id": "otgw",
@@ -45,6 +51,7 @@ OTGW = {
     "topology": "gateway_standalone",
     "thermostat_kind": "none",  # nothing on the gateway's thermostat terminals (decision 1)
     "curve": CURVE,
+    "vt_boiler_helper": HELPER,
 }
 # A gateway with an OpenTherm thermostat on its terminals.
 WITH_THERMOSTAT = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
@@ -54,6 +61,7 @@ RELAY = {
     "write_path": "relay",
     "relay_entity": "switch.boiler_relay",
     "relay_is_separate_contact": True,
+    "vt_boiler_helper": HELPER,
 }
 
 
@@ -73,7 +81,6 @@ def test_otgw_defaults_are_cautious() -> None:
     assert control.curve.exponent == 1.3
     assert control.boiler_max == 65.0
     assert control.limits.hard_min == 20.0  # the lowest water temperature (decision 2)
-    assert options.learning_pauses
     assert options.reaction("outside_change") is AlarmReaction.HAND_BACK
     assert options.reaction("pressure_low") is AlarmReaction.INFO
     assert config_blockers(options, RADIATORS) == []
@@ -89,6 +96,7 @@ ENTITY = {
     "confirmed_entity": "sensor.boiler_flow_setpoint",
     "topology": "virtual",
     "curve": CURVE,
+    "vt_boiler_helper": HELPER,
 }
 # The entity path with the virtual topology and answer F's tick "the boiler has its own room
 # controller".
@@ -125,6 +133,103 @@ def test_underfloor_exponent_and_circuit_cap() -> None:
     options = parse_control(OTGW, installation, None)
     assert options.loop.control.curve.exponent == 1.1
     assert options.loop.control.circuit_max == 40.0
+    assert options.loop.control.outdoor_time_constant_s == 12 * HOUR  # I13.8
+
+
+# One circuit stores only the rooms on its emitter lists (I12.11): here one convector room.
+ONE_CONVECTOR = Installation(
+    Boiler(BoilerClass.FLOW_SETPOINT),
+    (Circuit("main"),),
+    (Zone("climate.hall", "main", EmitterType.CONVECTOR),),
+)
+
+
+@pytest.mark.parametrize(
+    ("rooms", "expected"),
+    [
+        (["climate.hall", "climate.bed"], 1.3),  # the bedroom on no list: a radiator
+        (["climate.hall"], 1.4),  # every room a convector
+        ([], 1.4),  # no room now (VT reloading): as configured, no jump
+    ],
+    ids=["a_radiator_room_too", "convectors_only", "no_room_now"],
+)
+def test_the_default_exponent_follows_the_rooms_vt_hands_over(
+    rooms: list[str], expected: float
+) -> None:
+    """I12.17: with one circuit, a room on no emitter list is a radiator — the default exponent
+    is the lowest of the rooms' emitters as VT hands the rooms over, not of the listed ones only
+    (only convectors listed gave 1.4 though the other rooms have radiators). With no room now
+    the exponent stays as configured."""
+    options = parse_control(OTGW, ONE_CONVECTOR, None)
+    assert options.loop.control.curve.exponent == 1.4  # the stored rooms only
+    now = with_rooms_curve(options, ONE_CONVECTOR.with_rooms(rooms))
+    assert now.loop.control.curve.exponent == expected
+
+
+def test_an_entered_exponent_is_kept_whatever_the_rooms() -> None:
+    """I12.17, negative: an exponent the user entered stays; so do options without control."""
+    entered = parse_control(OTGW | {"curve": CURVE | {"exponent": 1.25}}, ONE_CONVECTOR, None)
+    rooms = ONE_CONVECTOR.with_rooms(["climate.hall", "climate.bed"])
+    assert entered.exponent_entered
+    assert with_rooms_curve(entered, rooms) is entered
+    unset = parse_control({}, ONE_CONVECTOR, None)
+    assert with_rooms_curve(unset, rooms) is unset
+
+
+# I13.8: one circuit, one room listed with underfloor heating.
+ONE_FLOOR = Installation(
+    Boiler(BoilerClass.FLOW_SETPOINT),
+    (Circuit("main", max_flow=40.0),),
+    (Zone("climate.floor", "main", EmitterType.UNDERFLOOR),),
+)
+
+
+@pytest.mark.parametrize(
+    ("rooms", "hours"),
+    [
+        (["climate.floor", "climate.bed"], 12),  # the floor among the rooms: its water too
+        (["climate.bed"], 3),  # the floor not handed over now: radiators only
+        ([], 12),  # no room now (VT reloading): as configured, no jump
+    ],
+    ids=["floor_and_radiator", "radiator_only", "no_room_now"],
+)
+@pytest.mark.parametrize("exponent", [None, 1.25], ids=["exponent_default", "exponent_entered"])
+def test_the_outdoor_mean_follows_the_floors_on_the_curves_circuit(
+    rooms: list[str], hours: int, exponent: float | None
+) -> None:
+    """I13.8: the curve's circuit with an underfloor room takes the 12-hour outdoor mean, read
+    from the rooms VT hands over as the default exponent reads them (I12.17) — whether or not the
+    user entered an exponent, which stays as entered; without a floor, 3 hours. With no room now,
+    the stored rooms' value stays."""
+    curve = CURVE if exponent is None else CURVE | {"exponent": exponent}
+    options = parse_control(OTGW | {"curve": curve}, ONE_FLOOR, None)
+    assert options.loop.control.outdoor_time_constant_s == 12 * HOUR  # the stored rooms
+    now = with_rooms_curve(options, ONE_FLOOR.with_rooms(rooms)).loop.control
+    assert now.outdoor_time_constant_s == hours * HOUR
+    if exponent is not None:
+        assert now.curve.exponent == exponent
+
+
+@pytest.mark.parametrize(
+    "floor",
+    [
+        Circuit("floor", CircuitControl.PASSIVE_FIXED, fixed_temperature=35.0),
+        Circuit("floor", CircuitControl.SEPARATE),
+    ],
+    ids=["fixed_valve", "other_automation"],
+)
+def test_a_floor_behind_a_mixer_leaves_the_curve_on_the_three_hour_mean(floor: Circuit) -> None:
+    """I13.8, negative: the curve serves the circuit fed straight from the boiler; a floor behind
+    a mixer or a fixed valve has its own water, so the curve keeps the 3-hour mean."""
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("radiators"), floor),
+        (Zone("climate.a", "radiators"), Zone("climate.f", "floor", EmitterType.UNDERFLOOR)),
+    )
+    options = parse_control(OTGW, installation, None)
+    assert options.loop.control.outdoor_time_constant_s == 3 * HOUR
+    rooms = installation.with_rooms(["climate.a", "climate.f"])
+    assert with_rooms_curve(options, rooms) is options
 
 
 @pytest.mark.parametrize(
@@ -229,7 +334,7 @@ def test_every_blocker_is_listed() -> None:
         (OTGW, two),
         (OTGW, floor),
         (OTGW, no_zones),
-        (OTGW | {"count_threshold": 5, "count_by": "zones"}, RADIATORS),
+        (OTGW | {"vt_boiler_helper": None}, RADIATORS),
         (ENTITY | {"off_setpoint": 30}, RADIATORS),
         (ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}, RADIATORS),
         (ENTITY | {"hand_back_value": 75}, RADIATORS),
@@ -525,35 +630,87 @@ def test_frequent_starts_are_information_only() -> None:
     assert options.reaction("frequent_starts") is AlarmReaction.INFO
 
 
-def test_the_count_threshold_must_fit_the_zones() -> None:
-    """Counting zones, a count above the zones is a blocker. Counting VT's devices (2026-10-14)
-    it is not: the zones' devices are VT's to tell — the form checks them, and the count never
-    asks more than the known zones drive (``core.demand``)."""
-    options = parse_control(OTGW | {"count_threshold": 2, "count_by": "zones"}, RADIATORS, None)
-    assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
+def test_vts_helper_must_be_an_input_boolean() -> None:
+    """I12: VT's central boiler decides through a helper the user picks: none, or one of another
+    kind, is a blocker naming it; an ``input_boolean`` is read as stored, and its renames are
+    followed."""
+    from custom_components.vtherm_smart_boiler.control_config import ENTITY_KEYS, VT_HELPER
+
+    assert parse_control(OTGW, RADIATORS, None).vt_boiler_helper == HELPER
     assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
-    devices = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
-    assert devices.loop.control.demand.count_by.value == "devices"  # the default
-    assert config_blockers(devices, RADIATORS) == []
-    # I8.8b: a zone split between circuits counts once.
-    split = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT),
-        (Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
-        (
-            Zone("climate.a", "main", devices=frozenset({"switch.radiator"})),
-            Zone("climate.a", "floor", devices=frozenset({"switch.loop"})),
-        ),
+    for helper in (None, "", "switch.boiler", "input_boolean.", "input_boolean"):
+        options = parse_control(OTGW | {"vt_boiler_helper": helper}, RADIATORS, None)
+        assert config_blockers(options, RADIATORS) == ["no_vt_boiler_helper"], helper
+    assert VT_HELPER in ENTITY_KEYS
+
+
+def test_the_demand_settings_moved_are_named_with_their_values() -> None:
+    """I12's migration: a count above 1, a power or opening threshold, a delay above 0 — each as
+    stored, the others "-"; the defaults and a section of another shape name nothing; the
+    section without them is what is left."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        vt_settings_set,
+        without_vt_settings,
     )
-    assert config_blockers(options, split) == ["count_threshold_above_zones"]
+
+    assert vt_settings_set(OTGW | {"count_threshold": 1, "activation_delay_s": 0}) == {}
+    assert vt_settings_set(["count_threshold", 3]) == {}
+    assert vt_settings_set({"count_threshold": 3, "opening_threshold": "x"}) == {
+        "count": "3",
+        "power": "-",
+        "opening": "-",
+        "delay": "-",
+    }
+    assert vt_settings_set({"power_threshold_kw": 1.5, "opening_threshold": 30}) == {
+        "count": "-",
+        "power": "1.5",
+        "opening": "30",
+        "delay": "-",
+    }
+    stored = OTGW | {"count_by": "devices", "power_threshold_kw": None}
+    assert without_vt_settings(stored) == OTGW
+    assert without_vt_settings(OTGW) is OTGW
+    assert without_vt_settings(None) is None
 
 
-def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
-    picked = parse_control(OTGW | {"frost_zone": "climate.a"}, RADIATORS, None)
-    assert picked.loop.control.frost.zone == "climate.a"
-    assert parse_control(OTGW, RADIATORS, None).loop.control.frost.zone is None
-    # A zone no longer configured must not leave frost protection watching nothing.
-    gone = parse_control(OTGW | {"frost_zone": "climate.gone"}, RADIATORS, None)
-    assert gone.loop.control.frost.zone is None
+def test_the_learning_pauses_setting_goes_and_a_session_compares_as_migrated() -> None:
+    """I12.9 (minor version 23): the learning pauses setting leaves the control section; a
+    section of another shape, or one without it, is left as it is; and the options a stored
+    session took the boiler with are read without it, so a restart after the update compares
+    like with like (no hand-back for a setting that went)."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        section_as_migrated,
+        without_learning_pauses,
+    )
+
+    assert without_learning_pauses(OTGW | {"learning_pauses": True}) == OTGW
+    assert without_learning_pauses(OTGW) is OTGW
+    assert without_learning_pauses(None) is None
+    assert without_learning_pauses(["learning_pauses"]) == ["learning_pauses"]
+    assert section_as_migrated(OTGW | {"learning_pauses": False}) == section_as_migrated(OTGW)
+    assert not hasattr(parse_control(OTGW, RADIATORS, None), "learning_pauses")
+
+
+def test_the_frost_settings_go_and_a_session_compares_as_migrated() -> None:
+    """I12.10 (minor version 24): frost protection is VT's — the frost settings leave the control
+    section; a section of another shape, or one without them, is left as it is; and the options
+    a stored session took the boiler with are read without them, so a restart after the update
+    compares like with like (no hand-back for settings that went)."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        FROST_REMOVED,
+        section_as_migrated,
+        without_frost,
+    )
+
+    frost = {"frost_limit": 4.0, "frost_release": 6.0, "frost_zone": "climate.a"}
+    assert set(frost) == set(FROST_REMOVED)
+    assert without_frost(OTGW | frost) == OTGW
+    assert without_frost(OTGW | {"frost_zone": "climate.a"}) == OTGW
+    assert without_frost(OTGW) is OTGW
+    assert without_frost(None) is None
+    assert without_frost(["frost_limit"]) == ["frost_limit"]
+    assert section_as_migrated(OTGW | frost) == section_as_migrated(OTGW)
+    assert not hasattr(parse_control(OTGW | frost, RADIATORS, None).loop.control, "frost")
 
 
 @pytest.mark.parametrize(("off", "blocked"), [(24.5, True), (24.0, False), (25.0, True)])
@@ -645,9 +802,9 @@ def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
         True,
         33.0,
     )
-    assert mixer.devices == {}
     assert control.curve_zones == frozenset({"climate.a"})
-    # I8.8b: a zone the mixer's circuit feeds in part asks in it through those devices.
+    # I8.8b, I12.7: a zone the mixer's circuit feeds in part is one of its zones — it asks in
+    # it whenever it wants heat (``vtherm_api`` does not tell which devices VT has on).
     split = replace(
         layout,
         zones=(
@@ -656,7 +813,7 @@ def test_the_circuits_set_the_caps_floors_needs_and_the_curves_zones() -> None:
         ),
     )
     (mixer,) = parse_control(OTGW, split, None).loop.control.other_automation
-    assert mixer.devices == {"climate.a": frozenset({"switch.loop"})}
+    assert mixer.zones == frozenset({"climate.a"})
     single = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
     assert parse_control(OTGW, single, None).loop.control.curve_zones is None
 
@@ -989,28 +1146,32 @@ def test_the_offered_reaction_is_read_from_raw_options() -> None:
 def test_the_switch_says_who_keeps_frost_protection_after_a_hand_back(
     data: dict, after_hand_back: str | None
 ) -> None:
-    """S-57: while the session controls, the plugin keeps frost protection; otherwise whoever
-    the hand-back's effect leaves it with — the thermostat, the boiler's own (if it has one)
-    where the hand-back stops heating, or the boiler's or the device's own control."""
+    """S-57: while the session controls, VT keeps frost protection through the plugin (I12.10);
+    otherwise whoever the hand-back's effect leaves it with — the thermostat, the boiler's own
+    (if it has one) where the hand-back stops heating, or the boiler's or the device's own
+    control."""
     from custom_components.vtherm_smart_boiler.control_config import (
         FrostProtection,
         frost_protection_by,
     )
 
     options = parse_control(data, RADIATORS, None)
-    assert frost_protection_by(options, controlling=True) is FrostProtection.PLUGIN
+    assert frost_protection_by(options, controlling=True) is FrostProtection.VT
     shown = frost_protection_by(options, controlling=False)
     assert (None if shown is None else shown.value) == after_hand_back
 
 
-# --- X3: control needs a zone (S-04); the boiler's own room controller (answers F, M) -----------
+# --- I12.11: no room asked of the options; the boiler's own room controller (answers F, M) ----
 
 
-def test_control_needs_at_least_one_zone() -> None:
-    """S-04: without a VT zone nothing can ask for heat — a blocker that names it alone."""
+def test_control_asks_no_room_of_the_options() -> None:
+    """I12.11: the rooms are VT's, known at run time, and VT decides whether to heat — the
+    options need no room (S-04's blocker went), and none stored is no lack."""
     none = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
-    assert config_blockers(parse_control(OTGW, none, None), none) == ["no_zones"]
-    assert "no_zones" not in config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS)
+    from custom_components.vtherm_smart_boiler.control_config import CONFIG_BLOCKERS
+
+    assert config_blockers(parse_control(OTGW, none, None), none) == []
+    assert "no_zones" not in CONFIG_BLOCKERS
 
 
 def test_the_own_room_controller_tick_makes_a_working_thermostat() -> None:
@@ -1125,24 +1286,7 @@ def test_a_tick_with_a_hand_back_value_that_stops_heating_is_ignored() -> None:
     assert not working_thermostat(options)
 
 
-# --- X4: VT's activation delay (decision 5), frost's closed zones (decision 4), the circuit
-# alarm information only (decision 10) ----------------------------------------------------------
-
-
-def test_the_activation_delay_is_read_with_its_cautious_default() -> None:
-    """0 s by default (VT's), the stored value otherwise; outside 0–600 s the parser raises.
-    Never taken from VT at parse time: only what the user saved counts."""
-    from custom_components.vtherm_smart_boiler.control_config import CONTROL_DEFAULTS
-
-    assert CONTROL_DEFAULTS["activation_delay_s"] == 0
-    assert parse_control(OTGW, RADIATORS, None).loop.control.activation_delay_s == 0.0
-    stored = parse_control(OTGW | {"activation_delay_s": 120}, RADIATORS, None)
-    assert stored.loop.control.activation_delay_s == 120.0
-    unset = parse_control(OTGW | {"activation_delay_s": None}, RADIATORS, None)
-    assert unset.loop.control.activation_delay_s == 0.0  # PB-95: the default, not just parsed
-    for bad in (-10, 700):
-        with pytest.raises(ValueError, match="activation_delay_s"):
-            parse_control(OTGW | {"activation_delay_s": bad}, RADIATORS, None)
+# --- X4: stored values, the circuit alarm information only (decision 10) ----------------------
 
 
 @pytest.mark.parametrize(
@@ -1153,9 +1297,7 @@ def test_the_activation_delay_is_read_with_its_cautious_default() -> None:
         ({"curve": ["design_flow", 55]}, "curve"),
         ({"curve": CURVE | {"exponent": "inf"}}, "exponent"),
         ({"alarm_reactions": ["write_ignored"]}, "alarm_reactions"),
-        ({"learning_pauses": "no"}, "learning_pauses"),
         ({"hand_back_value": "nan"}, "hand_back_value"),
-        ({"count_threshold": float("inf")}, "count_threshold"),
         ({"off_setpoint": -1}, "off_setpoint"),
     ],
 )
@@ -1168,20 +1310,9 @@ def test_stored_control_values_the_form_would_not_take_are_refused(changes: dict
 
 def test_stored_control_values_left_out_take_their_defaults() -> None:
     """The negative of PB-24: values not stored (``None``) take their cautious defaults."""
-    stored = dict.fromkeys(("hard_min", "frost_limit", "hand_back_value", "curve"))
+    stored = dict.fromkeys(("hard_min", "hand_back_value", "curve"))
     control = parse_control(OTGW | stored | {"curve": CURVE}, RADIATORS, None).loop.control
-    assert (control.limits.hard_min, control.frost.room_limit) == (20.0, 5.0)
-
-
-def test_zones_declared_closed_when_off_reach_frost_protection() -> None:
-    installation = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT),
-        (Circuit("main"),),
-        (Zone("climate.a", "main", closes_when_off=True), Zone("climate.b", "main")),
-    )
-    frost = parse_control(OTGW, installation, None).loop.control.frost
-    assert frost.closes_when_off == frozenset({"climate.a"})
-    assert parse_control(OTGW, RADIATORS, None).loop.control.frost.closes_when_off == frozenset()
+    assert control.limits.hard_min == 20.0
 
 
 def test_the_circuit_too_hot_alarm_is_information_only() -> None:
@@ -1348,7 +1479,7 @@ def test_the_curve_defaults_pass_the_cross_field_checks() -> None:
 
 def test_a_passive_fixed_circuit_needs_its_temperature() -> None:
     """Negative: a thermostatic mixing valve without its temperature stays a configuration
-    error — the setting tells the zones what water they get (water-interface.md §4)."""
+    error — the setting tells the zones what water they get."""
     from custom_components.vtherm_smart_boiler.config import ConfigError, EntryConfig
 
     missing = {
@@ -1684,7 +1815,6 @@ def test_relay_settings_have_cautious_defaults() -> None:
     assert control.on_off
     assert control.stale_hand_back_s is None  # the link is the relay (R6)
     assert not control.comfort_correction
-    assert not options.learning.pause_on_water_swing  # R13: no water swing on a relay
     assert not options.return_after_outside_change
 
 
@@ -1836,17 +1966,17 @@ def test_the_own_room_controller_tick_counts_on_the_relay_path_with_rest_state_o
 
 def test_the_circuit_rules_do_not_apply_to_a_relay() -> None:
     """R1: the relay sets no water temperature — the circuit, curve, topology and read-back
-    blockers do not apply; the demand thresholds do."""
+    blockers do not apply; VT's helper does (I12)."""
     two = Installation(
         Boiler(BoilerClass.ON_OFF),
         (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
         (Zone("climate.a", "a", EmitterType.UNDERFLOOR),),
     )
     assert config_blockers(parse_control(RELAY, two, None), two) == []
-    many = parse_control({**RELAY, "count_threshold": 3, "count_by": "zones"}, ON_OFF, None)
-    assert config_blockers(many, ON_OFF) == ["count_threshold_above_zones"]
+    unhelped = parse_control({**RELAY, "vt_boiler_helper": ""}, ON_OFF, None)
+    assert config_blockers(unhelped, ON_OFF) == ["no_vt_boiler_helper"]
     no_zones = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
-    assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == ["no_zones"]
+    assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == []
 
 
 def test_the_relay_in_another_role_is_a_blocker() -> None:
@@ -1971,7 +2101,7 @@ BLOCKER_PRECEDENCE = [
         _READ_ONLY,
         None,
         _ALL_SIGNALS,
-        ["boiler_class_no_control", "one_direct_circuit_only", "no_zones"],
+        ["boiler_class_no_control", "one_direct_circuit_only"],
     ),
     (
         "the relay on a flow-setpoint boiler",
@@ -1990,12 +2120,17 @@ BLOCKER_PRECEDENCE = [
         ["path_not_for_boiler_class"],
     ),
     (
-        "the relay: its own lacks and the zones', nothing about water",
+        "the relay: its own lacks and the helper's, nothing about water",
         {"write_path": "relay"},
         _ON_OFF_NO_ZONES,
         {"flow": "flame"},
         _NO_SIGNALS,
-        ["entity_for_two_signals", "no_relay_entity", "relay_contact_not_confirmed", "no_zones"],
+        [
+            "entity_for_two_signals",
+            "no_relay_entity",
+            "relay_contact_not_confirmed",
+            "no_vt_boiler_helper",
+        ],
     ),
     (
         "the entity path with everything missing, in the list's order",
@@ -2013,7 +2148,7 @@ BLOCKER_PRECEDENCE = [
             "no_confirmed_setpoint",
             "no_topology",
             "curve_not_entered",
-            "no_zones",
+            "no_vt_boiler_helper",
         ],
     ),
     (
@@ -2065,7 +2200,13 @@ BLOCKER_PRECEDENCE = [
         RADIATORS,
         None,
         (Signal.FLAME, Signal.FLOW),
-        ["no_gateway", "no_confirmed_setpoint", "no_topology", "curve_not_entered"],
+        [
+            "no_gateway",
+            "no_confirmed_setpoint",
+            "no_topology",
+            "curve_not_entered",
+            "no_vt_boiler_helper",
+        ],
     ),
     (
         "the firmware's topics missing, no topology",
@@ -2073,6 +2214,7 @@ BLOCKER_PRECEDENCE = [
             "write_path": "otgw_mqtt",
             "confirmed_entity": "sensor.x",
             "curve": CURVE,
+            "vt_boiler_helper": HELPER,
         },
         RADIATORS,
         None,
@@ -2136,20 +2278,20 @@ BLOCKER_PRECEDENCE = [
         ["underfloor_without_max_flow"],
     ),
     (
-        "no zone before the count",
-        OTGW | {"count_threshold": 3},
+        "no helper, with no room in the options (I12.11)",
+        {key: value for key, value in OTGW.items() if key != "vt_boiler_helper"},
         _NO_ZONES,
         None,
         _ALL_SIGNALS,
-        ["no_zones"],
+        ["no_vt_boiler_helper"],
     ),
     (
-        "a count above the zones",
-        OTGW | {"count_threshold": 3, "count_by": "zones"},
+        "a helper that is no input_boolean",
+        OTGW | {"vt_boiler_helper": "switch.boiler"},
         RADIATORS,
         None,
         _ALL_SIGNALS,
-        ["count_threshold_above_zones"],
+        ["no_vt_boiler_helper"],
     ),
     (
         '"off" next to the lowest water temperature, without heating writes',
@@ -2640,3 +2782,80 @@ def test_ems_esp_with_a_heating_switch_uses_it() -> None:
     control = parse_control(data, RADIATORS, None, connection=Connection.EMS_ESP)
     assert control.loop.ch_writes
     assert control.loop.off_setpoint == 10.0  # the default, unused with a switch
+
+
+# --- I13.7: the modulation cap ------------------------------------------------------------------
+
+ENTITY_PATH = {
+    "write_path": "entity",
+    "setpoint_entity": "number.boiler_flow",
+    "write_type": "expiring",
+    "ch_entity": "switch.boiler_ch",
+    "ch_write_type": "held",
+    "hand_back": "timeout",
+    "confirmed_entity": "sensor.boiler_ch_setpoint",
+    "topology": "virtual",
+    "curve": CURVE,
+    "vt_boiler_helper": HELPER,
+}
+
+
+def test_the_modulation_cap_is_off_by_default_and_blocks_nothing() -> None:
+    for section, installation in ((OTGW, RADIATORS), (ENTITY_PATH, RADIATORS), (RELAY, ON_OFF)):
+        options = parse_control(section, installation, None)
+        assert options.modulation_cap_pct is None
+        assert options.modulation_cap_entity is None
+    # Ticked without a target on the entity path: not applied, and control is not blocked.
+    ticked = parse_control(ENTITY_PATH | {"modulation_cap": True}, RADIATORS, None)
+    assert ticked.modulation_cap_pct == 70.0
+    assert not cap_target(ticked)
+    bare = parse_control(ENTITY_PATH, RADIATORS, None)
+    assert config_blockers(ticked, RADIATORS) == config_blockers(bare, RADIATORS)
+
+
+def test_the_modulation_cap_where_the_path_can_set_it() -> None:
+    gateway = parse_control(
+        OTGW | {"modulation_cap": True, "modulation_cap_pct": 45}, RADIATORS, None
+    )
+    assert gateway.modulation_cap_pct == 45.0
+    assert cap_target(gateway)
+    assert cap_repeat_s(gateway) == 300.0  # MM= is held in the gateway's memory
+    mqtt = {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"}
+    assert cap_target(parse_control(OTGW | mqtt | {"modulation_cap": True}, RADIATORS, None))
+    # A gateway without its ID, or the firmware without its topics: nowhere to write it.
+    assert not cap_target(replace(gateway, gateway_id=None))
+    no_topic = parse_control(OTGW | mqtt | {"mqtt_node": None}, RADIATORS, None)
+    assert not cap_target(no_topic)
+    entity = parse_control(
+        ENTITY_PATH | {"modulation_cap": True, "modulation_cap_entity": "number.selburnpow"},
+        RADIATORS,
+        None,
+    )
+    assert entity.modulation_cap_entity == "number.selburnpow"
+    assert "number.selburnpow" in entity.entities
+    assert cap_target(entity)
+    assert cap_repeat_s(entity) == 30.0  # EMS-ESP's selburnpow lapses: every keep-alive
+    assert cap_repeat_s(replace(entity, write_type=WriteType.HELD)) == 300.0
+    # Never through a relay; an entity in another role is no target; a gateway keeps none.
+    relay = parse_control(RELAY | {"modulation_cap": True}, ON_OFF, None)
+    assert relay.modulation_cap_pct is None
+    assert not cap_target(relay)
+    assert not cap_offered(WritePath.RELAY)
+    assert not cap_offered(None)
+    assert not cap_target(replace(entity, modulation_cap_entity="number.boiler_flow"))
+    on_gateway = parse_control(
+        OTGW | {"modulation_cap": True, "modulation_cap_entity": "number.x"}, RADIATORS, None
+    )
+    assert on_gateway.modulation_cap_entity is None
+
+
+@pytest.mark.parametrize("value", [29, 101, "high", True, float("nan")])
+def test_a_stored_cap_outside_the_forms_bounds_is_refused(value: Any) -> None:
+    """PB-24: a value the form would not take — a hand edit — leaves control out."""
+    with pytest.raises(ValueError, match="modulation_cap_pct"):
+        parse_control(OTGW | {"modulation_cap": True, "modulation_cap_pct": value}, RADIATORS, None)
+
+
+def test_an_unreadable_tick_is_refused() -> None:
+    with pytest.raises(ValueError, match="modulation_cap"):
+        parse_control(OTGW | {"modulation_cap": "yes"}, RADIATORS, None)

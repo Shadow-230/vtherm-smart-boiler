@@ -12,7 +12,9 @@ summaries outlive it (``docs/en/specification/scope.md`` §10).
 A burn across midnight is found whole, twelve hours on each side of the day: it is one burn of
 the day it started in, its time split at midnight, and a day waits for such a burn to end
 before it is summarised (P-83). A day checks the boiler's outdoor sensor against the weather
-over that day and leaves a stuck one out (P-86).
+over that day and leaves a stuck one out (P-86). I13.5 adds three figures each day keeps: its
+burns under 3 minutes, the gas counted as hot water (the hot-water self-check) and the median of
+its hysteresis samples (the drift over weeks).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from dataclasses import asdict, dataclass, replace
 from itertools import chain
 from typing import Any
 
+from .alarms import day_median, hysteresis_samples
 from .building import DayPoint, LoadFit, fit_daily_load
 from .controller import ControlMode
 from .cycles import ClassifiedBurn, find_burns
@@ -53,16 +56,21 @@ FIT_COVERAGE = 0.9  # a day the fit uses is known for this much of it
 DAY_MARGIN_S = 12 * HOUR
 DAY_SETTLE_S = 6 * HOUR
 # P-96 (A12): the control states in which the plugin controls the boiler, and the time under
-# control from which a day is left out of the verdict (provisional, K4).
+# control from which a day is left out of the verdict (provisional, K4). "frost": the plugin's own
+# frost heating, gone with I12.10 (decision 4), as the control-state history from before keeps it.
 CONTROLLED_MODES = frozenset(
-    mode.value
-    for mode in (
-        ControlMode.HEATING,
-        ControlMode.IDLE,
-        ControlMode.FROST,
-        ControlMode.FALLBACK,
-        ControlMode.BOILER_FAULT,
-    )
+    {
+        *(
+            mode.value
+            for mode in (
+                ControlMode.HEATING,
+                ControlMode.IDLE,
+                ControlMode.FALLBACK,
+                ControlMode.BOILER_FAULT,
+            )
+        ),
+        "frost",
+    }
 )
 CONTROLLED_DAY_S = HOUR
 # P-91: a day's outdoor temperatures are kept in whole °C within these ends, colder or warmer
@@ -103,6 +111,12 @@ class DaySummary:
     # I10.7: the heating starts in each hour from the day's start — as many as the day has hours,
     # 23 or 25 at a clock change — adding up to ``starts``; ``None``: stored before they were kept.
     hourly_starts: tuple[int, ...] | None = None
+    # I13.5: the complete heating burns under 3 minutes (of ``complete_burns``); the gas of the
+    # burns known as hot water, where the heating gas is known whole; the median of the day's
+    # hysteresis samples, with 5 of them or more. ``None``: not known, or stored before.
+    very_short_burns: int | None = None
+    dhw_gas: float | None = None
+    hysteresis_median: float | None = None
 
     @classmethod
     def empty(cls, start: float, end: float) -> DaySummary:
@@ -118,7 +132,9 @@ class DaySummary:
         ):
             return None
         # A day of 23 or 25 hours (the clock change) counts as a whole day of heating.
-        return DayPoint(self.outdoor_mean, self.heat_kwh * DAY / (self.end - self.start))
+        return DayPoint(
+            self.outdoor_mean, self.heat_kwh * DAY / (self.end - self.start), self.start
+        )
 
     @property
     def has_data(self) -> bool:
@@ -157,6 +173,9 @@ class DaySummary:
             raw = data.get("hourly_starts")
             return None if raw is None else tuple(int(count) for count in raw)
 
+        def count(key: str) -> int | None:
+            return None if data.get(key) is None else int(data[key])
+
         return cls(
             start=number("start"),
             end=number("end"),
@@ -177,6 +196,9 @@ class DaySummary:
             controlled_s=optional("controlled_s"),
             outdoor_s=outdoor(),
             hourly_starts=hourly(),
+            very_short_burns=count("very_short_burns"),
+            dhw_gas=optional("dhw_gas"),
+            hysteresis_median=optional("hysteresis_median"),
         )
 
 
@@ -241,7 +263,24 @@ def summarize_day(
         controlled_s=duration_where(history.control_state, start, end, _controlled),
         outdoor_s=outdoor_distribution(outdoor_series, start, end),
         hourly_starts=hourly_starts(summary.burns, start, end),
+        very_short_burns=heating.very_short_burns,
+        dhw_gas=summary.dhw_gas,
+        hysteresis_median=_hysteresis_median(history, summary.burns, start - DAY_MARGIN_S, until),
     )
+
+
+def _hysteresis_median(
+    history: History, burns: Sequence[ClassifiedBurn], start: float, end: float
+) -> float | None:
+    """I13.5: the median of the day's hysteresis samples — the pauses after its burns, judged
+    as the drift's fast check judges them (``hysteresis_samples``); ``None`` without the flow
+    or the calls for heat, or with too few pauses."""
+    flow = history.signals.get(Signal.FLOW)
+    demand = history.zone_calling(start, end)
+    if flow is None or demand is None:
+        return None
+    setpoint = history.signals.get(Signal.CH_SETPOINT)
+    return day_median(hysteresis_samples(flow, burns, setpoint, demand=demand))
 
 
 def hourly_starts(burns: Sequence[ClassifiedBurn], start: float, end: float) -> tuple[int, ...]:
@@ -392,6 +431,9 @@ def verdict_over_days(
         p90_burn_s=None,
         short_burns=sum(d.short_burns for d in chosen),
         active_s=sum(d.heating_s for d in chosen),
+        # I13.5: over the days that counted them — those kept before did not.
+        very_short_burns=sum(d.very_short_burns or 0 for d in chosen),
+        very_short_basis=sum(d.complete_burns for d in chosen if d.very_short_burns is not None),
     )
     basis = sum(d.condensing_basis_s for d in chosen)
     condensing = (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { histogram, minutesOf, recentBurns, type BurnInfo } from "./burner";
+import { histogram, minutesOf, recentBurns, veryShortShare, type BurnInfo } from "./burner";
 
 const burn = (start: number, minutes: number, kind: BurnInfo["kind"] = "ch"): BurnInfo => ({
   start, end: start + minutes * 60, kind, start_seen: true, end_seen: true,
@@ -30,5 +30,23 @@ describe("the burns", () => {
   it("gives a burn's minutes, at least one", () => {
     expect(minutesOf(burn(0, 0.2))).toBe(1);
     expect(minutesOf(burn(0, 22.4))).toBe(22);
+  });
+});
+
+describe("the share under 3 minutes (I13.5)", () => {
+  const sensor = (attributes: Record<string, unknown>) => ({
+    entity_id: "sensor.short",
+    state: "40",
+    attributes,
+    last_changed: "",
+    last_updated: "",
+  });
+  it("is read from the short burns' sensor", () => {
+    expect(veryShortShare(sensor({ under_3_min: 12.5 }))).toBe(12.5);
+  });
+  it("is none where the sensor gives none", () => {
+    expect(veryShortShare(undefined)).toBeNull();
+    expect(veryShortShare(sensor({ under_3_min: null }))).toBeNull();
+    expect(veryShortShare(sensor({}))).toBeNull();
   });
 });

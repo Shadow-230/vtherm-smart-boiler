@@ -82,7 +82,8 @@ CONFLICT_BAND = (0.35, 0.65)
 class DhwInputs:
     """Signals that help tell DHW from CH; any may be missing.
 
-    ``zone_demand`` is true while any zone on the boiler calls for heat.
+    ``zone_demand`` is true while the boiler was called for heat (``History.zone_demand``): VT's
+    call where its helper's state is known, else any room on the boiler calling (I12.7b).
     """
 
     dhw_active: Series[bool] | None = None

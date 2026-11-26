@@ -1,8 +1,9 @@
 // The overview (docs/en/development/plans/plan-0.2-i10.md, I10.3): the status with its reasons
-// and whether control is on, the tiles, the schematic with the rooms beside the curve, and the
-// last 24 h, whose scrubber shows any moment of the day in every part above. Control is switched
-// in the plugin's settings, by an administrator (plan-0.2-i11.md, the user's decisions of
-// 2026-11-22): the page shows its state and leads an administrator there.
+// and whether control is on, the tiles, the schematic beside the curve, and the last 24 h, whose
+// scrubber shows any moment of the day in every part above. Control is switched in the plugin's
+// settings, by an administrator (plan-0.2-i11.md, the user's decisions of 2026-11-22): the page
+// shows its state and leads an administrator there. The rooms are VT's: the page counts them and
+// leads an administrator to VT's page (plan-0.2-i12.md, decision 6).
 import { LitElement, css, html, nothing } from "lit";
 import { liveView, type LiveView } from "./live";
 import { localize } from "./localize";
@@ -143,11 +144,27 @@ export class SmartBoilerOverview extends LitElement {
     return this.hass?.user?.is_admin === true;
   }
 
-  /** The plugin's own page in Home Assistant's settings, where "Configure" opens its options:
-   * control is switched there ("Control mode", "Control on"). */
-  private openSettings(): void {
-    window.history.pushState(null, "", SETTINGS_PATH);
+  /** A page of Home Assistant's own, opened in place as its sidebar does: the plugin's page in
+   * the settings, where "Configure" opens its options and control is switched ("Control mode",
+   * "Control on"), or VT's. */
+  private open(path: string): void {
+    window.history.pushState(null, "", path);
     window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+  }
+
+  /** A link to a page in Home Assistant's settings — an administrator's only, as the settings
+   * are: opened in place, or in a new tab as any link. */
+  private link(link: { path: string; text: string }) {
+    return html`<a
+      class="small"
+      href=${link.path}
+      @click=${(e: MouseEvent) => {
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        this.open(link.path);
+      }}
+      >${link.text}</a
+    >`;
   }
 
   render() {
@@ -242,7 +259,7 @@ export class SmartBoilerOverview extends LitElement {
                 ${control.on ? this.t("control.on") : this.t("control.off")}
               </span>
               ${canChange
-                ? html`<button class="text" @click=${() => this.openSettings()}>
+                ? html`<button class="text" @click=${() => this.open(SETTINGS_PATH)}>
                     ${this.t("control.settings")}
                   </button>`
                 : nothing}
@@ -257,6 +274,7 @@ export class SmartBoilerOverview extends LitElement {
                 <div class="tile-label">${tile.label}</div>
                 <div class="tile-value">${tile.value}</div>
                 <div class="muted small">${tile.detail}</div>
+                ${tile.link && this.isAdmin ? this.link(tile.link) : nothing}
               </div>`,
             )}
           </section>`
@@ -350,8 +368,9 @@ export class SmartBoilerOverview extends LitElement {
     }
     .control {
       display: flex;
+      flex-wrap: wrap; /* on a phone the button goes below, not past the screen's edge */
       align-items: center;
-      gap: 14px;
+      gap: 8px 14px;
       flex: 1 1 340px;
       justify-content: flex-end;
       text-align: right;
@@ -430,6 +449,20 @@ export class SmartBoilerOverview extends LitElement {
       font-weight: 600;
       line-height: 1.1;
       font-variant-numeric: tabular-nums;
+    }
+    .tile a {
+      color: var(--primary-color);
+      font-weight: 600;
+      text-decoration: none;
+      align-self: flex-start;
+    }
+    .tile a:hover {
+      text-decoration: underline;
+    }
+    .tile a:focus-visible {
+      outline: 2px solid var(--primary-color);
+      outline-offset: 2px;
+      border-radius: 4px;
     }
   `;
 }

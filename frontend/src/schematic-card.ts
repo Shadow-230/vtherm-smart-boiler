@@ -1,10 +1,10 @@
-// The installation and its rooms (docs/en/development/plans/plan-0.2-i10.md, I10.3b): the
-// schematic from schematic.ts, and under each circuit its rooms — how hard each room's own
-// controller heats, and whether it calls for heat. It shows; it changes nothing.
+// The installation (docs/en/development/plans/plan-0.2-i10.md, I10.3b): the schematic from
+// schematic.ts, with the circuits taking water now. No rooms list: the rooms are VT's, on its own
+// page (plan-0.2-i12.md, decision 6). It shows; it changes nothing.
 import { LitElement, css, html, nothing, svg } from "lit";
 import type { LiveInputs } from "./live";
 import { localize } from "./localize";
-import { VIEW_BOX, roomsView, schematicView } from "./schematic";
+import { VIEW_BOX, schematicView } from "./schematic";
 import type { HomeAssistant, Installation } from "./types";
 
 export const SCHEMATIC_TAG = "vtherm-smart-boiler-schematic";
@@ -46,13 +46,8 @@ export class SmartBoilerSchematic extends LitElement {
     const inputs = this.inputs();
     if (!inputs) return nothing;
     const view = schematicView(inputs);
-    const rooms = roomsView(inputs, view.circuits);
     const { paths } = view;
-    const count = view.circuits.length;
-    const columns = count
-      ? `minmax(0, 44fr) repeat(${count}, minmax(0, ${(54 / count).toFixed(2)}fr)) minmax(0, 2fr)`
-      : "1fr";
-    const taking = rooms.flat().filter((r) => r.calling).map((r) => r.name);
+    const taking = view.circuits.filter((c) => c.active).map((c) => c.name);
     const status = view.labels[1]?.text ?? "";
     const box = `${VIEW_BOX.x} ${VIEW_BOX.y} ${VIEW_BOX.width} ${VIEW_BOX.height}`;
     return html`
@@ -63,7 +58,7 @@ export class SmartBoilerSchematic extends LitElement {
           role="img"
           aria-label=${this.t("schematic.aria", {
             status,
-            rooms: taking.length ? taking.join(", ") : this.t("schematic.nobody"),
+            circuits: taking.length ? taking.join(", ") : this.t("schematic.nobody"),
           })}
         >
           <svg viewBox=${box} aria-hidden="true">
@@ -107,52 +102,35 @@ export class SmartBoilerSchematic extends LitElement {
             class="flame ${view.flame ? "lit" : ""}"
             viewBox="0 0 24 24"
             aria-hidden="true"
-            style="left: ${percent(135, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(205, VIEW_BOX.y, VIEW_BOX.height)}"
+            style="left: ${percent(135, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(185, VIEW_BOX.y, VIEW_BOX.height)}"
           >
             <path d=${FLAME_PATH}></path>
           </svg>
-          ${view.labels.map(
-            (label) => html`<span
-              class="${label.kind}${label.minor ? " minor" : ""}"
-              style="left: ${percent(label.x, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(label.y, VIEW_BOX.y, VIEW_BOX.height)}"
-              >${label.text}</span
-            >`,
-          )}
+          ${view.labels.map((label) => {
+            const style = `left: ${percent(label.x, VIEW_BOX.x, VIEW_BOX.width)}; top: ${percent(label.y, VIEW_BOX.y, VIEW_BOX.height)}`;
+            return label.caption
+              ? html`<span class="captioned" style=${style}
+                  ><span class="text">${label.caption}</span><span class="${label.kind}">${label.text}</span></span
+                >`
+              : html`<span
+                  class="${label.kind}${label.minor ? " minor" : ""}${label.end ? " end" : ""}${label.wrap ? " wrap" : ""}"
+                  style=${style}
+                  >${label.text}</span
+                >`;
+          })}
         </div>
-        ${count
-              ? html`<div class="rooms" style="grid-template-columns: ${columns}">
-                  <div class="rooms-intro">
-                    <div class="strong">${this.t("schematic.rooms")}</div>
-                    <div class="muted small">${this.t("schematic.rooms_hint")}</div>
-                  </div>
-                  ${rooms.map(
-                    (column, k) => html`<div class="column">
-                      <div class="column-name">${view.circuits[k].name}</div>
-                      ${column.map(
-                        (room) => html`<div class="room ${room.calling ? "calling" : ""}">
-                          <div class="room-top">
-                            <span class="strong">${room.name}</span>
-                            <span class="nums">${room.temperature} <span class="muted">/ ${room.target}</span></span>
-                          </div>
-                          <div class="room-bar">
-                            ${room.demand == null
-                              ? nothing
-                              : html`<div class="track">
-                                  <div class="fill" style="width: ${room.demand}%"></div>
-                                </div>`}
-                            <span class=${room.calling ? "takes" : "muted"}
-                              >${room.calling ? this.t("schematic.takes_heat") : this.t("schematic.no_heat")}${room.demand ==
-                              null
-                                ? ""
-                                : ` · ${room.demand} %`}</span
-                            >
-                          </div>
-                        </div>`,
-                      )}
-                    </div>`,
-                  )}
-                </div>`
-              : nothing}
+        ${view.circuits.length
+          ? html`<ul class="circuits">
+              ${view.circuits.map(
+                (circuit) => html`<li class=${circuit.active ? "on" : ""}>
+                  <span class="strong">${circuit.name}</span>
+                  <span class=${circuit.active ? "takes" : "muted"}
+                    >${circuit.active ? this.t("schematic.takes_heat") : this.t("schematic.no_heat")}</span
+                  >
+                </li>`,
+              )}
+            </ul>`
+          : nothing}
         <div class="legend">
           <span><i class="hot"></i>${this.t("schematic.legend_hot")}</span>
           <span><i class="mixed"></i>${this.t("schematic.legend_mixed")}</span>
@@ -318,7 +296,8 @@ export class SmartBoilerSchematic extends LitElement {
       stroke: var(--state-climate-heat-color, #ff8100);
     }
     .text,
-    .value {
+    .value,
+    .captioned {
       position: absolute;
       transform: translate(-50%, -50%);
       white-space: nowrap;
@@ -331,6 +310,28 @@ export class SmartBoilerSchematic extends LitElement {
       white-space: nowrap;
       pointer-events: none;
       font-size: clamp(8px, 1.55cqw, 12px);
+    }
+    .text.end {
+      transform: translate(-100%, -50%);
+    }
+    /* The boiler's state wraps inside its body (150 of the drawing's 1000 wide) at any width. */
+    .inside.wrap {
+      font-size: clamp(7.5px, 1.55cqw, 12px); /* a long word still fits the boiler's body */
+      white-space: normal;
+      width: 13%;
+      text-align: center;
+      line-height: 1.15;
+    }
+    /* A value with its name above it, as one block. */
+    .captioned {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .captioned > span {
+      position: static;
+      transform: none;
     }
     .text {
       color: var(--secondary-text-color);
@@ -348,90 +349,36 @@ export class SmartBoilerSchematic extends LitElement {
       box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
       font-variant-numeric: tabular-nums;
     }
-    .rooms {
-      display: grid;
-      gap: 10px;
-      margin-top: 4px;
-    }
-    .rooms-intro {
-      padding: 4px 8px 0 4px;
-    }
-    .column {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .column-name {
+    /* The circuits by name, in a narrow card only: there the drawing leaves its labels out, so
+       they would overlap. */
+    .circuits {
       display: none;
+      list-style: none;
+      margin: 6px 0 0;
+      padding: 0;
+      flex-direction: column;
+      gap: 4px;
       font-size: 13px;
-      font-weight: 600;
-      color: var(--secondary-text-color);
     }
-    /* A narrow column: the drawing shrinks to it, its labels with it; the rooms stack, each
-       circuit named. */
-    @container (max-width: 760px) {
-      .rooms {
-        grid-template-columns: minmax(0, 1fr) !important;
-      }
-      .column-name {
-        display: block;
-        margin-top: 6px;
-      }
+    .circuits li {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      padding: 4px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+    }
+    .circuits li.on {
+      border-color: var(--sb-mix);
     }
     @container (max-width: 480px) {
       .minor {
         display: none;
       }
-      .inside {
-        white-space: normal;
-        width: 19%;
-        text-align: center;
-        line-height: 1.1;
+      .circuits {
+        display: flex;
       }
-    }
-    .room {
-      background: var(--card-background-color, #fff);
-      border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
-      border-radius: 10px;
-      padding: 8px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .room.calling {
-      border-color: var(--sb-mix);
-      box-shadow: inset 0 0 0 0.5px var(--sb-mix);
-    }
-    .room-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 6px;
-      font-size: 13px;
-    }
-    .nums {
-      white-space: nowrap;
-      font-variant-numeric: tabular-nums;
-    }
-    .room-bar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 11px;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-    .track {
-      height: 6px;
-      border-radius: 3px;
-      background: var(--secondary-background-color, rgba(0, 0, 0, 0.08));
-      overflow: hidden;
-      flex: 1;
-    }
-    .fill {
-      height: 6px;
-      border-radius: 3px;
-      background: var(--primary-color);
     }
     .takes {
       color: var(--sb-mix);
@@ -442,10 +389,6 @@ export class SmartBoilerSchematic extends LitElement {
     .muted {
       color: var(--secondary-text-color);
       font-weight: 500;
-    }
-    .small {
-      font-size: 12px;
-      font-weight: 400;
     }
     .legend {
       display: flex;

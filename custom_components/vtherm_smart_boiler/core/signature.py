@@ -8,7 +8,11 @@ gets a straight line through its heating days — colder than the heating thresh
 heating gas — by the building fit's own rules (``core.building``): enough days, enough spread of
 outdoor temperature, more gas on colder days, and a fit close enough; otherwise no line, and why.
 Where both lines exist and their temperatures overlap, they are compared in the middle of the
-overlap: how much more or less gas a day under control took there.
+overlap: how much more or less gas a day under control took there — each line's value with its
+95 % range, widened for correlated days (``core.regression``, I13.4), and the change with its
+range. Where the two ranges overlap, no difference is shown: daily signatures with correlated
+days give ranges too narrow otherwise (Gondian and Thiery 2026), and the independent evidence of
+control savings is weak (Lomas et al. 2018).
 """
 
 from __future__ import annotations
@@ -16,9 +20,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+from itertools import pairwise
+from typing import cast
 
-from .building import MIN_FIT_DAYS, MIN_OUTDOOR_SPREAD_K, MIN_QUALITY
+from .building import MIN_FIT_DAYS, MIN_OUTDOOR_SPREAD_K, MIN_QUALITY, NEXT_DAY_S
 from .daily import DAY, FIT_COVERAGE, DaySummary
+from .regression import Line, fit_line
 
 
 class NoLine(StrEnum):
@@ -59,6 +66,8 @@ class SignatureLine:
 class SignatureFit:
     line: SignatureLine | None
     reason: NoLine | None  # why there is no line
+    # The fit behind the line, for its ranges (I13.4); not shown itself.
+    fitted: Line | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +76,16 @@ class Comparison:
     observing: float  # gas per day there, watched
     control: float  # gas per day there, under control
     change: float  # control against watched: -0.1 is 10 % less
+    # I13.4: each line's 95 % range there, and the change's from them (``None``: the watched
+    # range reaches zero, so the change could be anything); ``shown``: the two ranges do not
+    # overlap — a difference the days show.
+    observing_low: float
+    observing_high: float
+    control_low: float
+    control_high: float
+    change_low: float | None
+    change_high: float | None
+    shown: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,41 +114,67 @@ def energy_signature(days: Iterable[DaySummary], threshold: float | None) -> Sig
         shown.append(SignatureDay(day.start, day.outdoor_mean, gas, day.under_control, heating))
     observing = _fit([d for d in shown if d.fitted and not d.controlled])
     control = _fit([d for d in shown if d.fitted and d.controlled])
-    return Signature(tuple(shown), observing, control, _compare(observing.line, control.line))
+    return Signature(tuple(shown), observing, control, _compare(observing, control))
 
 
 def _fit(days: list[SignatureDay]) -> SignatureFit:
+    """The line through ``days`` (in time order), or why there is none."""
     if len(days) < MIN_FIT_DAYS:
         return SignatureFit(None, NoLine.TOO_FEW_DAYS)
     xs = [d.outdoor for d in days]
     ys = [d.gas for d in days]
     if max(xs) - min(xs) < MIN_OUTDOOR_SPREAD_K:
         return SignatureFit(None, NoLine.TOO_LITTLE_SPREAD)
-    n = len(days)
-    mean_x, mean_y = sum(xs) / n, sum(ys) / n
-    sxx = sum((x - mean_x) ** 2 for x in xs)
-    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
-    slope = sxy / sxx
-    if slope >= 0:
+    adjacent = [after.start - before.start <= NEXT_DAY_S for before, after in pairwise(days)]
+    # Seven days over 8 K or more: a spread, so a line.
+    fitted = cast(Line, fit_line(xs, ys, adjacent))
+    if fitted.slope >= 0:
         return SignatureFit(None, NoLine.NOT_HEATING)
-    intercept = mean_y - slope * mean_x
+    mean_y = sum(ys) / len(ys)
     # A falling line means the gas varies: ``total`` is above zero.
     total = sum((y - mean_y) ** 2 for y in ys)
-    residual = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys, strict=True))
+    residual = sum((y - fitted.at(x)) ** 2 for x, y in zip(xs, ys, strict=True))
     r_squared = 1.0 - residual / total
     if r_squared < MIN_QUALITY:
         return SignatureFit(None, NoLine.TOO_SCATTERED)
-    return SignatureFit(SignatureLine(slope, intercept, min(xs), max(xs), n, r_squared), None)
+    line = SignatureLine(fitted.slope, fitted.intercept, min(xs), max(xs), fitted.n, r_squared)
+    return SignatureFit(line, None, fitted)
 
 
-def _compare(observing: SignatureLine | None, control: SignatureLine | None) -> Comparison | None:
-    if observing is None or control is None:
+def _compare(observing: SignatureFit, control: SignatureFit) -> Comparison | None:
+    """The two lines in the middle of the temperatures both cover, each with its range; none
+    without both lines, an overlap, or gas watched there."""
+    watched_line, controlled_line = observing.fitted, control.fitted
+    if (
+        observing.line is None
+        or control.line is None
+        or watched_line is None
+        or controlled_line is None
+    ):
         return None
-    low, high = max(observing.low, control.low), min(observing.high, control.high)
+    low = max(observing.line.low, control.line.low)
+    high = min(observing.line.high, control.line.high)
     if low > high:
         return None
     outdoor = (low + high) / 2
-    watched, controlled = observing.at(outdoor), control.at(outdoor)
+    watched, controlled = watched_line.at(outdoor), controlled_line.at(outdoor)
     if watched <= 0:
         return None
-    return Comparison(outdoor, watched, controlled, controlled / watched - 1)
+    watched_half = watched_line.t * watched_line.error_at(outdoor)
+    controlled_half = controlled_line.t * controlled_line.error_at(outdoor)
+    w_low, w_high = watched - watched_half, watched + watched_half
+    c_low, c_high = controlled - controlled_half, controlled + controlled_half
+    bounded = w_low > 0
+    return Comparison(
+        outdoor,
+        watched,
+        controlled,
+        controlled / watched - 1,
+        w_low,
+        w_high,
+        c_low,
+        c_high,
+        c_low / w_high - 1 if bounded else None,
+        c_high / w_low - 1 if bounded else None,
+        shown=c_high < w_low or c_low > w_high,
+    )

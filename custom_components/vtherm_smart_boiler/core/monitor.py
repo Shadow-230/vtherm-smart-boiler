@@ -83,6 +83,9 @@ class MonitorSummary:
     load_estimate_only: bool = False
     # S-43: a flame signal is mapped at all.
     burner_signal: bool = True
+    # I13.5: the gas of the burns known as hot water, in the heating gas's unit — the hot-water
+    # self-check's; ``None`` where the heating gas is not known whole.
+    dhw_gas: float | None = None
 
 
 def dhw_inputs(
@@ -145,35 +148,37 @@ def _gas(
     end: float,
     scale: ModulationScale,
     burns: Sequence[ClassifiedBurn],
-) -> tuple[Consumption | None, GasSource | None, float | None]:
+) -> tuple[Consumption | None, GasSource | None, float | None, float]:
     """Heating gas, its source and, from a meter, the gas other consumers used while the burner
-    was off (S-31, shown apart). The gas of the burns known as hot water is left out."""
+    was off (S-31, shown apart). The gas of the burns known as hot water is left out, and given
+    last (I13.5: the hot-water self-check)."""
     if history.is_mapped(Signal.GAS_METER):
         meter = history.signal(Signal.GAS_METER)
         total = meter_consumption(meter, start, end)
         if total is None:
-            return None, GasSource.METER, None
+            return None, GasSource.METER, None, 0.0
         dhw, other = _metered_split(meter, history.signal(Signal.FLAME), burns, start, end)
         heating = max(0.0, total.amount - dhw - other)
-        return Consumption(heating, total.complete), GasSource.METER, other
+        return Consumption(heating, total.complete), GasSource.METER, other, dhw
     low = parameters.value(ParameterKey.GAS_AT_MIN_POWER)
     high = parameters.value(ParameterKey.GAS_AT_MAX_POWER)
     if low is None or high is None or not history.is_mapped(Signal.MODULATION):
-        return None, None, None
-    # Burn by burn, hot water left out; complete while the flame is known nearly all the time
+        return None, None, None, 0.0
+    # Burn by burn, hot water apart; complete while the flame is known nearly all the time
     # (a restart's seconds without it must not void a week) and the modulation in every burn.
     flame, modulation = history.signal(Signal.FLAME), history.signal(Signal.MODULATION)
-    amount = 0.0
+    amount = hot = 0.0
     complete = known_duration(flame, start, end) >= GAS_COVERAGE * (end - start)
     for classified in burns:
-        if classified.kind in DHW_KINDS:
-            continue
         part = integrate_rate(
             flame, modulation, low, high, scale, *_inside(classified, (start, end))
         )
+        if classified.kind in DHW_KINDS:
+            hot += part.amount
+            continue
         amount += part.amount
         complete = complete and part.complete
-    return Consumption(amount, complete), GasSource.MODULATION, None
+    return Consumption(amount, complete), GasSource.MODULATION, None, hot
 
 
 def _metered_split(
@@ -267,7 +272,9 @@ def summarize(
         if history.is_mapped(Signal.RETURN)
         else None
     )
-    gas, source, other_gas = _gas(history, parameters, start, end, opts.modulation_scale, burns)
+    gas, source, other_gas, dhw_gas = _gas(
+        history, parameters, start, end, opts.modulation_scale, burns
+    )
     # Gas known for part of the window over degree-days for all of it would be too little.
     gas_per_dd = (
         per_degree_day(gas.amount, days)
@@ -310,6 +317,7 @@ def summarize(
         other_gas=other_gas,
         load_estimate_only=load.estimate_only and len(outdoor) > 0,
         burner_signal=history.is_mapped(Signal.FLAME),
+        dhw_gas=dhw_gas if gas is not None and gas.complete else None,
     )
 
 

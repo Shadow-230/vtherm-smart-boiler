@@ -21,6 +21,10 @@ DHW_KINDS = frozenset({BurnKind.DHW})
 UNKNOWN_KINDS = frozenset({BurnKind.UNKNOWN})  # counted apart: it may have been hot water
 NOT_DHW_KINDS = CH_KINDS | UNKNOWN_KINDS  # energy and gas not known to be hot water
 DEFAULT_SHORT_BURN_S = 10 * 60.0
+# I13.5: a burn under this long is shown apart beside the short ones — the efficiency cost of
+# cycling sits under 3 minutes (Bennett et al. 2019, from Orr et al. 2009). Fixed: a measure,
+# not a setting.
+VERY_SHORT_BURN_S = 3 * 60.0
 DEFAULT_CONDENSING_RETURN = 55.0
 MIN_DEGREE_DAYS = 0.5  # below this, gas per degree-day means nothing
 
@@ -45,6 +49,10 @@ class CycleStats:
     p90_burn_s: float | None
     short_burns: int
     active_s: float | None = None
+    # I13.5: the complete burns under ``VERY_SHORT_BURN_S``, out of ``very_short_basis``
+    # complete burns (``None``: all of them; fewer where days kept before did not count them).
+    very_short_burns: int = 0
+    very_short_basis: int | None = None
 
     @property
     def starts_per_hour(self) -> float | None:
@@ -55,6 +63,12 @@ class CycleStats:
     @property
     def short_burn_share(self) -> float | None:
         return self.short_burns / self.complete_burns if self.complete_burns else None
+
+    @property
+    def very_short_burn_share(self) -> float | None:
+        """I13.5: the share of burns under 3 minutes, beside the short ones."""
+        basis = self.complete_burns if self.very_short_basis is None else self.very_short_basis
+        return self.very_short_burns / basis if basis else None
 
 
 def cycle_stats(
@@ -86,6 +100,7 @@ def cycle_stats(
         p90_burn_s=_percentile(durations, 0.9) if durations else None,
         short_burns=sum(1 for d in durations if d < short_burn_s),
         active_s=hours_with(selected, window),
+        very_short_burns=sum(1 for d in durations if d < VERY_SHORT_BURN_S),
     )
 
 

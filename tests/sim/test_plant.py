@@ -27,6 +27,8 @@ from custom_components.boiler_sim.profiles import (
 
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.installation import EmitterType
+from sim.simulator import LEARNING_BAND, LEARNING_PHASES
+from sim.simulator import LEARNING_CYCLE_S as VT_CYCLE_S
 
 
 def plant(**kwargs) -> Plant:
@@ -246,13 +248,9 @@ def test_a_zone_with_its_own_capacity_cools_faster_than_the_house() -> None:
     assert living == pytest.approx(bath)
 
 
-# SmartPI learning from scratch, as the plugin and J4 read it (SmartPI 0.4.0 ``HYST_UPPER_C``,
-# ``HYST_LOWER_C``; 0.6.7's documentation, as the test session read it on 2026-11-22: 5 cooling
-# and 4 or 5 heating phases, each a full swing): on at 0.3 K under the setpoint, off at 0.5 K
-# over it, decided at each VT cycle of 5 min. Assumed: SmartPI's own rules beyond the band.
-LEARNING_BAND = (-0.3, 0.5)
-VT_CYCLE_S = 300.0
-LEARNING_PHASES = 10
+# SmartPI learning from scratch, as the plugin and J4 read it: ``sim.simulator``'s
+# ``LEARNING_…`` (on at 0.3 K under the setpoint, off at 0.5 K over it, decided at each VT cycle
+# of 5 min; ten phases).
 
 
 def _learning_phases(zones: tuple[ZoneProfile, ...], hours: float) -> list[tuple[str, float]]:

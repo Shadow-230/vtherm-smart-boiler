@@ -6,10 +6,12 @@ thermostat — "off", before its first refresh neither ``is_ready`` nor the rest
 2026-10-06) — so nothing VT shows then is taken for an answer, nor after the recognition period:
 
 - **The recognition period** runs from the control unit's start (Home Assistant starting, the
-  entry reloading), and again whenever every configured zone stops answering at once — all of
-  them answered at the step before (VT reloading). No new decision is taken until every
-  configured zone has reported since it began — VT shows it started, and its mode and data are
-  known — or for at most ``RECOGNITION_S``, and never before Home Assistant runs.
+  entry reloading), and again whenever every zone stops answering at once — all of them
+  answered at the step before (VT reloading). No new decision is taken until every zone has
+  reported since it began — VT shows it started, and its mode and data are known — or for at
+  most ``RECOGNITION_S``, and never before Home Assistant runs. The zones are the rooms VT
+  hands over (I12.11): with none known yet — VT has not handed its thermostats over — only the
+  time ends it, never an empty list.
 - **The grace:** a zone that stops answering after it answered — unknown, or showing again that
   VT has not started it (a thermostat's reload) — keeps its last answer for ``GRACE_S`` from when
   it went away, also when the recognition period ends meanwhile (SB-28); then it drops out and
@@ -18,9 +20,9 @@ thermostat — "off", before its first refresh neither ``is_ready`` nor the rest
   period covers restarts.
 - **Every zone unknown:** since when no configured zone is known, for the repair issue that
   follows after ``NO_ZONE_ISSUE_S`` (every mode, the monitor only included).
-- **No criterion judged** (PB-03, decision 3 of 0.2.3): since when the zones are known but no
-  configured demand criterion can be judged — the same end state, and the same repair issue
-  after ``NO_ZONE_ISSUE_S``, naming the criterion. The controller follows it after the demand.
+- **VT's decision unknown** (PB-03, I12): since when the zones are known but VT's central
+  boiler's helper is neither on nor off — the same end state, and a repair issue after
+  ``NO_ZONE_ISSUE_S``. The controller follows it after the demand.
 
 A fact about the zones, not the session: it is followed at every step, whatever holds control,
 and switching control off and on does not start it again.
@@ -47,7 +49,7 @@ class ZoneWatch:
     lost_at: Mapping[str, float] = field(default_factory=dict)  # a zone in its grace: since
     all_answering: bool = False  # at the last step, every configured zone answered
     unknown_since: float | None = None  # every configured zone unknown since then
-    unjudged_since: float | None = None  # zones known, no configured criterion judged since then
+    unjudged_since: float | None = None  # zones known, VT's decision unknown since then
 
 
 def in_recognition(watch: ZoneWatch) -> bool:
@@ -65,14 +67,14 @@ def no_zone_issue_due(watch: ZoneWatch, now: float) -> bool:
     return issue_due(watch.unknown_since, now)
 
 
-def criteria_issue_due(watch: ZoneWatch, now: float) -> bool:
-    """No configured criterion judged, the zones known, for ``NO_ZONE_ISSUE_S`` (PB-03)."""
+def vt_unknown_issue_due(watch: ZoneWatch, now: float) -> bool:
+    """VT's decision unknown, the zones known, for ``NO_ZONE_ISSUE_S`` (PB-03, I12)."""
     return issue_due(watch.unjudged_since, now)
 
 
 def unjudged_since(previous: float | None, unjudged: bool, now: float) -> float | None:
-    """Since when no configured criterion can be judged while zones are known (``None``: one
-    can, or no zone is known)."""
+    """Since when VT's decision is unknown while zones are known (``None``: it is known, or no
+    zone is known)."""
     if not unjudged:
         return None
     return now if previous is None else _not_after(previous, now)
@@ -125,7 +127,10 @@ def follow_zones(
         # step with Home Assistant running, however long the start took.
         since = now if starting else _not_after(since, now)
         reported = reported | answering.keys()
-        done = all(zone_id in reported for zone_id in ids) or now - since >= RECOGNITION_S
+        # No room known yet is VT not having handed its thermostats over (I12.11): only time.
+        done = (bool(ids) and all(zone_id in reported for zone_id in ids)) or (
+            now - since >= RECOGNITION_S
+        )
         if done and not starting:
             since, reported = None, frozenset()
     last = {zone_id: state for zone_id, state in watch.last.items() if zone_id in ids}

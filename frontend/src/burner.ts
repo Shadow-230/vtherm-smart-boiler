@@ -1,6 +1,7 @@
 // The burner tab's arithmetic (docs/en/development/plans/plan-0.2-i10.md, I10.5): the burns are
 // the monitor's own, as its last analysis classified them (vtherm_smart_boiler/burns); this only
 // sorts them for drawing. Pure.
+import type { HassEntity } from "./types";
 
 export type BurnKind = "ch" | "dhw" | "unknown";
 
@@ -32,6 +33,13 @@ export function recentBurns(burns: BurnInfo[], now: number, windowS: number): Bu
   return burns
     .filter((burn) => burn.end > now - windowS && burn.start <= now)
     .sort((a, b) => a.start - b.start);
+}
+
+/** I13.5: the share of heating burns under 3 minutes (%), as the short burns' sensor gives it
+ * beside its own; `null` where it gives none. */
+export function veryShortShare(entity: HassEntity | undefined): number | null {
+  const value = entity?.attributes.under_3_min;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** How long the heating burns lasted, in buckets of minutes; the monitor's short-burn length

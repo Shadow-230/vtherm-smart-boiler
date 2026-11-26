@@ -29,12 +29,12 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.control_config import MIGRATED_HARD_MIN
 
-from .harness import VT_PLATFORM, FakeZones, ServiceSpy, analyse_now
+from .harness import VT_HELPER, VT_PLATFORM, FakeZones, ServiceSpy, analyse_now
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -65,6 +65,17 @@ GATEWAY_CONTROL = {
     "confirmed_entity": CONFIRMED,
     "topology": "gateway_with_thermostat",
     "curve": {"design_outdoor": -15, "design_flow": 55},
+    "vt_boiler_helper": VT_HELPER,  # I12: the helper VT's central boiler switches
+}
+
+
+# VT's climate unavailable: no attribute of its own (I12.7: its thermostat gives no mode either).
+UNAVAILABLE: dict[str, Any] = {
+    "current_temperature": None,
+    "temperature": None,
+    "hvac_action": None,
+    "on_percent": None,
+    "power_percent": None,
 }
 
 
@@ -78,6 +89,7 @@ class Rig:
     entry: MockConfigEntry | None = None
     vt_mode: str = "heat"  # the HVAC mode VT gives its thermostats (VT's own modes act on it)
     over_climate: set[str] = field(default_factory=set)  # zones of VT's over_climate type
+    rebuilt: set[str] = field(default_factory=set)  # zones VT rebuilt as over_climate
     modes: dict[str, str] = field(default_factory=dict)  # a zone's own mode, over ``vt_mode``
     # VT's ``is_ready`` on every thermostat; false: VT cannot start them; ``None``: its
     # placeholder, neither ``is_ready`` nor ``specific_states`` (no device has reported).
@@ -87,7 +99,6 @@ class Rig:
     # PB-39: the translation key of the error the last switching off raised (its hand-back did
     # not get through), else None.
     switch_error: str | None = None
-    smartpi: dict[str, bool] = field(default_factory=dict)  # SmartPI zones: learning on or off
 
     @property
     def sim(self):
@@ -112,10 +123,11 @@ class Rig:
             self.sim.set_zone_mode(zone.zone_id, plant_mode)
             opening = self.sim.opening(zone.zone_id)
             index = [z.zone_id for z in self.sim.zones].index(zone.zone_id)
-            entity_id = self.zones.entities[zone.zone_id]
             mode = self.modes.get(zone.zone_id, self.vt_mode)
             if mode == "unavailable":
-                self.hass.states.async_set(entity_id, "unavailable", {})
+                # VT's climate unavailable: its thermostat gives no mode (I12.7), and one VT had
+                # started is stopped (the harness hands over a new one, not started).
+                self.zones.set(zone.zone_id, "unavailable", **UNAVAILABLE)
                 continue
             active = opening > 0.05
             action = "heating" if active else "idle"
@@ -123,27 +135,29 @@ class Rig:
                 opening = 1.0 if mode == "sleep" else 0.0
                 mode, active, action = "off", False, "off"
             if zone.zone_id in self.over_climate:
-                # It drives a device with its own regulation: no opening, only whether it heats
-                # — and, as VT 10.4.0 shows every started thermostat, that it has started.
-                shown: dict[str, Any] = {
-                    "current_temperature": self.degrees(self.sim.room(zone.zone_id)),
-                    "temperature": self.degrees(self.sim.plant.targets[index]),
-                    "hvac_action": action,
-                }
-                if self.vt_ready is not None:
-                    shown |= {
-                        "is_ready": self.vt_ready,
-                        "specific_states": {"is_device_active": active},
-                    }
-                self.hass.states.async_set(entity_id, mode, shown)
+                # It drives a device with its own regulation: no opening — VT's power hook never
+                # comes for a plain over_climate — only whether it heats, and that it has started.
+                if zone.zone_id not in self.rebuilt:  # VT rebuilds a thermostat it reconfigures
+                    self.rebuilt.add(zone.zone_id)
+                    self.zones.stop(zone.zone_id)
+                    self.zones.last.pop(zone.zone_id, None)
+                    self.zones.hand(zone.zone_id)
+                self.zones.set(
+                    zone.zone_id,
+                    mode,
+                    current_temperature=self.degrees(self.sim.room(zone.zone_id)),
+                    temperature=self.degrees(self.sim.plant.targets[index]),
+                    hvac_action=action,
+                    on_percent=None,
+                    specific_states={"is_device_active": active}
+                    if self.vt_ready is not None
+                    else None,
+                    is_ready=self.vt_ready,
+                )
                 continue
             # What real VT publishes for every thermostat, and what demand follows first (T4):
-            # whether its device heats now, and that it has started; a SmartPI zone, its flag.
+            # whether its device heats now, and that it has started.
             specific: dict[str, Any] = {"is_device_active": active}
-            extra: dict[str, Any] = {}
-            if zone.zone_id in self.smartpi:
-                specific["smartpi_learning_enabled"] = self.smartpi[zone.zone_id]
-                extra["configuration"] = {"proportional_function": "smartpi"}
             self.zones.set(
                 zone.zone_id,
                 mode,
@@ -154,8 +168,9 @@ class Rig:
                 on_percent=0.0 if mode == "off" else round(opening, 2),
                 specific_states=specific if self.vt_ready is not None else None,
                 is_ready=self.vt_ready,
-                **extra,
             )
+        if self.zones.follow:
+            self.zones.follow_zones()  # VT's central boiler, after every room (I12)
 
     async def advance(self, seconds: float, step: float = 10.0) -> None:
         elapsed = 0.0
@@ -590,9 +605,8 @@ async def test_a_boiler_ignoring_what_the_gateway_sends_is_not_seen_by_the_read_
 
 async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     """VT's central mode "Stopped" turns its zones off: the plugin sees no demand — heating off,
-    no hand-back, control goes on — and frost protection still watches: a room left to freeze
-    behind a valve VT keeps closed gets no frost heat, which could not reach it, but a repair
-    issue naming it (decision 4)."""
+    no hand-back, control goes on. A room left to freeze behind a valve VT keeps closed gets no
+    heat: "Stopped" in VT means nobody heats, and frost protection is VT's (I12.10)."""
     from homeassistant.helpers import issue_registry as ir
 
     hass = rig.hass
@@ -619,12 +633,8 @@ async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     assert rig.sim.opening(rig.sim.zones[0].zone_id) == 0.0
     assert 0.0 not in rig.setpoints()
     assert rig.entry is not None
-    found = ir.async_get(hass).async_get_issue(DOMAIN, f"frost_zone_closed_{rig.entry.entry_id}")
-    assert found is not None
-    assert (
-        rig.zones.entities[rig.sim.zones[0].zone_id].split(".")[1].replace("_", " ")
-        in (found.translation_placeholders["zones"])
-    )
+    issues = ir.async_get(hass).issues
+    assert not any(issue_id.startswith("frost_zone_closed") for _domain, issue_id in issues)
 
 
 async def test_vt_stopped_leaves_a_zone_outside_the_central_mode_heating(rig: Rig) -> None:
@@ -649,10 +659,10 @@ async def test_vt_stopped_leaves_a_zone_outside_the_central_mode_heating(rig: Ri
     assert 0.0 not in rig.setpoints()
 
 
-async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
-    """Summer and winter come from VT: with its zones off nothing heats, but a room close to
-    freezing whose valve VT holds open — VT's SLEEP shows "off" with the valve at 100 % — still
-    gets heat (decision 4)."""
+async def test_the_plugin_does_not_heat_for_frost_while_vt_is_off(rig: Rig) -> None:
+    """Summer and winter come from VT: with its zones off nothing heats — a room close to
+    freezing whose valve VT holds open included (VT's SLEEP shows "off" with the valve at
+    100 %): frost protection is VT's, by its frost preset or central mode (I12.10)."""
     await start(rig)
     await rig.scenario("set_outdoor", temperature=24)
     rig.vt_mode = "sleep"
@@ -664,8 +674,8 @@ async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
     rig.sim.advance(rig.now())
     rig.mirror_zones()
     await rig.advance(20)
-    assert rig.state("sensor", "control_state").state == "frost"
-    assert rig.gateway("ch")[-1][2] is True
+    assert rig.state("sensor", "control_state").state == "idle"
+    assert rig.gateway("ch")[-1][2] is False
 
 
 @pytest.mark.parametrize(
@@ -1105,6 +1115,8 @@ async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
     3 K at most, and the user is told once it has sat at that edge — switched on: off by
     default since the user's decision of 2026-10-03 (K4.1)."""
     await start(rig, comfort_correction=True)
+    for zone in rig.sim.zones:
+        rig.zones.configure(zone.zone_id, cycle_min=5)  # VT's default cycle (I13.3's pace)
     await rig.switch(True)
     await rig.advance(900, step=30.0)
     attributes = rig.state("sensor", "control_state").attributes
@@ -1112,10 +1124,14 @@ async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
     base = attributes["target"]
     rig.sim.plant.targets[0] = 30.0  # out of reach: its valve stays fully open
     targets = []
-    # Six hours: the first reads the weather (rule 5 judges its rate by an hour of readings).
-    for _ in range(72):
+    # At most twelve hours: the first reads the weather (rule 5 judges its rate by an hour of
+    # readings); the room warms back after its raised setpoint, then counts as short after an
+    # hour (I13.3); then 3 K at 1 K per 30 min, and three hours at the edge.
+    for _ in range(144):
         await rig.advance(300, step=30.0)
         targets.append(rig.state("sensor", "control_state").attributes["target"])
+        if rig.state("binary_sensor", "alarm_correction_at_limit").state == "on":
+            break
     assert max(targets) > base + 1.0  # the correction worked
     assert max(targets) <= base + 3.0 + 0.1  # and stayed within its band
     assert max(rig.setpoints()) <= base + 3.0 + 0.1
@@ -1221,6 +1237,7 @@ ENTITY_CONTROL = {
     "hand_back_value": 0,
     "hand_back_value_effect": "own_control",
     "topology": "virtual",
+    "vt_boiler_helper": VT_HELPER,
 }
 
 
@@ -1535,12 +1552,18 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25}  # the highest: the circuit's
     result = await options_step(rig, result, curve)
     assert result["type"] == "menu"  # I7: back at the menu, nothing saved yet
+    # I12: the helper VT's central boiler switches, in the control behaviour's item.
+    result = await options_step(rig, result, {"next_step_id": "control_behaviour"})
+    assert "vt_boiler_helper" in {str(m) for m in result["data_schema"].schema}
+    result = await options_step(rig, result, {"vt_boiler_helper": VT_HELPER})
+    assert result["type"] == "menu"
     assert "control" not in rig.entry.options
     result = await options_step(rig, result, {"next_step_id": "save"})
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
     control = rig.entry.options["control"]
     assert (control["write_path"], control["gateway_id"]) == ("opentherm_gw", "sim")
+    assert control["vt_boiler_helper"] == VT_HELPER
     await rig.switch(True)
     await rig.advance(600, step=30.0)
     assert rig.setpoints()
@@ -1554,37 +1577,24 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
 
 async def test_a_dhw_draw_under_control_raises_no_outside_change(rig: Rig) -> None:
     """T-21 (P-36, P-22): control through the simulated gateway, its heating switch read back
-    from the boiler's "Central heating 1" (CH enable, not "running"), a SmartPI zone learning. A
-    ten-minute hot-water draw: the boiler leaves heating for the tank — no outside change, no
-    ignored write, no latch, the DHW-enable bit never written; SmartPI's learning paused for the
-    draw and resumed after it; heating back once the draw ends."""
-    hass = rig.hass
-    calls: list[tuple[str, bool]] = []
-
-    async def set_learning(call: Any) -> None:
-        calls.append((call.data["entity_id"], call.data["learning_enabled"]))
-        zone = next(z for z, e in rig.zones.entities.items() if e == call.data["entity_id"])
-        rig.smartpi[zone] = call.data["learning_enabled"]
-
-    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
-    learner = "zone_bath"
-    rig.smartpi[learner] = True
+    from the boiler's "Central heating 1" (CH enable, not "running"). A ten-minute hot-water
+    draw: the boiler leaves heating for the tank — no outside change, no ignored write, no latch,
+    the DHW-enable bit never written; "boiler gives no heat" on for hot water during the draw
+    and off after it (I12.9); heating back once the draw ends; nothing of SmartPI called."""
     await start(rig, ch_confirmed_entity=CH_ENABLED)
     rig.sim.plant.targets[2] = 24.0  # the bath calls, its valve open
     await rig.switch(True)
     await rig.advance(900, step=30.0)
-    entity = rig.zones.entities[learner]
-    assert calls == []
+    assert rig.state("binary_sensor", "no_heat").state == "off"
     await rig.scenario("start_dhw", minutes=10)
     await rig.advance(60)
     assert rig.sim.last.dhw
-    assert calls == [(entity, False)]
-    assert entity in rig.state("sensor", "control_state").attributes["learning_paused"]
+    shown = rig.state("binary_sensor", "no_heat")
+    assert (shown.state, shown.attributes["reason"]) == ("on", "hot_water")
     await rig.advance(540)
     assert not rig.sim.last.dhw  # the draw is over
     await rig.advance(1800, step=30.0)
-    assert calls[-1] == (entity, True)  # resumed
-    assert rig.smartpi[learner] is True
+    assert rig.state("binary_sensor", "no_heat").state == "off"
     assert rig.sim.last.flame  # heating back
     for alarm in ("alarm_outside_change", "alarm_write_ignored"):
         assert rig.state("binary_sensor", alarm).state == "off", alarm
@@ -1825,6 +1835,7 @@ RELAY_CONTROL = {
     "relay_reports_state": "yes",
     "relay_power_on_state": "off",
     "relay_off_timer": "none",
+    "vt_boiler_helper": VT_HELPER,
 }
 START_TRACE_S = 310.0  # past the five minutes a unit's start counts as a trace of an outage
 
@@ -2505,11 +2516,12 @@ async def test_every_zone_unknown_with_and_without_the_own_room_controller_tick(
 
 
 @pytest.mark.parametrize("path", ["opentherm_gw", "relay"])
-async def test_the_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: str) -> None:
-    """TB-14 (decision 5): VT's activation delay of 120 s. The rooms warm when control starts;
-    then they call. Heating is not switched on for 120 s from that first call, and a call that
-    drops and comes back meanwhile neither cancels nor restarts the wait; at its end heating
-    starts. Switching off is at once."""
+async def test_vts_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: str) -> None:
+    """TB-14, I12: VT's central boiler decides, and waits its own activation delay of 120 s. The
+    rooms call; VT's event announces the delay and VT keeps the helper off: heating stays off,
+    with the reason ``activation_delay`` and when it ends. VT turns the helper on at the delay's
+    end: heating starts at once, without waiting for the next tick; switching off follows within
+    a step."""
     relay = path == "relay"
 
     def heating() -> bool:
@@ -2519,34 +2531,44 @@ async def test_the_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: 
         return bool(switched) and switched[-1][2] is True
 
     if relay:
-        await start_relay(rig, activation_delay_s=120)
+        await start_relay(rig)
     else:
-        await start(rig, activation_delay_s=120)
+        await start(rig)
     rooms_call(rig, False)
     await rig.switch(True)
     await rig.advance(60)
     assert not heating()
+    rig.zones.set_helper("off")  # VT's central boiler takes the helper over
     rooms_call(rig, True)
+    rig.hass.bus.async_fire(
+        "versatile_thermostat_central_boiler_event", {"delayed_activation_sec": 120}
+    )
     await rig.advance(60)
     assert not heating()
-    assert "activation_delay" in rig.state("sensor", "control_state").attributes["reasons"]
-    rooms_call(rig, False)  # the call drops for 10 s...
-    await rig.advance(10)
-    rooms_call(rig, True)  # ...and comes back
-    await rig.advance(40)  # 110 s after the first call
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" in state.attributes["reasons"]
+    assert state.attributes["activation_at"] is not None
+    await rig.advance(50)
     assert not heating()
-    await rig.advance(20)  # past 120 s
-    assert heating()
+    rig.zones.set_helper("on")  # VT's delay is over: its command
+    rig.hass.bus.async_fire("versatile_thermostat_central_boiler_event", {"central_boiler": True})
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert heating()  # at once
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" not in state.attributes["reasons"]
+    assert state.attributes["activation_at"] is None
+    await rig.advance(30)
+    rig.zones.set_helper("off")
     rooms_call(rig, False)
     await rig.advance(10)
-    assert not heating()  # at once
+    assert not heating()
 
 
 async def test_a_planned_relay_restart_rests_then_restores_at_once(rig: Rig) -> None:
     """TB-14 (R9): a planned restart — the entry stopped and started again, as Home Assistant
     does. The relay goes to its rest state ("off") at the stop, and gets its last command ("on")
-    again at once at the start — no activation delay, no hand-back first — and keeps it."""
-    await start_relay(rig, activation_delay_s=120)
+    again at once at the start — no hand-back first — and keeps it."""
+    await start_relay(rig)
     rooms_call(rig, True)
     await rig.switch(True)
     await rig.advance(130)

@@ -1,15 +1,19 @@
 """Whether the boiler is called for heat, and why not (the user's decisions of 2026-10-14): what
-VT's central boiler shows on its binary sensor, and what SmartPI asks to tell a boiler not called
-from a burner pause (water-interface.md §4)."""
+VT's central boiler shows on its binary sensor; and the house-wide "boiler gives no heat" signal
+with its reason (I12.9), which SmartPI 1.0 takes as its "heating unavailable" input."""
 
 from __future__ import annotations
 
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.boiler_call import (
+    NO_HEAT_UNKNOWN,
     BoilerCall,
     CallReason,
+    NoHeat,
+    NoHeatReason,
     boiler_call,
+    no_heat,
 )
 from custom_components.vtherm_smart_boiler.core.controller import ControlMode, Reason
 
@@ -22,7 +26,6 @@ NOT_CONTROLLING = BoilerCall(None, CallReason.NOT_CONTROLLING)
     ("mode", "reasons", "calling", "expected"),
     [
         (ControlMode.HEATING, (Reason.DEMAND,), 1, CALLED),
-        (ControlMode.FROST, (Reason.FROST,), 0, CALLED),
         # Heating without an outdoor temperature, on the fallback setpoint: called.
         (ControlMode.FALLBACK, (Reason.OUTDOOR_UNKNOWN, Reason.DEMAND), 1, CALLED),
         # A circuit run by other automation asking, no zone calling: called.
@@ -74,3 +77,165 @@ def test_a_fault_comes_before_a_pending_start() -> None:
     assert fault.reason is CallReason.BOILER_FAULT
     waiting = boiler_call(ControlMode.IDLE, (Reason.NO_DEMAND, Reason.ACTIVATION_DELAY), 1)
     assert waiting.reason is CallReason.ACTIVATION_DELAY
+
+
+# --- I12.9: "boiler gives no heat" ------------------------------------------------------------
+
+GIVEN = NoHeat(False)
+ON_BEFORE = NoHeat(True, NoHeatReason.VT_NOT_CALLING)
+
+
+def on(reason: NoHeatReason) -> NoHeat:
+    return NoHeat(True, reason)
+
+
+@pytest.mark.parametrize(
+    ("mode", "reasons", "hot_water", "expected"),
+    [
+        # Heating wanted, nothing in the way: heat is given.
+        (ControlMode.HEATING, (Reason.DEMAND,), False, GIVEN),
+        (ControlMode.HEATING, (Reason.DEMAND,), None, GIVEN),  # hot water unknown: not counted
+        (ControlMode.FALLBACK, (Reason.OUTDOOR_UNKNOWN, Reason.DEMAND), None, GIVEN),
+        (ControlMode.HEATING, (Reason.CIRCUIT_ASKS,), None, GIVEN),
+        # The recognition period keeping a heating command: heating.
+        (ControlMode.HEATING, (Reason.ZONES_RECOGNITION,), None, GIVEN),
+        # Hot water while heating is wanted.
+        (ControlMode.HEATING, (Reason.DEMAND,), True, on(NoHeatReason.HOT_WATER)),
+        (ControlMode.FALLBACK, (Reason.DEMAND,), True, on(NoHeatReason.HOT_WATER)),
+        # Heating not wanted: VT's activation delay, or VT not calling.
+        (
+            ControlMode.IDLE,
+            (Reason.NO_DEMAND, Reason.ACTIVATION_DELAY),
+            None,
+            on(NoHeatReason.ACTIVATION_DELAY),
+        ),
+        (ControlMode.IDLE, (Reason.NO_DEMAND,), None, on(NoHeatReason.VT_NOT_CALLING)),
+        (ControlMode.IDLE, (Reason.NO_DEMAND,), True, on(NoHeatReason.VT_NOT_CALLING)),
+        # The recognition period keeping "off".
+        (ControlMode.IDLE, (Reason.ZONES_RECOGNITION,), None, on(NoHeatReason.VT_NOT_CALLING)),
+        # The boiler's own fault, before hot water; in the recognition period too.
+        (ControlMode.BOILER_FAULT, (Reason.BOILER_FAULT,), True, on(NoHeatReason.BOILER_FAULT)),
+        (
+            ControlMode.BOILER_FAULT,
+            (Reason.ZONES_RECOGNITION, Reason.BOILER_FAULT),
+            None,
+            on(NoHeatReason.BOILER_FAULT),
+        ),
+        # The plugin cannot vouch for heat: an alarm or latch, a lost link, a blocker, nothing
+        # asking with a working thermostat, VT's decision unknown with none.
+        (ControlMode.HANDED_BACK, (Reason.ALARM_HAND_BACK,), None, on(NoHeatReason.HANDED_BACK)),
+        (
+            ControlMode.HANDED_BACK,
+            (Reason.BOILER_LINK_STALE,),
+            None,
+            on(NoHeatReason.HANDED_BACK),
+        ),
+        (ControlMode.HANDED_BACK, (Reason.ZONES_UNKNOWN,), None, on(NoHeatReason.HANDED_BACK)),
+        (ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), None, on(NoHeatReason.HANDED_BACK)),
+        (ControlMode.IDLE, (Reason.ZONES_UNKNOWN,), None, on(NoHeatReason.HANDED_BACK)),
+    ],
+)
+def test_the_no_heat_signal_follows_the_control_step(
+    mode: ControlMode,
+    reasons: tuple[Reason, ...],
+    hot_water: bool | None,
+    expected: NoHeat,
+) -> None:
+    assert no_heat(mode, reasons, NO_HEAT_UNKNOWN, hot_water=hot_water) == expected
+
+
+def test_control_switched_off_cannot_tell() -> None:
+    """Switched off by the user: unknown (shown unavailable), never on — SmartPI's learning
+    would stay held for as long as control is off — whatever it showed before."""
+    for previous in (NO_HEAT_UNKNOWN, GIVEN, ON_BEFORE):
+        assert no_heat(ControlMode.DISABLED, (Reason.CONTROL_OFF,), previous) == NO_HEAT_UNKNOWN
+        assert no_heat(ControlMode.DISABLED, (), previous, hot_water=True) == NO_HEAT_UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "reasons",
+    [(Reason.BOILER_LINK_STALE,), (Reason.READ_BACK_UNKNOWN,), (Reason.ZONES_RECOGNITION,)],
+)
+def test_waiting_for_data_keeps_the_last_value(reasons: tuple[Reason, ...]) -> None:
+    """A stale link short of a loss, a read-back unknown, the recognition period with nothing
+    held: nothing is written meanwhile, so the last value stands, its reason too; none before:
+    unknown."""
+    for previous in (GIVEN, ON_BEFORE, on(NoHeatReason.HOT_WATER), NO_HEAT_UNKNOWN):
+        assert no_heat(ControlMode.WAITING_DATA, reasons, previous, hot_water=True) == previous
+
+
+@pytest.mark.parametrize(
+    ("mode", "reasons", "hot_water"),
+    [
+        (ControlMode.IDLE, (), None),  # VT not calling
+        (ControlMode.IDLE, (Reason.ACTIVATION_DELAY,), None),
+        (ControlMode.HEATING, (Reason.DEMAND,), True),  # hot water with priority
+        (ControlMode.BOILER_FAULT, (), None),
+        (ControlMode.HANDED_BACK, (), None),
+        (ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), None),
+    ],
+    ids=[
+        "vt_not_calling",
+        "activation_delay",
+        "hot_water",
+        "boiler_fault",
+        "handed_back",
+        "blocked",
+    ],
+)
+def test_no_room_calling_is_no_missing_heat(
+    mode: ControlMode, reasons: tuple[Reason, ...], hot_water: bool | None
+) -> None:
+    """I13.1: while no room calls for heat, no room is withheld any — the signal is off, whatever
+    the boiler does; a zone model learns from that rest (Hägglund and Åström 2000: learning held
+    only while a controller asks for an input it does not get). With a room calling, as before;
+    rooms not known (``None``), as before."""
+    assert no_heat(mode, reasons, ON_BEFORE, hot_water=hot_water, rooms_calling=False) == GIVEN
+    calling = no_heat(mode, reasons, ON_BEFORE, hot_water=hot_water, rooms_calling=True)
+    unknown = no_heat(mode, reasons, ON_BEFORE, hot_water=hot_water)
+    assert calling == unknown
+    assert calling.on is True
+
+
+def test_no_room_calling_still_waits_and_stays_unknown_when_off() -> None:
+    """I13.1, negative: control switched off stays unknown and waiting for data keeps the last
+    value — no room calling changes neither."""
+    assert no_heat(ControlMode.DISABLED, (), ON_BEFORE, rooms_calling=False) == NO_HEAT_UNKNOWN
+    assert no_heat(ControlMode.WAITING_DATA, (), ON_BEFORE, rooms_calling=False) == ON_BEFORE
+
+
+def test_a_start_keeps_the_last_value() -> None:
+    """I12.16: while the only blockers are Home Assistant starting or VT's settings not known yet,
+    control is not allowed for a moment at every start — the last value stands, unknown if none,
+    so a zone algorithm does not hold its integral at each start. Negative: any other blocker
+    cannot vouch for heat."""
+    for previous in (GIVEN, ON_BEFORE, NO_HEAT_UNKNOWN):
+        assert (
+            no_heat(ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), previous, starting=True)
+            == previous
+        )
+    assert no_heat(ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), GIVEN) == on(
+        NoHeatReason.HANDED_BACK
+    )
+    # A hand-back is not a start: the plugin cannot vouch for heat.
+    assert no_heat(ControlMode.HANDED_BACK, (), GIVEN, starting=True) == on(
+        NoHeatReason.HANDED_BACK
+    )
+
+
+def test_writes_stopped_cannot_vouch_for_heat() -> None:
+    """Another controller has the boiler: whatever control would decide, the plugin cannot vouch
+    for heat."""
+    assert no_heat(ControlMode.HEATING, (Reason.DEMAND,), GIVEN, writes_stopped=True) == on(
+        NoHeatReason.HANDED_BACK
+    )
+
+
+def test_every_mode_gives_a_no_heat_value() -> None:
+    """Every mode is mapped; only "switched off" and waiting for data with nothing before are
+    unknown."""
+    for mode in ControlMode:
+        found = no_heat(mode, (), NO_HEAT_UNKNOWN)
+        unknown = mode in (ControlMode.DISABLED, ControlMode.WAITING_DATA)
+        assert (found.on is None) is unknown, mode
+        assert (found.reason is None) is (found.on is not True), mode

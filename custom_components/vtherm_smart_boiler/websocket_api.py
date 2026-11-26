@@ -82,7 +82,9 @@ def installation_view(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) 
     the curve's settings — what the page needs to draw the schematic and the curve."""
     config = coordinator.config
     entry = coordinator.config_entry
-    installation = config.installation
+    # I12.11: the rooms VT hands over now, on their circuits as the options map them (the page's
+    # rooms are I12.12's).
+    installation = config.installation.with_rooms(coordinator.link.rooms())
     registry = er.async_get(hass)
     prefix = f"{entry.entry_id}_"
     # The entities this run creates, by domain and unique ID: an earlier version's entry with
@@ -130,7 +132,7 @@ def installation_view(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) 
 def _curve_settings(coordinator: SmartBoilerCoordinator) -> dict[str, Any] | None:
     """The curve's settings where control sets the water; ``None`` otherwise (monitoring only,
     or a relay that switches heating on and off)."""
-    control = coordinator.config.control
+    control = coordinator.control_now()  # the exponent from the rooms VT hands over (I12.17)
     loop = control.loop.control
     if not control.configured or loop.on_off:
         return None
@@ -185,7 +187,7 @@ def ws_curve(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, A
     if coordinator is None:
         _not_running(connection, msg)
         return
-    control = coordinator.config.control
+    control = coordinator.control_now()  # the exponent from the rooms VT hands over (I12.17)
     loop = control.loop.control
     if not control.configured or loop.on_off:
         connection.send_error(msg["id"], NO_CURVE, "control does not set the water")
@@ -229,7 +231,8 @@ def ws_curve(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, A
 def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, Any]) -> None:
     """The daily summaries kept (a year at most), oldest first, in their stored form; ``since``:
     only the days that start at or after it (a Unix time). With them, the last 12 weeks' gas per
-    degree-day as ``core.weekly`` reckons it, and the energy signature as ``core.signature``
+    degree-day as ``core.weekly`` reckons it, each with its band from the signature's scatter,
+    and the energy signature as ``core.signature``
     fits it through the heating threshold in use (I10.7), both over every day kept."""
     coordinator = _coordinator(hass)
     if coordinator is None:
@@ -246,7 +249,16 @@ def ws_days(hass: HomeAssistant, connection: ActiveConnection, msg: dict[str, An
         msg["id"],
         {
             "days": [day.to_dict() for day in days if since is None or day.start >= since],
-            "weeks": [asdict(week) for week in weekly_use(days, WEEKS_SHOWN)],
+            "weeks": [
+                asdict(week)
+                for week in weekly_use(
+                    days,
+                    WEEKS_SHOWN,
+                    # I13.5: the band from the house's own scatter — the watched days' line,
+                    # else the controlled days'.
+                    signature.observing.fitted or signature.control.fitted,
+                )
+            ],
             "signature": _signature(signature),
             "gas_unit": _meter_unit(hass, coordinator),
         },

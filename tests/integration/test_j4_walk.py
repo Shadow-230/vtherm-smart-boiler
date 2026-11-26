@@ -50,8 +50,10 @@ j4_options = _module("options")
 
 
 async def _rest(rig: Rig, hass_client: Any) -> Any:
-    """The runner's ``rest``, on Home Assistant's own HTTP API."""
+    """The runner's ``rest``, on Home Assistant's own HTTP API; the instances' helper of VT's
+    central boiler there (I12.8)."""
     assert await async_setup_component(rig.hass, "config", {})
+    rig.hass.states.async_set(j4_options.VT_HELPER, "off")
     client = await hass_client()
 
     async def rest(method: str, path: str, body: dict[str, Any] | None) -> tuple[int, Any]:
@@ -110,8 +112,9 @@ async def test_instance_1_base_is_asked_and_saved(
     assert "exponent" not in control["curve"]  # emptied: the emitters' default
     assert control["hard_min"] == 20.0
     assert control["comfort_correction"] is False
-    assert control["activation_delay_s"] == 0
-    assert (control["frost_limit"], control["frost_release"]) == (5.0, 7.0)
+    assert control["vt_boiler_helper"] == j4_options.VT_HELPER
+    assert "activation_delay_s" not in control
+    assert not {"frost_limit", "frost_release", "frost_zone"} & set(control)  # I12.10: VT's
     assert options["circuits"][0].get("max_flow") is None
     # Asked where it applies: the path, by an entry made before the connection question.
     asked = set(result["seen"])
@@ -167,13 +170,13 @@ async def test_a_field_no_form_asks_saves_nothing(rig: Rig, hass_client: Any) ->
 
 
 async def test_a_refused_answer_comes_back_with_its_errors(rig: Rig, hass_client: Any) -> None:
-    """A form that refuses its answer — frost protection released below its limit — comes back
-    with its errors, and a strict save raises. G3: an on/off contact on the gateway's thermostat
-    terminals is taken by the form (the switch refuses it) or refused there; the runner sees
-    which."""
+    """A form that refuses its answer — the lowest water above the water at the hardest frost —
+    comes back with its errors, and a strict save raises. G3: an on/off contact on the gateway's
+    thermostat terminals is taken by the form (the switch refuses it) or refused there; the
+    runner sees which."""
     await start(rig, entry_options=ONE_CIRCUIT)
     rest = await _rest(rig, hass_client)
-    change = j4_options.BASE_GATEWAY | {"frost_release": 4.0}  # below the frost limit of 5 °C
+    change = j4_options.BASE_GATEWAY | {"hard_min": 50.0, "design_flow": 45.0}
     result = await walk.save_options(
         rest, _entry_id(rig), change, j4_options.GATEWAY_ITEMS, strict=False
     )
@@ -246,15 +249,17 @@ async def test_control_is_switched_through_the_settings(rig: Rig, hass_client: A
 
 
 async def test_the_relay_path_walks_its_device_and_behaviour(rig: Rig, hass_client: Any) -> None:
-    """R6, R8 and the relay's settings (instance 6): the relay's own settings in the control
-    device, VT's activation delay in the behaviour (no longer a relay form of its own, I8)."""
+    """R8 and the relay's settings (instance 6): the relay's own settings in the control device,
+    VT's central boiler's helper in the behaviour (I12.8)."""
     await start_relay(rig)
+    other = "input_boolean.j4_other_helper"
+    rig.hass.states.async_set(other, "off")
     rest = await _rest(rig, hass_client)
     change = {
         "relay_power_on_state": "last",
         "relay_off_timer": "none",
         "relay_repeat_s": None,
-        "activation_delay_s": 120,
+        "vt_boiler_helper": other,
     }
     items = ("control", "control_behaviour")
     required = [k for k, v in change.items() if v is not None]
@@ -263,7 +268,7 @@ async def test_the_relay_path_walks_its_device_and_behaviour(rig: Rig, hass_clie
     control = _control(rig)
     assert control["relay_entity"] == RELAY
     assert control["relay_power_on_state"] == "last"
-    assert control["activation_delay_s"] == 120
+    assert control["vt_boiler_helper"] == other
     result = await walk.save_options(
         rest,
         _entry_id(rig),

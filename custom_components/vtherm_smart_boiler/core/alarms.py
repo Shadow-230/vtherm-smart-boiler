@@ -84,6 +84,9 @@ class Alarm:
     reason: str | None = None  # why it cannot be judged, why it does not apply, or ``held``
     since: float | None = None  # when its condition began (a level or a warning that waits)
     known_at: float | None = None  # when it was last judged from a known input
+    # I13.5: what a trend compared — the hysteresis drift's last day (``LAST_DAY``) or its
+    # weeks of daily medians (``WEEKS``); ``None`` for any other alarm.
+    basis: str | None = None
 
 
 def settle(alarm: Alarm, previous: Alarm | None, now: float) -> Alarm:
@@ -210,7 +213,8 @@ def pressure_alarms(
 
 DEFAULT_FREQUENT_STARTS_PER_HOUR = 12  # within one hour: the alarm (K4: its level ``alarm``)
 # K4 (the user's decision of 2026-11-17): more starts than gas boilers' TPI design value, 6 an
-# hour (UK room-thermostat manuals; Bennett 2019: 70 % of heating starts under 10 min), over the
+# hour (UK room-thermostat manuals; Bennett 2019: 70 % of the boilers averaged heating starts under
+# 10 min; a convention, not a harm threshold, I13.9), over the
 # last 3 h, is a warning — cycling the literature counts, below the alarm's hour.
 SUSTAINED_STARTS_PER_HOUR = 6
 SUSTAINED_S = 3 * HOUR
@@ -297,10 +301,11 @@ def unstable_ignition(
     known_s: float | None = None,
 ) -> Alarm:
     """Complete burns shorter than ``shortest_s`` in the last day — flame lost soon after
-    ignition — above ``limit``. A burn that ended with the zones' demand (a TPI zone's short
-    on-time, followed at once) lost no flame: with ``demand`` — whether the zones ask for heat
-    at each moment — only one during which, its end included, no moment is known without
-    demand counts; the boiler was told to stop at such a moment. Nor did one that ended on the
+    ignition — above ``limit``. A burn that ended with the demand (a TPI zone's short on-time,
+    followed at once) lost no flame: with ``demand`` — whether heat was called at each moment,
+    VT's call where its helper's state is known, else the rooms (I12.7b) — only one during
+    which, its end included, no moment is known without demand counts; the boiler was told to
+    stop at such a moment. Nor did one that ended on the
     boiler's own hysteresis (P-81): with ``flow`` and ``setpoint`` mapped (given), only a burn
     that ended with the flow known and more than ``SETPOINT_REACHED_K`` below the CH setpoint
     then in force counts — either unknown at its end, it does not; with either not mapped every
@@ -501,9 +506,10 @@ def hysteresis_samples(
 ) -> list[float]:
     """Flow when the burner stopped minus flow when it restarted, for heating cycles.
 
-    Only pauses between two heating burns with both edges seen count, during which the zones'
-    demand (``History.zone_calling``) was known "asking" throughout — a pause without demand
-    comes from the zones, not the burner's hysteresis (P-29); without zone data, none — and,
+    Only pauses between two heating burns with both edges seen count, during which the demand
+    (``History.zone_calling``: VT's call where its helper's state is known, else the rooms,
+    I12.7b) was known "asking" throughout — a pause without demand comes from the zones, not
+    the burner's hysteresis (P-29); without either, none — and,
     when the setpoint is mapped, only those during which it was known throughout and its range
     stayed within ``max_setpoint_change`` (PB-67).
     """
@@ -526,6 +532,68 @@ def hysteresis_samples(
             continue
         samples.append(off_flow - on_flow)
     return samples
+
+
+# I13.5: the hysteresis drift over weeks, from the days' medians — the last day against days
+# 4 to 8 before trips only at about 0.55 K a day (its windows' middles 5.5 days apart): a fault,
+# not a slow drift. The last week's daily medians against those of the 3 weeks ending 3 weeks
+# before: middles 28 days apart, so a drift of 1 K a week shows as 4 K, past the 3 K the fast
+# check uses. The limit is 3 K, or twice the base's own day-to-day scatter where it is larger
+# (a robust standard deviation, 1.4826 times the median absolute deviation), so a noisy boiler
+# does not cry wolf. A day's median needs 5 pauses; the last week 4 such days, the base 10
+# (provisional, K4: no domestic-boiler source gives limits — general control-chart practice).
+LAST_DAY = "last_day"
+WEEKS = "weeks"
+DAY_S = 86400.0
+MIN_DAY_PAUSES = 5
+SLOW_RECENT_DAYS = 7
+SLOW_BASE_DAYS = (42, 21)  # the base: from 42 to 21 days before now
+MIN_RECENT_MEDIANS = 4
+MIN_BASE_MEDIANS = 10
+SCATTER_TIMES = 2.0
+MAD_TO_SD = 1.4826
+
+
+def day_median(samples: Sequence[float]) -> float | None:
+    """I13.5: a day's median of the hysteresis samples, kept with its day summary; ``None``
+    with fewer than ``MIN_DAY_PAUSES``."""
+    return statistics.median(samples) if len(samples) >= MIN_DAY_PAUSES else None
+
+
+def slow_hysteresis_drift(
+    medians: Iterable[tuple[float, float]],
+    now: float,
+    floor: float = DEFAULT_HYSTERESIS_DRIFT_K,
+) -> Alarm:
+    """I13.5: the hysteresis drift over weeks — the median of the last week's daily medians
+    (``medians``: each day's start and median) against the median of the base's, either way,
+    beyond ``floor`` or twice the base's day-to-day scatter, whichever is larger; unknown
+    without enough days."""
+    kind = AlarmKind.HYSTERESIS_DRIFT
+    recent_from = now - SLOW_RECENT_DAYS * DAY_S
+    base_from, base_to = (now - days * DAY_S for days in SLOW_BASE_DAYS)
+    recent = [m for start, m in medians if recent_from <= start < now]
+    base = [m for start, m in medians if base_from <= start < base_to]
+    if len(recent) < MIN_RECENT_MEDIANS or len(base) < MIN_BASE_MEDIANS:
+        return Alarm(kind, None, limit=floor, reason=UNKNOWN_INPUT, basis=WEEKS)
+    middle = statistics.median(base)
+    scatter = MAD_TO_SD * statistics.median(abs(m - middle) for m in base)
+    limit = round(max(floor, SCATTER_TIMES * scatter), 1)  # shown to a tenth of a kelvin
+    change = statistics.median(recent) - middle
+    exceeded = abs(change) > limit
+    return Alarm(kind, exceeded, Level.WARNING if exceeded else None, change, limit, basis=WEEKS)
+
+
+def either_drift(fast: Alarm, slow: Alarm) -> Alarm:
+    """I13.5: the hysteresis warning from both checks — on where either is (the fast one
+    first: a fault), else off where either was judged, else the fast one's unknown."""
+    for alarm in (fast, slow):
+        if alarm.active:
+            return alarm
+    for alarm in (fast, slow):
+        if alarm.active is False:
+            return alarm
+    return fast
 
 
 def _steady(series: Series[float], start: float, end: float, max_range: float) -> bool:

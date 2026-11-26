@@ -42,7 +42,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage as ha_storage
 from homeassistant.util import dt as dt_util
 from homeassistant.util.file import WriteError
-from pytest_homeassistant_custom_component.common import mock_restore_cache
+from pytest_homeassistant.common import mock_restore_cache
 
 from custom_components.vtherm_smart_boiler import control as control_module
 from custom_components.vtherm_smart_boiler.const import DOMAIN
@@ -77,7 +77,6 @@ from .test_control import (  # the rig fixture comes with them
     start_with_stored,
     stored_control,
     unit_of,
-    vt_central_unknown,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -86,6 +85,12 @@ LINK_ISSUE = "hand_back_boiler_link_lost"
 STORE_ISSUE = "control_state_not_saved"
 OWED = "hand_back_owed"
 NO_DEMAND = {"hvac_action": "idle", "valve_open_percent": 0, "on_percent": 0.0}
+
+
+def vt_settings_unknown(rig: Rig) -> None:
+    """VT has handed no thermostat over: its central boiler's settings are not known (I12) — a
+    blocker that passes on its own."""
+    rig.zones.withdraw()
 
 
 def broken(self: Any, *args: Any) -> None:
@@ -206,14 +211,14 @@ async def test_the_restored_wish_is_stored_before_any_write(
     rig: Rig, hass_storage: dict[str, Any], held_by: str
 ) -> None:
     """PB-02: the switch gives the stored wish "on" back at a start while control writes nothing
-    yet — a blocker holds it (VT's central boiler cannot be ruled out), or decision 3's restore
+    yet — a blocker holds it (VT's central boiler's settings not known yet), or decision 3's restore
     waits for the boiler link (after a power cut). The control store says "on" at once and still,
     nothing written, a minute and ten minutes on (within the recognition period, for the
     restore): a crash in that window brings control back on, and decision 3's restore runs, with
     no hand-back first. Before the fix the restore stored the old "off" until control's first
     write."""
     if held_by == "blocker":
-        vt_central_unknown(rig)
+        vt_settings_unknown(rig)
         stored: dict[str, Any] = {"enabled": True}
         marks = (0, 10, 60, 600)
     else:
@@ -251,7 +256,7 @@ async def test_without_a_stored_wish_control_is_off_and_stored_at_once(
     the store says off at once, though a blocker keeps control from writing."""
     if restored is not None:
         mock_restore_cache(rig.hass, [State(SWITCH, restored)])
-    vt_central_unknown(rig)
+    vt_settings_unknown(rig)
     await start_with_stored(rig, hass_storage, {}, "0.2.2")
     on = False
     assert rig.state("binary_sensor", "control").state == ("on" if on else "off")
@@ -506,37 +511,28 @@ async def test_a_failing_step_whose_hand_back_and_issues_fail_keeps_the_debt(
     assert stored["controlling"] is True
 
 
-@pytest.mark.parametrize("also", ["learning_release", "issue_registry"])
 async def test_a_lasting_step_error_with_another_failure_keeps_the_minutes_retry(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch, also: str
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """TB-02 with a second lasting failure (L1 of the part-1 check): the control step raises at
     every step, the gateway does not show the owed hand-back released, and — at every step as
-    well — the release of learning raises, or the issue registry fails for this integration.
-    The hand-back still goes out once a minute: a step that made no attempt does not put the
-    retry off, and an owed issue that cannot be raised does not stop the attempt. Before: CS=0
-    once in six minutes."""
+    well — the issue registry fails for this integration. The hand-back still goes out once a
+    minute: a step that made no attempt does not put the retry off, and an owed issue that
+    cannot be raised does not stop the attempt. Before: CS=0 once in six minutes."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     unit = unit_of(rig)
     rig.gateway.ignore_release = True
     monkeypatch.setattr(type(unit), "_async_step", broken_step)
-    if also == "learning_release":
+    create = ir.async_create_issue
 
-        async def broken_release(self: Any, now: float) -> None:
-            raise RuntimeError("a bug in the learning release")
+    def create_issue(hass: HomeAssistant, domain: str, *args: Any, **kwargs: Any) -> None:
+        if domain == DOMAIN:
+            raise RuntimeError("the issue registry fails")
+        create(hass, domain, *args, **kwargs)
 
-        monkeypatch.setattr(type(unit), "_async_release_learning", broken_release)
-    else:
-        create = ir.async_create_issue
-
-        def create_issue(hass: HomeAssistant, domain: str, *args: Any, **kwargs: Any) -> None:
-            if domain == DOMAIN:
-                raise RuntimeError("the issue registry fails")
-            create(hass, domain, *args, **kwargs)
-
-        monkeypatch.setattr(ir, "async_create_issue", create_issue)
+    monkeypatch.setattr(ir, "async_create_issue", create_issue)
     sent = rig.gateway.setpoints().count(0.0)
     await rig.advance(10)  # the first failing step: the whole safe hand-back
     assert rig.gateway.setpoints().count(0.0) == sent + 1
@@ -551,17 +547,17 @@ async def test_a_lasting_step_error_with_another_failure_keeps_the_minutes_retry
 async def test_an_error_whose_hand_back_raises_with_nothing_held_owes_nothing(
     rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """TB-02's negative: control off, nothing held or owed; the step raises, and so does what
-    the error path does instead of a hand-back (learning's release). No debt is made up: nothing
-    is owed or stored as owed, and nothing is written."""
+    """TB-02's negative: control off, nothing held or owed; the step raises, and so does the
+    error path's hand-back. No debt is made up: nothing is owed or stored as owed, and nothing
+    is written."""
     await start(rig)
     unit = unit_of(rig)
 
-    async def release(self: Any, now: float) -> None:
-        raise RuntimeError("a bug in the learning release")
+    async def hand_back(self: Any, now: float, after_error: bool = False) -> None:
+        raise RuntimeError("a bug in the hand-back")
 
     monkeypatch.setattr(type(unit), "_async_step", broken_step)
-    monkeypatch.setattr(type(unit), "_async_release_learning", release)
+    monkeypatch.setattr(type(unit), "_async_hand_back_now", hand_back)
     await rig.advance(70)
     assert not unit.hand_back_owed
     assert not unit.holding
@@ -940,13 +936,12 @@ async def test_a_control_store_failing_while_control_holds_the_boiler_hands_back
     await rig.switch(True)
     await rig.advance(20)
     with control_writes_failing(rig) as failed:
+        # VT's helper goes off with the room (I12): a step at once, and the clock's after it —
+        # heating off, stored at once: the write fails; then the blocker: the safe hand-back.
         rig.zones.set("living", **NO_DEMAND)
-        await rig.advance(10)  # heating off, stored at once: the write fails
-        tries = len(failed)
-        assert tries >= 1
-        await rig.advance(10)  # the blocker: the safe hand-back
+        await rig.advance(10)
         assert rig.gateway.calls[-3:] == HAND_BACK
-        assert len(failed) > tries  # the debt's own save, made first, failed too: made anyway
+        assert len(failed) >= 2  # the debt's own save, made first, failed too: made anyway
         assert "control_state_not_saved" in blockers(rig)
         assert issue(rig, STORE_ISSUE) is not None
         assert _logged(caplog, logging.ERROR, "The control state could not be written") == 1

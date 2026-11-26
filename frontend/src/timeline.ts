@@ -1,8 +1,9 @@
 // The last 24 h (docs/en/development/plans/plan-0.2-i10.md, I10.3d): Home Assistant's recorded
 // history of the entities the overview reads, turned into the states of any moment — so the whole
-// overview can show that moment — and into the chart's series. Pure.
+// overview can show that moment — and into the chart's series. Pure. Nothing of VT: the rooms
+// calling at a moment are the plugin's own count and circuits, the call its "Heat call"
+// (plan-0.2-i12.md, decision 6).
 import { numberOf } from "./format";
-import { zoneIds } from "./live";
 import { wallClock } from "./time";
 import type { HassEntity, Installation } from "./types";
 
@@ -25,7 +26,8 @@ export interface Sample {
 
 export type History = Record<string, Sample[]>;
 
-/** The entities the overview reads: the boiler's signals, the plugin's own entities, the zones. */
+/** The entities the overview reads: the boiler's signals, the plugin's own entities and the
+ * weather. */
 export function watchedEntities(installation: Installation): string[] {
   const own = ["control_state", "control_setpoint", "demand_count", "boiler_called", "control"]
     .map((key) => installation.entities[key])
@@ -34,7 +36,6 @@ export function watchedEntities(installation: Installation): string[] {
     ...new Set([
       ...Object.values(installation.signals),
       ...own,
-      ...zoneIds(installation),
       ...(installation.weather ? [installation.weather] : []),
     ]),
   ];

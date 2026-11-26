@@ -12,6 +12,7 @@ The rig — the gateway, VT's zones and the boiler signals as fakes — is the c
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.core.daily import DaySummary
@@ -329,7 +330,8 @@ async def test_an_entered_design_load_always_wins(
     assert state.attributes["source"] == "entered"
     assert (state.attributes["entered"], state.attributes["measured"]) == (0.2, 0.35)
     assert state.attributes["mismatch"] is True
-    assert state.attributes["measured_range"] == [0.28, 0.42]  # ±20 % (K4)
+    # I13.4: the range from the fit — days on a clean line: the ±15 % floor.
+    assert state.attributes["measured_range"] == pytest.approx([0.2975, 0.4025], abs=1e-3)
     for source in (SOURCE_EN, SOURCE_PL):
         for flow in ("config", "options"):
             texts = source[flow]["step"]["building"]
@@ -455,3 +457,90 @@ async def test_without_a_flame_signal_the_verdict_names_it(rig: Rig) -> None:
     assert verdict.state == "not_enough_data"
     assert [r["code"] for r in verdict.attributes["reasons"]] == ["no_burner_signal"]
     assert rig.state("binary_sensor", "control").attributes["verdict"] == "not_enough_data"
+
+
+async def test_a_loss_kept_before_ranges_gets_its_range_at_the_next_analysis(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer
+) -> None:
+    """I13.4: a measured loss stored before its range was kept shows none — never a range made
+    up — until the next analysis fits one from the days; the range is then saved with it. The
+    verdict shows the house's design load from that loss."""
+    freezer.move_to(NOW)
+    now = NOW.timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage[key] = stored(entry, measured={"loss_coefficient": measured(0.3, 0.6, now - DAY)})
+    await setup(hass, entry)
+    sensor = entity_id(hass, entry, "sensor", "loss_coefficient")
+    state = hass.states.get(sensor)
+    assert state is not None
+    assert state.attributes["measured"] == 0.3
+    assert state.attributes["measured_range"] is None
+    coordinator = entry.runtime_data
+    coordinator.daily = house_days(now - 25 * DAY, 0.35, 16.0, coordinator.settings_key, count=21)
+    await analyse_now(coordinator)
+    state = hass.states.get(sensor)
+    assert state is not None
+    assert state.attributes["measured_range"] == pytest.approx([0.2975, 0.4025], abs=1e-3)
+    verdict = hass.states.get(entity_id(hass, entry, "sensor", "verdict"))
+    assert verdict is not None
+    sizing = verdict.attributes["sizing"]
+    # The loss in use when the analysis ran, the one kept (trusted at 0.6), over 20 − (−15) K:
+    # 0.3 · 35 = 10.5 kW at −15 °C; the next analysis takes the one just fitted.
+    assert sizing["design_load_kw"] == 10.5
+    assert sizing["design_outdoor"] == -15.0
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    saved = hass_storage[key]["data"]["measured"]["loss_coefficient"]
+    assert saved["range_share"] == pytest.approx(0.15)
+
+
+async def test_the_monitors_other_figures_reach_home_assistant(
+    hass: HomeAssistant, freezer
+) -> None:
+    """I13.5 through Home Assistant: hot-water gas that follows the outdoor temperature over a
+    month raises the information issue, which goes once it no longer does; the hysteresis
+    warning says what it compared — the kept days' weeks here, the last day having no calls
+    for heat to judge by; the short burns' sensor shows its share under 3 minutes."""
+    freezer.move_to(NOW)
+    now = NOW.timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    await setup(hass, entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    coordinator = entry.runtime_data
+    days = house_days(now - 40 * DAY, 0.3, 16.0, coordinator.settings_key, count=40)
+
+    def with_hot_water(slope: float) -> dict[float, DaySummary]:
+        return {
+            start: replace(
+                day,
+                dhw_gas=1.0 + slope * (10.0 - (day.outdoor_mean or 0.0)) + 0.05 * (i % 2),
+                hysteresis_median=10.0 if start < now - 21 * DAY else 5.0,
+            )
+            for i, (start, day) in enumerate(sorted(days.items()))
+        }
+
+    coordinator.daily = with_hot_water(0.1)  # 10 % more hot-water gas for each kelvin colder
+    await analyse_now(coordinator)
+    issue_id = f"dhw_split_suspect_{entry.entry_id}"
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_placeholders is not None
+    assert issue.translation_placeholders["days"] == "40"
+    assert issue.translation_placeholders["change"].startswith("-")
+    drift = hass.states.get(entity_id(hass, entry, "binary_sensor", "alarm_hysteresis_drift"))
+    assert drift is not None
+    assert (drift.state, drift.attributes["basis"]) == ("on", "weeks")
+    coordinator.daily = with_hot_water(0.0)  # flat: the split looks right
+    await analyse_now(coordinator)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    short = hass.states.get(entity_id(hass, entry, "sensor", "short_burn_share"))
+    assert short is not None
+    assert short.attributes["under_3_min"] is None  # no burns in the last day here
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

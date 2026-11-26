@@ -2,7 +2,7 @@
 // metrics as tiles, its burns of the last 24 h on a timeline, and how long the heating burns
 // lasted. The burns are the monitor's own (vtherm_smart_boiler/burns); nothing is judged here.
 import { LitElement, css, html, nothing } from "lit";
-import { histogram, minutesOf, recentBurns, type BurnInfo, type BurnsAnswer } from "./burner";
+import { histogram, minutesOf, recentBurns, veryShortShare, type BurnInfo, type BurnsAnswer } from "./burner";
 import { formatNumber, numberOf } from "./format";
 import { localize } from "./localize";
 import { profileZone } from "./time";
@@ -89,11 +89,16 @@ export class SmartBoilerBurner extends LitElement {
       const value = numberOf(entity.state);
       const unit = entity.attributes.unit_of_measurement;
       const shown = value == null ? "—" : `${formatNumber(value, lang, digits)}${typeof unit === "string" && unit !== "/h" ? ` ${unit}` : ""}`;
+      // I13.5: beside the short burns' share, the share under 3 minutes.
+      const under = key === "short_burn_share" ? veryShortShare(entity) : null;
       return [
         html`<div class="card tile">
           <div class="tile-label">${this.t(`burner.${key}`)}</div>
           <div class="tile-value">${shown}</div>
           <div class="muted small">${this.t(`burner.${key}_detail`, { value: shortMin })}</div>
+          ${under == null
+            ? nothing
+            : html`<div class="muted small">${this.t("burner.under_3_min", { value: formatNumber(under, lang, 0) })}</div>`}
         </div>`,
       ];
     });

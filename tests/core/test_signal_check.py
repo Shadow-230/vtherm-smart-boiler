@@ -286,8 +286,6 @@ CASES: list[tuple[Feature, dict[str, Any], FeatureStatus, tuple[str, ...]]] = [
         FeatureStatus.INACTIVE,
         ("turned_off",),
     ),
-    (Feature.FROST_PROTECTION, {"control": None}, FeatureStatus.INACTIVE, ("control",)),
-    (Feature.FROST_PROTECTION, {"zone_data": False}, FeatureStatus.INACTIVE, ("zone_data",)),
     (Feature.ACTIVATION_DELAY, {"control": None}, FeatureStatus.INACTIVE, ("control",)),
     (
         Feature.CIRCUIT_OVERSHOOT_ALARM,

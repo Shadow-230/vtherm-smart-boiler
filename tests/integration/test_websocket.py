@@ -25,7 +25,10 @@ from custom_components.vtherm_smart_boiler.websocket_api import async_setup_webs
 from .harness import FakeBoiler
 from .test_control import (  # the rig fixture comes with them
     Rig,
+    add_entry,
+    options,
     rig,  # noqa: F401
+    set_up,
     start,
 )
 from .test_setup import entity_id, entry_for, setup
@@ -152,6 +155,32 @@ async def test_the_days_come_with_their_energy_signature(
     assert (await client.ask("days"))["result"]["gas_unit"] is None  # no gas meter here
 
 
+async def test_the_weeks_take_their_band_from_the_signatures_scatter(
+    hass: HomeAssistant, hass_ws_client: Any
+) -> None:
+    """I13.5: fourteen cold days, each off the line by ±0.5 in turn: the watched line's scatter
+    gives each week's band around its gas per degree-day; the comparison, with no controlled
+    days, stays none."""
+    _boiler, entry = await monitoring(hass)
+    client = await connect(hass, hass_ws_client)
+    entry.runtime_data.daily = {
+        k * DAY: replace(
+            DaySummary.empty(k * DAY, (k + 1) * DAY),
+            observed_s=DAY,
+            outdoor_mean=-6.0 + k,
+            gas=12.0 - 0.8 * (-6.0 + k) + (0.5 if k % 2 else -0.5),
+            degree_days=15.0 - (-6.0 + k),
+        )
+        for k in range(14)
+    }
+    result = (await client.ask("days"))["result"]
+    weeks = result["weeks"]
+    assert len(weeks) == 2
+    for week in weeks:
+        assert week["low"] < week["per_degree_day"] < week["high"]
+    assert result["signature"]["comparison"] is None
+
+
 async def test_the_curve_as_control_decides_it(rig: Rig, hass_ws_client: Any) -> None:
     await start(rig)
     client = await connect(rig.hass, hass_ws_client)
@@ -177,6 +206,21 @@ async def test_the_curve_as_control_decides_it(rig: Rig, hass_ws_client: Any) ->
             ).value
         )
     assert reply["result"]["problems"] == []
+
+
+async def test_the_curves_default_exponent_follows_the_rooms(rig: Rig, hass_ws_client: Any) -> None:
+    """I12.17: one circuit, the living room listed with convectors and the bedroom on no list —
+    a radiator: the curve control runs and the page shows takes the radiators' 1.3, not the 1.4
+    of the listed room alone (one circuit stores no room list since I12.11)."""
+    rig.zones.add("bedroom", hvac_action="idle")
+    living = rig.zones.entities["living"]
+    entry_options = options(rig.zones) | {"circuits": [{"id": "main", "convectors": [living]}]}
+    await set_up(rig, add_entry(rig, entry_options))
+    coordinator = rig.entry.runtime_data
+    assert coordinator.config.control.loop.control.curve.exponent == 1.4  # the stored rooms only
+    assert coordinator.control_now().loop.control.curve.exponent == 1.3
+    client = await connect(rig.hass, hass_ws_client)
+    assert (await client.ask("installation"))["result"]["curve"]["exponent"] == 1.3
 
 
 async def test_a_draft_is_checked_as_the_settings_check_it(rig: Rig, hass_ws_client: Any) -> None:

@@ -55,6 +55,8 @@ not part of the repository. What was decided is in the plan.
 | a letter and a number in step I8 | "F3", "A4" | [plan of step I8](../development/plans/plan-0.2-i8.md), "Decisions of 2026-10-10": group A (scope) to I (plans) |
 | "decision n of I6" | "decision 4 of I6" | [plan of step I6](../development/plans/plan-0.2-i6.md), "Decisions of 2026-10-08 and 2026-10-09" |
 | "review question n" | "review question 4" | the review's appendix E, "Open questions for the user" |
+| a numbered decision of step I12 | "I12, decision 4" | [plan of step I12](../development/plans/plan-0.2-i12.md), second part, "Decisions" (the user's decisions of 2026-11-24 and 2026-11-25) |
+| "gap n" in step I12 | "gap 19" | one gap between what the plugin read of VT and what `vtherm_api` offers, which the user went through one at a time; the notes stay in `research/`, and plan I12's decision 8 sums them up |
 
 ## Steps of the plans
 
@@ -63,11 +65,30 @@ A step is a letter and a number. Each letter belongs to one plan:
 | Letters | Plan |
 |---|---|
 | A, B, C, D | [plan 0.1](../development/plans/plan-0.1.md) |
-| F, G, H, I, J, K, S | [plan 0.2](../development/plans/plan-0.2.md); steps I6, I7, I8, I9 and G11 have plans of their own in the same folder |
+| F, G, H, I, J, K, S | [plan 0.2](../development/plans/plan-0.2.md); steps I6 to I12 and G11 have plans of their own in the same folder (`I12.n` is one step of plan I12) |
 | L, M, N, O, R, U, W | [plan 0.2.1](../development/plans/plan-0.2.1.md) |
 | Q, V, X, Y, Z | [plan 0.2.2](../development/plans/plan-0.2.2.md); `Q3.n` is one question of the research step Q3 |
 
 Plan 0.2.3 is split into parts 1 to 4 and uses the review codes above as its steps.
+
+## Codes whose subject is gone
+
+Step I12 removed parts of the plugin that older codes point to. The codes stay valid, so old
+references still resolve; what they describe is no longer in the plugin.
+
+| Code | What it was | Removed at |
+|---|---|---|
+| decision 4 | the plugin's own frost protection, heating only zones that can take heat | I12.10: frost protection is VT's (the simulator's closed valves, S-05, stay) |
+| decision 5 | VT's activation delay carried over into the plugin | I12.8: the delay is VT's own |
+| S-04 | control needs at least one VT zone picked in the plugin | I12.11: the rooms come from VT |
+| S-35 | the alarm on a zone unknown, or without its room sensor, for too long | I12.10: such a room is left out of the curve's judgement instead |
+| S-36; decisions 7 and 9 of 0.2.3 | moving over from VT's central boiler: its values pre-filled, the wait for VT's restart | I12.8: VT's central boiler stays |
+| PB-23; decision 3 of 0.2.3, its demand-criterion part | the alarm "a demand criterion has no data" | I12.8: VT decides; decision 3's unknown zones stay |
+| P-105 | the grace of the "VT central boiler unknown" blocker during a VT reload | I12.8 |
+| F5 (step I8) | the zones' question "valves close when off" | I12.11, with the frost protection it served |
+| G11 C | a SmartPI room judged against SmartPI's own setpoint | I12.9: every room against VT's setpoint |
+| S-41, P-89 | the plugin pausing SmartPI's learning (hot water, water swings) | I12.9: the "gives no heat" sensor instead |
+| step I9 | the water data for zone algorithms (the `smart_boiler` attribute) | I12.9; its public API in `hass.data` at I12.2 |
 
 ## Tests in the test Home Assistant (J4)
 

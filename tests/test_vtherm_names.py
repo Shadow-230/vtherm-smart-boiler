@@ -1,6 +1,6 @@
 """The code convention "zone data only through vtherm_link.py" (TB-16).
 
-VT's attribute names, its entry keys and SmartPI's domain are written as string constants only in
+VT's attribute names and its entry keys are written as string constants only in
 ``vtherm_link.py`` and ``vtherm_attributes.py``; any other module reads a zone through them.
 """
 
@@ -12,46 +12,36 @@ from pathlib import Path
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components/vtherm_smart_boiler"
 ALLOWED = {"vtherm_link.py", "vtherm_attributes.py"}
 
-# VT 10.4.0's climate attributes and central-configuration entry keys the plugin reads, and
-# SmartPI's domain; generic Home Assistant words ("heat", "temperature", "on") are not VT's.
+# VT's names the plugin reads (I12.7): the thermostat members ``vtherm_api`` declares and its
+# power hook's kinds of device; the keys of a thermostat's ``entry_infos`` (VT 10.6.5
+# ``const.py``); and VT's events (I12.10: safety mode and the automatic window detection). No
+# climate attribute: nothing of VT's climates is read (I12.11). None for the rooms' history: it is
+# the plugin's own reads (I12.7b).
+# Generic Home Assistant words ("heat", "temperature", "on") are not VT's.
 VT_NAMES = frozenset(
     {
-        "auto_tpi_continuous_kext",
-        "auto_tpi_state",
-        "boiler_activation_threshold",
-        "boiler_power_activation_threshold",
-        "central_boiler_activation_delay_sec",
         "central_boiler_activation_service",
         "central_boiler_deactivation_service",
-        "central_boiler_state",
-        "configuration",
         "cycle_min",
-        "device_power",
+        "delayed_activation_sec",
+        "entry_infos",
         "hvac_off_reason",
-        "is_central_boiler_configured",
+        "hvac_off_window_detection",
         "is_device_active",
-        "is_ready",
-        "is_used_by_central_boiler",
-        "keep_alive_boiler_delay_sec",
-        "last_temperature_datetime",
-        "max_on_percent",
-        "mean_cycle_power",
-        "on_percent",
-        "overpowering_state",
-        "power_manager",
-        "power_unit",
-        "proportional_function",
-        "safety_manager",
-        "safety_state",
-        "smartpi_learning_enabled",
-        "specific_states",
+        "last_temperature_measure",
+        "target_temperature",
         "temperature_sensor_entity_id",
-        "thermostat_central_config",
+        "thermostat_over_switch",
         "thermostat_type",
         "underlying_entity_ids",
         "use_central_boiler_feature",
-        "valve_open_percent",
-        "vtherm_smartpi",
+        "used_by_controls_central_boiler",
+        "valve_regulation",
+        "versatile_thermostat_central_boiler_event",
+        "versatile_thermostat_safety_event",
+        "versatile_thermostat_window_auto_event",
+        "vtherm_hvac_mode",
+        "window_sensor_entity_id",
     }
 )
 

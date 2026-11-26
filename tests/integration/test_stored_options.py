@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 
@@ -68,7 +68,6 @@ def entry_with(
         ("monitor", [], "invalid_monitor"),
         ("signals", ["sensor.flow"], "invalid_signals"),
         ("boiler", "flow_setpoint", "invalid_boiler"),
-        ("zones", "climate.living", "invalid_zone"),
         ("circuits", {"id": "main"}, "invalid_circuit"),
         ("parameters", [], "invalid_parameters"),
         ("freshness", [60], "invalid_freshness"),
@@ -129,13 +128,13 @@ async def test_a_number_outside_the_form_stops_the_entry_and_reports_a_held_boil
 
 @pytest.mark.parametrize(
     "control",
-    [["opentherm_gw"], "opentherm_gw", {"write_path": "opentherm_gw", "frost_limit": "nan"}],
+    [["opentherm_gw"], "opentherm_gw", {"write_path": "opentherm_gw", "hard_min": "nan"}],
     ids=["list", "text", "nan"],
 )
 async def test_a_control_section_that_cannot_be_used_leaves_control_out(
     rig: Rig, hass_storage: dict[str, Any], control: Any
 ) -> None:
-    """PB-06, PB-24: a control section of another shape, or with a frost limit of nan, leaves
+    """PB-06, PB-24: a control section of another shape, or with a lowest water of nan, leaves
     control out — not an unexpected error: the monitor runs, the control-options issue says
     why, and a hand-back owed without the options that took the boiler is asked by hand."""
     entry_options = options(rig.zones) | {"control": control}

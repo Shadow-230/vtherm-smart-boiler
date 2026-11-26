@@ -21,13 +21,12 @@ Queuing Telemetry Transport (MQTT).
 5. [Lifecycle](#5-lifecycle)
 6. [Persistent state](#6-persistent-state)
 7. [Testing](#7-testing)
-8. [Water data for zone algorithms](#8-water-data-for-zone-algorithms)
 
 ## 1. Overview
 
-The integration (domain `vtherm_smart_boiler`) is a plugin of VT. It replaces VT's on/off
-central boiler: it reads VT's zones, decides when the boiler heats and how warm its water is,
-writes that to the boiler and hands the boiler back on every exit.
+The integration (domain `vtherm_smart_boiler`) is a plugin of VT. VT's central boiler decides
+when the boiler heats, through a helper the plugin follows; the plugin decides how warm the water
+is, writes that to the boiler and hands the boiler back on every exit.
 
 - **Pure logic in `core/`.** Every control and learning law, the monitor's analysis and the
   verdict are pure Python with no HA imports — a test parses the imports of `core/` to enforce
@@ -35,15 +34,49 @@ writes that to the boiler and hands the boiler back on every exit.
 - **The HA side** around it gathers inputs from the entities the user picked, runs the core on
   timers and state changes, carries out its writes, and publishes sensors, binary sensors,
   switches, buttons and repair issues.
-- **`vtherm_link.py` is the only door to zone data.** It reads VT's climate entities and VT's
-  central configuration, and detects what is installed (VT and its version, `vtherm_api`,
-  SmartPI) instead of assuming it. No other module looks up a zone's state by entity name.
+- **`vtherm_link.py` is the only door to zone data.** It reads each zone only through
+  `vtherm_api` (the user's rule, 2026-11-24/25; I12.7). The rooms are the thermostats VT hands
+  to the plugin's feature manager whose `entry_infos` say VT's central boiler counts them
+  (`used_by_controls_central_boiler`; I12.11); the plugin keeps no list of its own. One handed
+  over and not counted is no room, and one information repair issue names it. While VT holds
+  no thermostat for a room the plugin knew — VT reloading it, or not started yet after a
+  restart (the rooms its own store kept) — the room stays, not known, so decision 3's
+  recognition period and grace still apply; it goes once VT hands it over not counted, or once
+  Home Assistant's registry no longer lists its entity. A zone is matched by its declared
+  `entity_id` and named by its declared `name`. From the thermostat: the room
+  temperature and when VT measured it, the target, the mode, whether the zone heats and its
+  device is on, and why VT keeps it off (the window only). From its `entry_infos`: its type,
+  cycle and devices, whether VT's central boiler counts it, the room's thermometer and window
+  sensor, and VT's central boiler settings. From VT's calls on the manager: the zone counts as
+  started from VT's first `refresh_state`, and its duty and valve opening are what VT's power
+  hook last said VT applied. A zone whose thermostat VT has not handed over is not known; nothing
+  of VT's climate entity stands in for it. The rooms' history is what it read, kept by the
+  plugin itself (see [Persistent state](#6-persistent-state)); nothing of VT's climates goes into
+  it. Nothing of VT's climate entities is read, nor VT's central mode. What it takes from Home
+  Assistant about VT is Home Assistant's information, not VT's data: whether VT is loaded and its
+  version (its integrations and config entries), and its entity registry — whether VT has
+  climate entities (the reload repair below) and an entity's area (a circuit's area shortcut).
+  It reads nothing of SmartPI. No other module looks up a zone's state by entity name, and a
+  test (`tests/test_vt_boundary.py`) lists every place in the integration that reads a state, a
+  state's history or a config entry, with whose entity it is: none is VT's.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
-  `register_feature_manager`) shows on each VT thermostat whether the boiler's heat reaches its
-  zone now — `heat_available`, from `core/heat.py` (I8, decision C1) — and, since I9, the water
-  reaching the zone (`core/water.py`; section 8). It is
-  registered only once VT is loaded; a thermostat already running sees it only after VT's next
-  reload, which the plugin never triggers itself. Nothing in control depends on it.
+  `register_feature_manager`) is the channel VT hands each thermostat through. It keeps what VT
+  tells it — its `refresh_state` and its power hook `async_on_underlying_power` — and publishes
+  nothing on VT's thermostats: the water data it showed until I12.9 went, as nothing read it
+  (the user's decision of 2026-11-25). It is registered only once VT is loaded; a thermostat
+  already running is handed over only after VT's next reload, which the plugin never triggers
+  itself. At a first installation while VT runs, none comes: a fixable repair issue, "Reload
+  Versatile Thermostat once", is raised once VT is loaded, Home Assistant's registry lists VT
+  climates and none has been handed over in this run 15 minutes after the registration; it goes
+  as soon as one is handed over, and its fix flow (`repairs.ReloadVtFlow`) checks again. The
+  setup's last step says the same where it applies.
+- **"Gives no heat"** (`binary_sensor`, key `no_heat`; `core/boiler_call.py`): one house-wide
+  signal, on while a room VT counts calls for heat and the boiler gives none (off while no room
+  calls, I13.1), with its reason — VT's central boiler
+  not calling, its activation delay, hot water, a boiler fault, or the plugin unable to vouch for
+  heat. Mapped from control's decision at each step; unavailable while control is off. The user
+  picks it in SmartPI 1.0's "heating unavailable" setting, or uses it in an automation: the
+  plugin pauses no zone's learning itself (I12.9).
 
 Details: [`docs/en/specification/scope.md`, §2](../specification/scope.md#2-why-a-plugin) and
 [§5](../specification/scope.md#5-hardware-circuits-and-zone-algorithms).
@@ -76,7 +109,8 @@ docs/                                     the documentation, one folder per lang
 - `sim/custom_components/` holds `boiler_sim` (the simulated boiler, rooms and weather) and a
   stand-in `opentherm_gw`, both for tests only.
 - `tools/import_history.py` turns a copy of an HA recorder database into the core's history,
-  so the monitor's analysis can be checked on recorded data.
+  so the monitor's analysis can be checked on recorded data: the boiler's signals, the weather
+  and the helper VT's central boiler switches — never VT's climates.
 - The Boiler page ([`plan-0.2-i10.md`](../development/plans/plan-0.2-i10.md)):
   `frontend/` is its source; `npm run build` there writes the module the plugin serves into
   `custom_components/vtherm_smart_boiler/frontend/`, with the licenses of the packages bundled
@@ -94,26 +128,40 @@ docs/                                     the documentation, one folder per lang
   entry runs, `panel.py` also
   has Home Assistant load the same module on every page (`frontend.add_extra_js_url`, taken
   back at unload, an older address replaced after an update), so the overview's parts are in the
-  card picker as four cards — status and tiles, schematic and rooms, the curve, the last 24 h —
+  card picker as four cards — status and tiles, the schematic, the curve, the last 24 h —
   each the page's own part (`frontend/src/cards.ts`), with no settings: each finds the running
   entry through `vtherm_smart_boiler/installation`. Without Home Assistant's frontend running
-  nothing is registered. Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
+  nothing is registered. The page reads nothing of VT and shows no rooms
+  ([`plan-0.2-i12.md`](../development/plans/plan-0.2-i12.md), decision 6): the tile of the rooms
+  shows the plugin's own count, **Calling for heat** (`demand_count`), with a link to VT's page
+  in the settings for an administrator; the schematic draws the water flowing while **Heat call**
+  (`boiler_called`) is on or the flame burns for heating, into the circuits that sensor's
+  attribute `calling_circuits` names — the circuits of the rooms calling, recorded, unlike the
+  rooms themselves (`calling_zones`), so the last 24 h replay them. The last 24 h read the
+  recorder's history of the boiler's signals, the plugin's own entities and the weather only.
+  Node.js comes from `scripts/bootstrap_node.sh` into `.tools/node/`.
   `websocket_api.py` holds what the page reads, five read-only WebSocket commands for any
   signed-in user, each answering from the running entry (else the error `not_running`):
-  `vtherm_smart_boiler/installation` — the boiler, the circuits with their zones and emitters,
+  `vtherm_smart_boiler/installation` — the boiler, the circuits with their rooms and emitters
+  (the page draws the emitters; the rooms' IDs serve J4's check),
   the picked entity of every signal, the plugin's entities by key and the curve's settings;
   `vtherm_smart_boiler/curve` — the curve's points for the settings in use or for draft values,
   nothing saved, from `core/curve_view.py` (the curve at the room temperature in use, then the
   limits, as control decides it before the comfort correction, a circuit's need and the ramp),
   with the settings' own checks by their translation keys; `vtherm_smart_boiler/days` — the
   daily summaries in their stored form, with the last 12 weeks' gas per degree-day reckoned by
-  `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule),
+  `core/weekly.py` (a week whose gas is not known for every day has none, the monitor's rule;
+  none under 14 degree-days; each with its 95 % band, `low` and `high`, from the scatter of the
+  signature's watched line, else its controlled one, the week's spread taking the days'
+  correlation),
   the energy signature fitted by `core/signature.py` — each day's heating gas per 24 h against
   its mean outdoor temperature, the days only watched and the days under control apart, each
   group's line through its heating days (colder than the heating threshold in use, with heating
   gas) by the building fit's rules (`core/building.py`: days, outdoor spread, more gas on colder
   days, R²), or why there is none, and the two compared in the middle of the temperatures both
-  cover — and the gas meter's unit (none without a meter: the gas is then estimated in the unit
+  cover, each with its 95 % range widened for correlated days (`core/regression.py`), the change
+  with its range and whether the ranges part (`shown`; where they overlap the page says no
+  difference is shown) — and the gas meter's unit (none without a meter: the gas is then estimated in the unit
   of the boiler's gas figures); each day kept since I10.7 holds its heating starts hour by hour
   from its start (`hourly_starts`, 23 or 25 hours at a clock change), which the page places at
   their clock hours; days kept before have none and still read;
@@ -144,13 +192,47 @@ changes and every 30 seconds (readings, signal check, hot water, current alarms)
 (`core/analysis.py`) runs every few minutes on a copy of the history, off the event loop. It
 also owns the stores (see [Persistent state](#6-persistent-state)).
 
+The history (`core/history.py`, `History`) has three sources. The boiler's signals, the weather,
+the plugin's control state and the helper VT's central boiler switches come live from their
+states and, after a start, from the recorder: the last 8 days (`HISTORY_DAYS`), and older days,
+up to a year, only to build day summaries. The rooms come from the plugin's own reads through
+`vtherm_api`, at every refresh (30 s) and every control step (10 s), changes only
+(`ZoneSeries.record`), and from the rooms' store after a start — never from the recorder's
+records of VT's climates (I12.7b). "Was the boiler called for heat" (`History.zone_demand`,
+`zone_calling`) is the helper's state wherever it is known — VT's own decision, with its
+thresholds — and the rooms only where it is not, or where no helper is set (monitoring only);
+a circuit run by other automation asking through its request entity (`History.circuits_asking`,
+the user's entity, from the recorder and live) counts as a call whatever VT's (I12.18).
+It tells heating burns from hot water (every day summary, the verdict, the building fit), the
+pauses the hysteresis drift may judge, the short burns unstable ignition counts and the burns the
+lowest water temperature's evidence takes. The rooms' own details — the mean target of the
+report, the valve openings of that evidence — come from the rooms' store alone, so they start
+from the installation.
+
 **Monitor and analysis (`core/monitor.py`, `core/analysis.py`, `core/verdict.py`).** From the
 history to burns, metrics, trend warnings, a report and the control verdict, always with its
-reasons. `core/alarms.py` holds the monitor's alarms, with hysteresis so they do not flap.
+reasons; beside them, the boiler's lowest and highest output against the house's design load
+(`Sizing`, the verdict sensor's `sizing`). `core/alarms.py` holds the monitor's alarms, with
+hysteresis so they do not flap. `core/building.py` fits the house's heat loss to the kept days:
+the heating days are those below the change point the days show once a week of them lies on
+each side of the threshold in use, else below that threshold; the loss carries its 95 % range
+(`range_share`, kept with the measured value in the main store), from the fit's slope error
+widened by the lag-1 autocorrelation of the residuals in time order (`core/regression.py`:
+effective sample size, Student's t), held within ±15 % and ±100 %; above ±50 % the loss is
+shown, never used. The fit is checked on `sim/house_days.py`, a house by the day with a known
+loss and correlated errors (`tests/sim/test_building_range.py`). Each day summary also keeps its
+burns under 3 minutes (`very_short_burns`), the gas of its hot-water burns (`dhw_gas`) and the
+median of its hysteresis samples (`hysteresis_median`, from 5 pauses); days kept before have
+none and still read. `core/dhw_check.py` fits the kept days' hot-water gas against their mean
+outdoor temperature and raises the information issue `dhw_split_suspect` while the slope is
+clear (28 days, an 8 K spread, at least 3 widened standard errors and 3 % of the mean per K).
+The hysteresis warning is either check's (`either_drift`): the last day against days 4–8
+before, or the last week's daily medians against those of days 21–42 before
+(`slow_hysteresis_drift`); its attribute `basis` says which.
 
 **Control unit (`control.py`, `ControlUnit`).** The HA side of control: a control step every
-few seconds, its writes through the writer, the hand-back on every exit, learning pauses for
-the zone algorithms, and the status the entities show. It turns guard events and failures into
+few seconds, its writes through the writer, the hand-back on every exit, and the status the
+entities show — "gives no heat" among them. It turns guard events and failures into
 alarms. The writer exists only while control is switched on. An internal error hands back and
 latches control.
 
@@ -161,13 +243,13 @@ step of its own (`core/relay.py`).
 **Controller (`core/controller.py`, `decide`).** A state machine that turns what the plugin
 knows into a boiler command, in a fixed order of precedence: control switched off; a latch or
 an alarm set to hand back; a missing precondition (a blocker); the boiler link lost or stale; the
-boiler's own fault; otherwise heating on or off from frost protection and the zones' demand, and
-the water temperature from the curve (`core/curve.py`), limits and ramp.
+boiler's own fault; otherwise heating on or off from VT's decision (the helper), and the water
+temperature from the curve (`core/curve.py`), limits and ramp.
 
-**Demand (`core/demand.py`, `boiler_demand`).** What VT's central boiler decided, now the
-plugin's job: devices or zones calling (VT's devices by default, as its central boiler counts
-them), total power or valve opening, each zone counted only while VT reports it clearly; where
-VT gives no device state, VT's own rule — a valve open at all, else a duty cycle above 0.
+**Demand (`core/demand.py`, `boiler_demand`).** VT's decision — the helper on, off or not
+known — and the rooms counted: how many call (shown), which are unknown, and whether anything
+can ask at all (decision 3). A room calls while VT says one of its devices is active; where VT
+gives no device state, by VT's own rule — a valve open at all, else a duty cycle above 0.
 
 **Circuits run by other automation (`core/circuit_requests.py`, `circuits_asking`).** A circuit
 whose mixer or pump something else drives asks for heat through its own entity or its zones; an
@@ -198,17 +280,19 @@ never assumed applied. Reading the boiler is in `transport/entities.py`, which w
 
 **Configuration (`config_flow.py`, `config.py`, `control_config.py`).** The setup and options
 forms, and the control options as core objects with the blockers that keep control from
-starting. Both flows are one menu of sections; control is five of its items, each one form —
-the control device, the heating curve, the control behaviour, frost protection, the alarm
-reactions (`CONTROL_ITEMS`) —, each shown where it applies and opened with the write path's
+starting. Both flows are one menu of sections; control is four of its items, each one form —
+the control device, the heating curve, the control behaviour, the alarm reactions
+(`CONTROL_ITEMS`) —, each shown where it applies and opened with the write path's
 own checks (`_control_path`). A form shows itself again with the fields an answer reveals
 (`entity_form_fields`, `relay_form_fields`); a value whose field is hidden is kept. Control reads its section with the connection's MQTT topics and the signals'
-read-backs put in (`with_boiler_inputs`): each value is stored once. The zones are the
-circuits': each circuit lists the VT zones it feeds and, of them, those with underfloor and
-with convectors, and, of a zone it feeds only in part, its devices (`devices`, by zone — the
-form resolves each device to its zone through `vtherm_link.zone_devices`); a zone may be in
-two circuits only so. The zones' own section keeps only whether a zone's valves close when it
-is off (`config._circuit_zones`). `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
+read-backs put in (`with_boiler_inputs`): each value is stored once. The rooms are VT's
+(I12.11): the options keep only how they map to the circuits. With one circuit every room is
+its, and it stores only which rooms have underfloor heating and convectors. With several, each
+circuit lists the rooms it feeds and, of them, those with underfloor and with convectors, and,
+of a room it feeds only in part, its devices (`devices`, by room — the form resolves each
+device to its room through `vtherm_link.room_devices`); a room may be in two circuits only so.
+`config._zones` reads the mapping, and `Installation.with_rooms` puts it together with the
+rooms VT hands over at each refresh and control step. `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
 
 ## 4. One control step
 
@@ -222,15 +306,15 @@ flowchart TD
     B -- no --> Z[No decision this step]
     B -- yes --> C[Read inputs: boiler snapshot and freshness, zones via vtherm_link, hot water]
     C --> D[Blockers and latches]
-    D --> E[Zones' demand, circuits asking and frost protection: boiler_demand, circuits_asking, follow_zones]
+    D --> E[VT's decision, circuits asking and the zones: boiler_demand, circuits_asking, follow_zones]
     E --> F{Controller decides: decide}
     F -- hand back --> H[Hand-back writes: lowest water, heating on where taken over, release]
-    F -- heat, idle or frost --> G[Guards judge the read-back: plan_write, classify]
+    F -- heat or idle --> G[Guards judge the read-back: plan_write, classify]
     G -- another controller --> S[Step aside: hand back and latch]
     S --> H
     G -- allowed --> W[Writer writes setpoint and heating on or off]
     G -- nothing due --> K[Hold: nothing written]
-    W --> F2[Follow-up: owed hand-back, relay, control store, learning pauses, status]
+    W --> F2[Follow-up: owed hand-back, relay, control store, status and gives no heat]
     K --> F2
     H --> F2
 ```
@@ -240,8 +324,8 @@ flowchart TD
   over a window (lost once stale steps cover 5 minutes within 10; back after 60 seconds fresh).
 - **Blockers and latches** come before demand: a latch, or an alarm set to hand back, hands
   back whatever the zones ask.
-- **Decide:** heating on or off is decided at every step — the zones' demand, or a circuit run
-  by other automation asking; the water temperature every decision interval (5 minutes by
+- **Decide:** heating on or off is decided at every step — VT's decision (the helper), or a
+  circuit run by other automation asking; the water temperature every decision interval (5 minutes by
   default), and at once after a blocker or fault ends or when a circuit's need changes: the
   curve, never below an asking circuit's need, capped by
   the circuits fed straight from the boiler and the boiler's maximum. With several circuits the
@@ -285,11 +369,11 @@ a repair issue that outlives the entry tells the user to hand back by hand.
 ## 6. Persistent state
 
 Control has a store of its own (`ControlStore` in `coordinator.py`), apart from the entry's main
-store, which holds the monitor's history and day summaries.
+store, which holds the monitor's small data and day summaries.
 
 - **What it holds:** whether control is enabled, the last command and whether the plugin is
-  controlling, latches and their causes, a hand-back owed and its release evidence, learning
-  pauses, the baselines the guards compare against, the relay's observations, and the active
+  controlling, latches and their causes, a hand-back owed and its release evidence, the
+  baselines the guards compare against, the relay's observations, and the active
   control alarms.
 - **Written at once:** every change that a crash must not lose — the controlling marker, a
   latch, an owed hand-back — is saved immediately and atomically. The outcome of each write is
@@ -315,14 +399,30 @@ first (provisional, K4); written a minute after a change, at once when the entry
 Home Assistant at its stop; a store that cannot be read starts an empty journal. It goes with
 the entry's other stores when the entry is removed.
 
+**The rooms' history** (`rooms_store` in `coordinator.py`, its format in `core/history.py`) has
+a store of its own too, `<domain>.<entry_id>.rooms`: each room's temperature, target, mode,
+call, duty and valve opening as the plugin read them through `vtherm_api` over the last 8 days.
+Each series is one line of text — moments in whole seconds, each after the first as the seconds
+since the one before; values to three decimals — as Home Assistant writes its stores indented.
+It keeps the newest 10,000 samples of a series at most, so a value that flaps cannot grow the
+file without end. Written half an hour after a change (about 48 writes a day at most) and at a
+clean stop; read back at the start, every room it kept, unknown from its last write until the
+rooms are read again — a crash loses what came since. The rooms it kept are the rooms the plugin
+expects until VT hands their thermostats over (I12.11, decision 3). A series that cannot be read is
+left out; a store without the moment of its write is ignored. Nothing is written to it before
+it was read. It goes with the entry's other stores when the entry is removed.
+
 ## 7. Testing
 
 Three layers ([`docs/en/development/plan.md`, "Test environment"](../development/plan.md#test-environment)):
 
 1. **Core tests** (`tests/core/`) — plain pytest, no HA, no network.
-2. **Integration tests** — `pytest-homeassistant-custom-component`: HA runs inside the test
-   process; no instance, no network. Continuous integration (CI) also fetches VT 10.5.1 and
-   SmartPI 0.4.0 from their tags, so the tests with a real VT run on every change.
+2. **Integration tests** — `pytest-homeassistant` 2026.11.3 (Home Assistant 2026.11.3) and, on the
+   oldest version supported, its predecessor `pytest-homeassistant-custom-component` 0.13.375 (Home
+   Assistant 2026.10.4); the tests import the new name, which the old package serves on the oldest
+   version (`tests/conftest.py`). HA runs inside the test process; no instance, no network. Continuous integration (CI) also fetches VT 10.6.5 from its
+   tag, so the tests with a real VT run on every change. It fetches SmartPI 0.4.0 too, only for
+   the test HA's deploy: the plugin reads nothing of SmartPI.
 3. **Test HA** — a dedicated container (`devenv/`) running the plugin, VT, SmartPI and the
    simulator, where the acceptance scenarios run before anything reaches a real boiler.
 
@@ -349,33 +449,4 @@ built page on sample data (`frontend/preview/index.html`) in a headless Chromium
 dark, a desktop and a phone, an administrator and a user who is not — into `.tmp/screenshots/`,
 and fails on any error in the page; `scripts/bootstrap_browser.sh` puts that Chromium, and the
 system libraries it needs, into `.tools/`.
-
-## 8. Water data for zone algorithms
-
-**Built in I9** (the user's decisions of 2026-10-12;
-[`docs/en/development/plans/plan-0.2-i9.md`](../development/plans/plan-0.2-i9.md)). An optional
-interface gives a zone algorithm — SmartPI first — the water reaching each zone's circuit, so
-its room model can account for a weather-compensated boiler, a mixer, burner cycling and hot
-water with priority. Data flows one way, from the plugin to the zone algorithm.
-
-The plugin exposes, per VT thermostat that is one of its zones, the supply temperature with the
-reason it is missing (lasting or momentary), when it was measured, and whether heat reaches the
-zone with its reason: as properties of its feature manager, through a function in `hass.data`
-that works with every supported VT version, and, rounded, in the `smart_boiler` attribute. It
-reads one key a consumer writes into the thermostat's `specific_states`, and pauses SmartPI's
-learning on its own conditions. No version number: consumers detect what exists, changes only
-add, and a contract test (`tests/test_water_interface.py`) pins every name and value. The parts:
-`core/supply.py` and `core/heat.py` (the reasons), `core/water.py` (a zone's fields),
-`coordinator.py` (each zone's `ZoneWater`), `feature_manager.py` (the properties, the attribute,
-the API), `vtherm_link.py` (the consumer's key) and `core/learning.py` (the pauses).
-
-**Added 2026-10-14, at SmartPI's request:** whether the boiler is called for heat
-(`boiler_called`) and why not (`call_reason` — `below_threshold` where zones call under the
-demand criteria, `no_demand`, `activation_delay`, `boiler_fault`, `not_controlling`,
-`waiting_data`), with the demand against its thresholds — so a zone algorithm does not learn
-from heat that never came, which a burner pause does not tell apart. The installation's values,
-the same for each zone, read live from control (`core/boiler_call.py`).
-
-The full specification — names, types, values, ranges, what happens when a value is missing:
-[`water-interface.md`](../specification/water-interface.md).
 

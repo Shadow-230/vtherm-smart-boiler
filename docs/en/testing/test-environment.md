@@ -150,12 +150,16 @@ Proxmox host, so the firewall there is out of its reach.
 
 Set up in the user interface — or by Claude through the API at J4, once you say to start:
 
-1. **VT central configuration**: with the central mode select. Do not configure VT's central
-   boiler — the plugin replaces it, and control refuses to start while it exists.
+1. **VT central configuration**: with the central mode select, and VT's central boiler on, its
+   thresholds at VT's defaults and its two commands on the helper
+   `input_boolean.j4_vt_central_boiler` (`devenv/config/configuration.yaml`):
+   `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` and `…/input_boolean.turn_off`.
+   VT decides whether the boiler heats; the plugin follows the helper (I12.8). Never point these
+   commands at the simulated boiler.
 2. **One VT thermostat per simulated zone** (`zone_living`, `zone_bedroom`, `zone_bath`):
    type "over switch"; underlying switch `switch.boiler_sim_<zone>_valve`; room temperature
    `sensor.boiler_sim_<zone>_temperature`; outdoor temperature `sensor.boiler_sim_outdoor`. Use
-   SmartPI in the bedroom, to test the learning pauses. In each zone's advanced settings, its own
+   SmartPI in the bedroom, a zone algorithm that learns. In each zone's advanced settings, its own
    safety delay of 1440 min: VT takes a sensor whose state has not been written for its delay
    (60 min by default) for dead and switches the zone to its safety mode, and the simulator's
    steady rooms, or a steady outdoor temperature, keep one value longer than that.
@@ -167,7 +171,8 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
      `sensor.boiler_sim_ch_setpoint`, `binary_sensor.boiler_sim_ch_active` and
      `binary_sensor.boiler_sim_pump_running`.
    - Weather: `weather.boiler_sim_weather`.
-   - Boiler: class "Flow setpoint", DHW "combi"; one unmixed circuit; the three VT zones.
+   - Boiler: class "Flow setpoint", DHW "combi"; one unmixed circuit, which takes every room:
+     the three VT zones, each with "Used by central boiler" ticked in VT (I12.11).
 4. **The simulated gateway**: Settings → Devices & services → Add integration → "OpenTherm Gateway
    (simulator stub, test only)" → Submit. Its entry has the gateway ID `sim`. It is a test-only
    stand-in on the simulator for Home Assistant's own OpenTherm Gateway integration, which it
@@ -178,7 +183,8 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
    `sensor.otgw_sim_boiler_control_setpoint` (heating setpoint the boiler received) and
    `binary_sensor.otgw_sim_boiler_master_ch_enabled` (heating on/off); **Control device** — the
    write path "OpenTherm Gateway", only for an entry made before the connection question;
-   **Heating curve** — design flow 55 °C. The runner puts this base back after each scenario
+   **Heating curve** — design flow 55 °C; **Control behaviour** — the helper
+   `input_boolean.j4_vt_central_boiler`. The runner puts this base back after each scenario
    that changes it (`devenv/j4/options.py`, saved item by item through the menu by
    `devenv/j4/walk.py`; `tests/integration/test_j4_walk.py` walks the same base through the
    real options flow), also when the scenario stops half-way, and enables again any VT zone entry
@@ -217,7 +223,7 @@ before 2026-11-22). In `configuration.yaml` the bedroom, the SmartPI zone, is li
 radiator 2.5 times its design load (`zones: radiators_light_bedroom`). There SmartPI's learning
 from scratch ends in about 11 h in the simulator's model. A bedroom at the house's pace stays at
 about 20.0 °C, the top of SmartPI's learning band, and never ends a phase (L15). Q5 reads NOT RUN
-while that learning goes on. Q1 starts it again: run Q5 before Q1, or half a day after it.
+while that learning goes on.
 
 ## 5. What runs at J4
 

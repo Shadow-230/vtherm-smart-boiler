@@ -21,13 +21,12 @@ zapisuje, i sposób testowania. Co integracja robi dla użytkownika, opisuje
 5. [Cykl życia](#5-cykl-życia)
 6. [Stan trwały](#6-stan-trwały)
 7. [Testowanie](#7-testowanie)
-8. [Dane o wodzie dla algorytmów stref](#8-dane-o-wodzie-dla-algorytmów-stref)
 
 ## 1. Przegląd
 
-Integracja (domena `vtherm_smart_boiler`) jest wtyczką VT. Zastępuje kocioł centralny VT
-działający w trybie wł./wył.: czyta strefy VT, decyduje, kiedy kocioł grzeje i jak ciepła jest
-jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
+Integracja (domena `vtherm_smart_boiler`) jest wtyczką VT. Kocioł centralny VT decyduje, kiedy
+kocioł grzeje, przez pomocnika, za którym idzie wtyczka; wtyczka decyduje, jak ciepła jest woda,
+zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
 
 - **Czysta logika w `core/`.** Każde prawo sterowania i uczenia, analiza monitora i werdykt to
   czysty Python bez importów HA — test parsuje importy `core/`, żeby to wymusić. Ten sam rdzeń
@@ -35,15 +34,52 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
 - **Strona HA** wokół niego zbiera dane wejściowe z encji wybranych przez użytkownika, uruchamia
   rdzeń na timerach i przy zmianach stanu, wykonuje jego zapisy i publikuje czujniki, czujniki
   binarne, przełączniki, przyciski i zgłoszenia w Naprawach.
-- **`vtherm_link.py` to jedyne wejście do danych stref.** Czyta encje klimatu VT i centralną
-  konfigurację VT oraz wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`,
-  SmartPI), zamiast to zakładać. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
+- **`vtherm_link.py` to jedyne wejście do danych stref.** Czyta każdą strefę wyłącznie przez
+  `vtherm_api` (zasada użytkownika, 2026-11-24/25; I12.7). Pokoje to termostaty przekazane przez
+  VT modułowi funkcji wtyczki, których `entry_infos` mówią, że liczy je kocioł centralny VT
+  (`used_by_controls_central_boiler`; I12.11); wtyczka nie prowadzi własnej listy. Termostat
+  przekazany, a nieliczony, nie jest pokojem, i wymienia go jedno informacyjne zgłoszenie w
+  Naprawach. Gdy VT nie trzyma termostatu pokoju, który wtyczka znała — VT go przeładowuje albo
+  po ponownym starcie jeszcze go nie uruchomił (pokoje zapisane we własnym magazynie wtyczki) —
+  pokój zostaje, jako nieznany, więc okres rozpoznania i okres karencji z decyzji 3 nadal
+  działają; znika, gdy VT przekaże go jako nieliczony albo gdy rejestr Home Assistanta nie zna
+  już jego encji. Strefę rozpoznaje się po zadeklarowanym `entity_id`, a nazywa zadeklarowanym
+  `name`. Z termostatu:
+  temperatura pokoju i czas jej pomiaru przez VT, nastawa, tryb, czy strefa grzeje i czy jej
+  urządzenie pracuje oraz powód, dla którego VT trzyma ją wyłączoną (tylko okno). Z jego
+  `entry_infos`: typ, cykl i urządzenia, czy liczy go centralny kocioł VT, termometr i czujnik
+  okna pokoju oraz ustawienia centralnego kotła VT. Z wywołań VT na module funkcji: strefa liczy
+  się jako uruchomiona od pierwszego `refresh_state` od VT, a jej wypełnienie i otwarcie zaworu to
+  to, co ostatnio podał hak mocy VT jako zastosowane. Strefa, której termostatu VT nie przekazał,
+  jest nieznana; nic z encji klimatu VT jej nie zastępuje. Historia pokoi to to, co odczytał,
+  przechowywane przez samą wtyczkę (zobacz [Stan trwały](#6-stan-trwały)); nic z encji klimatu VT
+  do niej nie trafia. Nic z encji klimatu VT nie jest czytane, ani tryb centralny VT. To, co
+  bierze z Home Assistanta o VT, to informacja Home Assistanta, nie dane VT: czy VT jest wczytany
+  i jego wersja (integracje i wpisy konfiguracji) oraz rejestr encji — czy VT ma encje klimatu
+  (zgłoszenie o przeładowaniu niżej) i obszar encji (skrót obszaru w obiegu). Nie czyta niczego
+  ze SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji, a test
+  (`tests/test_vt_boundary.py`) wymienia każde miejsce integracji, które czyta stan, historię
+  stanu albo wpis konfiguracji, i czyja to encja: żadna nie jest encją VT.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
-  `register_feature_manager` z `vtherm_api`) pokazuje na każdym termostacie VT, czy ciepło z
-  kotła dociera teraz do jego strefy — `heat_available`, z `core/heat.py` (I8, decyzja C1) — a od
-  I9 także wodę docierającą do strefy (`core/water.py`; rozdział 8). Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
-  go dopiero po następnym przeładowaniu VT, którego wtyczka nigdy sama nie wywołuje. Nic w
-  sterowaniu od niego nie zależy.
+  `register_feature_manager` z `vtherm_api`) to kanał, którym VT przekazuje każdy termostat.
+  Zachowuje to, co mówi mu VT — jego `refresh_state` i hak mocy `async_on_underlying_power` — i
+  nie publikuje niczego na termostatach VT: dane o wodzie, które pokazywał do I12.9, usunięto, bo
+  nikt ich nie czytał (decyzja użytkownika z 2026-11-25). Jest rejestrowany dopiero po wczytaniu
+  VT; termostat, który już działa, trafia do niego dopiero po następnym przeładowaniu VT, którego
+  wtyczka nigdy sama nie wywołuje. Przy pierwszej instalacji, gdy VT działa, nie przychodzi
+  żaden: zgłoszenie do naprawy „Przeładuj raz Versatile Thermostat” pojawia się, gdy VT jest
+  wczytany, rejestr Home Assistanta zna encje klimatu VT, a w tym uruchomieniu żaden termostat
+  nie został przekazany przez 15 minut od rejestracji; znika, gdy tylko pierwszy zostanie
+  przekazany, a jego przepływ naprawy (`repairs.ReloadVtFlow`) sprawdza ponownie. Ostatni krok
+  konfiguracji mówi to samo tam, gdzie to potrzebne.
+- **„Nie daje ciepła”** (`binary_sensor`, klucz `no_heat`; `core/boiler_call.py`): jeden sygnał
+  dla całego domu, włączony, gdy pokój liczony przez VT woła o ciepło, a kocioł go nie daje
+  (wyłączony, gdy żaden pokój nie woła, I13.1), z powodem — kocioł
+  centralny VT nie wzywa ciepła, trwa jego opóźnienie włączenia, ciepła woda, usterka kotła albo
+  wtyczka nie może ręczyć za ciepło. Wyliczany z decyzji sterowania w każdym kroku; niedostępny,
+  gdy sterowanie jest wyłączone. Użytkownik wybiera go w ustawieniu „heating unavailable” w
+  SmartPI 1.0 albo używa w automatyzacji: wtyczka sama nie wstrzymuje nauki żadnej strefy
+  (I12.9).
 
 Szczegóły: [`docs/pl/specification/scope.md`, §2](../specification/scope.md#2-dlaczego-wtyczka) i
 [§5](../specification/scope.md#5-sprzęt-obiegi-i-algorytmy-stref).
@@ -76,7 +112,8 @@ docs/                                     dokumentacja, osobny katalog na każdy
 - `sim/custom_components/` zawiera `boiler_sim` (symulowany kocioł, pomieszczenia i pogodę) oraz
   zastępczy `opentherm_gw`, oba tylko do testów.
 - `tools/import_history.py` zamienia kopię bazy recordera HA na historię rdzenia, żeby analizę
-  monitora można było sprawdzić na zapisanych danych.
+  monitora można było sprawdzić na zapisanych danych: sygnały kotła, pogodę i pomocnika
+  przełączanego przez kocioł centralny VT — nigdy encje klimatu VT.
 - Strona „Kocioł” ([`plan-0.2-i10.md`](../../en/development/plans/plan-0.2-i10.md)):
   `frontend/` to jej źródło; `npm run build` w tym katalogu zapisuje moduł, który wtyczka
   udostępnia, do `custom_components/vtherm_smart_boiler/frontend/`, razem z licencjami pakietów w
@@ -94,26 +131,38 @@ docs/                                     dokumentacja, osobny katalog na każdy
   przełącznikiem (F17 z J4). Póki wpis działa, `panel.py` każe
   też Home Assistantowi wczytywać ten sam moduł na każdej stronie (`frontend.add_extra_js_url`,
   zabierane przy wyładowaniu, starszy adres zastępowany po aktualizacji), więc części przeglądu
-  są w wyborze kart jako cztery karty — stan i kafelki, schemat i pokoje, krzywa, ostatnie 24 h —
+  są w wyborze kart jako cztery karty — stan i kafelki, schemat, krzywa, ostatnie 24 h —
   każda to własna część strony (`frontend/src/cards.ts`), bez ustawień: każda sama znajduje
   działający wpis przez `vtherm_smart_boiler/installation`. Gdy frontend Home Assistanta nie
-  działa, nic nie jest rejestrowane. Node.js instaluje `scripts/bootstrap_node.sh` do
-  `.tools/node/`. `websocket_api.py` to to, co strona czyta: pięć poleceń WebSocket tylko do
+  działa, nic nie jest rejestrowane. Strona nie czyta niczego z VT i nie pokazuje pokoi
+  ([`plan-0.2-i12.md`](../../en/development/plans/plan-0.2-i12.md), decyzja 6): kafelek pokoi
+  pokazuje własną liczbę wtyczki, **Wołające o ciepło** (`demand_count`), z odnośnikiem do strony
+  VT w ustawieniach dla administratora; schemat rysuje płynącą wodę, gdy **Wezwanie do grzania**
+  (`boiler_called`) jest włączone albo płomień pali na grzanie, do obiegów, które wymienia atrybut
+  tego czujnika `calling_circuits` — obiegi wołających pokoi, zapisywane w recorderze, w
+  przeciwieństwie do samych pokoi (`calling_zones`), więc ostatnie 24 h je odtwarzają. Ostatnie
+  24 h czytają z recordera historię tylko sygnałów kotła, własnych encji wtyczki i pogody.
+  Node.js instaluje `scripts/bootstrap_node.sh` do `.tools/node/`. `websocket_api.py` to to, co strona czyta: pięć poleceń WebSocket tylko do
   odczytu, dla każdego zalogowanego użytkownika, każde odpowiada z działającego wpisu (inaczej
-  błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich strefami i
-  grzejnikami, encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
+  błąd `not_running`): `vtherm_smart_boiler/installation` — kocioł, obiegi z ich pokojami i
+  grzejnikami (strona rysuje grzejniki; identyfikatory pokoi służą sprawdzeniu J4), encja wybrana dla każdego sygnału, encje wtyczki według klucza i ustawienia
   krzywej; `vtherm_smart_boiler/curve` — punkty krzywej dla ustawień w użyciu albo dla wartości
   roboczych, bez zapisu, z `core/curve_view.py` (krzywa przy temperaturze pokojowej w użyciu,
   potem limity, tak jak decyduje sterowanie przed korektą komfortu, potrzebą obiegu i rampą), ze
   sprawdzeniami z ustawień według ich kluczy tłumaczeń; `vtherm_smart_boiler/days` — podsumowania
   dni w zapisanej postaci, razem z gazem na stopniodzień z ostatnich 12 tygodni liczonym przez
-  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora), sygnaturą
+  `core/weekly.py` (tydzień bez gazu w którymś dniu nie ma wyniku, zasada monitora; brak też
+  poniżej 14 stopniodni; każdy z pasmem 95 %, `low` i `high`, z rozrzutu linii dni
+  obserwowanych sygnatury, a bez niej dni pod sterowaniem, z rozrzutem tygodnia liczonym
+  z powiązania dni), sygnaturą
   energetyczną dopasowaną przez `core/signature.py` — gaz na grzanie każdego dnia na 24 h wobec
   jego średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, linia
   każdej grupy przez jej dni grzania (zimniejsze niż próg grzania w użyciu, z gazem na grzanie)
   według zasad dopasowania budynku (`core/building.py`: liczba dni, rozrzut temperatur, więcej
   gazu w zimniejsze dni, R²) albo powód jej braku, i obie porównane w środku temperatur, które
-  obie obejmują — oraz z jednostką licznika gazu (bez licznika żadną: gaz jest wtedy szacowany w
+  obie obejmują, każda z zakresem 95 % poszerzonym na dni ze sobą powiązane
+  (`core/regression.py`), zmiana z jej zakresem i to, czy zakresy się rozchodzą (`shown`; gdy
+  zachodzą na siebie, strona mówi, że różnicy nie widać) — oraz z jednostką licznika gazu (bez licznika żadną: gaz jest wtedy szacowany w
   jednostce danych gazu kotła); każdy dzień zapisany od I10.7 trzyma swoje starty grzania
   godzina po godzinie od swojego początku (`hourly_starts`, 23 albo 25 godzin przy zmianie
   czasu), które strona umieszcza na ich godzinach zegarowych; dni zapisane wcześniej ich nie mają
@@ -144,13 +193,48 @@ co 30 sekund (odczyty, sprawdzenie sygnałów, ciepła woda, bieżące alarmy); 
 (`core/analysis.py`) działa co kilka minut na kopii historii, poza pętlą zdarzeń. Koordynator
 zarządza też magazynami (zobacz [Stan trwały](#6-stan-trwały)).
 
+Historia (`core/history.py`, `History`) ma trzy źródła. Sygnały kotła, pogoda, stan sterowania
+wtyczki i pomocnik przełączany przez kocioł centralny VT przychodzą na żywo z ich stanów, a po
+starcie z rejestratora: ostatnie 8 dni (`HISTORY_DAYS`) i starsze dni, do roku wstecz, tylko do
+budowy podsumowań dni. Pokoje pochodzą z własnych odczytów wtyczki przez `vtherm_api`, przy każdym
+odświeżeniu (30 s) i każdym kroku sterowania (10 s), tylko zmiany (`ZoneSeries.record`), a po
+starcie z magazynu pokoi — nigdy z zapisów encji klimatu VT w rejestratorze (I12.7b). „Czy kocioł
+był wezwany do grzania” (`History.zone_demand`, `zone_calling`) to stan pomocnika wszędzie, gdzie
+jest znany — własna decyzja VT, z jego progami — a pokoje tylko tam, gdzie nie jest, albo gdy
+pomocnik nie jest ustawiony (samo monitorowanie); obieg sterowany inną automatyką, który prosi
+przez swoją encję żądania (`History.circuits_asking`, encja użytkownika, z rejestratora i na
+bieżąco), liczy się jako wezwanie bez względu na VT (I12.18).
+Odróżnia palenia na grzanie od ciepłej wody
+(każde podsumowanie dnia, werdykt, dopasowanie budynku), przerwy, które może ocenić dryf
+histerezy, krótkie palenia liczone przez niestabilny zapłon i palenia brane przez dowody
+najniższej temperatury wody. Własne szczegóły pokoi — średnia nastawa w raporcie, otwarcia
+zaworów w tych dowodach — pochodzą tylko z magazynu pokoi, więc zaczynają się od instalacji.
+
 **Monitor i analiza (`core/monitor.py`, `core/analysis.py`, `core/verdict.py`).** Od historii do
 cykli pracy palnika, metryk, ostrzeżeń o trendach, raportu i werdyktu sterowania, zawsze z
-powodami. `core/alarms.py` zawiera alarmy monitora, z histerezą, żeby nie migotały.
+powodami; obok nich najniższa i najwyższa moc kotła wobec obciążenia projektowego domu
+(`Sizing`, atrybut `sizing` czujnika werdyktu). `core/alarms.py` zawiera alarmy monitora,
+z histerezą, żeby nie migotały. `core/building.py` dopasowuje straty ciepła domu do
+zapisanych dni: dniami grzania są dni poniżej punktu zmiany, który pokazują same dni, gdy po
+obu stronach progu w użyciu leży co najmniej tydzień dni, a inaczej dni poniżej tego progu;
+straty niosą swój zakres 95 % (`range_share`, zapisywany ze zmierzoną wartością w głównym
+magazynie), z błędu nachylenia poszerzonego o autokorelację reszt z dnia na dzień
+(`core/regression.py`: efektywna liczba dni, rozkład t Studenta), trzymany między ±15 % a
+±100 %; powyżej ±50 % straty są pokazywane, ale nieużywane. Dopasowanie jest sprawdzane na
+`sim/house_days.py`, domu liczonym dzień po dniu ze znanymi stratami i powiązanymi błędami
+(`tests/sim/test_building_range.py`). Każde podsumowanie dnia trzyma też swoje palenia krótsze
+niż 3 minuty (`very_short_burns`), gaz paleń ciepłej wody (`dhw_gas`) i medianę swoich próbek
+histerezy (`hysteresis_median`, od 5 przerw); dni zapisane wcześniej ich nie mają i nadal się
+wczytują. `core/dhw_check.py` dopasowuje gaz ciepłej wody z zapisanych dni do ich średniej
+temperatury zewnętrznej i zgłasza informacyjne `dhw_split_suspect`, gdy nachylenie jest
+wyraźne (28 dni, rozrzut 8 K, co najmniej 3 poszerzone błędy standardowe i 3 % średniej na K).
+Ostrzeżenie o histerezie daje ta kontrola, która ostrzega (`either_drift`): ostatni dzień wobec
+dni 4–8 wcześniej albo mediany dzienne z ostatniego tygodnia wobec tych z dni 21–42 wcześniej
+(`slow_hysteresis_drift`); jego atrybut `basis` mówi, która.
 
 **Jednostka sterowania (`control.py`, `ControlUnit`).** Strona HA sterowania: krok sterowania co
-kilka sekund, jego zapisy przez moduł zapisu, oddanie kotła przy każdym wyjściu, wstrzymywanie
-nauki algorytmów stref i stan pokazywany przez encje. Zamienia zdarzenia zabezpieczeń i awarie
+kilka sekund, jego zapisy przez moduł zapisu, oddanie kotła przy każdym wyjściu i stan
+pokazywany przez encje — w tym „Nie daje ciepła”. Zamienia zdarzenia zabezpieczeń i awarie
 na alarmy. Moduł zapisu istnieje tylko wtedy, gdy sterowanie jest włączone. Błąd wewnętrzny
 oddaje kocioł i blokuje sterowanie zatrzaskiem.
 
@@ -162,14 +246,14 @@ Przekaźnik ma własny krok (`core/relay.py`).
 wie, na polecenie dla kotła, w stałej kolejności pierwszeństwa: sterowanie wyłączone; zatrzask
 albo alarm ustawiony na oddanie kotła; brakujący warunek wstępny (blokada); utracona albo
 nieświeża łączność z kotłem; usterka samego kotła; w pozostałych przypadkach włączenie lub
-wyłączenie grzania z ochrony przed mrozem i zapotrzebowania stref, a temperatura wody z krzywej
-(`core/curve.py`), limitów i rampy.
+wyłączenie grzania z decyzji VT (pomocnik), a temperatura wody z krzywej (`core/curve.py`),
+limitów i rampy.
 
-**Zapotrzebowanie (`core/demand.py`, `boiler_demand`).** To, o czym decydował kocioł centralny
-VT, teraz zadanie wtyczki: wołające urządzenia albo strefy (domyślnie urządzenia VT, tak jak
-liczy je jego kocioł centralny), łączna moc albo otwarcie zaworów, przy czym każda strefa liczy
-się tylko wtedy, gdy VT podaje jej stan jednoznacznie; gdy VT nie podaje stanu urządzenia,
-zasada VT — zawór choć trochę otwarty, inaczej cykl pracy powyżej 0.
+**Zapotrzebowanie (`core/demand.py`, `boiler_demand`).** Decyzja VT — pomocnik włączony,
+wyłączony albo nieznany — i policzone pokoje: ile woła (do pokazania), które są nieznane i czy
+cokolwiek w ogóle może prosić (decyzja 3). Pokój woła, gdy VT mówi, że jedno z jego urządzeń
+działa; gdy VT nie podaje stanu urządzenia, według zasady VT — zawór choć trochę otwarty, inaczej
+cykl pracy powyżej 0.
 
 **Obiegi sterowane przez inną automatykę (`core/circuit_requests.py`, `circuits_asking`).**
 Obieg, którego mieszaczem albo pompą steruje coś innego, prosi o ciepło przez własną encję albo
@@ -204,17 +288,19 @@ zapisuje.
 
 **Konfiguracja (`config_flow.py`, `config.py`, `control_config.py`).** Formularze konfiguracji
 i opcji oraz opcje sterowania jako obiekty rdzenia, z blokadami, które nie pozwalają ruszyć
-sterowaniu. Oba przepływy to jedno menu sekcji; sterowanie to pięć jego pozycji, każda jako jeden
-formularz — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, ochrona przed mrozem,
-reakcje na alarmy (`CONTROL_ITEMS`) —, każda pokazana tam, gdzie ma zastosowanie, i otwierana
+sterowaniu. Oba przepływy to jedno menu sekcji; sterowanie to cztery jego pozycje, każda jako
+jeden formularz — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, reakcje na alarmy
+(`CONTROL_ITEMS`) —, każda pokazana tam, gdzie ma zastosowanie, i otwierana
 po sprawdzeniu ścieżki zapisu (`_control_path`). Formularz pokazuje się ponownie z polami, które
 odsłoniła odpowiedź (`entity_form_fields`, `relay_form_fields`); wartość ukrytego pola zostaje. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
-zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Strefy należą do
-obiegów: każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką i z konwektorami,
-a ze strefy zasilanej tylko w części — jej urządzenia (`devices`, według strefy; formularz
-przypisuje każde urządzenie do strefy przez `vtherm_link.zone_devices`); tylko tak strefa może
-być w dwóch obiegach. Własna sekcja stref trzyma tylko to, czy zawory strefy zamykają się, gdy
-jest wyłączona (`config._circuit_zones`). `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
+zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Pokoje są z VT
+(I12.11): opcje trzymają tylko to, jak należą do obiegów. Przy jednym obiegu wszystkie pokoje są
+jego, a zapisuje on tylko, które pokoje mają podłogówkę i konwektory. Przy kilku każdy obieg
+wymienia zasilane pokoje, a z nich te z podłogówką i z konwektorami, a z pokoju zasilanego tylko
+w części — jego urządzenia (`devices`, według pokoju; formularz przypisuje każde urządzenie do
+pokoju przez `vtherm_link.room_devices`); tylko tak pokój może być w dwóch obiegach.
+`config._zones` czyta to przypisanie, a `Installation.with_rooms` łączy je z pokojami, które VT
+przekazuje, przy każdym odświeżeniu i kroku sterowania. `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
 zrobionego ręcznie).
 
 ## 4. Jeden krok sterowania
@@ -229,15 +315,15 @@ flowchart TD
     B -->|"nie"| Z["Brak decyzji w tym kroku"]
     B -->|"tak"| C["Odczyt: migawka i świeżość kotła, strefy przez vtherm_link, ciepła woda"]
     C --> D["Blokady i zatrzaski"]
-    D --> E["Zapotrzebowanie stref, prośby obiegów i ochrona przed mrozem: boiler_demand, circuits_asking, follow_zones"]
+    D --> E["Decyzja VT, prośby obiegów i strefy: boiler_demand, circuits_asking, follow_zones"]
     E --> F{"Sterownik decyduje: decide"}
     F -->|"oddanie kotła"| H["Oddanie: najniższa woda, grzanie, gdzie ktoś przejmuje, zwolnienie"]
-    F -->|"grzanie, spoczynek, mróz"| G["Zabezpieczenia oceniają odczyt: plan_write, classify"]
+    F -->|"grzanie, spoczynek"| G["Zabezpieczenia oceniają odczyt: plan_write, classify"]
     G -->|"inny sterownik"| S["Ustąpienie: oddanie kotła i zatrzask"]
     S --> H
     G -->|"dozwolone"| W["Moduł zapisu zapisuje nastawę i włączenie lub wyłączenie grzania"]
     G -->|"nic do zrobienia"| K["Wstrzymanie: nic nie jest zapisywane"]
-    W --> F2["Dalej: zaległe oddanie, przekaźnik, magazyn, wstrzymanie nauki, stan"]
+    W --> F2["Dalej: zaległe oddanie, przekaźnik, magazyn, stan i „nie daje ciepła”"]
     K --> F2
     H --> F2
 ```
@@ -248,8 +334,8 @@ flowchart TD
   nieświeże kroki pokryją 5 minut w ciągu 10; wraca po 60 sekundach świeżych danych).
 - **Blokady i zatrzaski** idą przed zapotrzebowaniem: zatrzask albo alarm ustawiony na oddanie
   kotła oddaje kocioł, o cokolwiek proszą strefy.
-- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku — zapotrzebowanie
-  stref albo prośba obiegu sterowanego przez inną automatykę; temperatura wody co odstęp decyzji
+- **Decyzja:** włączenie lub wyłączenie grzania jest ustalane w każdym kroku — decyzja VT
+  (pomocnik) albo prośba obiegu sterowanego przez inną automatykę; temperatura wody co odstęp decyzji
   (domyślnie 5 minut) i od razu po końcu blokady albo usterki lub gdy zmienia się potrzeba
   obiegu: krzywa, nigdy poniżej potrzeby proszącego obiegu,
   ograniczona przez obiegi zasilane prosto z kotła i maksimum kotła. Przy kilku obiegach
@@ -300,11 +386,10 @@ ręcznie.
 ## 6. Stan trwały
 
 Sterowanie ma własny magazyn (`ControlStore` w `coordinator.py`), oddzielny od głównego magazynu
-wpisu, który trzyma historię monitora i podsumowania dni.
+wpisu, który trzyma drobne dane monitora i podsumowania dni.
 
 - **Co trzyma:** czy sterowanie jest włączone, ostatnie polecenie i to, czy wtyczka steruje,
-  zatrzaski i ich przyczyny, zaległe oddanie kotła i dowody zwolnienia, wstrzymania nauki,
-  wartości bazowe, z którymi porównują zabezpieczenia, obserwacje przekaźnika i aktywne alarmy
+  zatrzaski i ich przyczyny, zaległe oddanie kotła i dowody zwolnienia, wartości bazowe, z którymi porównują zabezpieczenia, obserwacje przekaźnika i aktywne alarmy
   sterowania.
 - **Zapisywane od razu:** każda zmiana, której awaria nie może zgubić — znacznik sterowania,
   zatrzask, zaległe oddanie kotła — jest zapisywana natychmiast i atomowo. Wynik każdego zapisu
@@ -333,14 +418,30 @@ zmianie, od razu przy wyładowaniu wpisu i przez Home Assistanta przy jego zatrz
 którego nie da się odczytać, zaczyna pusty dziennik. Znika razem z innymi magazynami wpisu, gdy
 wpis jest usuwany.
 
+**Historia pokoi** (`rooms_store` w `coordinator.py`, jej format w `core/history.py`) też ma
+własny magazyn, `<domain>.<entry_id>.rooms`: temperatura, nastawa, tryb, wezwanie, wypełnienie i
+otwarcie zaworu każdego pokoju, tak jak wtyczka odczytała je przez `vtherm_api` w ostatnich 8
+dniach. Każda seria to jeden wiersz tekstu — chwile w pełnych sekundach, każda po pierwszej jako
+sekundy od poprzedniej; wartości do trzech miejsc po przecinku — bo Home Assistant zapisuje swoje
+magazyny z wcięciami. Trzyma najwyżej 10 000 najnowszych próbek serii, więc migocząca wartość nie
+powiększa pliku bez końca. Zapisywany pół godziny po zmianie (najwyżej około 48 zapisów na dobę)
+i przy czystym zatrzymaniu; odczytywany przy starcie, każdy zapisany pokój, nieznany od
+ostatniego zapisu do następnego odczytu pokoi — awaria gubi to, co przyszło od zapisu. Zapisane
+pokoje to pokoje, których wtyczka oczekuje, aż VT przekaże ich termostaty (I12.11, decyzja 3). Serii,
+której nie da się odczytać, nie bierze; magazyn bez chwili zapisu pomija. Nic do niego nie jest
+zapisywane, zanim go odczytano. Znika razem z innymi magazynami wpisu, gdy wpis jest usuwany.
+
 ## 7. Testowanie
 
 Trzy warstwy ([`docs/pl/development/plan.md`, „Test environment”](../development/plan.md#środowisko-testowe)):
 
 1. **Testy rdzenia** (`tests/core/`) — zwykły pytest, bez HA, bez sieci.
-2. **Testy integracyjne** — `pytest-homeassistant-custom-component`: HA działa wewnątrz procesu
-   testów; bez instancji, bez sieci. Ciągła integracja (CI) pobiera też VT 10.5.1 i SmartPI
-   0.4.0 z ich tagów, więc testy z prawdziwym VT działają przy każdej zmianie.
+2. **Testy integracyjne** — `pytest-homeassistant` 2026.11.3 (Home Assistant 2026.11.3), a na
+   najstarszej obsługiwanej wersji jego poprzednik `pytest-homeassistant-custom-component` 0.13.375
+   (Home Assistant 2026.10.4); testy importują nową nazwę, którą na najstarszej wersji obsługuje
+   stary pakiet (`tests/conftest.py`). HA działa wewnątrz procesu testów; bez instancji, bez sieci. Ciągła integracja (CI) pobiera też VT 10.6.5 z jego tagu,
+   więc testy z prawdziwym VT działają przy każdej zmianie. Pobiera też SmartPI 0.4.0, tylko do
+   wdrożenia na testowy HA: wtyczka nie czyta niczego ze SmartPI.
 3. **Testowy HA** — osobny kontener (`devenv/`) z wtyczką, VT, SmartPI i symulatorem, w którym
    scenariusze odbiorcze są uruchamiane, zanim cokolwiek trafi do prawdziwego kotła.
 
@@ -368,45 +469,4 @@ Strona „Kocioł”, w `frontend/`: `../scripts/env.sh npm test` i `../scripts/
 administrator i zwykły użytkownik — do `.tmp/screenshots/` i zgłasza błąd przy każdym błędzie na
 stronie; `scripts/bootstrap_browser.sh` umieszcza to Chromium i potrzebne mu biblioteki systemowe
 w `.tools/`.
-
-## 8. Dane o wodzie dla algorytmów stref
-
-**Zbudowane w I9** (decyzje użytkownika z 2026-10-12;
-[`docs/en/development/plans/plan-0.2-i9.md`](../../en/development/plans/plan-0.2-i9.md)).
-Opcjonalny interfejs daje algorytmowi strefy — najpierw SmartPI — temperaturę wody, która dociera
-do obiegu każdej strefy, żeby jego model pomieszczenia uwzględniał krzywą grzewczą, mieszacz,
-taktowanie palnika i ciepłą wodę z priorytetem. Dane płyną w jedną stronę: od wtyczki do
-algorytmu strefy; algorytm nigdy nie zadaje temperatury wody.
-
-Co wtyczka wystawia dla każdego termostatu VT, który jest jej strefą:
-
-- **temperaturę wody** (`supply_temperature`, °C, jak mierzy czujnik, −20 do 110 °C) albo brak, z
-  powodem (`supply_reason`): trwałym — brak czujnika (`not_mapped`), obieg z mieszaczem bez
-  własnego czujnika (`circuit_not_measured`), termostat w kilku obiegach o różnej wodzie
-  (`several_circuits`) — albo chwilowym: odczyt niedostępny (`flow_unknown`) lub nieświeży
-  (`flow_stale`);
-- **czas pomiaru** (`supply_measured_at`, UTC) — tylko informacyjnie;
-- **czy ciepło dociera** (`heat_available`) i dlaczego nie (`heat_reason`) — zmienia się z każdym
-  cyklem palnika;
-- **czy kocioł jest wezwany do grzania** (`boiler_called`) i dlaczego nie (`call_reason`:
-  `below_threshold` — strefy wołają, ale poniżej progów zapotrzebowania, `no_demand`,
-  `activation_delay`, `boiler_fault`, `not_controlling`, `waiting_data`), z zapotrzebowaniem
-  wobec progów — dodane 2026-10-14 na prośbę SmartPI, żeby algorytm strefy nie uczył się na
-  cieple, które nie przyszło, czego przerwa palnika nie odróżnia. Wartości całej instalacji, te
-  same dla każdej strefy, czytane na bieżąco ze sterowania (`core/boiler_call.py`).
-
-Gdzie: jako właściwości modułu funkcji (feature manager) na termostacie VT (gdy VT ma
-`get_feature_manager`, od 10.5.0.beta1); przez funkcję `zone_water(entity_id)` pod kluczem
-`hass.data["vtherm_smart_boiler_api"]`, działającą z każdą obsługiwaną wersją VT; i w atrybucie
-`smart_boiler` termostatu, z temperaturą zaokrągloną do 1 °C i publikowaną przy zmianie o co
-najmniej 1 K. Wtyczka czyta jeden klucz, który algorytm wpisuje do `specific_states` termostatu
-(dla SmartPI proponowany `water_factor`), i nadal sama wstrzymuje uczenie SmartPI na swoich
-warunkach: ciepła woda z priorytetem i awaria kotła — w strefach wołających ciepła; duże
-wahania wody — tylko gdy algorytm nie korzysta z danych o wodzie. Bez numeru wersji: strony
-wykrywają, co istnieje, zmiany tylko dodają, a test kontraktu (`tests/test_water_interface.py`)
-pilnuje nazw i wartości.
-
-Pełna specyfikacja — nazwy, typy, wartości, zakresy, co się dzieje, gdy wartości brak (kocioł
-wł./wył. na przekaźniku, integracja producenta, tryb samego monitorowania i inne):
-[`docs/pl/specification/water-interface.md`](../specification/water-interface.md).
 

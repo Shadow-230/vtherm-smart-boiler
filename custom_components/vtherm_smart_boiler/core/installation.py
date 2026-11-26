@@ -1,9 +1,17 @@
-"""The installation: one boiler, its circuits and the VT zones on each circuit."""
+"""The installation: one boiler, its circuits and the rooms on each circuit.
+
+The rooms are VT's (I12.11, the user's decision of 2026-11-25): the thermostats VT hands to the
+plugin and counts for its central boiler, known only at run time. What the options keep is the
+mapping of rooms to circuits: with one circuit every room is its, and only which rooms have
+underfloor heating or convectors is stored; with several, each circuit lists the rooms it feeds.
+``Installation.with_rooms`` puts the two together for the rooms VT hands over now.
+"""
 
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 
@@ -116,16 +124,13 @@ class Circuit:
 
 @dataclass(frozen=True, slots=True)
 class Zone:
-    """A VT thermostat assigned to a circuit. ``closes_when_off``: the user's declaration that
-    the zone's emitter closes while VT has it off, for a zone whose valve state VT does not
-    publish (decision 4; off by default). ``devices``: the zone's own devices this circuit
-    feeds, where it feeds only some — a zone in two circuits is listed in each by its devices
-    (I8.8b, decision F2); empty: the whole zone."""
+    """A room — a VT thermostat — on a circuit. ``devices``: the room's own devices this circuit
+    feeds, where it feeds only some — a room in two circuits is listed in each by its devices
+    (I8.8b, decision F2); empty: the whole room."""
 
     zone_id: str
     circuit_id: str
     emitter: EmitterType = EmitterType.RADIATOR
-    closes_when_off: bool = False
     devices: frozenset[str] = frozenset()
 
 
@@ -154,9 +159,33 @@ class Issue:
 
 @dataclass(frozen=True, slots=True)
 class Installation:
+    """``zones``: as the options map the rooms (``with_rooms``), or — resolved — the rooms VT
+    hands over now on their circuits."""
+
     boiler: Boiler
     circuits: tuple[Circuit, ...]
     zones: tuple[Zone, ...] = ()
+
+    @property
+    def every_room(self) -> bool:
+        """One circuit: every room is its (I12.11); its zones list only the rooms' emitters."""
+        return len(self.circuits) == 1
+
+    def with_rooms(self, rooms: Sequence[str]) -> Installation:
+        """The installation with the rooms VT hands over now (I12.11): with one circuit each room
+        on it, its emitter as listed — a radiator where none is; with several, the rooms each
+        circuit lists that are rooms now. A room no circuit lists is on none."""
+        if self.every_room:
+            only = self.circuits[0].circuit_id
+            emitters = {z.zone_id: z.emitter for z in self.zones}
+            zones = tuple(
+                Zone(room, only, emitters.get(room, EmitterType.RADIATOR))
+                for room in dict.fromkeys(rooms)
+            )
+        else:
+            present = set(rooms)
+            zones = tuple(z for z in self.zones if z.zone_id in present)
+        return replace(self, zones=zones)
 
     def circuit(self, circuit_id: str) -> Circuit | None:
         return next((c for c in self.circuits if c.circuit_id == circuit_id), None)
@@ -208,7 +237,7 @@ class Installation:
             ):
                 found.append(Issue(IssueCode.FIXED_TEMPERATURE_MISSING, Severity.ERROR, cid))
             emitters = self.emitters_in(cid)
-            if not emitters:
+            if not emitters and not self.every_room:  # one circuit takes every room (I12.11)
                 found.append(Issue(IssueCode.EMPTY_CIRCUIT, Severity.WARNING, cid))
             if (
                 circuit.control is CircuitControl.UNMIXED_SHARED

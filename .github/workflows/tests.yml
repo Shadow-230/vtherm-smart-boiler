@@ -1,18 +1,19 @@
 # Tests, lint, formatting and types on every push and pull request
 # (docs/en/development/plans/plan-0.2.md, K2; docs/en/development/plans/plan-0.2.1.md, R3), on the
-# Home Assistant version tested and on the declared minimum (hacs.json). vendor/ (VT 10.5.1 and
+# Home Assistant version tested and on the declared minimum (hacs.json). vendor/ (VT 10.6.5 and
 # SmartPI 0.4.0) is not in the repository: CI fetches both on GitHub's servers by the full commit
 # their release tags pointed at, so a tag moved later changes nothing, and so runs the real-VT
 # tests on every change (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86; nothing is
-# downloaded on the developer's machine). Coverage counts branches, and
-# every module keeps its own floor (P-35). The canaries (newest vtherm_api; newest VT and
-# SmartPI releases) are early warnings of a change upstream, not of ours: they run on demand and
-# on pull requests into qas and main, not on every pull request (PB-85). GitHub runs a schedule
-# only from the default branch, main, which holds no workflow until a release: so the canaries
-# are started by hand on dev, weekly and before every pull request into qas (the user's decision,
-# 2026-10-13). A pull request is checked once, up to date with its base, so the merge into dev
-# is not checked again; pushes to qas and main are, as the last word before tests on a real
-# Home Assistant and before a release. The tests run on every CPU
+# downloaded on the developer's machine). SmartPI only for the test bench's deploy, whose zones run
+# it: the plugin reads nothing of SmartPI and no test loads it (I12.9). Coverage counts branches,
+# and every module keeps its own floor (P-35). The canaries (newest vtherm_api; newest VT and
+# SmartPI releases) are early warnings of a change upstream, not of ours: they run on demand and on
+# pull requests into qas and main, not on every pull request (PB-85). GitHub runs a schedule only
+# from the default branch, main, which holds no workflow until a release: so the canaries are
+# started by hand on dev, weekly and before every pull request into qas (the user's decision,
+# 2026-10-13). A pull request is checked once, up to date with its base, so the merge into dev is
+# not checked again; pushes to qas and main are, as the last word before tests on a real Home
+# Assistant and before a release. The tests run on every CPU
 # (pytest-xdist). Actions are pinned to full commits (PB-86); the comment names the version.
 # The tests are CPU-bound, so a run is split across jobs side by side (2026-11-18): for each
 # Home Assistant version, four parts — the lint, types and core tests; test_acceptance.py;
@@ -35,10 +36,9 @@ permissions:
   contents: read
 
 jobs:
-  # A pull request that changes documentation only (Markdown, docs/, LICENSE — not CLAUDE.md, not
-  # the water interface's specification, which its contract test reads, nothing under .github/)
-  # passes without the tests: no test reads those files. Anything else, and every push,
-  # schedule and manual run, runs everything.
+  # A pull request that changes documentation only (Markdown, docs/, LICENSE — not CLAUDE.md,
+  # nothing under .github/) passes without the tests: no test reads those files. Anything else,
+  # and every push, schedule and manual run, runs everything.
   changes:
     name: Documentation only?
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
             if [ -n "$files" ] && ! printf '%s\n' "$files" \
                 | grep -v -E '^(docs/.*|LICENSE|[^/]*\.md|[^.][^/]*/.*\.md)$' \
                 | grep -q . && ! printf '%s\n' "$files" \
-                | grep -q -E '^(CLAUDE\.md|\.github/|docs/en/specification/water-interface\.md)'; then
+                | grep -q -E '^(CLAUDE\.md|\.github/)'; then
               only=true
               echo "Documentation only: tests skipped." | tee -a "$GITHUB_STEP_SUMMARY"
             fi
@@ -292,8 +292,9 @@ jobs:
           python -m pytest -q -n auto --ignore=tests/core
 
   # PB-85: the newest VT and SmartPI releases (and the newest vtherm_api VT runs with) — a
-  # failure here is a finding: VT or SmartPI changed under the plugin, not a broken change of
-  # ours. Each release tag is resolved to its commit and fetched by that commit.
+  # failure here is a finding: VT changed under the plugin, not a broken change of ours. SmartPI
+  # is fetched only for the test bench's deploy test: the plugin reads nothing of it (I12.9).
+  # Each release tag is resolved to its commit and fetched by that commit.
   latest-vt-smartpi:
     name: Early warning – newest Versatile Thermostat and SmartPI
     if: >-

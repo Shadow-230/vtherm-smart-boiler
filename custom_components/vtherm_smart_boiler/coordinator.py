@@ -5,8 +5,12 @@ Two paths. The quick one runs on state changes (debounced) and every 30 s: curre
 signal check, hot water, the heat each zone gets, critical zones,
 current alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
-history is rebuilt from the recorder, which keeps these states anyway; the entry's own store
-holds only small things: the monitoring start, measured parameters and when
+boiler's signals and the helper VT's central boiler switches are rebuilt from the recorder, which
+keeps these states anyway; never VT's climates (I12.7b). The rooms' history is the plugin's own:
+each room as read through ``vtherm_api`` at every refresh and control step, changes only, kept
+``HISTORY_DAYS`` in the rooms' store — written half an hour after a change and at a clean stop,
+read back at the start, unknown from its last write on. The entry's own store holds only small
+things: the monitoring start, measured parameters and when
 the user reset one, the day summaries, a copy of when the plugin was down and a copy of the
 control state (P-116). A small store of its own, the last-run record, keeps when the plugin last
 ran — written every ten minutes and at a clean stop, so the entry's store is written only when
@@ -52,7 +56,7 @@ import copy
 import logging
 import math
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
@@ -86,6 +90,7 @@ from .const import (
     FORECAST_SECONDS,
     HISTORY_DAYS,
     REFRESH_COOLDOWN_SECONDS,
+    ROOMS_STORE_VERSION,
     STORAGE_VERSION,
     SUMMARY_SECONDS,
     TICK_SECONDS,
@@ -97,9 +102,17 @@ from .const import (
     has_control_section,
     main_store_key,
     owes_hand_back,
+    rooms_store_key,
     stored_flag,
 )
-from .control_config import Connection, Topology, WritePath, wall_thermostat_applies
+from .control_config import (
+    Connection,
+    ControlOptions,
+    Topology,
+    WritePath,
+    wall_thermostat_applies,
+    with_rooms_curve,
+)
 from .core.alarms import (
     CIRCUIT_NOT_MEASURED,
     HELD,
@@ -126,7 +139,14 @@ from .core.alarms import (
 from .core.analysis import Analysis, analyse
 from .core.comfort_rules import heating_starts
 from .core.controller import OutageWindow, follow_outage, is_short
-from .core.critical_zone import CriticalZone, critical_zone
+from .core.critical_zone import (
+    CriticalZone,
+    RoomReadings,
+    WindowHold,
+    critical_zone,
+    follow_window,
+    keep_readings,
+)
 from .core.daily import (
     DAY_MARGIN_S,
     KEEP_DAYS,
@@ -135,9 +155,16 @@ from .core.daily import (
     settings_key,
     summarize_day,
 )
+from .core.dhw_check import check_dhw_split
 from .core.freshness import Rhythm, automatic_limit, observe
 from .core.heat import Heat, heat_available, heat_through_any
-from .core.history import History, ZoneSeries, with_downtime
+from .core.history import (
+    History,
+    ZoneSeries,
+    rooms_from_stored,
+    rooms_to_stored,
+    with_downtime,
+)
 from .core.installation import CircuitControl, IssueCode, Severity
 from .core.long_run import LongRun, LongRunClass, RoomLook, follow_long_run, tally
 from .core.lowest_water import (
@@ -173,8 +200,7 @@ from .core.signal_check import (
     link_connected,
 )
 from .core.signals import GatewayOutdoor, Signal
-from .core.supply import Supply, circuit_return, circuit_supply
-from .core.water import ZoneWater, zone_water
+from .core.supply import circuit_return, circuit_supply
 from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
 from .transport.entities import (
@@ -185,8 +211,8 @@ from .transport.entities import (
     weather_from_state,
 )
 from .transport.mqtt_reports import MqttReports, ems_esp_topics, mqtt_signals, otgw_topics
-from .vtherm_attributes import CentralMode
-from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm
+from .units import parse_binary
+from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm, holds_thermostats
 
 if TYPE_CHECKING:
     from .control import ControlUnit
@@ -199,7 +225,6 @@ DAY = 86400.0
 # monitor only included; its text follows what control does then (translation keys
 # ``no_zone_known_off``, ``_handed_back``, ``_monitor``).
 NO_ZONE_KNOWN_ISSUE = "no_zone_known"
-NO_CRITERION_ISSUE = "no_criterion_judged"  # its text where the zones are known (PB-03)
 # X6: the wall thermostat on a gateway would keep the house cool after a hand-back (``_unknown``:
 # it reports no setpoint); the lowest water temperature's suggestion (``_boiler``: worded for the
 # device that sets the water). Warnings, not fixable.
@@ -223,12 +248,18 @@ REPEATABLE_SIGNALS = frozenset(
     }
 )
 LOWEST_WATER_ISSUE = "lowest_water_suggestion"
+# I13.5: the hot-water self-check's information issue, while the gas classed as hot water follows
+# the outdoor temperature (``core.dhw_check``).
+DHW_SPLIT_ISSUE = "dhw_split_suspect"
 # K4 (the user's decision of 2026-11-17): VT zones that switch their heating on and off — VT's
 # "over_switch" — in cycles shorter than this, while the plugin controls the boiler, are named in
 # a warning: each gap between their pulses stops the burner. Gas boilers' TPI convention is 6
 # cycles an hour (UK room-thermostat manuals); in the simulation 10–15 min cut the plugin's starts
 # by a third to a half in mild weather, the rooms as warm (research, 2026-11-17).
 ZONE_CYCLE_ISSUE = "zone_cycle_short"
+# I12.11: the thermostats VT hands over that its central boiler does not count — no rooms of the
+# plugin's — in one information issue.
+NOT_COUNTED_ISSUE = "vt_thermostats_not_counted"
 SHORT_CYCLE_MIN = 10.0
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 # Y1's notifications: repair issues the plugin raises itself — warnings, not fixable
@@ -274,6 +305,13 @@ ANALYSIS_JOB = "The periodic analysis"
 # entry's store with a year of days in it (SD cards, eMMC). After a crash the downtime starts at
 # its last write. Downtimes are kept as long as the rolling history.
 ALIVE_SAVE_S = 10 * 60
+# I12.7b: the rooms' store is written this long after a change — about 48 writes a day, not one
+# every 30 s refresh (SD cards, eMMC) — and at a clean stop; a crash loses what came since its
+# last write, read back as unknown. Each series keeps at most this many samples, the newest — a
+# change every 70 s for eight days, far above a room's own pace (a TPI relay's ten-minute cycle
+# is 2,300) — so a value flapping every refresh cannot grow the file without end.
+ROOMS_SAVE_DELAY_S = 30 * 60
+ROOMS_MAX_POINTS = 10_000
 # PB-65: the record names the Home Assistant run that wrote it (a token made once per run, kept
 # in ``hass.data``); a setup in the same run — a reload, the entry enabled again — follows no
 # stop of Home Assistant: the recorder ran through it, so no downtime is recorded.
@@ -314,7 +352,6 @@ class ZoneView:
     circuit_ids: tuple[str, ...]  # one, or each a zone split by its devices is in (I8.8b)
     state: ZoneState
     heat: Heat
-    water: ZoneWater  # what the water interface exposes (I9; water-interface.md §4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,10 +363,9 @@ class MonitorData:
     # Every mapped link signal fresh and, on the relay path, the relay within reach; ``None``
     # with no link signal mapped and no relay (X8, R4).
     connected: bool | None
-    zones: dict[str, ZoneView]
+    zones: dict[str, ZoneView]  # the rooms VT hands over now (I12.11)
     critical: dict[str, CriticalZone]
     alarms: dict[AlarmKind, Alarm]
-    central_mode: CentralMode | None
     analysis: Analysis | None
     monitoring_since: float
     forecast_snapshots: int
@@ -377,8 +413,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.transport = EntityTransport(hass, config.signals, gateway)
         self.reports = MqttReports()  # the interface's own MQTT messages (I6, decision 9)
         self.transport.heard = self.reports.heard
-        self.link = VThermLink(hass, config.zone_entities)
+        self.link = VThermLink(hass)
         self.history = self._empty_history()
+        # I12.7b: the rooms' history in a store of its own; nothing is written to it before it
+        # was read (a setup that fails earlier must not write over what the last run kept).
+        self._rooms_store = rooms_store(hass, entry.entry_id)
+        self._rooms_read = False
+        self._rooms_save_pending = False
         self.parameters = config.parameters
         # Days summarised with other settings no longer count (A4): the key of the current ones.
         self.settings_key = settings_key(summary_settings(config, self._registry_source))
@@ -415,6 +456,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.long_run_totals: dict[str, float] = {}
         self._long_run_at: float | None = None
         self._critical: dict[str, CriticalZone] = {}
+        # I12.10: the critical zone's window rule — each room's own recent readings and where its
+        # window stands (live only: empty after a restart).
+        self._room_readings: dict[str, RoomReadings] = {}
+        self._windows: dict[str, WindowHold] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
         self._circuit_alarms: dict[str, Alarm] = {}  # each circuit's too-hot alarm (decision 10)
         # Y1: since when each mapped fault signal has counted (the notification's own clock;
@@ -427,6 +472,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._failing: set[str] = set()
         self._alive_stop_unsub: CALLBACK_TYPE | None = None
         self._zone_algorithms: dict[str, ZoneAlgorithm] = {}  # the last read of each (PB-47)
+        # I12.11: the thermostats VT's central boiler does not count, as the issue last named.
+        self._not_counted: tuple[str, ...] | None = None
         # The monitor's refreshes of the last ten minutes, each failed or not: control hands back
         # while they fail for five (V6); and the first failure of the current streak, shown.
         self._refreshes = OutageWindow()
@@ -464,7 +511,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # Decision 3's repair issue: every zone unknown since, for the monitor only; the kind
         # raised now.
         self._zones_unknown_since: float | None = None
-        self._no_zone_issue: tuple[str, tuple[str, ...]] | None = None
+        self._no_zone_issue: str | None = None
         # X6: the suggestion the last analysis gave; the wall thermostat's warning since, and
         # the issues raised now (their translation key and placeholders).
         self.lowest_water: LowestWaterSuggestion | None = None
@@ -507,18 +554,18 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._started_at = now
         if await self.reports.async_start(self.hass, self._report_topics()):
             self._unsubs.append(self.reports.stop)
-        self.link.watch_vt_central()  # first: a change to VT made unwatched latches (decision 9)
         await self.link.async_detect()
+        # VT's safety and window events, and the start a room's measurement must be newer than
+        # (I12, decision 8).
+        self._unsubs.append(self.link.start(now))
         self._restore_notices()
         self.report_installation()
+        await self._async_restore_rooms(now)
         # Current states seed the history too: without the recorder they are all there is, and
-        # an entity that does not change would otherwise never enter it.
-        zones = set(self.config.zone_entities)
-        for entity_id in self.config.watched_entities:
-            if entity_id in zones:  # zone data only through the VT link
-                state = self.link.recorded_state(entity_id)
-            else:
-                state = self.hass.states.get(entity_id)
+        # an entity that does not change would otherwise never enter it. Not VT's climates: the
+        # rooms enter it from the plugin's own reads, at the first refresh (I12.7b).
+        for entity_id in self._history_entities():
+            state = self.hass.states.get(entity_id)
             if state is not None:
                 self._record(entity_id, state, state.last_updated.timestamp())
         if self.control is not None:
@@ -527,10 +574,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             # disabled sensor does not lose it; the recorder's copy fills what came before.
             self._record_control_state()
             self._unsubs.append(self.control.async_add_listener(self._record_control_state))
+        helper = self.config.vt_boiler_helper
+        followed = list(dict.fromkeys([*self.config.watched_entities, *filter(None, [helper])]))
         self._unsubs.append(
-            async_track_state_change_event(
-                self.hass, list(self.config.watched_entities), self._handle_state_event
-            )
+            async_track_state_change_event(self.hass, followed, self._handle_state_event)
         )
         self._unsubs.append(
             async_track_time_interval(
@@ -567,7 +614,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def async_start_background(self) -> None:
         """The recorder's history, then the first analysis, and the first forecast snapshot,
         without holding up setup."""
-        self.check_learning()
+        self.check_zone_cycles()
         self.config_entry.async_create_background_task(
             self.hass, self._async_backfill_then_analyse(), f"{DOMAIN} analysis"
         )
@@ -579,24 +626,24 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def async_stop(self) -> None:
         """Stop every listener and timer and write what is pending."""
         self._stopped = True
-        self.link.stop_watching_vt_central()
         while self._unsubs:
             self._unsubs.pop()()
         if self._alive_stop_unsub is not None:  # not from the shutdown job, which keeps it
             self._alive_stop_unsub()
             self._alive_stop_unsub = None
         for key in (
-            "auto_tpi_blocked",
-            "learning_not_paused",
             ZONE_CYCLE_ISSUE,
+            NOT_COUNTED_ISSUE,
             NO_ZONE_KNOWN_ISSUE,
             WALL_ISSUE,
             LOWEST_WATER_ISSUE,
             ESPHOME_REPEATS_ISSUE,
             POWER_LIMIT_ISSUE,
+            DHW_SPLIT_ISSUE,
         ):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         self._no_zone_issue = None
+        self._not_counted = None
         self._wall_issue = self._lowest_water_issue = None
         await self.async_shutdown()
         if self._loaded:
@@ -604,6 +651,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             # A clean stop: the downtime from here on (P-95).
             await self._async_save_alive()
             await self._store.async_save(self._stored_data())
+        await self._async_save_rooms()
         if self.forecasts is not None:
             await self.forecasts.async_stop()
 
@@ -661,11 +709,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         measured = stored.get("measured")
         for key, data in measured.items() if isinstance(measured, dict) else ():
             try:
+                share = data.get("range_share")  # I13.4; none kept before
                 estimate = Estimate(
                     float(data["value"]),
                     Source.MEASURED,
                     float(data["confidence"]),
                     data.get("at"),
+                    None if share is None else float(share),
                 )
                 self.parameters = self.parameters.with_estimate(ParameterKey(key), estimate)
             except KeyError, TypeError, ValueError:
@@ -707,6 +757,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     "value": estimate.value,
                     "confidence": estimate.confidence,
                     "at": estimate.at,
+                    "range_share": estimate.range_share,
                 }
         control = self._stored_control()
         self._main_owed = _owed_flags(control)
@@ -872,7 +923,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     include_start_time_state=True,
                     significant_changes_only=False,
                     minimal_response=False,
-                    no_attributes=False,
+                    no_attributes=False,  # the signals' units, the weather's temperature
                 )
                 if not states.get(flame):
                     return None  # the recorder reaches no further back
@@ -922,7 +973,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 include_start_time_state=True,
                 significant_changes_only=False,  # every change, as the live history keeps
                 minimal_response=False,
-                no_attributes=False,  # zones need their attributes
+                no_attributes=False,  # the signals' units, the weather's temperature
             )
             # The downtime is marked up to now: the samples recorded live since setup follow.
             return self._rebuild(states, start.timestamp(), math.inf, down)
@@ -934,11 +985,21 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return
         self.history.prepend(older)
 
-    def _recorded_entities(self) -> list[str]:
-        """What is read back from the recorder: the watched entities and, where there is one,
-        the plugin's own control-state sensor (P-96) — as the registry names it now, so a
-        rename is followed. Called in the event loop."""
+    def _history_entities(self) -> list[str]:
+        """The entities whose states the history keeps: the watched ones — never VT's climates:
+        the rooms are the plugin's own reads (I12.7b) — and the helper VT's central boiler
+        switches, where one is set."""
         entity_ids = list(self.config.watched_entities)
+        helper = self.config.vt_boiler_helper
+        if helper is not None and helper not in entity_ids:
+            entity_ids.append(helper)
+        return entity_ids
+
+    def _recorded_entities(self) -> list[str]:
+        """What is read back from the recorder: the history's entities and, where there is one,
+        the plugin's own control-state sensor (P-96) — as the registry names it now, so a
+        rename is followed. Never VT's climates (I12.7b). Called in the event loop."""
+        entity_ids = self._history_entities()
         self._control_entity = er.async_get(self.hass).async_get_entity_id(
             "sensor", DOMAIN, f"{self.config_entry.entry_id}_control_state"
         )
@@ -973,12 +1034,85 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     @callback
     def _handle_state_event(self, event: Event[EventStateChangedData]) -> None:
+        """A followed entity changed — never VT's climates: the rooms are read through
+        ``vtherm_api`` at each refresh and control step (I12.11)."""
+        entity_id = event.data["entity_id"]
         state = event.data["new_state"]
         moment = state.last_updated.timestamp() if state is not None else event.time_fired
         if isinstance(moment, datetime):
             moment = moment.timestamp()
-        self._record(event.data["entity_id"], state, float(moment))
+        self._record(entity_id, state, float(moment))
         self.config_entry.async_create_task(self.hass, self.async_request_refresh())
+
+    # --- the rooms' history (I12.7b) ------------------------------------------------------
+
+    async def _async_restore_rooms(self, now: float) -> None:
+        """The rooms' history the last run kept: every room it kept — the rooms are VT's, known
+        only once VT hands them over (I12.11) —, the last ``HISTORY_DAYS``, unknown from the
+        store's last write on — put before anything recorded since. A store that cannot be read
+        starts it empty."""
+        raw = _mapping(await _async_try_load(self._rooms_store))
+        saved_at = _timestamp(raw.get("saved_at"))
+        if saved_at is not None:
+            kept = raw.get("zones")
+            rooms, damaged = rooms_from_stored(
+                kept,
+                kept.keys() if isinstance(kept, Mapping) else (),
+                now - HISTORY_DAYS * DAY,
+                saved_at,
+            )
+            if damaged:
+                _LOGGER.warning("Ignoring %d unreadable series of the rooms' history", damaged)
+            for zone_id in rooms:
+                self.history.zones.setdefault(zone_id, ZoneSeries(zone_id))
+            older = History(zones=rooms)
+            self.history.prepend(older)
+            # The rooms the last run knew are expected until VT hands them over (decision 3).
+            self.link.expect(rooms)
+        elif raw:
+            _LOGGER.warning("Ignoring the rooms' history: it says not when it was written")
+        self._rooms_read = True
+
+    def record_rooms(self, zones: Iterable[ZoneState], now: float) -> None:
+        """Rooms as just read through ``vtherm_api`` — at each refresh and control step — into
+        the rolling history, changes only; the rooms' store is written a while after a change
+        (I12.7b)."""
+        changed = False
+        for zone in zones:
+            # A room VT hands over for the first time gets its series (I12.11).
+            series = self.history.zones.setdefault(zone.zone_id, ZoneSeries(zone.zone_id))
+            if series.record(zone, now):
+                changed = True
+        if changed:
+            self._schedule_rooms_save()
+
+    def _schedule_rooms_save(self) -> None:
+        """One delayed write at a time: the store's own timer starts again with each call, which
+        would put the write off for as long as the rooms change."""
+        if self._stopped or not self._rooms_read or self._rooms_save_pending:
+            return
+        self._rooms_save_pending = True
+        self._rooms_store.async_delay_save(self._stored_rooms, ROOMS_SAVE_DELAY_S)
+
+    async def _async_save_rooms(self) -> None:
+        """The rooms' store written now — at a clean stop, an unload or Home Assistant's —, once
+        it was read; a write that fails is logged and costs only the rooms' last minutes."""
+        if not self._rooms_read:
+            return
+        try:
+            await self._rooms_store.async_save(self._stored_rooms())
+        except Exception:  # a full disk, say: the stop goes on
+            _LOGGER.warning("Could not write the rooms' history", exc_info=True)
+
+    def _stored_rooms(self) -> dict[str, Any]:
+        self._rooms_save_pending = False
+        now = dt_util.utcnow().timestamp()
+        return {
+            "saved_at": now,
+            "zones": rooms_to_stored(
+                self.history.zones, now - HISTORY_DAYS * DAY, ROOMS_MAX_POINTS
+            ),
+        }
 
     def _registry_source(self, entity_id: str) -> str:
         """PB-17: what an entity is — its registry entry, which stays when its ID is renamed;
@@ -989,7 +1123,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def _empty_history(self) -> History:
         return History(
             signals={signal: Series() for signal in self.config.signals},
-            zones={zone: ZoneSeries(zone) for zone in self.config.zone_entities},
         )
 
     def _record(
@@ -1008,19 +1141,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if signal is not None:
             reading = self.transport.reading_of(signal, state, outdoor)
             _append(history.signals[signal], t, reading.value)
-        if entity_id in history.zones:
-            zone = self.link.zone_from_state(entity_id, state)
-            series = history.zones[entity_id]
-            for target, value in (
-                (series.temperature, zone.temperature),
-                (series.target, zone.target),
-                (series.heating_enabled, zone.heating_enabled),
-                (series.calling, zone.calling),
-                (series.on_percent, zone.on_percent),
-                (series.valve_open, zone.valve_open),
-                (series.power, zone.power),
-            ):
-                _append(target, t, value)
+        if entity_id == self.config.vt_boiler_helper:
+            # I12.7b: VT's call, as the helper its central boiler switches shows it.
+            _append(history.vt_called, t, _vt_call(state))
+        if entity_id in self.config.circuit_request_entities.values():
+            # I12.18: a circuit run by other automation asking for heat, as control reads it.
+            asking = None if state is None else parse_binary(state.state)
+            _append(history.circuits_asking.setdefault(entity_id, Series()), t, asking)
         if entity_id == self.config.weather:
             _append(history.weather, t, weather_from_state(state).value)
         if entity_id == self.config.setpoint_read_back:
@@ -1041,6 +1168,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         now = dt_util.utcnow().timestamp()
         try:
             feature_manager.async_check(self.hass, self)
+            self.check_rooms()
             data = self._compute(now)
         except Exception as err:
             self._job_failed(MONITOR_REFRESH)
@@ -1155,11 +1283,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """G11 E, a look at every refresh: the rooms counted — heating, known — against the flow,
         the setpoint (control's written one, else the boiler's CH setpoint) and the modulation.
         Information on its binary sensor; the power limit a warning repair issue too. The counts
-        kept for 0.4's tuning, the correction's hours at its limit among them."""
+        kept for 0.4's tuning, the correction's hours at its limit among them. A room whose
+        temperature is not trusted is left out (I12, decision 8)."""
         rooms = [
             RoomLook(zone.zone_id, zone.temperature, zone.target, is_short(zone))
             for zone in zones.values()
-            if zone.heating_enabled is True and zone.is_known(now, ZONE_MAX_AGE_S)
+            if zone.heating_enabled is True
+            and zone.is_known(now, ZONE_MAX_AGE_S)
+            and not zone.room_sensor_lost
         ]
         before = self.long_run
         self.long_run = follow_long_run(
@@ -1191,6 +1322,26 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     ", ".join(self.link.zone_name(zone) for zone in self.long_run.rooms_named),
                 )
             self._show_power_limit(found is LongRunClass.POWER_LIMIT)
+
+    def _follow_windows(self, zones: Mapping[str, ZoneState], now: float) -> set[str]:
+        """I12.10: each room's readings kept and its window followed at every look (the critical
+        zone's window rule, ``core.critical_zone``); the rooms it holds off now."""
+        held: set[str] = set()
+        for zone_id, zone in zones.items():
+            readings = keep_readings(self._room_readings.get(zone_id, ()), now, zone.temperature)
+            self._room_readings[zone_id] = readings
+            hold = follow_window(
+                self._windows.get(zone_id, WindowHold()),
+                zone.window_open,
+                now,
+                readings,
+                zone.temperature,
+                zone.target,
+            )
+            self._windows[zone_id] = hold
+            if hold.held:
+                held.add(zone_id)
+        return held
 
     def _water_setpoint(self, snapshot: BoilerSnapshot) -> float | None:
         """The setpoint the flow is judged against (G11 E): the one control wrote while it holds
@@ -1244,25 +1395,26 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         return_temp = snapshot.number(Signal.RETURN, self._max_age(Signal.RETURN))
         dhw = self.dhw_takes_heat(snapshot)
 
-        zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
+        # I12.11: the rooms VT hands over now, on their circuits as the options map them.
+        rooms = self.link.rooms()
+        installation = config.installation.with_rooms(rooms)
+        zone_states = {room: self.link.zone(room) for room in rooms}
+        self.record_rooms(zone_states.values(), now)
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_long_run(snapshot, zone_states, flame, now)
-        heats: dict[str, list[Heat]] = {}
-        supplies: dict[str, list[Supply]] = {}
-        circuits_of: dict[str, list[str]] = {}
-        for zone in config.installation.zones:
+        heats: dict[str, list[Heat]] = {room: [] for room in rooms}
+        circuits_of: dict[str, list[str]] = {room: [] for room in rooms}
+        for zone in installation.zones:
             state = zone_states[zone.zone_id]
-            circuit = config.installation.circuit(zone.circuit_id)
+            circuit = installation.circuit(zone.circuit_id)
             assert circuit is not None  # the config was validated
             circuit_flow = None
             own_stale = False
-            own_at = None
             flow_entity = config.circuit_flow_entities.get(circuit.circuit_id)
             if flow_entity is not None:
                 reading = read_temperature(self.hass, flow_entity)
                 if reading.is_fresh(now, self._max_age(Signal.FLOW)):
                     circuit_flow = reading.value
-                    own_at = reading.reported_at
                 else:
                     own_stale = reading.value is not None  # a value, too old: not unknown
             supply = circuit_supply(
@@ -1273,10 +1425,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 flow_mapped=Signal.FLOW in mapped,
                 own_mapped=flow_entity is not None,
                 own_stale=own_stale,
-                flow_at=flow_reading.reported_at,
-                own_at=own_at,
             )
-            supplies.setdefault(zone.zone_id, []).append(supply)
             heat = heat_available(
                 supply,
                 flame,
@@ -1287,9 +1436,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 flame_mapped=Signal.FLAME in mapped,
             )
             self._heat[zone.zone_id, zone.circuit_id] = heat.available
-            heats.setdefault(zone.zone_id, []).append(heat)
-            circuits_of.setdefault(zone.zone_id, []).append(zone.circuit_id)
-        # A zone split between circuits takes heat through either (I8.8b).
+            heats[zone.zone_id].append(heat)
+            circuits_of[zone.zone_id].append(zone.circuit_id)
+        # A zone split between circuits takes heat through either (I8.8b); a room no circuit
+        # lists, among several, cannot be told (I12.11).
         views = {}
         for zone_id, found in heats.items():
             heat = heat_through_any(found)
@@ -1299,19 +1449,18 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 tuple(circuits_of[zone_id]),
                 zone_states[zone_id],
                 heat,
-                zone_water(supplies[zone_id], heat),
             )
 
-        for circuit in config.installation.circuits:
-            members = [
-                zone_states[z.zone_id] for z in config.installation.zones_in(circuit.circuit_id)
-            ]
+        held = self._follow_windows(zone_states, now)
+        for circuit in installation.circuits:
+            members = [zone_states[z.zone_id] for z in installation.zones_in(circuit.circuit_id)]
             self._critical[circuit.circuit_id] = critical_zone(
                 circuit.circuit_id,
                 members,
                 now,
                 ZONE_MAX_AGE_S,
                 self._critical.get(circuit.circuit_id),
+                held=held,
             )
 
         known_zones = [z for z in zone_states.values() if z.is_fresh(now, ZONE_MAX_AGE_S)]
@@ -1353,7 +1502,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             zones=views,
             critical=dict(self._critical),
             alarms=alarms,
-            central_mode=self.link.central_mode(),
             analysis=self.analysis,
             monitoring_since=self.monitoring_since,
             forecast_snapshots=self.forecasts.store.count() if self.forecasts else 0,
@@ -1388,8 +1536,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         read_back: bool | None = None,
     ) -> dict[Feature, FeatureState]:
         """The feature table (the missing-data rule, Y4) for ``mapped`` signals: by default
-        what the options give — zones configured, the control's read-back configured — or,
-        given, what is known now."""
+        what the options give — rooms, which are VT's and known only at run time (I12.11), taken
+        as there; the control's read-back configured — or, given, what is known now."""
         config = self.config
         control = config.control
         kind: ControlKind | None = None
@@ -1408,7 +1556,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             pressure_high=config.monitor.alarms.pressure_high is not None,
             bypass=config.installation.boiler.bypass,
             zone_valves=zone_valves,
-            zone_data=bool(config.installation.zones) if zone_data is None else zone_data,
+            zone_data=True if zone_data is None else zone_data,
             gateway=self.transport.gateway,
             has_dhw=config.monitor.monitor.has_dhw,
             condensing=config.installation.boiler.condensing,
@@ -1540,6 +1688,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if analysed is None or now - analysed.at > ANALYSIS_BURNS_MAX_AGE_S:
             return None
         return heating_starts(analysed.day.burns, now)
+
+    def control_now(self) -> ControlOptions:
+        """The control options as they apply now: the curve's default exponent (I12.17) and its
+        outdoor mean (I13.8) from the rooms VT hands over (``with_rooms_curve``)."""
+        config = self.config
+        return with_rooms_curve(config.control, config.installation.with_rooms(self.link.rooms()))
 
     def dhw_takes_heat(self, snapshot: BoilerSnapshot) -> bool | None:
         """Hot water taking the heat from the rooms now: hot water running where it has
@@ -1877,7 +2031,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- analysis -------------------------------------------------------------------------
 
     async def _async_analysis_tick(self, _now: datetime) -> None:
-        self.check_learning()
+        self.check_zone_cycles()
         self._check_repeats(dt_util.utcnow().timestamp())
         await self.async_run_analysis()
 
@@ -1916,6 +2070,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._alive_stop_unsub = None
         if not self._stopped:
             await self._async_save_alive()
+            await self._async_save_rooms()  # Home Assistant's stop unloads no entry (PB-57)
 
     async def _async_alive_tick(self, _now: datetime) -> None:
         if not self._stopped:
@@ -1941,40 +2096,23 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         except Exception:  # a full disk, say: the stop and the monitor go on
             _LOGGER.warning("Could not write when the plugin last ran", exc_info=True)
 
-    def check_learning(self) -> None:
-        """Warn about zone learning the plugin affects but cannot protect, each warning with
-        what its advice costs: Auto-TPI that cannot learn — flagged as used by VT's central
-        boiler while that feature is off, which is how the plugin replaces it (research F2) —
-        and, while control runs with learning pauses, learning it cannot pause: Auto-TPI (only a
-        reset would pause it) and SmartPI without its learning flag. VT's central boiler unknown
-        says nothing about Auto-TPI's learning in the zones VT's central boiler uses: the first
-        issue is left as it is, and those zones are in neither (P-54). A zone whose algorithm
-        cannot be read — VT not started, the zone unknown — keeps its last answer (PB-47), so
-        an issue the user ignored is not deleted and raised anew. With control configured, also
-        the zones VT switches on and off in cycles under ``SHORT_CYCLE_MIN`` (K4): their gaps
-        stop the burner."""
-        central = self.link.vt_central_boiler_configured()
+    def check_zone_cycles(self) -> None:
+        """With control configured, warn about the rooms VT switches on and off in cycles under
+        ``SHORT_CYCLE_MIN`` (K4): their gaps stop the burner. A room whose thermostat VT holds
+        no longer — VT reloading it — keeps its last answer (PB-47), so an issue the user ignored
+        is not deleted and raised anew; one that is no room any more — unticked in VT, or
+        removed — goes (I12.11)."""
         control = self.config.control
-        pauses = control.configured and control.learning_pauses
-        blocked: list[str] = []
-        unpaused: list[str] = []
         short_cycles: list[str] = []
-        for zone_id in self.config.zone_entities:
+        rooms = self.link.rooms()
+        for zone_id in [z for z in self._zone_algorithms if z not in rooms]:
+            del self._zone_algorithms[zone_id]
+        for zone_id in rooms:
             algorithm = self.link.zone_algorithm(zone_id)
             if algorithm.known:
                 self._zone_algorithms[zone_id] = algorithm
             elif (last := self._zone_algorithms.get(zone_id)) is not None:
                 algorithm = last
-            flagless_smartpi = (
-                algorithm.proportional_function == "smartpi" and algorithm.smartpi_learning is None
-            )
-            depends = algorithm.auto_tpi and algorithm.used_by_central_boiler
-            if depends and central is None:
-                continue  # whether it learns is not known either way
-            if depends and central is False:
-                blocked.append(self.link.zone_name(zone_id))
-            elif pauses and (algorithm.auto_tpi or flagless_smartpi):
-                unpaused.append(self.link.zone_name(zone_id))
             if (
                 control.configured
                 and algorithm.switches_on_off
@@ -1982,51 +2120,66 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 and algorithm.cycle_min < SHORT_CYCLE_MIN
             ):
                 short_cycles.append(f"{self.link.zone_name(zone_id)} ({algorithm.cycle_min:g} min)")
-        if central is not None:
-            self._issue("auto_tpi_blocked", blocked)
-        self._issue("learning_not_paused", unpaused)
         self._issue(ZONE_CYCLE_ISSUE, short_cycles)
 
-    def report_no_zone_known(self, kind: str | None, criteria: Sequence[str] = ()) -> None:
+    def report_no_zone_known(self, kind: str | None) -> None:
         """Decision 3's repair issue: ``kind`` — "off", "handed_back" or "monitor" — while every
-        configured zone has been unknown for ten minutes, or, with ``criteria``, while the zones
-        are known but none of the configured criteria — those named — could be judged for as
-        long (PB-03); ``None`` deletes it. An error where heating stops, else a warning
-        (provisional, K4). Raised anew when its kind or its criteria change."""
-        wanted = None if kind is None else (kind, tuple(criteria))
-        if wanted == self._no_zone_issue:
+        configured zone has been unknown for ten minutes, or — "vt_off", "vt_handed_back" — while
+        the zones are known but VT's decision has been unknown for as long (PB-03, I12); ``None``
+        deletes it. An error where heating stops, else a warning (provisional, K4). Raised anew
+        when its kind changes."""
+        if kind == self._no_zone_issue:
             return
         issue_id = f"{NO_ZONE_KNOWN_ISSUE}_{self.config_entry.entry_id}"
         ir.async_delete_issue(self.hass, DOMAIN, issue_id)
-        self._no_zone_issue = wanted
+        self._no_zone_issue = kind
         if kind is None:
             return
         effects = {"off": "heating is off", "handed_back": "the boiler is handed back"}
-        if criteria:
+        helper = self.config.control.vt_boiler_helper or "-"
+        if kind.startswith("vt_"):
+            effect = kind.removeprefix("vt_")
             _LOGGER.warning(
-                "No demand criterion could be judged for ten minutes: %s has no data (%s)",
-                ", ".join(criteria),
-                effects.get(kind, "control does not decide now"),
+                "Versatile Thermostat's decision has been unknown for ten minutes: the helper %s "
+                "is neither on nor off (%s)",
+                helper,
+                effects.get(effect, effect),
             )
-            key = f"{NO_CRITERION_ISSUE}_{kind}"
-            placeholders = {"criteria": ", ".join(criteria)}
+            key = f"vt_decision_unknown_{effect}"
+            placeholders = {"helper": helper}
         else:
             _LOGGER.warning(
                 "No Versatile Thermostat zone has answered for ten minutes (%s)",
                 effects.get(kind, "the monitor cannot judge them"),
             )
-            zones = ", ".join(self.link.zone_name(zone) for zone in self.config.zone_entities)
-            key, placeholders = f"{NO_ZONE_KNOWN_ISSUE}_{kind}", {"zones": zones}
+            zones = ", ".join(self.link.zone_name(zone) for zone in self.link.rooms())
+            key, placeholders = f"{NO_ZONE_KNOWN_ISSUE}_{kind}", {"zones": zones or "-"}
         ir.async_create_issue(
             self.hass,
             DOMAIN,
             issue_id,
             is_fixable=False,
             is_persistent=False,
-            severity=ir.IssueSeverity.ERROR if kind == "off" else ir.IssueSeverity.WARNING,
+            severity=ir.IssueSeverity.ERROR
+            if kind in ("off", "vt_off")
+            else ir.IssueSeverity.WARNING,
             translation_key=key,
             translation_placeholders=placeholders,
         )
+
+    def check_rooms(self) -> None:
+        """I12.11: one information issue naming the thermostats VT hands over that its central
+        boiler does not count — no rooms of the plugin's, nor counted by VT's decision whether to
+        heat (a circuit that lists one included); it goes once there is none. While VT holds no
+        thermostat at all (it reloads them) it is left as it is, so an issue the user ignored is
+        not raised anew."""
+        if not holds_thermostats(self.hass):
+            return
+        found = tuple(self.link.not_counted())
+        if found == self._not_counted:
+            return
+        self._not_counted = found
+        self._issue(NOT_COUNTED_ISSUE, [self.link.zone_name(entity) for entity in found])
 
     def _issue(self, key: str, zones: list[str]) -> None:
         issue_id = f"{key}_{self.config_entry.entry_id}"
@@ -2136,6 +2289,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     self.parameters = self.parameters.with_estimate(key, estimate)
                 if moved:  # a fit that has not moved is not written again every five minutes
                     self.schedule_save()
+            self._check_dhw_split()
             await self._async_suggest_lowest_water(copy, now)
             # Published as of now, not as of the analysis' start: the quick path may have
             # moved on meanwhile (a reading gone stale), and must not be set back. Through the
@@ -2147,6 +2301,29 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._job_works(ANALYSIS_JOB)
         finally:
             self._analysing = False
+
+    def _check_dhw_split(self) -> None:
+        """I13.5: an information issue while the gas the plugin classes as hot water follows the
+        outdoor temperature over the kept days — the hot-water/heating split looks wrong; it goes
+        once it does not, or the days cannot tell. Nothing changes in control."""
+        check = check_dhw_split(self.daily.values())
+        issue_id = f"{DHW_SPLIT_ISSUE}_{self.config_entry.entry_id}"
+        if check is None or not check.suspect:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=DHW_SPLIT_ISSUE,
+            translation_placeholders={
+                "change": f"{check.slope_share * 100:+.1f}",
+                "days": str(check.days),
+            },
+        )
 
     async def _async_suggest_lowest_water(self, history: History, now: float) -> None:
         """X6 (decision 2): the lowest water temperature's evidence over the history, with the
@@ -2189,7 +2366,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             source = SetpointSource.READ_BACK
         else:
             source = None
-        limits = control.loop.control
+        limits = self.control_now().loop.control
         caps = [circuit.max_flow for circuit in config.installation.circuits if circuit.max_flow]
         if control.configured:
             # The curve's own cap, and the circuit's — its default where it gives none (I8, F2).
@@ -2318,7 +2495,11 @@ def alive_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(hass, ALIVE_STORE_VERSION, alive_store_key(entry_id), atomic_writes=True)
 
 
-LEARNING_FIELDS = ("paused", "resuming")  # the stored SmartPI pauses and resumes
+def rooms_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """The rooms' history (I12.7b): each room as the plugin read it over the last
+    ``HISTORY_DAYS``, each series one line of text; written half an hour after a change and at
+    a clean stop, atomically."""
+    return Store(hass, ROOMS_STORE_VERSION, rooms_store_key(entry_id), atomic_writes=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2407,9 +2588,7 @@ async def async_read_control_state(
         logging.INFO if raw_control is None and raw_main is None else logging.WARNING,
         "No stored control state could be read; control is not configured, so nothing is owed",
     )
-    # PB-52: the copy's SmartPI pauses still say which zones' learning to switch back on.
-    learning = {key: copy[key] for key in LEARNING_FIELDS if isinstance(copy, dict) and key in copy}
-    return ControlRead(learning, False, False, raw_main, True)
+    return ControlRead({}, False, False, raw_main, True)
 
 
 def _owed_flags(control: object) -> tuple[bool, bool] | None:
@@ -2424,6 +2603,11 @@ def _mapping(value: object) -> dict[str, Any]:
     if value is not None and not isinstance(value, dict):
         _LOGGER.warning("Ignoring stored data that is not a mapping")
     return value if isinstance(value, dict) else {}
+
+
+def _vt_call(state: State | None) -> bool | None:
+    """VT's call as its helper shows it: on, off, or not known."""
+    return None if state is None else {"on": True, "off": False}.get(state.state)
 
 
 def _append(series: Series[Any], t: float, value: object) -> None:
@@ -2575,9 +2759,13 @@ def _moved(before: Estimate | None, after: Estimate) -> bool:
     """Whether a measured value moved enough to be saved again."""
     if before is None:
         return True
+    if (before.range_share is None) != (after.range_share is None):
+        return True  # I13.4: a range found for a value kept without one, or lost
+    shares = (before.range_share or 0.0, after.range_share or 0.0)
     return (
         abs(after.value - before.value) > FIT_MOVED * max(abs(before.value), 1e-9)
         or abs(after.confidence - before.confidence) > FIT_CONFIDENCE_MOVED
+        or abs(shares[1] - shares[0]) > FIT_CONFIDENCE_MOVED
     )
 
 

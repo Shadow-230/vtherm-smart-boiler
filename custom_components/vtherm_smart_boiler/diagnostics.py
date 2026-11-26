@@ -38,10 +38,12 @@ class _Redactor:
         self._names: dict[str, str] = {}
 
     def _is_entity(self, value: str) -> bool:
+        """Home Assistant's registry first: a VT room is found there, its state never looked at
+        (I12.11); an entity outside the registry by its state."""
         return bool(ENTITY_ID.match(value)) and (
             value in self._entities
-            or self._hass.states.get(value) is not None
             or self._registry.async_get(value) is not None
+            or self._hass.states.get(value) is not None
         )
 
     def __call__(self, value: Any) -> Any:
@@ -141,7 +143,10 @@ async def async_get_config_entry_diagnostics(
             "options": dict(entry.options),
             "capabilities": asdict(data.capabilities),
             "vt_feature_manager": _feature_manager(hass),
-            "central_mode": None if data.central_mode is None else data.central_mode.value,
+            # I12.11: the rooms — the thermostats VT hands over and its central boiler counts —
+            # and those it hands over and does not count.
+            "rooms": coordinator.link.rooms(),
+            "thermostats_not_counted": coordinator.link.not_counted(),
             "monitoring_since": data.monitoring_since,
             # P-95: when the plugin was not running, unknown in what is read back.
             "downtimes": [[since, until] for since, until in coordinator.down],
@@ -221,7 +226,7 @@ def _feature_manager(hass: HomeAssistant) -> dict[str, Any]:
 
 def _named_entities(value: Any) -> frozenset[str]:
     """Every entity ID the options name — also one that is away now — in any mapping, its keys
-    too (the stored control state keys the zones it paused by their IDs): the entry's options
+    too (a control state stored by an earlier version keys zones by their IDs): the entry's options
     are a read-only mapping (P-30)."""
     if isinstance(value, str):
         return frozenset({value}) if ENTITY_ID.match(value) else frozenset()

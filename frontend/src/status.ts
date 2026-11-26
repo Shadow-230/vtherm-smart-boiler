@@ -34,6 +34,8 @@ export interface ReasonInfo {
   limit: number | null;
   changed_by_control?: boolean;
   detail?: string;
+  /** I13.5: beside the short burns' share, the share under 3 minutes (0–1). */
+  very_short_share?: number;
 }
 
 const KIND_ORDER: ReasonKind[] = ["problem", "missing", "data", "fine"];
@@ -71,10 +73,33 @@ export function verdictReasons(entity: HassEntity | undefined): ReasonInfo[] {
         limit: typeof r.limit === "number" ? r.limit : null,
         ...(typeof r.changed_by_control === "boolean" ? { changed_by_control: r.changed_by_control } : {}),
         ...(typeof r.detail === "string" ? { detail: r.detail } : {}),
+        ...(typeof r.very_short_share === "number" ? { very_short_share: r.very_short_share } : {}),
       },
     ];
   });
   return KIND_ORDER.flatMap((kind) => read.filter((r) => r.kind === kind));
+}
+
+/** I13.4: the boiler's lowest and highest output against the house's design load, as the
+ * verdict's sensor gives them; `null` where it gives none. */
+export interface Sizing {
+  minPower: number | null;
+  maxPower: number | null;
+  designLoad: number | null;
+  designOutdoor: number | null;
+}
+
+export function verdictSizing(entity: HassEntity | undefined): Sizing | null {
+  const sizing = entity?.attributes.sizing;
+  if (typeof sizing !== "object" || sizing === null) return null;
+  const s = sizing as Record<string, unknown>;
+  const found: Sizing = {
+    minPower: numberAttribute(s.min_power_kw),
+    maxPower: numberAttribute(s.max_power_kw),
+    designLoad: numberAttribute(s.design_load_kw),
+    designOutdoor: numberAttribute(s.design_outdoor),
+  };
+  return found.minPower == null && found.maxPower == null && found.designLoad == null ? null : found;
 }
 
 // ----------------------------------------------------------------------------------- the alarms

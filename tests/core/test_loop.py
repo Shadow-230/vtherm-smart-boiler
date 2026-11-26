@@ -15,6 +15,7 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     Reason,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
+from custom_components.vtherm_smart_boiler.core.demand import zone_wants_heat
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
     GuardConfig,
@@ -64,10 +65,13 @@ ECHOED_SWITCH = GuardConfig(write_type=WriteType.HELD, two_valued=True)
 
 
 def inputs(t: float, opening: float = 0.6, **kw) -> ControlInputs:
+    """A step's inputs; VT's decision, unless given, as VT's central boiler with a count of 1
+    would set its helper (I12)."""
     kw.setdefault("enabled", True)
     kw.setdefault("zones", (ZoneState("z", 20.0, 21.0, True, reported_at=t, valve_open=opening),))
     kw.setdefault("outdoor_sensor", 5.0)
     kw.setdefault("flame", False)
+    kw.setdefault("vt_heat", any(z.is_known(t, None) and zone_wants_heat(z) for z in kw["zones"]))
     return ControlInputs(now=t, dhw=False, **kw)
 
 
@@ -166,6 +170,37 @@ def test_the_comfort_correction_at_its_limit_is_written_exactly(
         assert out.setpoint is not None
         assert out.setpoint.kind is WriteKind.CHANGE
         assert out.setpoint.value == pytest.approx(first + 0.47, abs=0.05)
+    else:
+        assert out.setpoint is None or out.setpoint.kind is not WriteKind.CHANGE
+
+
+@pytest.mark.parametrize(("correction", "written"), [(-3.0, True), (-2.9, False)])
+def test_the_trim_at_its_limit_is_written_exactly(correction: float, written: bool) -> None:
+    """I13.3: the trim below the curve goes down in steps under the read-back's tolerance as the
+    rise goes up; at its limit (3 K) it is a bound, written exactly; above it the deadband
+    stays."""
+    control = ControlConfig(
+        curve=HeatingCurve(),
+        ramp_k_per_min=None,
+        comfort_correction=True,
+        correction_max_k=3.0,
+        decision_interval_s=10.0,  # the water decided again at the next step
+    )
+    config = replace(CONFIG, control=control)
+    calm = (ZoneState("z", 21.0, 21.0, True, reported_at=0.0, valve_open=0.3),)
+    state = LoopState(control=ControlState(correction=-2.53))
+    state, out = loop_step(state, inputs(0.0, zones=calm), None, config)
+    assert out.setpoint is not None
+    first = out.setpoint.value
+    state = replace(state, control=replace(state.control, correction=correction))
+    calm = (ZoneState("z", 21.0, 21.0, True, reported_at=10.0, valve_open=0.3),)
+    state, out = loop_step(state, inputs(10.0, zones=calm), first, config)
+    assert out.decision.correction == correction
+    assert out.decision.target == pytest.approx(first + correction + 2.53, abs=0.05)
+    if written:
+        assert out.setpoint is not None
+        assert out.setpoint.kind is WriteKind.CHANGE
+        assert out.setpoint.value == pytest.approx(first - 0.47, abs=0.05)
     else:
         assert out.setpoint is None or out.setpoint.kind is not WriteKind.CHANGE
 
@@ -312,10 +347,10 @@ def test_a_new_session_keeps_the_zone_watch() -> None:
     assert out.setpoint is not None  # a decision at once, no new recognition period
 
 
-def test_ignored_from_the_start_keeps_the_other_target_and_frost() -> None:
+def test_ignored_from_the_start_keeps_the_other_target() -> None:
     """Decision 6: the setpoint ignored from the start — the heating switch is still written, and
-    frost heating still switches it on; no block, no latch; the setpoint is not written again this
-    session. A new session tries it again."""
+    VT asking for heat again still switches it on; no block, no latch; the setpoint is not written
+    again this session. A new session tries it again."""
     config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
     state, out = loop_step(LoopState(), inputs(0.0), 0.0, config)  # 0 before the plugin
     state, outs = run(state, config, 10.0, 360.0, 0.0)  # never taken
@@ -325,11 +360,10 @@ def test_ignored_from_the_start_keeps_the_other_target_and_frost() -> None:
     state, outs = run(state, config, 370.0, 400.0, 0.0, opening=0.0)
     assert outs[0][1].ch_enable is False  # heating off goes
     assert all(out.setpoint is None for _t, out in outs)
-    # Its valve a little open: frost heat can reach it (decision 4), and it does not call.
-    cold = ZoneState("z", 4.0, 21.0, True, reported_at=410.0, valve_open=0.04)
-    state, out = loop_step(state, inputs(410.0, zones=(cold,)), 0.0, config)
-    assert out.decision.mode.value == "frost"
-    assert out.ch_enable is True  # frost heating switches it on
+    # VT asks for heat again (its frost preset, say): heating goes on.
+    state, out = loop_step(state, inputs(410.0), 0.0, config)
+    assert out.decision.mode.value == "heating"
+    assert out.ch_enable is True  # VT's call switches it on
     assert out.setpoint is None
     assert not out.blocked
     assert not state.control.latched

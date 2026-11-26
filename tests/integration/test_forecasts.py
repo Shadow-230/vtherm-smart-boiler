@@ -112,7 +112,7 @@ async def test_an_unsupported_forecast_is_known_from_the_entity(hass: HomeAssist
 async def test_removing_the_entry_removes_its_files(
     hass: HomeAssistant, hass_storage: dict[str, Any]
 ) -> None:
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     from custom_components.vtherm_smart_boiler import async_remove_entry
 
@@ -227,7 +227,7 @@ async def test_forecasts_load_off_the_event_loop(
     the older weeks as a count."""
     import threading
 
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     from custom_components.vtherm_smart_boiler.core import forecast as core_forecast
 

@@ -17,7 +17,7 @@ from itertools import pairwise
 from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from run import SCENARIOS, ZONES, Run, main
+from run import _NO_PLUGIN_DELAY, SCENARIOS, ZONES, NotRun, Run, main
 from walk import save_options
 
 RELAY = "switch.boiler_sim_relay"
@@ -243,6 +243,7 @@ async def R5(r: Run):
 
 async def R6(r: Run):
     """VT's activation delay of 120 s on the relay path"""
+    raise NotRun(_NO_PLUGIN_DELAY)
     d = await options_walk(r, {"control_behaviour": {"activation_delay_s": 120}})
     r.note(f"options {d.get('type')} {d.get('errors')}")
     try:
@@ -658,6 +659,7 @@ async def R17(r: Run):
 
 async def R18(r: Run):
     """VT's activation delay of 120 s on the relay path: a start waits for it"""
+    raise NotRun(_NO_PLUGIN_DELAY)
     try:
         d = await options_walk(r, {"control_behaviour": {"activation_delay_s": 120}})
         if d.get("errors"):
@@ -888,7 +890,8 @@ async def U1(r: Run, outdoor: float = -5.0, emitters: tuple[str, ...] = ("underf
         if e == "underfloor"
     ]
     try:
-        # The circuit lists its underfloor zones (I8 F2): the zones' own question is gone.
+        # The circuit lists its underfloor rooms (I8 F2); the only circuit's list offers every
+        # room VT counts for its central boiler (I12.11).
         await options_walk(r, {"circuit": {"max_flow": 40, "underfloor": underfloor}})
         await r.sim("set_outdoor", temperature=outdoor)
         await rooms_call(r, True)

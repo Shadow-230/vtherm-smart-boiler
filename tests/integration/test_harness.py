@@ -8,11 +8,10 @@ import pytest
 from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.core.signals import Signal
 from custom_components.vtherm_smart_boiler.units import signal_value
-from custom_components.vtherm_smart_boiler.vtherm_attributes import zone_values
 from sim.simulator import Scenario, daily_cycle, simulate
 
 from .harness import (
@@ -47,9 +46,8 @@ async def test_fake_zones_are_registered_as_vt(hass: HomeAssistant, zones: FakeZ
     assert entry.platform == VT_PLATFORM
     state = hass.states.get(entity_id)
     assert state is not None
-    values = zone_values(state.state, state.attributes)
-    assert values.calling is True
-    assert values.valve_open == pytest.approx(0.4)
+    assert state.attributes["hvac_action"] == "heating"
+    assert state.attributes["valve_open_percent"] == pytest.approx(40)
 
 
 async def test_fake_forecasts_answer_and_record(

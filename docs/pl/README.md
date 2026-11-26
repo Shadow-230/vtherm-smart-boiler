@@ -12,7 +12,7 @@ samym miejscu pod `docs/pl/`.
 |---|---|---|
 | [`user-guide/`](user-guide/user-guide.md) | jak zainstalować, ustawić i używać wtyczki | użytkownicy |
 | [`technical/`](technical/technical.md) | jak wtyczka jest zbudowana: jej części, jeden krok sterowania, testy | programiści |
-| [`specification/`](specification/scope.md) | co wtyczka robi i dlaczego: zakres, interfejs danych o wodzie, kody używane w kodzie | programiści, recenzenci |
+| [`specification/`](specification/scope.md) | co wtyczka robi i dlaczego: zakres, połączenia kotła, kody używane w kodzie | programiści, recenzenci |
 | [`development/`](development/plan.md) | plan rozwoju; plany każdego wydania i przeglądy (tylko po angielsku) | programiści |
 | [`testing/`](testing/test-environment.md) | testowy Home Assistant i raporty z testów | testerzy |
 | `../images/` | obrazy wspólne dla wszystkich języków | — |
@@ -24,9 +24,9 @@ samym miejscu pod `docs/pl/`.
 | [Przewodnik użytkownika](user-guide/user-guide.md) | aktualny | [tak](../en/user-guide/user-guide.md) |
 | [Dokumentacja techniczna](technical/technical.md) | aktualny | [tak](../en/technical/technical.md) |
 | [Zakres](specification/scope.md) | aktualny | [tak](../en/specification/scope.md) |
-| [Dane o wodzie dla algorytmów stref](specification/water-interface.md) | aktualny | [tak](../en/specification/water-interface.md) |
 | [Połączenia kotła i szablon urządzenia](specification/device-connections.md) | aktualny | [tak](../en/specification/device-connections.md) |
 | [Kody odniesień](specification/references.md) | aktualny | [tak](../en/specification/references.md) |
+| [Literatura](specification/literature.md) | aktualny | [tak](../en/specification/literature.md) |
 | [Plan rozwoju](development/plan.md) | aktualny | [tak](../en/development/plan.md) |
 | [Środowisko testowe](testing/test-environment.md) | aktualny | [tak](../en/testing/test-environment.md) |
 | [Raporty z testów: jak powstają](testing/reports/README.md) | aktualny | [tak](../en/testing/reports/README.md) |

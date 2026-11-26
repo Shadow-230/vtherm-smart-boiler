@@ -12,7 +12,7 @@ the same place under `docs/pl/`.
 |---|---|---|
 | [`user-guide/`](user-guide/user-guide.md) | how to install, set up and use the plugin | users |
 | [`technical/`](technical/technical.md) | how the plugin is built: its parts, one control step, tests | developers |
-| [`specification/`](specification/scope.md) | what the plugin does and why: the scope, the water data interface, the codes used in the code | developers, reviewers |
+| [`specification/`](specification/scope.md) | what the plugin does and why: the scope, the boiler connections, the codes used in the code | developers, reviewers |
 | [`development/`](development/plan.md) | the development plan; the plans of each release and the reviews | developers |
 | [`testing/`](testing/test-environment.md) | the test Home Assistant and the test reports | testers |
 | `../images/` | pictures shared by every language | — |
@@ -24,9 +24,9 @@ the same place under `docs/pl/`.
 | [User guide](user-guide/user-guide.md) | current | [yes](../pl/user-guide/user-guide.md) |
 | [Technical documentation](technical/technical.md) | current | [yes](../pl/technical/technical.md) |
 | [Scope](specification/scope.md) | current | [yes](../pl/specification/scope.md) |
-| [Water data for zone algorithms](specification/water-interface.md) | current | [yes](../pl/specification/water-interface.md) |
 | [Boiler connections and the device template](specification/device-connections.md) | current | [yes](../pl/specification/device-connections.md) |
 | [Reference codes](specification/references.md) | current | [yes](../pl/specification/references.md) |
+| [Literature](specification/literature.md) | current | [yes](../pl/specification/literature.md) |
 | [Development plan](development/plan.md) | current | [yes](../pl/development/plan.md) |
 | [Test environment](testing/test-environment.md) | current | [yes](../pl/testing/test-environment.md) |
 | [Test reports: how they are made](testing/reports/README.md) | current | [yes](../pl/testing/reports/README.md) |
@@ -37,6 +37,7 @@ the same place under `docs/pl/`.
 | [Test report of 2026-10-14](testing/reports/2026-10-14-test-report.md) | history | no |
 | [Test report of 2026-11-22](testing/reports/2026-11-22-test-report.md) | history | no |
 | [Test report of 2026-11-22, I11](testing/reports/2026-11-22-i11-test-report.md) | history | no |
+| [Test report of 2026-11-24](testing/reports/2026-11-24-test-report.md) | history | no |
 
 **Current** documents change together with the code, in both languages in the same pull
 request. **History** is the record of how the plugin was built. It stays in English only and is

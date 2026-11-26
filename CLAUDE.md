@@ -15,7 +15,10 @@ and [`plan-0.2-i9.md`][plan-0.2-i9]; step I10, the Boiler page in the sidebar an
 user's decisions of 2026-11-18, before the first release), is planned in
 [`plan-0.2-i10.md`][plan-0.2-i10] and listed in the development plan, since `plan-0.2.md` is
 history; step I11, control switched only in the plugin's settings (the user's decisions of
-2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; the device
+2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; step I12, data
+through `vtherm_api` and VT deciding whether to heat (the user's decisions of 2026-11-24/25), in [`plan-0.2-i12.md`][plan-0.2-i12],
+listed there too; step I13, the corrections from the literature (the user's decision of
+2026-11-26), in [`plan-0.2-i13.md`][plan-0.2-i13], before the test environment's move and J4; the device
 templates, after the first release and before 0.3, in
 [`plan-device-templates.md`][plan-device-templates]; phases run in order. A 🔒 step whose plan says it holds nothing
 up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
@@ -32,6 +35,8 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2-i9]: docs/en/development/plans/plan-0.2-i9.md
 [plan-0.2-i10]: docs/en/development/plans/plan-0.2-i10.md
 [plan-0.2-i11]: docs/en/development/plans/plan-0.2-i11.md
+[plan-0.2-i12]: docs/en/development/plans/plan-0.2-i12.md
+[plan-0.2-i13]: docs/en/development/plans/plan-0.2-i13.md
 [plan-device-templates]: docs/en/development/plans/plan-device-templates.md
 [plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
 [plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
@@ -84,20 +89,26 @@ Each topic lives only in its file; do not copy it here.
   consented 2026-09-24: `uv` from PyPI into `.tools/bootstrap/` (`docs/en/development/plans/plan-0.1.md` A1); Python
   3.14 through `uv` into `.tools/python/` (A2); packages from PyPI into `.venv/` (A3); VT 10.4.0
   and SmartPI 0.4.0 sources in `vendor/` (A5; VT 10.5.1 there since 2026-10-13, put in by the
-  user). Consented 2026-11-18 for the Boiler page (`plan-0.2-i10.md`): Node.js (LTS) from
+  user; VT 10.6.5 fetched by Claude, the user's consent of 2026-11-25, `plan-0.2-i12.md` I12.6).
+  Consented 2026-11-18 for the Boiler page (`plan-0.2-i10.md`): Node.js (LTS) from
   nodejs.org into `.tools/node/`, checked against its published SHA-256, and the npm packages
   `lit`, `typescript`, `vite`, `vitest` with what they depend on into `frontend/node_modules/`;
   for the page's screenshots, `playwright` likewise, its Chromium into `.tools/ms-playwright/`,
   and the system libraries Chromium needs as Debian packages fetched with `apt-get download`
   (no root) and unpacked into `.tools/chromium-libs/` (`scripts/bootstrap_browser.sh`); any
-  other package needs the user's consent first. Sources and documents of typical DIY boiler
+  other package needs the user's consent first. Consented 2026-11-26: useful literature is kept
+  only in the git-ignored `research/literature/`, each file listed with its source and licence in
+  its `INDEX.md` — never in the repository, whatever its licence; the repository holds only the
+  references, in `docs/en/specification/literature.md` (the user, 2026-11-26); the SmartPI
+  project's documents at `/home/ai/projects/vtherm_smartpi/` may be read. Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
   for interface facts only (the user's decision, 2026-09-24). The official license text only
   with the user's consent at that step (`docs/en/development/plans/plan-0.2.md` K1). CI on GitHub's servers fetches VT
-  10.5.1 (10.4.0 until 2026-10-13, the user's decision) and SmartPI 0.4.0 from their tags for the
-  real-VT tests; nothing is downloaded locally (`docs/en/development/plans/plan-0.2.2.md`, decision 14).
+  10.6.5 (10.5.1 until 2026-11-25, 10.4.0 until 2026-10-13) for the real-VT tests and SmartPI 0.4.0
+  only for the test bench's deploy, both by their release commits; nothing is downloaded locally
+  (`docs/en/development/plans/plan-0.2.2.md`, decision 14; `plan-0.2-i12.md` I12.6, I12.9).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
@@ -187,6 +198,13 @@ Each topic lives only in its file; do not copy it here.
   imports; control and learning laws are pure functions with unit tests.
 - Zone data only through one module (`vtherm_link.py`); no `hass.states.get(...)` by entity name
   elsewhere.
+- VT integration goes only through `vtherm_api`, with no fallback for what the API has (the
+  user's rule, 2026-11-24/25). Read from Home Assistant, as none of VT's data: VT's version and
+  whether it is loaded, the user's own devices VT names through `entry_infos` (the room
+  thermometer, the window sensor), the helper VT's central boiler commands, and Home Assistant's
+  registries (an entity's area, a relay's platform). What the API lacks is asked of VT's author,
+  not worked round (`docs/en/development/plans/plan-0.2-i12.md`, second part). Nothing is kept
+  that nothing uses.
 - Detect capabilities (`hasattr`, import in `try`); VT, `vtherm_api` and SmartPI change fast and
   older versions must work.
 - `translations/en.json` is the source; every user-visible string via translation keys; a test
@@ -200,7 +218,16 @@ Each topic lives only in its file; do not copy it here.
 
 - **`vtherm_api`**: class `VThermAPI`, `VThermAPI.get_vtherm_api(hass)`; `register_feature_manager`,
   `get_feature_manager_factories`, `list_feature_managers`, `register_prop_algorithm`,
-  `PluginClimate`. No central hook — hence the plugin replaces VT's central boiler itself.
+  `PluginClimate`. No central hook: the plugin follows VT's central boiler through a helper it
+  commands (I12, the user's decision of 2026-11-25). 0.12.0 and 0.13.1 were released on
+  2026-11-23. The thermostat VT hands a feature manager declares `entity_id`, `name`, `unique_id`
+  and `entry_infos` (its settings merged over VT's central entry's); VT calls the manager's
+  `refresh_state` first once the thermostat is ready, `add_custom_attributes` before each state
+  write, and the power hook at each cycle; VT 10.6.5 keeps its API while a plugin is registered;
+  its `on_percent` getter calls the algorithm's `update_realized_power` when safety or the duty
+  cap clamps it; built-in managers are named after the thermostat, so
+  `get_feature_manager("safety")` finds nothing (`docs/en/development/plans/plan-0.2-i12.md`,
+  second part, Facts).
   A feature manager can add attributes to the VT climate (`add_custom_attributes`); its
   `refresh_state()` runs after the algorithm (one-cycle lag). The thermostat method
   `get_feature_manager(name)` exists from VT 10.5.0.beta1, not in 10.4.0. `get_vtherm_api`
@@ -213,7 +240,9 @@ Each topic lives only in its file; do not copy it here.
   protection); VT applies it only to thermostats that follow the central mode
   (`is_controlled_by_central_mode`, VT 10.4.0 `base_thermostat.py`), so the plugin sees it
   through the zones' demand. Central boiler: binary sensor on device count or total power
-  thresholds, calls on/off actions — the plugin replaces it. VT starts its thermostats at
+  thresholds, calls on/off actions; it counts as configured only with a command, and
+  `CENTRAL_BOILER_EVENT` follows each change its command made — the plugin follows it through a
+  helper (I12). VT starts its thermostats at
   `EVENT_HOMEASSISTANT_STARTED` (at the end of an entry's setup once Home Assistant runs), while
   `hass.is_running` is already true during start-up; each VT climate has `is_ready`. Reloading the
   central entry makes the central-boiler binary sensor unavailable, then `off` until VT's boiler
@@ -251,6 +280,9 @@ Each topic lives only in its file; do not copy it here.
   on at setpoint − 0.3 °C (`smartpi/const.py` `HYST_UPPER_C`, `HYST_LOWER_C`); its diagnostic
   sensor's state is "bootstrap_hysteresis" then, and the VT climate names that sensor in
   `specific_states.regulation_diagnostics` (`docs/en/development/plans/plan-0.2-g11.md`, Facts).
+  SmartPI 1.0 (`dev-1.0`, 2026-11-24, unreleased) takes two entities the user picks per
+  thermostat, "heating unavailable" and "disturbance" (SmartPI #29); the plugin no longer pauses
+  SmartPI nor reads it (I12).
 - **HA forecasts**: only through `weather.get_forecasts`, not in entity state — the recorder
   does not keep them. HACS inclusion has no license requirement.
 - **Home Assistant 2026.9.3**: shutdown jobs (`hass.async_add_shutdown_job`) run before

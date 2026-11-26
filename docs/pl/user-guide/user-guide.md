@@ -44,12 +44,13 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
 
 - **Home Assistant 2026.10.4 lub nowszy** — wymaga go najnowszy Versatile Thermostat (10.6.5), a
   wtyczka jest na nim testowana.
-- **Versatile Thermostat 10.2.0 lub nowszy**, z termostatami (wtyczka nazywa je strefami)
-  ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł. VT wczytuje zewnętrzne moduły funkcji
-  (feature managers) od wersji 10.2.0; testowane są 10.5.1 i najnowsza, 10.6.5. To minimum jest
-  tymczasowe i zostanie potwierdzone przed pierwszym wydaniem. Sam VT 10.6.5 wymaga Home
-  Assistanta 2026.10.4 i `vtherm_api` 0.9.0.
-- Biblioteka `vtherm_api` w wersji 0.5.0 lub nowszej. Home Assistant instaluje ją razem z
+- **Versatile Thermostat 10.6.5 lub nowszy**, z termostatami (wtyczka nazywa je strefami albo
+  pokojami) ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł i z zaznaczonym w każdym
+  **Używane przez kocioł centralny**: pokoje wtyczki to termostaty, które liczy kocioł centralny
+  VT. Ze starszym VT wtyczka nie steruje
+  kotłem i prosi o aktualizację VT. VT 10.6.5 przedstawia się w Home Assistancie jako 10.6.4, co
+  wtyczka przyjmuje. Sam VT 10.6.5 wymaga Home Assistanta 2026.10.4 i `vtherm_api` 0.9.0.
+- Biblioteka `vtherm_api` w wersji 0.9.0 lub nowszej. Home Assistant instaluje ją razem z VT i
   wtyczką.
 - **Kocioł, który Home Assistant potrafi odczytać**, przez dowolną integrację pokazującą jego
   sygnały jako encje: na przykład OpenTherm Gateway (OTGW), EMS-ESP albo sterownik OpenTherm na
@@ -61,20 +62,16 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
   (temperatura powrotu, ciśnienie wody, modulacja, temperatura zewnętrzna, gazomierz i inne)
   włącza kolejne funkcje monitora.
 - **Do sterowania:** sposób zapisu do kotła i sposób jego oddania (zobacz
-  [Podłączenie kotła](#5-podłączenie-kotła)) oraz wyłączony własny kocioł centralny VT.
+  [Podłączenie kotła](#5-podłączenie-kotła)) oraz kocioł centralny VT ustawiony tak, by
+  przełączał pomocnika, za którym idzie wtyczka (zobacz
+  [Kiedy grzanie się włącza i wyłącza](#43-kiedy-grzanie-się-włącza-i-wyłącza)).
 
 SmartPI i Auto-TPI z VT (samouczący się algorytm VT, sterujący proporcjonalnie do czasu) są
 opcjonalne; wtyczka działa z każdym algorytmem stref VT.
 
-**Co pokazują termostaty VT.** Każdy termostat strefy obsługiwanej przez wtyczkę dostaje atrybut
-`smart_boiler` z wartością `heat_available`: czy ciepło z kotła dociera teraz do strefy.
-Jest „tak”, gdy pali się płomień, a zasilanie jest wyraźnie cieplejsze od powrotu (od
-pomieszczenia, gdy powrót nie jest znany), „nie”, gdy płomień zgasł albo ciepło zabiera ciepła
-woda z priorytetem, i puste, gdy nie da się tego ocenić. Obok niej `supply_temperature`: woda
-docierająca do obiegu strefy, zaokrąglona do 1 °C i odświeżana po zmianie o 1 K, pusta, gdy nie
-jest znana. Algorytm strefy może czytać pełne dane ([interfejs danych o wodzie, po
-angielsku](../specification/water-interface.md)); SmartPI 0.4.0 z nich nie korzysta. Nic w VT ani w
-sterowaniu od tego nie zależy.
+**Co pokazują termostaty VT.** Nic od wtyczki. Żeby algorytm strefy nie uczył się, gdy kocioł
+nie daje ciepła, wtyczka ma jeden czujnik, **Nie daje ciepła** (zobacz
+[Obok algorytmów stref VT](#411-obok-algorytmów-stref-vt)).
 
 ## 2. Instalacja
 
@@ -95,11 +92,15 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 
 ## 3. Szybki start
 
-1. **Przygotuj VT.** Ustaw termostaty VT dla pomieszczeń. Jeśli kocioł centralny VT jest
-   skonfigurowany, odznacz go w konfiguracji centralnej VT i uruchom ponownie Home Assistant: dwa
-   sterowniki nigdy nie mogą sterować tym samym kotłem. Monitorowanie działa i bez tego;
-   sterowanie na to czeka. Konfiguracja centralna VT utworzona albo zmieniona po starcie Home
-   Assistant też wymaga tego jednego ponownego uruchomienia.
+1. **Przygotuj VT.** Ustaw termostaty VT dla pomieszczeń i zaznacz **Używane przez kocioł
+   centralny** w każdym termostacie, którego pokój grzeje ten kocioł: to są pokoje wtyczki, i
+   tylko je liczy kocioł centralny VT. We wtyczce nie ma listy pokoi do prowadzenia. Do
+   sterowania utwórz pomocnika wł./wył.
+   (Ustawienia → Urządzenia i usługi → Pomocnicy → Przełącznik) i ustaw kocioł centralny VT w
+   konfiguracji centralnej VT: jego progi i opóźnienie włączenia oraz oba polecenia na pomocniku
+   (`input_boolean.twoj_pomocnik/input_boolean.turn_on` i `…/input_boolean.turn_off`). Nigdy nie
+   kieruj poleceń VT na sam kocioł: dwa sterowniki nigdy nie mogą sterować tym samym kotłem.
+   Monitorowanie działa i bez tego; sterowanie na to czeka.
 2. **Utwórz wpis.** Ustawienia → Urządzenia i usługi → Dodaj integrację → **Smart Boiler for
    Versatile Thermostat**. Pierwsze panele pytają, jak kocioł jest podłączony, o źródło ciepła i
    rodzaj kotła oraz o tryb sterowania — pełne sterowanie, wł./wył. albo tylko monitorowanie. Nic
@@ -117,15 +118,21 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
      przez kocioł (wymagana) i odczyt zwrotny włączenia ogrzewania.
    - **Kocioł** — co o nim wiesz; nieznane wartości zostaw puste.
    - **Obieg: <nazwa>** — jedna pozycja na obieg grzewczy (do czterech na poziomie
-     zaawansowanym): jego typ, zasilane strefy VT i które z nich mają podłogówkę albo
-     konwektory, jego najwyższa temperatura wody. Strefa poza obiegami nie jest pilnowana i nie
-     prosi o ciepło.
-   - **Strefy VT** — których zawory zamykają się, gdy VT wyłącza strefę.
+     zaawansowanym): jego typ, jego najwyższa temperatura wody i które pokoje mają podłogówkę
+     albo konwektory. Przy jednym obiegu wszystkie pokoje są w nim. Przy kilku każdy wymienia
+     swoje pokoje; pokój poza obiegami liczy się do tego, ile pokoi woła o ciepło, ale nie do
+     wody żadnego obiegu.
    - **Budynek** i **Progi monitora** — na poziomie zaawansowanym, tylko dla monitora; tam jest
      **Dni danych do werdyktu** (domyślnie 7).
    - **Pozycje sterowania** — przy pełnym sterowaniu albo wł./wył.: urządzenie sterujące, krzywa
-     grzewcza, zachowanie sterowania, ochrona przed mrozem i reakcje na alarmy (zobacz
+     grzewcza, zachowanie sterowania i reakcje na alarmy (zobacz
      [Sterowanie włączasz sam](#42-sterowanie-włączasz-sam)).
+   - **Przeładuj raz VT.** VT przekazuje wtyczce swoje termostaty tylko wtedy, gdy je
+     uruchamia. Jeśli VT już działa, gdy konfigurujesz wtyczkę, po **Utwórz** uruchom raz
+     ponownie Home Assistant albo przeładuj wpisy Versatile Thermostat w Ustawienia → Urządzenia
+     oraz usługi. Ostatni krok konfiguracji mówi o tym tam, gdzie to potrzebne, a zgłoszenie
+     „Przeładuj raz Versatile Thermostat” przypomina; znika samo, gdy VT przekaże pierwszy
+     termostat. Do tego czasu wtyczka nie zna żadnego pokoju.
 4. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie ([4.1](#41-monitorowanie-i-werdykt)). Decyzja należy do ciebie.
 5. **Włącz sterowanie** w opcjach integracji: **Tryb sterowania**, zaznacz **Sterowanie
@@ -168,6 +175,18 @@ dopóki nie włączysz sterowania, co możesz zrobić od pierwszego dnia. Rejest
 Werdykt potrzebuje domyślnie **7 dni danych**. Możesz zażądać więcej (do 60 dni), ale nie mniej.
 Liczą się dni kalendarzowe od dnia utworzenia wpisu.
 
+**Skąd bierze się przeszłość.** Sygnały kotła są odczytywane z rejestratora Home Assistant:
+ostatnie 8 dni i starsze dni tak daleko, jak sięga rejestrator, do roku wstecz. To, czy kocioł był wezwany do grzania — co odróżnia palenie na grzanie od poboru
+ciepłej wody — pochodzi z pomocnika przełączanego przez kocioł centralny VT: włączony oznacza, że
+VT wezwał ciepło. Liczy się też jego historia w rejestratorze, więc działa to także dla dni sprzed
+instalacji wtyczki. Szczegóły pokoi — temperatury, nastawy, które pokoje wzywają ciepła, otwarcia
+zaworów — są własne wtyczki: zapisuje je przy każdym odczycie pokoi i trzyma ostatnie 8 dni we
+własnym magazynie. Nie odczytuje ich z termostatów VT w rejestratorze, więc analizy, które
+potrzebują szczegółów pokoi, zaczynają się od instalacji. Bez pomocnika (samo monitorowanie) także
+to, czy kocioł był wezwany, pochodzi z pokoi zapisanych przez wtyczkę. Obieg sterowany inną
+automatyką, który prosi o ciepło przez wybraną dla niego encję, też liczy się jako wezwanie,
+cokolwiek pokazuje pomocnik.
+
 Potem czujnik **Werdykt sterowania** pokazuje jedną z wartości:
 
 | Werdykt | Znaczenie |
@@ -182,13 +201,35 @@ bez werdyktu.
 
 Co znaczą werdykt i wartości budynku:
 
-- **Krótkie palenia** najczęściej biorą się z kotła za dużego dla domu: jego najmniejsza moc jest
-  większa, niż dom potrzebuje, więc kocioł startuje i gaśnie. Werdykt mówi to, gdy obciążenie
-  budynku często jest poniżej mocy minimalnej kotła.
+- **Krótkie palenia** werdykt wymienia, gdy są częste. Kocioł, którego najmniejsza moc jest
+  większa, niż dom potrzebuje, startuje i gaśnie: to częsta przyczyna, a werdykt mówi o niej, gdy
+  obciążenie budynku często jest poniżej najniższej mocy kotła. Nie jedyna: w domu, w którym VT
+  przełącza pokoje, liczy się też długość cykli VT. Obok powodów werdykt pokazuje najniższą
+  i najwyższą moc kotła oraz to, czego dom potrzebuje w najzimniejszy dzień, na który go
+  zaprojektowano (straty ciepła przy projektowej temperaturze zewnętrznej) — każdą, jeśli jest
+  znana — żebyś mógł je sam porównać.
 - **Straty ciepła budynku**, mierzone ze zużycia kotła i pogody, liczą się dopiero po około
   **3 tygodniach grzania** (21 dni grzewczych); wcześniej są pokazywane, ale nieużywane. Są
-  pokazywane z prawdopodobnym zakresem około ±20 % — tyle osiągają opublikowane metody. Zmierzone
-  straty mniejsze od projektowych są częste: oznaczają przewymiarowany kocioł, a nie błąd pomiaru.
+  pokazywane z prawdopodobnym zakresem, wziętym z tego, jak blisko linii leżą dni. Dni po sobie
+  są do siebie podobne (fala mrozu, masa budynku), więc liczą się mniej, a zakres jest szerszy.
+  Nigdy nie jest węższy niż ±15 % — tyle osiągają najlepsze opublikowane metody. Straty z zakresem
+  szerszym niż ±50 % są pokazywane, ale nieużywane. Gdy po obu stronach progu grzania leży co
+  najmniej tydzień dni, próg wyznaczają same dni. Zmierzone straty mniejsze od projektowych są
+  częste: oznaczają przewymiarowany kocioł, a nie błąd pomiaru.
+- **Krótkie palenia** są liczone dwa razy: krótsze niż długość krótkiego palenia (domyślnie
+  10 minut) i krótsze niż 3 minuty — tam ginie większość sprawności traconej na startach
+  i zatrzymaniach. Oba udziały są pokazywane obok siebie.
+- **Gaz na stopniodzień z tygodnia** jest pokazywany dopiero od 14 stopniodni w tygodniu
+  (średnio dni 2 °C poniżej progu grzania). W łagodniejszym tygodniu sama niepewność progu
+  grzania, około 2 °C, mogłaby zmienić stopniodni o tyle, ile ich jest, więc wynik mówiłby mało
+  o domu. Gdy sygnatura energetyczna ma linię, każdy tydzień dostaje pasmo: gdzie
+  prawdopodobnie leży jego wartość, z tego, jak bardzo dni tego domu rozrzucone są wokół linii.
+- **Ciepła woda a pogoda.** Ciepłej wody używa się mniej więcej tyle samo przez cały rok. Jeśli
+  gaz, który wtyczka liczy jako ciepłą wodę, przez co najmniej 4 tygodnie wyraźnie idzie za
+  temperaturą zewnętrzną (spada albo rośnie o 3 % swojej średniej lub więcej na każdy stopień),
+  zgłoszenie mówi, że ciepła woda i ogrzewanie mogą być źle rozdzielone; sprawdź sygnały ciepłej
+  wody i ogrzewania. Straty ciepła i gaz na stopniodzień miałyby ten sam błąd. To tylko
+  informacja.
 - **Zużycie wobec wczoraj** porównuje dwa dni; zużycie z dnia na dzień zmienia się samo sporo
   (budynek jeszcze ciepły albo zimny po wczoraj, słońce, ludzie). Gdy część, której żadna
   przyczyna nie wyjaśnia, mieści się w 15 % zużycia z dnia poprzedniego, jest oznaczona jako
@@ -209,39 +250,46 @@ wymagane ustawienia, na przykład:
 - najwyżej jeden obieg grzewczy zasilany wprost z kotła; obok niego obiegi za stałym
   termostatycznym zaworem mieszającym albo sterowane przez inną automatykę. Obiegu mieszanego
   przez sam kocioł (drugiego obiegu grzewczego kotła) sterowanie jeszcze nie obsługuje;
-- własny kocioł centralny VT wyłączony w VT, a po tym ponowne uruchomienie Home Assistant, żeby
-  tym samym kotłem nigdy nie sterowały dwa sterowniki. Centralna konfiguracja VT utworzona lub
-  zmieniona po uruchomieniu Home Assistant, nawet bez kotła centralnego, też wymaga tego jednego
-  ponownego uruchomienia.
+- kocioł centralny VT ustawiony z oboma poleceniami na pomocniku wł./wył., a ten pomocnik wybrany
+  w **Zachowaniu sterowania** (zobacz
+  [Kiedy grzanie się włącza i wyłącza](#43-kiedy-grzanie-się-włącza-i-wyłącza)).
 
 Gdy czegoś brakuje, **Sterowanie (eksperymentalne)** mówi czego. Monitor dalej działa, a kocioł zostaje
 przy własnym sterowaniu albo przy swoim termostacie.
 
 ### 4.3 Kiedy grzanie się włącza i wyłącza
 
-Wtyczka zastępuje kocioł centralny VT. O włączeniu lub wyłączeniu grzania decyduje na podstawie
-stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych kryteriów:
+O tym, czy kocioł grzeje, decyduje kocioł centralny Versatile Thermostat. Ustaw go w konfiguracji
+centralnej VT, tak jak opisuje dokumentacja VT: jego progi (ile urządzeń woła albo ile mocy),
+opóźnienie włączenia i oba polecenia na pomocniku wł./wył. (`input_boolean`), którego tworzysz —
+nigdy na samym kotle. Potem wybierz tego pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
+idzie za pomocnikiem: włączony — kocioł grzeje; wyłączony — nie. Dokłada temperaturę wody i swoje
+zasady bezpieczeństwa. Opóźnienie włączenia w VT działa jak zwłoka przy wezwaniu ciepła: pokój,
+który woła tylko przez chwilę, nie uruchamia kotła. Wtyczka nie dodaje własnej przerwy (przerwę
+przed ponownym startem palnika sprawdzono na symulatorze i nie pomogła, I13.6).
 
-| Kryterium | Grzanie jest włączone, gdy |
-|---|---|
-| Wołające | ciepła potrzebuje co najmniej ustawiona liczba urządzeń — albo stref (domyślnie 1) |
-| Łączna moc | łączna moc stref osiąga ustawiony próg |
-| Otwarcie zaworów | otwarcie zaworów stref potrzebujących ciepła osiąga ustawiony próg |
-
-- Decyzja jest sprawdzana co 10 sekund i działa od razu, w obie strony.
-- **Co liczyć** (poziom zaawansowany): **Urządzenia** liczy głowice, zawory i przełączniki VT tak
-  jak kocioł centralny VT — domyślnie w nowej instalacji, a liczba z VT przechodzi bez zmian;
-  **Strefy** liczy każdą strefę raz, ile by nie miała urządzeń — tak zostaje instalacja sprzed
-  zmiany. Przy domyślnej liczbie 1 jedno i drugie działa tak samo.
-- Gdy VT nie podaje stanu urządzenia, strefa woła, gdy jej zawór jest choć trochę otwarty, a bez
-  zaworu — gdy jej cykl pracy jest powyżej 0 — tak jak w VT; otwarcie zaworu i cykl pracy strefy
-  są oceniane osobno.
-- Strefa się liczy tylko wtedy, gdy VT podaje jej stan jednoznacznie. Strefa niedostępna albo
-  taka, której VT jeszcze nie uruchomił, ma stan „nieznany” — nigdy „brak zapotrzebowania”.
+- Wtyczka sprawdza co 10 sekund i od razu, gdy pomocnik się zmieni, w obie strony.
+- Sterowanie jest zablokowane bez pomocnika, dopóki kocioł centralny VT nie jest ustawiony
+  (zaznaczony, z oboma poleceniami), i dopóki jego polecenia przełączają coś innego niż pomocnika;
+  zgłoszenie w Naprawach podaje wtedy, co przełączają. Jeśli dziś VT przełącza przekaźnik twojego
+  kotła, wybierz ten przekaźnik we wtyczce (ścieżka przez przekaźnik) i skieruj polecenia VT na
+  pomocnika.
+- VT liczy tylko pokoje oznaczone w VT jako „używany przez kocioł centralny”: oznacz każdy pokój,
+  który ma wołać kocioł.
+- Jeśli pomocnik nie jest ani włączony, ani wyłączony, nic nie może poprosić o ciepło (zobacz
+  [Po ponownym uruchomieniu](#47-po-ponownym-uruchomieniu)).
+- Wtyczka liczy pokoje, które wołają, do pokazania. Gdy VT nie podaje stanu urządzenia, pokój
+  woła, gdy jego zawór jest choć trochę otwarty, a bez zaworu — gdy jego cykl pracy jest powyżej 0
+  — tak jak w VT.
+- Strefa się liczy dopiero wtedy, gdy VT przekazał jej termostat wtyczce i go uruchomił. Wtyczka
+  czyta pokój tylko z termostatu VT, nigdy z tego, co pokazuje encja klimatu VT. Pokój, którego
+  termostat już działał, gdy instalowano wtyczkę, trafia do niej dopiero po przeładowaniu VT; do
+  tego czasu ma stan „nieznany”, tak jak pokój, którego VT jeszcze nie uruchomił — nigdy „brak
+  zapotrzebowania”.
 - Tryb centralny VT (Auto, Zatrzymany, Tylko grzanie, Tylko chłodzenie, Ochrona przed mrozem)
   działa przez strefy. Gdy wszystkie strefy są zatrzymane, nic nie potrzebuje ciepła, więc
-  kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła; ochrona przed mrozem dalej
-  czuwa.
+  kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła i znaczy, że nikt nie grzeje:
+  ochrona przed mrozem należy do VT (zobacz [Ochrona przed mrozem](#45-ochrona-przed-mrozem)).
 - Wtyczka nie ma przełącznika lato/zima. Jeśli strefy VT są wyłączone, kocioł nie grzeje.
 - **Cykl w VT dla pokoi, które wołają kocioł: 10 do 15 minut.** VT włącza i wyłącza grzanie
   pokoju w cyklach (domyślnie co 5 minut). Wtyczka idzie za pokojami od razu, więc każda przerwa
@@ -249,31 +297,22 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   godzinę; w symulacji cykl 10–15 minut zmniejszył liczbę startów kotła o jedną trzecią do połowy
   w łagodną pogodę, przy równie ciepłych pokojach. Gdy sterowanie jest ustawione, wtyczka
   wymienia pokoje, które VT przełącza w cyklach krótszych niż 10 minut („Krótkie cykle w VT”).
-- **Strefy z zaworem, który nie zamyka się do końca** (w VT **Maksymalny stopień zamknięcia**
-  poniżej 100): używaj VT 10.5 lub nowszego. Od 10.5 zawór trzymany na tym minimum nie liczy się
-  jako grzejący, a strefa prosi o ciepło dopiero, gdy VT otworzy go bardziej. VT 10.2–10.4 liczył
-  go jako grzejący, więc taka strefa prosiła o ciepło bez przerwy i kocioł mógł się nigdy nie
-  wyłączać. Przy ustawieniu domyślnym (100: zawór zamyka się całkiem) wszystkie wersje działają
-  tak samo.
 - Obieg sterowany przez inną automatykę prosi o ciepło, gdy jego encja **Obieg prosi o ciepło**
   jest włączona albo gdy potrzebuje ciepła któraś z jego stref: grzanie włącza się wtedy dla
-  niego samego, bez względu na ustawioną liczbę stref — jego mieszacz potrzebuje wody. Gdy tej
+  niego, bez względu na kocioł centralny VT — jego mieszacz potrzebuje wody. Gdy tej
   encji nie da się odczytać (niedostępna, nieznana), obieg o nic nie prosi (jego strefy dalej
-  mogą, a ochrona przed mrozem dalej czuwa), a stan sterowania pokazuje powód
+  mogą), a stan sterowania pokazuje powód
   `circuit_request_unknown`.
-- **To, co pokazywał kocioł centralny VT, pokazuje wtyczka** (gdy sterowanie jest ustawione):
-  - **Wezwanie do grzania** — włączone, gdy wtyczka wzywa kocioł do grzania (także ochrona przed
-    mrozem); wyłączone, gdy steruje kotłem i go nie wzywa, z powodem: nic nie woła, strefy wołają
-    poniżej progów, start czeka na opóźnienie włączenia VT, kocioł zgłasza usterkę; nieznane, gdy
-    nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany) albo jeszcze nie wie.
-    Jego atrybuty pokazują zapotrzebowanie wobec progów.
-  - **Wołające o ciepło** — urządzenia (albo strefy, zależnie od liczenia) wołające teraz, z
-    wołającymi strefami i urządzeniami, które VT podaje jako aktywne; **Moc wołających** —
-    zsumowana średnia moc stref, tak jak pokazuje ją VT. Moc liczy się do progu tylko wtedy, gdy
-    zawór wołającej strefy jest otwarty albo jej urządzenie włączone, więc kocioł nigdy nie grzeje
-    na zamknięte zawory.
-  - Zdarzenie `vtherm_smart_boiler_boiler_call`, wysyłane przy zmianie wezwania i gdy start
-    zaczyna czekać na opóźnienie włączenia VT, do twoich automatyzacji (`boiler_called`,
+- **Co pokazuje wtyczka** (gdy sterowanie jest ustawione):
+  - **Wezwanie do grzania** — włączone, gdy wtyczka wzywa kocioł do grzania (także dla ochrony
+    przed mrozem VT, gdy VT o nią woła); wyłączone, gdy steruje kotłem i go nie wzywa, z powodem:
+    nic nie woła, pokoje wołają, a kocioł centralny VT nie, kocioł centralny VT czeka na opóźnienie włączenia, kocioł zgłasza
+    usterkę; nieznane, gdy nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany)
+    albo jeszcze nie wie. Jego atrybuty pokazują wołające pokoje i to, kiedy kończy się
+    opóźnienie włączenia VT.
+  - **Wołające o ciepło** — pokoje wołające teraz, które to są i na jakich obiegach.
+  - Zdarzenie `vtherm_smart_boiler_boiler_call`, wysyłane przy zmianie wezwania i gdy kocioł
+    centralny VT zaczyna czekać na opóźnienie włączenia, do twoich automatyzacji (`boiler_called`,
     `call_reason`, `activation_at`).
 
 ### 4.4 Temperatura wody
@@ -323,6 +362,15 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
 Temperatura wody zmienia się powoli (rampa, domyślnie 1 K na minutę). Domyślnie jest ustalana
 na nowo co 5 minut (odstęp decyzji).
 
+Temperatura zewnętrzna, którą czyta krzywa, to niższa z bieżącej i jej średniej z ostatnich
+godzin: zimny poranek od razu podnosi wodę, łagodne popołudnie obniża ją tylko powoli. Średnia
+obejmuje około 3 godzin. Gdy w obiegu, któremu służy krzywa, jest pokój z ogrzewaniem
+podłogowym, obejmuje około 12 godzin (wartość tymczasowa): podłoga nagrzewa się i stygnie dobę
+albo dłużej, więc jej woda nie powinna iść za krótkim ociepleniem; przy ociepleniu woda zostaje
+wtedy dłużej nieco cieplejsza. Wtyczka nie wie, jak ciężki jest Twój dom: ciężki dom z
+grzejnikami zostaje przy średniej z 3 godzin. Stan sterowania pokazuje używaną wartość
+(`curve_outdoor`).
+
 Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3 godziny trzyma
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
 krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
@@ -331,67 +379,86 @@ krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 pomieszczenie nie dochodzi do swojej nastawy mimo w
 pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K,
 najwyżej 10 K, ustawianego w **Krzywej grzewczej** obok korekty; nigdy więcej niż 3 K na dobę.
-Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy +
-0,5 K, gdzie SmartPI przestaje je grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej.
+„Nie dochodzi” znaczy: co najmniej 0,3 K poniżej nastawy VT, bez względu na algorytm strefy.
+Korekta czeka, aż pomieszczenie nie dochodzi do nastawy przez godzinę bez przerwy — i przez dwa
+cykle VT tego pomieszczenia, gdy są dłuższe niż pół godziny. Potem rośnie o 1 K na cztery cykle
+najwolniejszego pomieszczenia (ustawienie cyklu w VT; 15 minut, gdy nie jest znane), nigdy
+szybciej niż 1 K na 30 minut. Dzięki temu jest dużo wolniejsza niż własna regulacja pomieszczeń i
+obie się nie przepychają. Nie rośnie, gdy pomieszczenie wciąż się nagrzewa po podniesieniu nastawy
+— na przykład po nocnym obniżeniu — dopóki nie jest w granicach 0,3 K od nowej nastawy albo nie
+nagrzało się mniej niż o 0,2 K w pół godziny: ten sam test co po otwartym oknie. Nie rośnie, gdy
+kocioł startuje częściej niż wcześniej.
 Jedno niedogrzane pomieszczenie liczy się jak każde inne — woda nigdy nie idzie wyżej dla jednego
 pokoju. Po trzech godzinach tak wysoko, jak może — na limicie albo po wzroście o 3 K w ciągu
 doby — gdy pomieszczenie nadal nie dochodzi do nastawy, korekta tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
-mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i więcej startów palnika — przy
-strefach TPI w VT często stoi na limicie i kilkakrotnie zwiększa liczbę startów, prawie nie dodając
-ciepła. Dlatego jest wyłączona: gdy pokój zostaje zimny, najpierw podnieś krzywą. Przycisk
-„Wyzeruj korektę komfortu” cofa ją do zera.
+mały grzejnik albo pomieszczenie tracące ciepło.
+
+**Pod krzywą.** Gdy płynie ciepło, a każde pomieszczenie, które korekta odczytuje, jest otwarte
+mniej niż w 70 % i żadne nie jest niedogrzane, korekta obniża wodę pod krzywą: najwyżej 1 K na 2
+godziny ciepła (i zawsze co najwyżej z połową szybkości wzrostu), najwyżej o 3 K (nigdy o więcej
+niż jej limit) i najwyżej o 3 K na dobę. Wraca w stronę krzywej, 1 K na 15 minut, gdy tylko
+któreś pomieszczenie nie dochodzi do nastawy albo jest otwarte w 70 %, albo kocioł startuje
+częściej niż wcześniej. Nie schodzi niżej, gdy otwarcie albo temperatura któregoś pomieszczenia
+nie są znane, przy skrajnej pogodzie, podczas ciepłej wody ani gdy najniższa temperatura wody lub
+ograniczenie już trzyma wodę. Najniższa temperatura wody zawsze obowiązuje. Stan sterowania
+pokazuje korektę ze znakiem: `comfort_correction` poniżej 0 znaczy pod krzywą.
+
+Koszt: więcej gazu i więcej startów palnika — przy strefach TPI w VT może stać na limicie: w
+symulacji do około 3,5 razy więcej startów przy stałym mrozie, prawie nie dodając ciepła. Pod
+krzywą pomieszczenie może wolniej się nagrzewać. Dlatego jest wyłączona: gdy pokój zostaje zimny,
+najpierw podnieś krzywą. Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
+
+**Które pokoje oceniają krzywą.** Temperatura pokoju liczy się dla korekty komfortu, jej
+ostrzeżenia „za niska krzywa”, „za chłodnej wody” przy długim spalaniu i strefy krytycznej tylko
+wtedy, gdy wtyczka może jej ufać. Jest pomijana, gdy VT prowadzi ten termostat w trybie
+bezpieczeństwa, gdy termometr pokoju (czujnik ustawiony w VT) jest niedostępny albo nieznany,
+oraz po starcie wtyczki, dopóki VT znowu nie zmierzy pokoju. Pokój dalej się liczy, gdy woła o
+ciepło. **Stan sterowania** podaje takie pokoje w atrybucie `room_sensor_lost_zones`; nie ma dla
+nich alarmu.
 
 ### 4.5 Ochrona przed mrozem
 
-Ochrona przed mrozem grzeje nawet wtedy, gdy żadna strefa nie potrzebuje ciepła:
-
-- Pilnuje wszystkich stref (domyślnie) albo jednej wybranej.
-- Gdy pilnowana strefa spadnie poniżej **5 °C** (domyślnie), grzanie pracuje według krzywej,
-  dopóki każda pilnowana strefa nie przekroczy **7 °C** (domyślnie).
-- Grzeje tylko pomieszczenie, do którego ciepło może dotrzeć: VT podaje otwarty zawór albo
-  włączone urządzenie. Jeśli VT trzyma zimne pomieszczenie zamknięte (termostat wyłączony,
-  otwarte okno, tryb centralny „Zatrzymany”), wtyczka nie uruchamia dla niego kotła. Tworzy
-  zgłoszenie w Naprawach, które wskazuje pomieszczenie i mówi, co zrobić — na przykład użyć
-  presetu przeciwmrozowego VT zamiast „wyłączony”.
-- Jeśli grzanie przeciwmrozowe trwa około 2 godzin, a pomieszczenie się nie ogrzewa, informuje o
-  tym alarm. Grzanie nie jest z tego powodu zatrzymywane.
+Ochroną przed mrozem zajmuje się VT; wtyczka nie ma własnej. Użyj presetu przeciwmrozowego VT na
+termostacie albo trybu centralnego VT „Ochrona przed mrozem”: VT każe wtedy zimnemu pokojowi
+wołać o ciepło, jego kocioł centralny włącza pomocnika, a wtyczka grzeje jak przy każdym innym
+wezwaniu. Dlatego kocioł centralny VT ma przełączać pomocnika. „Zatrzymany” w VT znaczy, że nikt
+nie grzeje, także zimnego pokoju. Gdy sterowanie nie trzyma kotła i nic innego nie grzeje, alarm
+„oddane, a w pomieszczeniu grozi mróz” mówi o pokoju poniżej 5 °C
+([Bezpieczeństwo i oddanie sterowania](#6-bezpieczeństwo-i-oddanie-sterowania)).
 
 ### 4.6 Opóźnienie włączenia z VT
 
-Wtyczka zachowuje opóźnienie włączenia z VT: od 0 do 600 sekund, domyślnie 0. Jest dla wolnych
+Opóźnienie włączenia ustawia się w kotle centralnym VT (od 0 do 600 sekund). Jest dla wolnych
 zaworów (na przykład głowic termoelektrycznych w ogrzewaniu podłogowym), żeby otworzyły się
-przed startem kotła i jego pompy.
+przed startem kotła i jego pompy. Wtyczka nie ma własnego opóźnienia.
 
-- Opóźnia tylko **włączenie**. Wyłączenie nigdy nie jest opóźniane.
-- Odliczanie zaczyna się przy pierwszej prawdziwej potrzebie ciepła. Jeśli potrzeba zniknie i
-  wróci w trakcie odliczania, odliczanie trwa dalej; na jego koniec kocioł startuje tylko wtedy,
-  gdy zapotrzebowanie wciąż jest.
-- Grzanie przeciwmrozowe też na nie czeka.
-- Przy przejściu z VT wartość jest wstępnie wypełniona ustawieniem z VT, do twojego
-  potwierdzenia.
+- Gdy VT odlicza opóźnienie, wtyczka pokazuje „wyłączone” z powodem `activation_delay` i to, kiedy
+  opóźnienie się kończy. Kocioł startuje, gdy VT włączy pomocnika.
 
 ### 4.7 Po ponownym uruchomieniu
 
 **Okres rozpoznania.** Po starcie Home Assistant albo przeładowaniu VT wtyczka czeka, aż każda
-strefa poda swój stan, najwyżej 10 minut. W tym czasie nie podejmuje nowych decyzji. Jeśli przed
+strefa poda swój stan, najwyżej 10 minut. Strefy to pokoje, które wtyczka znała wcześniej — VT
+przekazuje swoje termostaty dopiero wtedy, gdy je uruchamia. W tym czasie nie podejmuje nowych decyzji. Jeśli przed
 ponownym uruchomieniem sterowała kotłem i nic się nie zmieniło, co by tego zabraniało,
-zachowuje albo od razu przywraca swoje ostatnie polecenie (bez opóźnienia włączenia). Jeśli coś
+zachowuje albo od razu przywraca swoje ostatnie polecenie. Jeśli coś
 się zmieniło, najpierw oddaje kocioł.
 
 **Okres przejściowy.** Jeśli strefa staje się nieznana, gdy VT działa, jej ostatnia odpowiedź
-jest zachowywana przez 10 minut. Potem strefa wypada, a decydują pozostałe. Strefa nieznana
-przez 30 minut wywołuje alarm, bo ochrona przed mrozem jej nie widzi.
+jest zachowywana przez 10 minut. Potem strefa wypada, a decydują pozostałe. **Stan sterowania**
+podaje strefy, których nie widzi, w atrybucie `unknown_zones`.
 
-**Żadna strefa nie odpowiada.** Jeśli po tych okresach wszystkie strefy są nieznane albo żadne z
-twoich kryteriów zapotrzebowania nie dostaje danych, nic nie może poprosić o ciepło:
+**Żadna strefa nie odpowiada.** Jeśli po tych okresach wszystkie strefy są nieznane albo pomocnik
+VT nie jest ani włączony, ani wyłączony, nic nie może poprosić o ciepło:
 
 | Twoja instalacja | Co się dzieje |
 |---|---|
 | Działający termostat albo regulator pokojowy (zobacz niżej) | kocioł jest mu oddawany |
 | Brak działającego termostatu | wtyczka trzyma grzanie wyłączone; **nie** oddaje kotła |
 
-W obu przypadkach od razu pojawiają się alarm („Sterowanie: żadna strefa nie odpowiada”) i
-zgłoszenie w Naprawach. Sterowanie wraca samo, gdy strefa znów odpowie.
+W obu przypadkach pojawiają się alarm („Sterowanie: żadna strefa nie odpowiada” albo
+„Sterowanie: decyzja VT nieznana”) i zgłoszenie w Naprawach. Sterowanie wraca samo, gdy strefa
+albo pomocnik znów odpowie.
 
 **Działający termostat** to jedno z:
 
@@ -413,20 +480,21 @@ z wbudowanym zasobnikiem. Dla każdego kotła, który grzeje ciepłą wodę, ekr
 
 - **Z priorytetem** (domyślnie) — gdy kocioł grzeje ciepłą wodę, pomieszczenia nie dostają
   ciepła. Tak jest zwykle w kotle dwufunkcyjnym i przy zasobniku ładowanym przez zawór
-  trójdrogowy. Wtyczka wstrzymuje wtedy na czas poboru naukę SmartPI w strefach i liczy, że
-  ciepło kotła nie trafia do pomieszczeń.
+  trójdrogowy. **Nie daje ciepła** jest wtedy włączony na czas poboru, z powodem „ciepła woda”.
 - **Bez priorytetu** — ciepła woda i ogrzewanie działają razem (zasobnik ładowany równolegle,
-  bufor, kocioł dwufunkcyjny, który dzieli ciepło). Ciepła woda nie wstrzymuje wtedy nauki i nie
-  liczy się jako ciepło, którego brakuje pomieszczeniom.
+  bufor, kocioł dwufunkcyjny, który dzieli ciepło). Ciepła woda nie liczy się wtedy jako ciepło,
+  którego brakuje pomieszczeniom.
 
-Zła odpowiedź albo niepotrzebnie wstrzymuje naukę, albo pozwala jej uczyć się z poborów, które
-zabrały pomieszczeniom ciepło. Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
+Przy złej odpowiedzi **Nie daje ciepła** myli się podczas ciepłej wody: algorytm strefy, który go
+czyta, wstrzymuje naukę bez potrzeby albo uczy się z poborów, które zabrały pomieszczeniom ciepło.
+Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
 
 ### 4.9 Otwarte okna
 
 Otwartymi oknami zajmuje się VT. Jego własne wykrywanie okna — czujnik okna albo automatyczne
 wykrywanie po szybkości zmian temperatury — wyłącza strefę albo obniża jej nastawę; taka strefa
-przestaje wołać o ciepło. Wtyczka nie ma własnej obsługi okien.
+przestaje wołać o ciepło. Wtyczka nie ma własnej obsługi okien; tylko nie uznaje pokoju z otwartym
+oknem za strefę krytyczną ([Encje](#9-encje)).
 
 ### 4.10 Obiegi i strefy
 
@@ -445,16 +513,21 @@ Obieg to część instalacji zasilana w jeden sposób, wybrany jako jego **Typ o
   każdym wołaniu jej stref (formularz raz ostrzeże).
 - **Mieszany przez kocioł** (drugi obieg grzewczy kotła) — jeszcze nie sterowany.
 
-Każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką albo konwektorami; pozostałe to
-grzejniki. Pokój zasilany przez dwa obiegi — grzejnik z jednego, pętla podłogówki z drugiego —
-trafia do każdego przez swoje urządzenia (**Pojedyncze urządzenia strefy**, poziom
-zaawansowany); pozostaje jedną strefą, pilnowaną i liczoną raz. Strefa poza obiegami nie jest
-pilnowana i nie prosi o ciepło.
+Pokoje są z VT: to termostaty, które VT przekazuje wtyczce i liczy dla kotła centralnego (w VT
+zaznaczone **Używane przez kocioł centralny**). Wtyczka nie prowadzi listy pokoi. Przy jednym
+obiegu wszystkie pokoje są w nim, a jego formularz pyta tylko, które pokoje mają podłogówkę albo
+konwektory; pozostałe to grzejniki. Przy kilku obiegach każdy wymienia zasilane pokoje (obszar
+dopisuje swoje pokoje przy zapisie), a z nich te z podłogówką albo konwektorami. Gdy dodasz
+drugi obieg, pierwszy zatrzymuje wszystkie pokoje, których nie bierze nowy; gdy zostanie jeden
+obieg, znów obejmuje wszystkie pokoje. Pokój zasilany przez dwa obiegi — grzejnik z jednego,
+pętla podłogówki z drugiego — trafia do każdego przez swoje urządzenia (**Pojedyncze urządzenia
+pokoju**, poziom zaawansowany); pozostaje jednym pokojem, liczonym raz. Pokój poza obiegami
+liczy się do tego, ile pokoi woła o ciepło, ale nie do wody żadnego obiegu.
 
 ### 4.11 Obok algorytmów stref VT
 
-Wtyczka czyta strefy VT i nigdy nie zmienia ich ustawień ani algorytmów. Co termostat każdej
-strefy pokazuje od wtyczki, czyli atrybut `smart_boiler`, opisują [Wymagania](#1-wymagania).
+Wtyczka czyta strefy VT i nigdy nie zmienia ich ustawień ani algorytmów, ani nie wstrzymuje ich
+nauki.
 
 Krzywa grzewcza już podnosi temperaturę wody, gdy na zewnątrz robi się zimniej. Niektóre algorytmy
 stref też liczą temperaturę zewnętrzną, więc pogoda działa wtedy dwa razy:
@@ -463,14 +536,68 @@ stref też liczą temperaturę zewnętrzną, więc pogoda działa wtedy dwa razy
   temperatura zewnętrzna) do czasu grzania każdej strefy. Z krzywą wtyczki chłodniejsza pogoda
   daje i cieplejszą wodę, i dłuższe grzanie. To ustawienie VT, osobne w każdej strefie; wtyczka go
   nie zmienia.
-- **SmartPI** (0.4.0) uczy się własnego członu zewnętrznego (`u_ff1`, wyuczony współczynnik ×
-  (nastawa − temperatura zewnętrzna)). Nie da się go ustawić ani wyłączyć; uczy się przy wodzie,
-  którą ustawia wtyczka.
+- **SmartPI** (sprawdzone w 0.6.7 i 1.0) uczy się własnego członu zewnętrznego (`u_ff1`, wyuczony
+  współczynnik × (nastawa − temperatura zewnętrzna)). Nie da się go ustawić ani wyłączyć; uczy się
+  przy wodzie, którą ustawia wtyczka.
 
 Jak strefa zachowuje się przy obu, zależy od pomieszczenia i algorytmu; wtyczka to opisuje i nie
-doradza tych ustawień. Gdy ciepła woda albo duża zmiana temperatury wody zaburza pomieszczenia,
-wtyczka wstrzymuje uczenie SmartPI (domyślnie włączone), żeby wywołane przez nią wahania nie
-trafiły do modelu SmartPI.
+doradza tych ustawień.
+
+#### Nie daje ciepła
+
+Przy ustawionym sterowaniu czujnik binarny **Nie daje ciepła** (`binary_sensor.boiler_gives_no_heat`
+dla wpisu o nazwie „Boiler”) jest włączony, gdy pokój liczony przez VT woła o ciepło, a kocioł go
+nie daje, i wyłączony, gdy daje — na tyle, na ile wtyczka nim steruje. Gdy żaden pokój nie woła,
+jest wyłączony: żadnemu pokojowi nie brakuje ciepła, a algorytm strefy może uczyć się z postoju.
+Jego atrybut `reason` mówi, dlaczego jest włączony:
+
+- **Kocioł centralny VT nie wzywa ciepła** (`vt_not_calling`) — pokój woła, ale pomocnik VT jest
+  wyłączony: progi VT nie są osiągnięte;
+- **Trwa opóźnienie włączenia VT** (`activation_delay`);
+- **Kocioł grzeje ciepłą wodę** (`hot_water`) — tylko przy priorytecie ciepłej wody;
+- **Kocioł zgłasza usterkę** (`boiler_fault`);
+- **Wtyczka nie może ręczyć za ciepło** (`handed_back`) — oddała kocioł (alarm, utracone
+  połączenie z kotłem), sterowanie jest zablokowane, kocioł ma inny sterownik albo decyzja VT nie
+  jest znana.
+
+Gdy sterowanie jest wyłączone, czujnik jest niedostępny: wtyczka wtedy nie steruje kotłem i nie
+może tego ocenić. Gdy wtyczka czeka na dane (połączenie z kotłem na chwilę nieświeże) i gdy Home
+Assistant się uruchamia, zostawia ostatnią wartość. Wtyczka sama nie wstrzymuje nauki żadnej
+strefy; użyj czujnika tak:
+
+- **SmartPI 1.0:** wybierz czujnik w ustawieniu SmartPI dla termostatu **Heating unavailable
+  entity (optional)** („encja braku grzania”), w każdym termostacie ze SmartPI. Nic więcej nie
+  trzeba: gdy jest włączony, SmartPI przestaje się uczyć i trzyma człon całkujący; liczy się tylko
+  „włączony”, więc „niedostępny” pozwala mu się uczyć.
+- **SmartPI 0.6.x** nie ma takiego ustawienia. Automatyzacja może wyłączać jego naukę, gdy czujnik
+  jest włączony, i włączać ją w pozostałych przypadkach, własną akcją SmartPI
+  `vtherm_smartpi.set_smartpi_learning` (pole `learning_enabled`; sprawdzone w SmartPI 0.6.7).
+  Wpisz swoje termostaty ze SmartPI w `entity_id`. `to: null` reaguje na włączenie i wyłączenie,
+  nie na zmianę powodu. Włącza też naukę wyłączoną ręcznie.
+
+  ```yaml
+  automation:
+    - alias: "SmartPI learns only while the boiler gives heat"
+      triggers:
+        - trigger: state
+          entity_id: binary_sensor.boiler_gives_no_heat
+          to: null
+        - trigger: homeassistant
+          event: start
+      actions:
+        - action: vtherm_smartpi.set_smartpi_learning
+          target:
+            entity_id:
+              - climate.your_smartpi_thermostat
+          data:
+            learning_enabled: "{{ not is_state('binary_sensor.boiler_gives_no_heat', 'on') }}"
+  ```
+
+- **Auto-TPI** (VT 10.6.5): VT sam pomija naukę Auto-TPI, gdy jego kocioł centralny jest
+  wyłączony, w termostatach oznaczonych „używany przez kocioł centralny” — więc „VT nie wzywa” i
+  jego opóźnienie włączenia nie wymagają niczego. Dla ciepłej wody, usterki kotła i oddania kotła
+  VT nie ma czystej pauzy: jego akcja `set_auto_tpi_mode` domyślnie kasuje to, czego Auto-TPI się
+  nauczył, i przepisuje ustawienia termostatu, więc to nie jest pauza do automatyzacji.
 
 **Gdy czujnik milczy.** VT przełącza strefę w tryb bezpieczny, gdy przez czas opóźnienia
 bezpieczeństwa, domyślnie 60 minut, nie dostaje nowej wartości z czujnika pokojowego albo
@@ -492,12 +619,12 @@ potwierdzenie.
 
 | Zakładka | Co pokazuje |
 |---|---|
-| Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i wołającymi pokojami. Instalację narysowaną z ustawień, z pokojami każdego obiegu i tym, czy biorą ciepło. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat, pokoje i krzywa ją pokażą |
-| Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
-| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn. Przy nieznanej wartości mówi, dlaczego |
-| Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze. Starty grzania palnika według godzin z ostatnich 4 tygodni |
+| Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i liczbą wołających pokoi, tak jak liczy je wtyczka; administrator dostaje też odnośnik do strony Versatile Thermostat, gdzie są pokoje. Instalację narysowaną z ustawień, z obiegami, które teraz biorą wodę: tymi z wołającym pokojem, gdy wtyczka wzywa kocioł albo palnik pali na grzanie. W wąskiej karcie obiegi są wymienione z nazwy pod rysunkiem. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat i krzywa ją pokażą |
+| Palnik | Metryki palnika, krótkie palenia z udziałem tych poniżej 3 minut obok; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
+| Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni, każdy tydzień od 14 stopniodni i z prawdopodobnym pasmem z rozrzutu dni tego domu; zmianę wobec przedwczoraj według przyczyn. Przy nieznanej wartości mówi, dlaczego |
+| Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze, każda z prawdopodobnym zakresem; gdy oba zakresy na siebie zachodzą, mówi, że różnicy nie widać. Starty grzania palnika według godzin z ostatnich 4 tygodni |
 | Dziennik | Co wtyczka zdecydowała i dlaczego w ostatnich 14 dniach. Pokazuje jej starty i zatrzymania, przejęcie kotła przez sterowanie i jego oddanie, wezwanie ciepła, zapisaną nastawę wody (zmiany o 1 K i więcej), potrzebę obiegu, alarmy i zapisane ustawienia. Widać to jako pasy, które przybliża się przeciągnięciem, i jako listę z filtrami |
-| Stan i alarmy | Werdykt sterowania z powodami; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
+| Stan i alarmy | Werdykt sterowania z powodami oraz moce kotła wobec tego, czego potrzebuje dom; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
 
 **Zmiany ze strony.** Administrator, po potwierdzeniu:
 
@@ -513,8 +640,10 @@ sterowania**, **Sterowanie włączone**), dokąd strona prowadzi administratora.
 
 **Co pokazuje, a czego nie.** Strona pokazuje tylko to, co wtyczka i Home Assistant już wiedzą.
 Punkty krzywej, palenia, tygodnie, sygnatura i dziennik pochodzą z wtyczki, a nie z drugiej kopii
-jej zasad. Wartości, której encja nie jest wybrana w ustawieniach, strona nie pokazuje. Nieznana
-wartość to luka, nigdy ostatnia znana przeniesiona dalej. Ostatnie 24 h i ostatnie 7 dni
+jej zasad. Strona nie czyta niczego z VT: nie ma listy pokoi ani temperatur i nastaw
+termostatów; są na własnej stronie VT. Wartości, której encja nie jest wybrana w ustawieniach,
+strona nie pokazuje. Nieznana wartość to luka, nigdy ostatnia znana przeniesiona dalej. Ostatnie
+24 h i ostatnie 7 dni
 pochodzą z recordera Home Assistanta (domyślnie 10 dni). Strona używa języka twojego profilu
 (angielski i polski; inne języki widzą angielski) oraz jasnego albo ciemnego motywu i działa na
 telefonie. Godziny idą za ustawieniem strefy czasowej w twoim profilu. Dni liczone przez wtyczkę
@@ -527,6 +656,70 @@ schemat**, **Kocioł: krzywa grzewcza** i **Kocioł: ostatnie 24 h**. Dodaj je j
 a zmiany podlegają tym samym zasadom. Są dostępne, póki wtyczka działa, czy strona jest w menu
 bocznym, czy nie. Po aktualizacji odśwież stronę przeglądarki, jeśli karta pokazuje jeszcze starą
 wersję.
+
+### 4.13 Ograniczenie modulacji (do włączenia)
+
+Na poziomie zaawansowanym **Zachowanie sterowania** ma opcję **Ogranicz maksymalną modulację
+kotła**. Domyślnie jest wyłączona. Nie ma jej przy przekaźniku.
+
+**Co robi.** Gdy wtyczka steruje kotłem, ogranicza jego największą moc. Palnik grzeje wtedy wodę
+wolniej, więc może pracować dłużej, gdy dom potrzebuje mało ciepła. Nie obniża najmniejszej mocy
+kotła: gdy dom potrzebuje mniej, kocioł i tak się włącza i wyłącza, z ograniczeniem czy bez.
+
+**Czym grozi.** Mniej ciepła w mróz: nigdy nie używaj tego do oszczędzania gazu w najzimniejsze
+dni. Zysk nie jest dobrze potwierdzony — jedna próba w laboratorium i rady instalatorów, brak
+badań w domach (HEM-VAL-05, DESNZ 2023; Bennett i in. 2019). Niektóre kotły w ogóle go nie
+słuchają.
+
+**Jak jest zabezpieczone** (wszystkie liczby tymczasowe):
+
+- Ustawiasz 30–100 %, domyślnie 70 %. Wtyczka nigdy nie zapisuje mniej niż 30 %. Gdy wpisano
+  najmniejszą i największą moc kotła (pozycja **Kocioł**), nigdy nie zapisuje mniej niż udział
+  najmniejszej w największej plus 10 punktów: dla kotła 8–24 kW to 44 %. Ograniczenie na
+  najmniejszej mocy sprawiłoby, że kocioł włączałby się i wyłączał częściej, nie rzadziej.
+- Gdy woda przez 10 minut jest ponad 5 K poniżej zadanej, a płomień się pali, kocioł nie
+  nadąża: wtyczka zdejmuje ograniczenie na 3 godziny.
+- Gdy grzeje się ciepła woda, ograniczenie jest zwalniane, w ciągu około 10–30 sekund od
+  odkręcenia kranu: OpenTherm nie ogranicza maksymalnej modulacji do grzania, więc w kotle
+  dwufunkcyjnym ograniczenie mogłoby zabrać wodzie użytkowej moc. Gdy kocioł grzeje ciepłą wodę,
+  a wtyczka nie umie stwierdzić, czy grzeje ją teraz, ograniczenie w ogóle nie jest włączane —
+  podłącz sygnał ciepłej wody kotła.
+- Jest zwalniane przy każdym oddaniu sterowania, przy zatrzymaniu Home Assistanta i gdy je
+  wyłączysz. Jeśli Home Assistant padł z włączonym ograniczeniem, zwalnia je przy następnym
+  starcie.
+- Nigdy nie wstrzymuje grzania: nieudany zapis jest tylko pokazywany i ponawiany po minucie.
+
+**Gdzie trafia**, zależnie od połączenia:
+
+| Połączenie | Co zapisuje wtyczka | Jak je zwalnia |
+|---|---|---|
+| OpenTherm Gateway | `MM=` bramki, przez jej usługę `set_max_modulation`, co 5 minut | poziom −1: bramka znów przekazuje wartość termostatu, a bez niego 100 % |
+| Oprogramowanie OTGW przez MQTT | `MM=`, na `<top>/set/<node>/maxmodulation`, co 5 minut | treść `-` |
+| EMS-ESP | encję liczbową wybranej mocy palnika (`selburnpow`), co 30 sekund — wygasa w ciągu około minuty, jak nastawa zasilania | 100 %; potem wygasa sama |
+| ESPHome OpenTherm, inna zapisywalna encja | encję liczbową, którą wybierzesz, tak jak zadeklarowano encję temperatury wody: co 30 sekund, gdy wartości wygasają, co 5 minut, gdy są trzymane | 100 % albo jej maksimum, gdy niższe, aż encja to pokaże |
+| Przekaźnik | niedostępne | — |
+
+Wybieraj tylko encję, której kocioł nie zapisuje w pamięci. W EMS-ESP nigdy nie wybieraj
+maksymalnej mocy palnika (`burnmaxpower`): kocioł ją zapisuje. W ESPHome liczba maksymalnej
+modulacji musi startować od 100 % i nie może przywracać ostatniej wartości po restarcie, tak jak
+nastawa ([ESPHome OpenTherm](#57-esphome-opentherm)).
+
+Kotły czytają ten procent na dwa sposoby: jako udział zakresu ponad najmniejszą mocą (sposób
+OpenTherm) albo jako udział największej mocy. Dolna granica i propozycja zakładają ten drugi,
+który przy tej samej liczbie daje mniej ciepła: ostrożniejszy.
+
+**Proponowana wartość.** Gdy werdykt widzi głównie krótkie palenia, a najmniejsza i
+największa moc kotła i straty ciepła domu (wpisane albo zmierzone z pewnością) są znane, opis
+opcji podaje wartość: zapotrzebowanie domu na ciepło przy projektowej temperaturze zewnętrznej z
+zapasem 20 %, jako udział największej mocy kotła, zaokrąglone w górę do 5 %, nigdy poniżej dolnej
+granicy. Nie ma jej, gdy wyszłoby 90 % lub więcej: mało do zyskania. Nigdy nie jest ustawiana
+sama.
+
+**Stan sterowania** pokazuje włączone ograniczenie (`modulation_cap`, %) i powód
+(`modulation_cap_state`): włączone; zwolnione, gdy wtyczka nie steruje kotłem, gdy grzeje się
+ciepła woda albo gdy nie da się jej stwierdzić; zdjęte na 3 godziny; nie ma czego ograniczać
+(dozwolona wartość to 100 %); nie wybrano dla niego encji; jego zapis się nie udaje; urządzenie
+go nie pokazuje.
 
 ## 5. Podłączenie kotła
 
@@ -870,7 +1063,9 @@ Wtyczka nic nie zapisuje bez świeżych danych. Gdy odczyt płomienia albo zasil
 
 - pojawia się alarm „Sterowanie: utracono dane kotła”, a wtyczka oddaje kocioł;
 - przy termostacie przejmuje termostat; przy bramce samodzielnej grzanie ustaje;
-- sterowanie wraca samo, gdy dane są świeże przez 60 sekund bez przerwy.
+- sterowanie wraca samo, gdy dane są świeże przez 60 sekund bez przerwy — przez 10 minut, gdy
+  łączność padła ponownie w ciągu godziny, żeby łącze, które co chwilę znika, nie oddawało i nie
+  przejmowało kotła co kilka minut.
 
 Awaria czujnika zewnętrznego nie jest utratą łączności: wtyczka używa nastawy awaryjnej, nigdy
 zerowego grzania.
@@ -883,8 +1078,8 @@ która go zatrzymuje. Na OTGW usterka liczy się tylko wtedy, gdy jednocześnie 
 bramki to te na tym samym urządzeniu Home Assistanta co jej nastawa. Encje napisane ręcznie w YAML
 nie mają urządzenia: liczą się jako encje bramki, gdy nastawa też go nie ma.
 
-Dopóki taka usterka pokazuje „włączony” przez 5 minut, wtyczka trzyma grzanie wyłączone — razem
-z grzaniem przeciwmrozowym — bez oddania sterowania i bez zatrzasku. Grzeje znowu sama, gdy
+Dopóki taka usterka pokazuje „włączony” przez 5 minut, wtyczka trzyma grzanie wyłączone — bez
+oddania sterowania i bez zatrzasku. Grzeje znowu sama, gdy
 tylko każda wskazana usterka pokaże „wyłączony” (albo stan nieznany). Odczytaj usterkę na
 kotle i postępuj według jego instrukcji.
 
@@ -922,17 +1117,16 @@ Oba znikają przy pierwszej oznace ciepła albo gdy wyłączysz sterowanie.
 | Zignorowane „wyłącz grzanie” albo „włącz grzanie”; przekaźnik przestaje przyjmować „wyłącz” | po wyłączeniu i włączeniu, po usunięciu przyczyny |
 | Błąd wewnętrzny | gdy wyłączysz i włączysz sterowanie |
 | Inna wartość ignorowana od początku | w następnej sesji |
-| Utracona łączność z kotłem | samo, po 60 sekundach świeżych danych |
+| Utracona łączność z kotłem | samo, po 60 sekundach świeżych danych (po 10 minutach po drugiej utracie w ciągu godziny) |
 | Przekaźnik poza zasięgiem | samo, gdy przekaźnik wróci |
 | Usterka samego kotła | samo, gdy usterka zniknie |
 | Żadna strefa nie odpowiada | samo, gdy strefa odpowie |
 | Własny monitor wtyczki zawodzi | samo, gdy znów działa |
 | Blokada: brakujące ustawienie, start Home Assistant | samo, gdy zniknie |
 
-Wciąż skonfigurowany kocioł centralny VT też jest blokadą: sterowanie czeka, aż odznaczysz go w
-VT i uruchomisz ponownie Home Assistant. Tak samo centralna konfiguracja VT utworzona lub zmieniona
-po uruchomieniu Home Assistant (np. VT ustawiony już po starcie), nawet bez kotła centralnego:
-wystarczy jedno ponowne uruchomienie Home Assistant.
+Kocioł centralny VT nieustawiony albo jego polecenia przełączające coś innego niż pomocnika też są
+blokadą: sterowanie czeka, aż poprawisz to w VT. Po starcie sterowanie czeka też, aż VT przekaże
+wtyczce swoje termostaty.
 
 Zatrzask przetrwa ponowne uruchomienie i jest wymieniony w jednym zgłoszeniu w Naprawach. Alarm
 z reakcją „oddaj kocioł”, który jest już aktywny, gdy włączasz sterowanie, od razu blokuje
@@ -949,7 +1143,8 @@ w opcjach, w **Limity świeżości**, w minutach, osobno dla każdego wskazanego
 pogody; sygnał usunięty z **Sygnałów kotła** zabiera swój limit ze sobą:
 
 - **Puste (domyślnie): automatycznie.** Bez limitu, dopóki źródło nie powtórzy niezmienionej
-  wartości co najmniej dwa razy w tym uruchomieniu; potem pięciokrotność jego własnego rytmu,
+  wartości co najmniej cztery razy w tym uruchomieniu; potem pięciokrotność jego własnego rytmu i
+  co najmniej dwukrotność jego drugiej najdłuższej przerwy,
   od 10 do 30 minut dla sygnałów kotła i od 3 do 12 godzin dla encji pogody. Źródło, które
   zgłasza tylko zmiany, nigdy go nie dostaje: stała wartość nie jest nieświeża, a limit
   zatrzymałby sterowanie przy stałej pogodzie.
@@ -995,7 +1190,7 @@ Alarmy monitora. Informują; wtyczka dalej grzeje.
 | Spaliny coraz cieplejsze od powrotu | spaliny cieplejsze od powrotu bardziej niż wcześniej | umów serwis |
 | Częste starty | alarm: więcej startów w ostatniej godzinie niż limit (12); ostrzeżenie: ponad 6 na godzinę przez ostatnie 3 godziny | sprawdź cykl w VT (10–15 min), krzywą i limity |
 | Niestabilny zapłon | w ciągu doby wiele cykli pracy palnika gaśnie wkrótce po zapłonie | zleć sprawdzenie |
-| Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa | zleć sprawdzenie |
+| Dryf histerezy c.o. | pasmo wł./wył. kotła z czasem się przesuwa: o więcej niż 3 K od ostatniego dnia do dni 4–8 wcześniej (usterka) albo w ciągu tygodni — mediany dzienne z ostatniego tygodnia wobec tych z 3 tygodni kończących się 3 tygodnie wcześniej, o więcej niż 3 K albo dwa razy zwykły rozrzut z dnia na dzień (powolny dryf, widać już około 1 K na tydzień). Jego atrybut mówi, które | zleć sprawdzenie |
 | Brak przepływu: wszystkie zawory zamknięte przy pracującej pompie | woda nie ma którędy płynąć | sprawdź zawory albo obejście (bypass) |
 | Za gorąca woda w obiegu | zasilanie powyżej temperatury alarmowej obiegu przez jego czas (obieg prosto z kotła: nie podczas grzania ciepłej wody) | sprawdź jego maksimum |
 | Długie palenie bez nagrzewania | palnik pracuje 3 h — razem z przerwami do 30 min, więc liczy się też kocioł, który ciągle gaśnie i startuje — a pomieszczenia się nie nagrzewają: przyczyna mówi, czy woda jest za chłodna dla niedogrzanych pomieszczeń (woda choć raz w ostatnich 30 minutach doszła do nastawy albo jest ponad nią, bo kocioł pracuje na minimum), kocioł na granicy mocy (płomień cały czas, poniżej nastawy przy wysokiej modulacji), czy woda za ciepła | woda za chłodna: podnieś krzywą (korekta, gdy jest włączona, ją podnosi); za ciepła: obniż ją — krzywą, a w kotle wł./wył. jego własną nastawę wody |
@@ -1064,25 +1259,23 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 
 | Alarm | Znaczenie |
 |---|---|
-| Sterowanie: stan strefy nieznany | nieznany przez 30 minut; ochrona przed mrozem jej nie widzi |
-| Sterowanie: grzanie przeciwmrozowe nie ogrzewa pomieszczenia | grzanie przeciwmrozowe przez 2 godziny bez ogrzania |
-| Sterowanie: oddane, a w pomieszczeniu grozi mróz | ochrona przed mrozem zależy od kotła |
+| Sterowanie: oddane, a w pomieszczeniu grozi mróz | pokój poniżej 5 °C, a nic nie grzeje: ochrona przed mrozem zależy od własnej ochrony kotła |
 | Sterowanie: żadna strefa nie odpowiada | żadna strefa nie jest znana: nic nie może poprosić o ciepło |
-| Sterowanie: kryterium zapotrzebowania bez danych | strefa potrzebująca ciepła nie zasila żadnego z kryteriów |
+| Sterowanie: decyzja VT nieznana | pomocnik VT nie jest ani włączony, ani wyłączony: nic nie może poprosić o ciepło |
 
 | Zgłoszenie | Znaczenie i co zrobić |
 |---|---|
 | Versatile Thermostat nie odpowiada (3 warianty) | sprawdź, czy VT działa, a termostaty są włączone |
-| Żadnego kryterium zapotrzebowania nie da się ocenić (3 warianty) | ustaw moc urządzenia w VT albo inne kryterium |
-| Pokój poniżej progu mrozu nie może dostać ciepła (6 wariantów) | VT trzyma go zamkniętym; zobacz tekst |
-| Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
+| Decyzja VT nie jest znana (2 warianty) | sprawdź pomocnika i to, czy kocioł centralny VT go przełącza |
+| Kocioł centralny VT przełącza coś innego niż pomocnika | skieruj polecenia VT na pomocnika |
+| Ustaw progi wezwania ciepła w kotle centralnym VT | po aktualizacji: ustaw swoje dawne wartości w VT |
+| Ochrona przed mrozem należy teraz tylko do Versatile Thermostat | po aktualizacji: daj każdemu termostatowi preset ochrony przed mrozem w VT albo użyj trybu centralnego VT „Frost protection” |
+| Obieg grzewczy nie ma pomieszczeń | przy kilku obiegach: dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
-| Auto-TPI nie może się uczyć w części stref | odznacz w VT „używany przez kocioł centralny” |
 | Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
-| Wtyczka nie może wstrzymać nauki w części stref | informacja |
-| Wtyczka nie mogła ponownie włączyć nauki w części stref | włącz naukę SmartPI |
-| Termostaty VT nie mogą pokazać wartości strefy z wtyczki | zaktualizuj VT; nic innego od tego nie zależy |
-| Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki | przeładuj VT |
+| Versatile Thermostat jest za stary dla wtyczki | zaktualizuj VT; do tego czasu sterowanie jest zablokowane |
+| Przeładuj raz Versatile Thermostat | przy pierwszej instalacji, gdy VT działa: uruchom ponownie Home Assistant albo przeładuj wpisy VT; do tego czasu wtyczka nie zna żadnego pokoju. Jego „Zatwierdź” sprawdza ponownie |
+| Kocioł centralny Versatile Thermostat nie liczy części termostatów | zaznacz w VT „Używane przez kocioł centralny” dla każdego, którego pokój grzeje ten kocioł; do tego czasu nie jest pokojem |
 
 „3 warianty”: kocioł nie grzeje albo wrócił do swojego termostatu, albo wtyczka tylko
 monitoruje.
@@ -1115,7 +1308,6 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Termostat ścienny utrzymałby w domu chłód po oddaniu sterowania | podnieś jego ustawienie |
 | Termostat ścienny nie podaje nastawy | sprawdź jego ustawienie i sygnał |
 | Encja używana przez wtyczkę zniknęła | wybierz inną w opcjach |
-| Centralna konfiguracja Versatile Thermostat nie działa | napraw centralną konfigurację VT |
 | Czujniki ESPHome nie powtarzają niezmienionych wartości | dodaj im `force_update: true` w ESP |
 
 ### 7.5 Monitor i sama wtyczka
@@ -1129,9 +1321,9 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Nie udało się odczytać pamięci wtyczki o kotle | dla bezpieczeństwa oddała kocioł |
 | Wtyczka nie może zapisać swojej pamięci o kotle | pełny dysk albo pamięć tylko do odczytu |
 | Kocioł może nadal trzymać wartość z Smart Boiler for Versatile Thermostat | oddaj kocioł ręcznie |
-| Nauka SmartPI może być nadal wyłączona w części stref | włącz naukę SmartPI |
+| Ciepła woda i ogrzewanie mogą być źle rozdzielone | gaz liczony jako ciepła woda idzie za temperaturą zewnętrzną; sprawdź sygnały ciepłej wody i ogrzewania. Tylko informacja |
 
-Dwa ostatnie pojawiają się, gdy integracja została usunięta, zanim zdążyła po sobie posprzątać.
+Ostatnie pojawia się, gdy integracja została usunięta, zanim zdążyła po sobie posprzątać.
 
 ## 8. Diagram stanów sterowania
 
@@ -1155,13 +1347,9 @@ stateDiagram-v2
     state Controlling {
         state "Bezczynność (grzanie wyłączone)" as Idle
         state "Grzanie" as Heating
-        state "Grzanie przeciwmrozowe" as Frost
         [*] --> Idle
-        Idle --> Heating: strefy lub obiegi potrzebują ciepła, po opóźnieniu włączenia
+        Idle --> Heating: pomocnik VT włączony albo obieg prosi o ciepło
         Heating --> Idle: zapotrzebowanie zniknęło
-        Idle --> Frost: pilnowana strefa poniżej progu mrozu
-        Frost --> Idle: każda pilnowana strefa znów ciepła
-        Frost --> Heating: strefy potrzebują ciepła
     }
 
     Controlling --> HandedBack: utrata łączności, brak odpowiedzi stref, monitor zawodzi, blokada
@@ -1177,8 +1365,8 @@ stateDiagram-v2
 
 Uwagi do diagramu:
 
-- **Czeka** obejmuje każdą blokadę (brakujące ustawienie, wciąż skonfigurowany kocioł
-  centralny VT, start Home Assistant) i okres rozpoznania po starcie.
+- **Czeka** obejmuje każdą blokadę (brakujące ustawienie, kocioł centralny VT nieustawiony albo
+  przełączający sam kocioł, start Home Assistant) i okres rozpoznania po starcie.
   Polecenie, które wtyczka trzymała przed ponownym uruchomieniem, jest zachowywane albo od razu
   przywracane, bez czekania.
 - **Żadna strefa nie odpowiada** oddaje kocioł tylko tam, gdzie przejmuje działający termostat
@@ -1206,10 +1394,10 @@ domyślnie wyłączone.
 | Starty c.o. na godzinę | starty palnika do ogrzewania, na godzinę z ostatnich 24 h; cykle, które mogły być ciepłą wodą, osobno |
 | Mediana palenia c.o. | typowa długość cyklu pracy palnika przy ogrzewaniu |
 | Godziny palnika c.o. (24 h) *ukryta* | godziny pracy palnika do ogrzewania z ostatnich 24 h |
-| Krótkie palenia c.o. *ukryta* | udział cykli krótszych niż długość krótkiego palenia (domyślnie 10 min) |
+| Krótkie palenia c.o. *ukryta* | udział cykli krótszych niż długość krótkiego palenia (domyślnie 10 min); udział tych poniżej 3 minut w atrybutach |
 | Udział kondensacji | udział czasu palenia c.o. z powrotem poniżej 55 °C |
 | Stopniodni (7 dni) *ukryta* | stopniodni z tygodnia, liczone od progu grzania |
-| Gaz na stopniodzień | gaz na stopniodzień, mierzony wskazanym licznikiem gazu, inaczej szacowany |
+| Gaz na stopniodzień | gaz na stopniodzień z ostatnich 7 dni, mierzony wskazanym licznikiem gazu, inaczej szacowany; brak w tygodniu poniżej 14 stopniodni |
 | Zużycie wobec wczoraj *ukryta* | zmiana zużycia wobec dnia poprzedniego, rozbita na pogodę, ciepłą wodę, ustawienia i resztę — reszta oznaczona, gdy to normalna zmienność z dnia na dzień |
 | Werdykt sterowania | warto włączyć, nie warto włączać albo jeszcze za mało danych — z uzasadnieniem |
 | Problemy z sygnałami | ile wskazanych sygnałów ma problem; stan każdego w atrybutach |
@@ -1217,7 +1405,7 @@ domyślnie wyłączone.
 | Współczynnik strat budynku, Próg grzania budynku *ukryte* | używane wartości budynku — twoje, zmierzone albo domyślne — ze źródłem; zmierzone straty z prawdopodobnym zakresem |
 | Proponowana najniższa temperatura wody | tylko propozycja, nigdy nie stosowana |
 | Migawki prognozy *wyłączona* | ile zapisanych prognoz jest przechowywanych, na przyszłe wydania |
-| Strefa krytyczna, obieg … | w każdym obiegu strefa, której własny regulator pracuje teraz najciężej |
+| Strefa krytyczna, obieg … | w każdym obiegu strefa, której własny regulator pracuje teraz najciężej; nigdy pokój, którego temperaturze wtyczka nie ufa, ani pokój z otwartym oknem — według jego czujnika, automatycznego wykrywania VT albo wyłączenia przez VT — ani pokój, który po zamknięciu okna jeszcze się nagrzewa, dopóki nie dojdzie do 0,3 K od nastawy albo nie urośnie o mniej niż 0,2 K w 30 minut |
 | Sygnały | włączony, gdy płomień i zasilanie (oraz przekaźnik) są znane i świeże |
 | Problem z czujnikiem zewnętrznym | czujnik zewnętrzny kotła stoi albo nie zgadza się z encją pogody |
 | Długie palenie bez nagrzewania | palnik pracuje 3 h (z krótkimi przerwami) bez nagrzewania pomieszczeń, z prawdopodobną przyczyną |
@@ -1227,12 +1415,13 @@ domyślnie wyłączone.
 
 | Encja | Co pokazuje albo robi |
 |---|---|
-| Sterowanie (eksperymentalne) | włącza i wyłącza sterowanie; jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
-| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
+| Sterowanie (eksperymentalne) | czy sterowanie jest włączone; niczego nie przełącza (sterowanie przełącza się w opcjach). Jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
+| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę; ograniczenie modulacji i jego powód, gdy jest włączone ([4.13](#413-ograniczenie-modulacji-do-włączenia)) |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
-| Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie — w miejsce czujnika kotła centralnego VT; przy zmianie wysyłane jest zdarzenie |
-| Wołające o ciepło, Moc wołających | wołające urządzenia (albo strefy) i zsumowana moc stref, każde obok swojego progu, tak jak pokazuje je kocioł centralny VT |
-| Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, nieznana strefa, mróz bez nagrzewania i pozostałe |
+| Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
+| Nie daje ciepła | włączone, gdy pokój woła o ciepło, a kocioł go nie daje, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
+| Wołające o ciepło | pokoje wołające teraz, które to są i na jakich obiegach |
+| Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, oddane, a w pomieszczeniu grozi mróz, i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
 | Wyzeruj zmierzone straty ciepła, Wyzeruj zmierzony próg grzania | zapominają zmierzone wartości budynku |
 
@@ -1246,7 +1435,8 @@ Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w
 
 ## 10. Jak często odświeżają się dane
 
-- Sygnały kotła i strefy są czytane przy każdej zmianie i co najmniej co **30 s**.
+- Sygnały kotła są czytane przy każdej zmianie i co najmniej co **30 s**; pokoje, przez
+  termostaty VT, co **30 s** i przy każdym kroku sterowania.
 - Sterowanie robi krok co **10 s**; nastawa, która wygasa, jest powtarzana co **30 s**, trzymana
   przez urządzenie — przy zmianie i co 5 minut.
 - Wskaźniki monitora i werdykt są liczone co **5 minut**.
@@ -1258,9 +1448,9 @@ Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w
 ## 11. Co zostaje lokalnie
 
 Wszystko. Wtyczka nie łączy się z żadną usługą w chmurze i nic nie wysyła poza Home Assistant.
-Czyta encje, zapisuje tylko do wybranych przez ciebie celów, swój stan i zapisane prognozy trzyma
-we własnym magazynie Home Assistant (`.storage`), a jej czujniki trafiają do rejestratora Home
-Assistant jak każde inne. Pobrana diagnostyka (urządzenie integracji → Pobierz diagnostykę)
+Czyta encje, zapisuje tylko do wybranych przez ciebie celów, swój stan, ostatnie 8 dni pokoi i
+zapisane prognozy trzyma we własnym magazynie Home Assistant (`.storage`), a jej czujniki trafiają
+do rejestratora Home Assistant jak każde inne. Pobrana diagnostyka (urządzenie integracji → Pobierz diagnostykę)
 zastępuje identyfikatory encji i bramki, zanim ją komuś przekażesz.
 
 ## 12. Opcje i ryzyko
@@ -1270,19 +1460,18 @@ Najważniejsze — opisane, nie doradzane:
 
 | Opcja | Domyślnie | Co robi i czym ryzykuje |
 |---|---|---|
-| Sterowanie (przełącznik) | wyłączone | włączone: wtyczka zapisuje do kotła; wyłączone: kocioł pracuje jak dotąd |
+| Sterowanie włączone (w **Trybie sterowania**) | wyłączone | włączone: wtyczka zapisuje do kotła; wyłączone: kocioł pracuje jak dotąd |
 | Krzywa grzewcza | temperatura projektowa zasilania bez wartości domyślnej — wpisujesz ją | za wysoka marnuje gaz i każe palnikowi taktować; za niska zostawia pomieszczenia zimne |
 | Najniższa temperatura wody | 20 °C (tymczasowo) | za niska: przy łagodnej pogodzie kocioł raz po raz sam staje, a kocioł niekondensacyjny skrapla się w kominie (wartość podaje jego instrukcja) |
 | Najwyższa temperatura wody obiegu | 70 °C, gdy pole puste | ogranicza każdą nastawę w obiegach zasilanych prosto z kotła; kocioł może ją przekroczyć o własną histerezę |
 | Jej alarm za gorącej wody | maksimum + 5 K przez 10 min | tylko informacja; za wysoki przepuszcza prawdziwe przekroczenie bez słowa |
-| Korekta komfortu | wyłączona; po włączeniu do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika |
-| Opóźnienie włączenia | 0 s | czeka przed włączeniem grzania, dla wolnych zaworów; w tym czasie pomieszczenia nie dostają ciepła |
+| Korekta komfortu | wyłączona; po włączeniu do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę, gdy pomieszczenie nie dochodzi do nastawy od godziny; do 3 K pod krzywą, gdy każde pomieszczenie ma ciepła pod dostatkiem | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika; pod krzywą pomieszczenie może wolniej się nagrzewać |
+| Pomocnik przełączany przez kocioł centralny VT | brak — wybierasz go | kocioł centralny VT decyduje przez niego; skierowany zamiast tego na kocioł dałby dwa kłócące się sterowniki |
 | Typ zapisu wybranego celu | nieznany — bez zapisu | trzeba zadeklarować „wygasa” albo „trzymany”; zła deklaracja zużywa pamięć kotła albo pozwala wartości wygasnąć |
 | Wartość przy oddaniu sterowania | brak — wpisywana razem ze skutkiem | ta sama liczba na jednym urządzeniu znaczy „własne sterowanie”, na innym „bez ciepła” |
-| Ochrona przed mrozem | wł. przy 5 °C, wył. przy 7 °C, każda strefa | grzeje tylko strefy, których grzejniki mogą przyjąć ciepło; strefa trzymana przez VT zamknięta dostaje zgłoszenie w Naprawach |
 | Reakcje na alarmy | informacja — kilka alarmów zawsze oddaje sterowanie | alarm ustawiony na oddanie zatrzymuje sterowanie, dopóki go nie wyłączysz i nie włączysz |
 | Powrót sam po innym sterowniku | wyłączony | włączony: sterowanie wraca 60 minut po ostatniej obcej wartości, choć inny sterownik może wciąż działać |
-| Wstrzymywanie uczenia (SmartPI) | włączone | wyłączone: wahania wywołane przez wtyczkę trafiają do modelu SmartPI |
+| Ograniczenie modulacji (zaawansowane) | wyłączone; zaznaczone, 70 % (30–100 %, tymczasowo) | ogranicza największą moc kotła, gdy wtyczka nim steruje, co może wydłużyć pracę palnika przy małym zapotrzebowaniu — dowody są słabe; mniej ciepła w mróz, więc zdejmuje się samo, gdy woda nie nadąża, i jest zwalniane na czas ciepłej wody i przy każdym oddaniu sterowania |
 
 Każda wartość domyślna i jej powód: tabela wartości domyślnych w [specyfikacji, część 7](../specification/scope.md#7-funkcje-według-etapów).
 Wartości oznaczone jako tymczasowe są przeglądane przed pierwszym wydaniem.
@@ -1324,12 +1513,21 @@ automation:
           message: "Werdykt sterowania: {{ states('sensor.boiler_control_verdict') }}"
 ```
 
-Oddaj kocioł przed wizytą serwisu — robi to wyłączenie sterowania:
+Oddaj kocioł przed wizytą serwisu — robi to wyłączenie sterowania. Odznacz **Sterowanie
+włączone** w opcjach albo zleć to automatyzacji, tu wtedy, gdy włączysz utworzonego przez siebie
+pomocnika. Każda osoba, która może przełączyć tego pomocnika, przełącza wtedy sterowanie:
 
 ```yaml
-action: switch.turn_off
-target:
-  entity_id: switch.boiler_control_experimental
+automation:
+  - alias: "Kocioł: sterowanie wyłączone na wizytę serwisu"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.boiler_service_visit
+        to: "on"
+    actions:
+      - action: vtherm_smart_boiler.set_control
+        data:
+          enabled: false
 ```
 
 ## 14. Rozwiązywanie problemów
@@ -1340,6 +1538,10 @@ target:
 - **Stan sterowania zostaje „Oddane kotłu”.** Wtyczka się wycofała — inny sterownik, kocioł
   ignorujący „grzanie wył.”, alarm ustawiony na oddanie. Usuń przyczynę, potem wyłącz i włącz
   sterowanie.
+- **Wtyczka nie zna żadnego pokoju albo któregoś brakuje.** VT przekazuje termostat dopiero
+  wtedy, gdy go uruchamia: po pierwszej instalacji uruchom ponownie Home Assistanta albo raz
+  przeładuj wpisy VT. Pokój liczy się tylko z zaznaczonym **Używane przez kocioł centralny**
+  w jego termostacie w VT; zgłoszenia w Naprawach podają termostaty, którym tego brakuje.
 - **Werdykt mówi „Jeszcze za mało danych” albo brakuje czujnika.** Czujniki **Funkcje** i
   **Problemy z sygnałami** wskazują brakujące albo nieświeże sygnały.
 - **„Sygnały” są wyłączone.** Płomień albo zasilanie jest nieświeże lub nieznane: sprawdź
@@ -1362,19 +1564,16 @@ target:
 - **Zmiany, których nie widać w odczycie zwrotnym:** grzanie wyłączone albo tryb letni na panelu
   kotła, blokada kotła, aplikacja producenta, limit modulacji innego sterownika, zezwolenie na
   ciepłą wodę, kocioł obcinający nastawę za bramką — bramka wciąż pokazuje wartość wtyczki. Widać
-  je tylko po skutkach: korekta komfortu na swoim limicie (po około 4,5 h) albo grzanie
-  przeciwmrozowe, które nie ogrzewa pomieszczenia (po 2 h).
+  je tylko po skutkach: brak oznak grzania kotła, gdy VT woła (po 30 minutach), albo korekta
+  komfortu na swoim limicie (po około 5,5 h, dłużej przy wolniejszych cyklach VT).
 - **Kocioł obcinający stałą nastawę** wygląda jak inny sterownik: niższa wartość jest uznawana za
   własny limit kotła dopiero wtedy, gdy wtyczka wysłała wartości różniące się o co najmniej 1 K.
   Przy jednej stałej wartości jest raz zapisywana ponownie, a druga zmiana w ciągu 24 h każe
   wtyczce się wycofać.
 - Jeden kocioł na Home Assistant (jeden wpis). Bez pomp ciepła, zaworów i sterowania ciepłą wodą.
-- **Strefy VT z zaworem, który nie zamyka się do końca** (w VT „Maksymalny stopień zamknięcia”
-  poniżej 100) wymagają VT 10.5 lub nowszego: VT 10.2–10.4 liczy taki zawór na jego minimum jako
-  grzejący, więc strefa prosi o ciepło bez przerwy i kocioł może się nigdy nie wyłączać.
 - Sterowanie temperaturą wody wymaga przełącznika grzania wł./wył. (poza EMS-ESP); bramka z
   termostatem wł./wył. na zaciskach to tylko monitor.
-- Własny kocioł centralny VT musi być wyłączony, a Home Assistant raz uruchomiony ponownie.
+- Kocioł centralny VT musi być ustawiony, z poleceniami na pomocniku, za którym idzie wtyczka.
 - Prognozy są zapisywane, ale sterowanie jeszcze z nich nie korzysta.
 - W instalacji Home Assistant poza jego kontenerem albo obrazem systemu Home Assistant instaluje
   razem z wtyczką biblioteki integracji MQTT i OpenTherm Gateway, nawet jeśli nie używasz żadnej z
@@ -1386,8 +1585,8 @@ target:
 1. Możesz najpierw wyłączyć sterowanie (**Tryb sterowania**, odznacz **Sterowanie włączone**) i
    sprawdzić, że kocioł wrócił do własnego sterowania.
 2. Usuń wpis: Ustawienia → Urządzenia oraz usługi → Smart Boiler for Versatile Thermostat → Usuń.
-   Wtyczka oddaje kocioł, wznawia wstrzymane przez siebie uczenie SmartPI i usuwa swój zapisany
-   stan, dziennik i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
+   Wtyczka oddaje kocioł i usuwa swój zapisany stan, dziennik, historię pokoi i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
    Naprawach: oddaj kocioł ręcznie.
 3. Usuń ją w HACS (albo usuń jej folder) i uruchom ponownie Home Assistant.
-4. Aby wrócić do kotła centralnego VT, zaznacz go z powrotem w centralnej konfiguracji VT.
+4. Aby kocioł centralny VT znów sterował kotłem, skieruj jego polecenia z powrotem na kocioł w
+   centralnej konfiguracji VT.

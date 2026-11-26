@@ -13,7 +13,7 @@ from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zone
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
@@ -45,10 +45,10 @@ MAIN = (
 
 
 def entry_for(boiler: FakeBoiler, zones: FakeZones | None = None, **extra) -> MockConfigEntry:
+    """The entry for ``boiler``; ``zones``' rooms are VT's (I12.11): nothing of them is stored."""
     options = {
         "signals": {s.value: boiler.entity(s) for s in boiler.signals},
         "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0},
-        "zones": [{"entity_id": e} for e in (zones.entities.values() if zones else [])],
     } | extra
     return MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
 
@@ -341,15 +341,14 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
     assert len(asked) == 2
 
 
-async def test_the_backfill_puts_a_zones_recorded_states_before_its_live_ones(
+async def test_no_recorder_query_asks_for_vts_climates(
     hass: HomeAssistant, freezer, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P-117: a VT zone's recorded states, read back with their attributes, go before the
-    zone's states recorded live since setup — series by series, only what is older, as the
-    boiler's signals do. Negative: a zone the recorder has nothing for keeps its live states
-    alone."""
-    import asyncio
-
+    """I12.7b (the user's decision of 2026-11-25): the rooms' past is no longer rebuilt from the
+    recorder's records of VT's climates — neither the rolling eight days nor the older days the
+    day summaries are built from ask for them. A room enters the history from the plugin's own
+    read through ``vtherm_api`` at the first refresh; without a helper (monitoring only) no
+    helper is asked for either. Negative: a climate state the recorder would give is not there."""
     from homeassistant.core import State
     from homeassistant.util import dt as dt_util
 
@@ -357,53 +356,158 @@ async def test_the_backfill_puts_a_zones_recorded_states_before_its_live_ones(
 
     freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
     now = dt_util.utcnow()
-    release = asyncio.Event()
-    living = zones.add(
-        "living",
-        current_temperature=20.5,
-        temperature=21.0,
-        hvac_action="heating",
-        valve_open_percent=70,
-    )
-    bedroom = zones.add("bedroom", current_temperature=19.0, valve_open_percent=10)
+    living = zones.add("living", current_temperature=20.5, temperature=21.0, hvac_action="heating")
+    asked: list[tuple[bool, list[str]]] = []
 
-    def recorded(temperature: float, action: str, opening: int, days: int) -> State:
-        attributes = {
-            "current_temperature": temperature,
-            "temperature": 21.0,
-            "hvac_action": action,
-            "valve_open_percent": opening,
-            "is_ready": True,
-            "specific_states": {},
+    def significant_states(hass, start_time, *, end_time=None, entity_ids=None, **_kwargs):
+        asked.append((end_time is None, list(entity_ids)))
+        if start_time < now - timedelta(days=12):
+            return {}  # the recorder reaches no further back
+        flame = boiler.entity(Signal.FLAME)
+        climate = {"current_temperature": 18.0, "hvac_action": "heating", "is_ready": True}
+        return {
+            flame: [State(flame, "off", {}, last_updated=start_time)],
+            living: [State(living, "heat", climate, last_updated=start_time)],
         }
-        return State(living, "heat", attributes, last_updated=now - timedelta(days=days))
-
-    def significant_states(hass, start_time, **kwargs):
-        return {living: [recorded(18.0, "heating", 40, 2), recorded(19.0, "idle", 0, 1)]}
 
     class Recorder:
         async def async_add_executor_job(self, target, *args):
-            await release.wait()
             return await hass.async_add_executor_job(target, *args)
 
     monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
     monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
     hass.config.components.add("recorder")
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
-    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 45.0})
     entry = entry_for(boiler, zones)
-    await setup(hass, entry, background=False)  # does not wait for the recorder
+    await setup(hass, entry)
+    assert {rolling for rolling, _ids in asked} == {True, False}  # both kinds of query ran
+    assert all(living not in ids for _rolling, ids in asked)
+    assert all(not any(e.startswith("input_boolean.") for e in ids) for _rolling, ids in asked)
     zone = entry.runtime_data.history.zones[living]
-    assert [s.value for s in zone.temperature] == [20.5]
-    release.set()
+    assert [(s.t, s.value) for s in zone.temperature] == [(now.timestamp(), 20.5)]
+    assert [s.value for s in zone.calling] == [True]
+
+
+async def test_the_rooms_history_survives_a_restart_and_goes_with_the_entry(
+    hass: HomeAssistant, freezer, hass_storage: dict[str, Any], zones: FakeZones
+) -> None:
+    """I12.7b: each room as read at every refresh goes into the history by its changes only; the
+    rooms' store keeps it, written at the stop; read back at the next start, it is unknown from
+    that write until the room is read again. The store goes with the entry."""
+    from custom_components.vtherm_smart_boiler.core.series import Series
+
+    def samples(series: Series[Any]) -> list[tuple[float, Any]]:
+        return [(s.t, s.value) for s in series]
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    t0 = datetime(2026, 1, 10, 12, tzinfo=UTC).timestamp()
+    living = zones.add("living", current_temperature=20.5, temperature=21.0, hvac_action="heating")
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 45.0})
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    freezer.tick(timedelta(minutes=5))
+    zones.set("living", current_temperature=20.8, temperature=21.0, hvac_action="idle")
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()  # nothing changed: nothing added
+    zone = coordinator.history.zones[living]
+    assert samples(zone.temperature) == [(t0, 20.5), (t0 + 300, 20.8)]
+    assert samples(zone.target) == [(t0, 21.0)]
+    assert samples(zone.calling) == [(t0, True), (t0 + 300, False)]
+    freezer.tick(timedelta(minutes=1))
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    key = f"{DOMAIN}.{entry.entry_id}.rooms"
+    stored = hass_storage[key]["data"]
+    assert stored["saved_at"] == t0 + 360
+    assert set(stored["zones"]) == {living}
+    freezer.tick(timedelta(hours=1))  # an hour down
+    zones.set("living", current_temperature=19.0, temperature=21.0, hvac_action="heating")
+    assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert [s.value for s in zone.temperature] == [18.0, 19.0, 20.5]
-    assert [s.value for s in zone.valve_open] == [0.4, 0.0, 0.7]
-    assert [s.value for s in zone.calling] == [True, False, True]
-    assert [s.value for s in zone.target] == [21.0]  # unchanged throughout: one sample
-    assert zone.temperature.first_time == (now - timedelta(days=2)).timestamp()
-    other = entry.runtime_data.history.zones[bedroom]
-    assert [s.value for s in other.temperature] == [19.0]
+    zone = entry.runtime_data.history.zones[living]
+    back = t0 + 360 + 3600
+    assert samples(zone.temperature) == [(t0, 20.5), (t0 + 300, 20.8), (t0 + 360, None),
+                                         (back, 19.0)]  # fmt: skip
+    assert samples(zone.target) == [(t0, 21.0), (t0 + 360, None), (back, 21.0)]
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert key not in hass_storage
+
+
+async def test_the_rooms_store_is_written_half_an_hour_late_and_keeps_eight_days(
+    hass: HomeAssistant,
+    freezer,
+    hass_storage: dict[str, Any],
+    zones: FakeZones,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I12.7b: a change of a room schedules one write of the rooms' store, half an hour later —
+    later changes do not put it off, nor schedule another while it waits. What is read back
+    reaches eight days back, the value holding then included; an unreadable series is left out,
+    the rest kept; a store that says not when it was written is ignored."""
+    from homeassistant.helpers.storage import Store
+
+    from custom_components.vtherm_smart_boiler.coordinator import ROOMS_SAVE_DELAY_S
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    now = datetime(2026, 1, 10, 12, tzinfo=UTC).timestamp()
+    living = zones.add("living", current_temperature=20.0, temperature=21.0)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 45.0})
+    entry = entry_for(boiler, zones)
+    key = f"{DOMAIN}.{entry.entry_id}.rooms"
+    first = round(now - 10 * DAY)
+    temperature = f"{first}:18.0,{DAY:.0f}:18.5,{7 * DAY:.0f}:19.0"  # 10, 9 and 2 days ago
+    hass_storage[key] = {
+        "version": 1,
+        "key": key,
+        "data": {
+            "saved_at": now - DAY,
+            "zones": {living: {"temperature": temperature, "target": "x:21"}},
+        },
+    }
+    delays: list[float] = []
+    delay_save = Store.async_delay_save
+
+    def recorded(store: Store[Any], data_func: Any, delay: float = 0) -> None:
+        if store.key == key:
+            delays.append(delay)
+        delay_save(store, data_func, delay)
+
+    monkeypatch.setattr(Store, "async_delay_save", recorded)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    zone = coordinator.history.zones[living]
+    assert [(s.t, s.value) for s in zone.temperature] == [
+        (now - 9 * DAY, 18.5),
+        (now - 2 * DAY, 19.0),
+        (now - DAY, None),
+        (now, 20.0),
+    ]
+    assert [s.value for s in zone.target] == [21.0]  # the damaged series left out
+    assert delays == [ROOMS_SAVE_DELAY_S]  # the first read's change
+    for degrees in (20.3, 20.6):
+        freezer.tick(timedelta(minutes=1))
+        zones.set("living", current_temperature=degrees, temperature=21.0)
+        await coordinator.async_refresh()
+    assert delays == [ROOMS_SAVE_DELAY_S]  # one write pending: none more
+    freezer.tick(timedelta(seconds=ROOMS_SAVE_DELAY_S))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass_storage[key]["data"]["saved_at"] > now
+    zones.set("living", current_temperature=20.9, temperature=21.0)
+    await coordinator.async_refresh()
+    assert delays == [ROOMS_SAVE_DELAY_S] * 2  # written: the next change schedules another
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    hass_storage[key]["data"].pop("saved_at")
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    zone = entry.runtime_data.history.zones[living]
+    assert [s.value for s in zone.temperature] == [20.9]  # nothing read back
 
 
 async def test_no_day_is_kept_before_the_history_is_back(
@@ -535,20 +639,20 @@ async def test_a_renamed_entity_is_followed(
     assert flow.entity_id == boiler.entity(Signal.FLOW)
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     living = zones.add("living")
-    entry = entry_for(boiler, zones)
+    # I12.11: the only circuit lists no room, only its emitter lists — here the living room's.
+    entry = entry_for(boiler, zones, circuits=[{"id": "main", "convectors": [living]}])
     await setup(hass, entry)
     setups = count_setups(monkeypatch)
     registry.async_update_entity(living, new_entity_id="climate.lounge")
     registry.async_update_entity(flow.entity_id, new_entity_id="sensor.boiler_flow")
     await hass.async_block_till_done()
-    # I8 (F4): the zones are the circuits' — the one the options implied, after minor 20.
-    assert entry.options["circuits"][0]["zones"] == ["climate.lounge"]
+    assert entry.options["circuits"][0]["convectors"] == ["climate.lounge"]
     assert entry.options["signals"]["flow"] == "sensor.boiler_flow"
     assert setups == [entry.entry_id]  # one reload
     assert entry.state is ConfigEntryState.LOADED
     registry.async_update_entity("climate.lounge", new_entity_id="climate.salon")
     await hass.async_block_till_done()
-    assert entry.options["circuits"][0]["zones"] == ["climate.salon"]
+    assert entry.options["circuits"][0]["convectors"] == ["climate.salon"]
     assert len(setups) == 2
 
 
@@ -689,7 +793,8 @@ async def test_a_removed_entity_raises_a_repair_issue(
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     living = zones.add("living")
     bedroom = zones.add("bedroom")
-    entry = entry_for(boiler, zones)
+    # I12.11: the only circuit names its rooms in its emitter lists only.
+    entry = entry_for(boiler, zones, circuits=[{"id": "main", "convectors": [living, bedroom]}])
     await setup(hass, entry)
     issue_id = f"entity_removed_{entry.entry_id}_{living}"
 
@@ -717,7 +822,7 @@ async def test_a_removed_entity_raises_a_repair_issue(
     remove(bedroom)
     await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, gone) is not None
-    circuits = [{**entry.options["circuits"][0], "zones": [living]}]  # the zones: the circuit's
+    circuits = [{**entry.options["circuits"][0], "convectors": [living]}]
     hass.config_entries.async_update_entry(entry, options={**entry.options, "circuits": circuits})
     await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, gone) is None  # no longer named
@@ -856,13 +961,12 @@ async def test_an_entry_from_before_drops_the_options_that_are_gone(
     )
     await left_control_store(hass, entry)
     await setup(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     # Minor version 3 (X6): the lowest water temperature 0.2.1 used, kept.
     assert entry.options["control"] == {
         "write_path": "entity",
         "hard_min": 25.0,
         "comfort_correction": False,  # what it ran with, stored (G11 B)
-        "count_by": "zones",  # what it ran with, stored (21)
     }
 
 
@@ -911,7 +1015,7 @@ async def test_the_alarm_migration_moves_to_the_add_water_threshold(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     stored = entry.options["monitor"]
     assert "pressure_low_warning" not in stored
     assert "pressure_low_alarm" not in stored
@@ -951,7 +1055,7 @@ async def test_the_alarm_migration_keeps_an_offered_reaction_and_raises_no_issue
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["control"]["alarm_reactions"] == {"write_ignored": "hand_back"}
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"reactions_removed_{entry.entry_id}") is None
 
@@ -987,7 +1091,7 @@ async def test_migration_keeps_the_floor_of_a_control_section_without_it(
     await left_control_store(hass, entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     stored = entry.options.get("control")
     if hard_min is None:
         assert stored == control
@@ -1011,7 +1115,13 @@ STORED_BY_MINOR: dict[int, dict[str, Any]] = {
     1: {
         "boiler": {"class": "flow_setpoint", "dhw": "combi", "shared_return": True},
         "control": _GATEWAY
-        | {"min_burn_min": 5, "daily_cap": 100, "alarm_reactions": _REACTIONS, "curve": _CURVE},
+        | {
+            "min_burn_min": 5,
+            "daily_cap": 100,
+            "alarm_reactions": _REACTIONS,
+            "curve": _CURVE,
+            "learning_pauses": True,  # gone at 23 (I12.9)
+        },
         "monitor": _OLD_MONITOR,
     },
     2: {  # 0.2.1's removed options gone (shared_return among them)
@@ -1067,8 +1177,9 @@ BEFORE_21 = {  # G11 D: the curve's room temperature it ran with, Manual, now st
     "monitor": {"monitoring_days": 7, "add_water_below": 0.8},
     "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0, "design_outdoor": -18.0},
 }
-# 21 (2026-10-14): the count by zones it ran with, now stored.
-CURRENT_OPTIONS = BEFORE_21 | {"control": {**BEFORE_21["control"], "count_by": "zones"}}
+# 21 (2026-10-14) stored the count by zones it ran with; 22 (I12) drops the demand settings; 23
+# (I12.9) the learning pauses; 24 (I12.10) the frost settings.
+CURRENT_OPTIONS = BEFORE_21
 STORED_BY_MINOR[8] = BEFORE_21 | {"reference_room": {"strategy": "average"}}
 STORED_BY_MINOR[9] = BEFORE_21 | {"monitor": {**BEFORE_21["monitor"], "foreign_heat_hold_min": 30}}
 STORED_BY_MINOR[10] = BEFORE_21 | {  # I8.1a, I8.1c: reference room, foreign heat gone
@@ -1086,13 +1197,28 @@ STORED_BY_MINOR[17] = BEFORE_21  # I8.5a: the relay's answer, the orphan limits;
 STORED_BY_MINOR[18] = BEFORE_21  # I8.5b: the read-backs are signals; none here
 STORED_BY_MINOR[19] = BEFORE_21  # I8.7a: the highest water temperature is the circuit's
 STORED_BY_MINOR[20] = BEFORE_21  # I8.7c: the zones are the circuits'; none here
-STORED_BY_MINOR[21] = CURRENT_OPTIONS  # the count by zones it ran with
+STORED_BY_MINOR[21] = BEFORE_21 | {  # the count by zones it ran with, the default count of 1
+    "control": {**BEFORE_21["control"], "count_by": "zones", "count_threshold": 1}
+}
+STORED_BY_MINOR[22] = CURRENT_OPTIONS | {  # I12: VT's central boiler decides; no demand settings
+    "control": {**CURRENT_OPTIONS["control"], "learning_pauses": False}
+}
+STORED_BY_MINOR[23] = CURRENT_OPTIONS | {  # I12.9: no learning pauses; frost settings stored
+    "control": {
+        **CURRENT_OPTIONS["control"],
+        "frost_limit": 4.0,
+        "frost_release": 6.0,
+        "frost_zone": "climate.bedroom",
+    }
+}
+STORED_BY_MINOR[24] = CURRENT_OPTIONS  # I12.10: frost protection is VT's
+STORED_BY_MINOR[25] = CURRENT_OPTIONS  # I12.11: the rooms are VT's; no zones here
 
 
 def through_21(section: dict[str, Any]) -> dict[str, Any]:
-    """What minor version 21 adds to a control section naming a write path: the count by zones
-    it ran with (2026-10-14)."""
-    return section | {"count_by": "zones"} if section.get("write_path") else section
+    """A control section through minor version 21's count by zones and 22's removal of it (I12):
+    as it was."""
+    return section
 
 
 @pytest.mark.parametrize(
@@ -1125,7 +1251,7 @@ async def test_an_entry_from_before_keeps_the_high_pressure_limits_it_ran_with(
         domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=minor
     )
     await setup(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["monitor"] == {"monitoring_days": 7, **expected}
     key = f"{entry.entry_id}_alarm_pressure_high"
     found = er.async_get(hass).async_get_entity_id("binary_sensor", DOMAIN, key)
@@ -1199,7 +1325,7 @@ async def test_the_curves_design_outdoor_temperature_becomes_the_buildings(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert dict(entry.options) == expected
     assert ("replaces the building's -20.0 °C" in caplog.text) is replaced
 
@@ -1236,7 +1362,7 @@ async def test_an_upgraded_entry_keeps_the_comfort_correction_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21  # through the later steps too
+    assert entry.minor_version == 25  # through the later steps too
     assert entry.options.get("control") == (None if expected is None else through_21(expected))
 
 
@@ -1259,14 +1385,11 @@ async def test_an_upgraded_entry_drops_foreign_heat(hass: HomeAssistant) -> None
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
-    # I8.7c (minor version 20): the zone moved to the circuit the options implied.
-    implied = {"id": "main", "control": "unmixed_shared", "zones": ["climate.a"]}
-    assert dict(entry.options) == {
-        "zones": [],
-        "circuits": [implied],
-        "monitor": {"monitoring_days": 7},
-    }
+    assert entry.minor_version == 25
+    # I8.7c (minor version 20): the zone moved to the circuit the options implied; 25
+    # (I12.11): the only circuit takes every room, its list and the zones' section gone.
+    implied = {"id": "main", "control": "unmixed_shared"}
+    assert dict(entry.options) == {"circuits": [implied], "monitor": {"monitoring_days": 7}}
 
 
 @pytest.mark.parametrize(
@@ -1322,7 +1445,7 @@ async def test_an_upgraded_entry_drops_the_correction_range(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["control"] == through_21(expected)
 
 
@@ -1336,7 +1459,6 @@ def test_a_session_taken_with_a_correction_range_compares_as_migrated() -> None:
         "write_path": "entity",
         "comfort_correction": True,
         "comfort_correction_max_k": 2.0,
-        "count_by": "zones",  # 21: what it ran with
     }
 
 
@@ -1389,7 +1511,7 @@ async def test_an_upgraded_entry_keeps_the_heat_loss_it_entered(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert dict(entry.options) == expected
 
 
@@ -1416,7 +1538,7 @@ async def test_room_temperature_only_reads_as_monitoring_only(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["boiler"] == boiler | {"control_mode": expected}
 
 
@@ -1467,7 +1589,7 @@ async def test_the_mqtt_topics_are_stored_once(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["boiler"] == expected_boiler
     assert entry.options["control"] == through_21(expected_control)
     assert ("is replaced by the control's" in caplog.text) is (boiler.get("mqtt_node") == "old")
@@ -1520,7 +1642,7 @@ async def test_a_gateways_monitor_mode_is_monitoring_only(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["boiler"] == expected_boiler
     assert entry.options["control"] == through_21(expected_control)
 
@@ -1589,7 +1711,7 @@ async def test_a_relay_answers_and_limits_follow_the_signals(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert dict(entry.options) == expected
 
 
@@ -1638,7 +1760,7 @@ async def test_the_read_backs_become_boiler_signals(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["signals"] == expected_signals
     assert entry.options["control"] == through_21({"write_path": "opentherm_gw", "hard_min": 25.0})
     assert ("is replaced by the control's read-back" in caplog.text) is (
@@ -1721,12 +1843,9 @@ async def test_the_highest_water_temperature_becomes_the_circuits(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
-    circuits = expected.get("circuits")
-    if isinstance(circuits, list) and all(isinstance(c, dict) for c in circuits):
-        # Minor version 20: each circuit lists its zones (none here); one of another shape
-        # leaves them all as stored.
-        expected = expected | {"circuits": [c | {"zones": []} for c in circuits]}
+    assert entry.minor_version == 25
+    # Minor version 20 gave each circuit its list of zones (none here); 25 drops the only
+    # circuit's (I12.11: it takes every room) — one circuit in each case here.
     if isinstance(expected.get("control"), dict):
         expected = expected | {"control": through_21(expected["control"])}
     assert dict(entry.options) == expected
@@ -1757,15 +1876,11 @@ _TWO = [{"id": "main", "control": "unmixed_shared"}, {"id": "floor", "control": 
                     _TWO[0] | {"zones": ["climate.a", "climate.c"], "convectors": ["climate.c"]},
                     _TWO[1] | {"zones": ["climate.b"], "underfloor": ["climate.b"]},
                 ],
-                "zones": [{"entity_id": "climate.c", "closes_when_off": True}],
             },
         ),
-        (  # no circuit named, one stored: its; none stored: the one implied
+        (  # no circuit named, one stored: its; none stored: the one implied — every room (25)
             {"zones": [{"entity_id": "climate.a"}]},
-            {
-                "circuits": [{"id": "main", "control": "unmixed_shared", "zones": ["climate.a"]}],
-                "zones": [],
-            },
+            {"circuits": [{"id": "main", "control": "unmixed_shared"}]},
         ),
         (  # left for the check: a circuit not there, none among several, another shape
             {"circuits": _TWO, "zones": [{"entity_id": "climate.a", "circuit": "gone"}]},
@@ -1783,8 +1898,9 @@ async def test_the_zones_become_the_circuits(
     hass: HomeAssistant, options: dict[str, Any], expected: dict[str, Any] | None
 ) -> None:
     """I8.7c (minor version 20, decisions F2 and F4): each circuit lists the zones it feeds and,
-    of them, those with underfloor and with convectors; the zones' section keeps the "valves
-    close" tick. What cannot move safely is left as stored, for the check to report."""
+    of them, those with underfloor and with convectors. What cannot move safely is left as
+    stored, for the check to report. Then 25 (I12.11): the zones' section goes, "valves close"
+    with it, and the only circuit's list — every room is its."""
     from custom_components.vtherm_smart_boiler import async_migrate_entry
 
     entry = MockConfigEntry(
@@ -1792,8 +1908,47 @@ async def test_the_zones_become_the_circuits(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
-    assert dict(entry.options) == (options if expected is None else expected)
+    assert entry.minor_version == 25
+    if expected is None:  # left at 20; 25 drops the zones' section, and an only circuit's list
+        expected = {k: v for k, v in options.items() if k != "zones"}
+    assert dict(entry.options) == expected
+
+
+@pytest.mark.parametrize(
+    ("circuits", "expected"),
+    [
+        (  # one circuit: its rooms and devices go, its emitter lists stay
+            [{"id": "main", "zones": ["c.a", "c.b"], "devices": {"c.a": ["s.a"]},
+              "underfloor": ["c.b"], "max_flow": 45}],
+            [{"id": "main", "underfloor": ["c.b"], "max_flow": 45}],
+        ),
+        (  # several: each keeps its list, the mapping
+            [{"id": "main", "zones": ["c.a"]}, {"id": "floor", "zones": ["c.b"]}],
+            [{"id": "main", "zones": ["c.a"]}, {"id": "floor", "zones": ["c.b"]}],
+        ),
+    ],
+    ids=["one_circuit", "several"],
+)  # fmt: skip
+async def test_the_rooms_come_from_vt_after_the_migration(
+    hass: HomeAssistant, circuits: list[dict[str, Any]], expected: list[dict[str, Any]]
+) -> None:
+    """I12.11 (minor version 25, the user's decision of 2026-11-25): an entry of minor version 24
+    loses its zones' section — "valves close when off" with it — and, with one circuit, that
+    circuit's list of rooms and its devices; with several, each keeps its list."""
+    from custom_components.vtherm_smart_boiler import async_migrate_entry
+
+    options = {
+        "circuits": circuits,
+        "zones": [{"entity_id": "c.a", "closes_when_off": True}],
+        "monitor": {"monitoring_days": 7},
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Boiler", data={}, options=options, version=1, minor_version=24
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 25
+    assert dict(entry.options) == {"circuits": expected, "monitor": {"monitoring_days": 7}}
 
 
 async def test_signals_of_another_shape_keep_the_read_backs_where_they_were(
@@ -1847,11 +2002,9 @@ async def test_an_upgraded_entry_drops_the_zone_values(hass: HomeAssistant) -> N
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
-    assert dict(entry.options) == {
-        "zones": [zone, "climate.b"],
-        "monitor": {"monitoring_days": 7},
-    }
+    assert entry.minor_version == 25
+    # 20 left the zone that is no mapping for the check; 25 (I12.11) drops the zones' section.
+    assert dict(entry.options) == {"monitor": {"monitoring_days": 7}}
 
 
 async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -> None:
@@ -1870,7 +2023,7 @@ async def test_an_upgraded_entry_drops_the_reference_room(hass: HomeAssistant) -
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert dict(entry.options) == kept
 
 
@@ -1916,28 +2069,49 @@ async def test_an_upgraded_entry_keeps_the_curves_room_it_ran_with(
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["control"] == through_21(expected)
 
 
 @pytest.mark.parametrize(
-    ("control", "expected"),
+    ("control", "expected", "told"),
     [
-        ({"write_path": "entity"}, {"write_path": "entity", "count_by": "zones"}),
         (
-            {"write_path": "relay", "count_by": "devices"},
-            {"write_path": "relay", "count_by": "devices"},
+            {"write_path": "entity", "count_by": "zones", "count_threshold": 1},
+            {"write_path": "entity"},
+            None,
         ),
-        ({"count_threshold": 2}, {"count_threshold": 2}),  # not set up: the new default later
+        (
+            {
+                "write_path": "relay",
+                "count_by": "devices",
+                "count_threshold": 2,
+                "power_threshold_kw": 3.5,
+                "opening_threshold": 40,
+                "activation_delay_s": 120,
+            },
+            {"write_path": "relay"},
+            {"count": "2", "power": "3.5", "opening": "40", "delay": "120"},
+        ),
+        (
+            {"write_path": "entity", "count_threshold": 0, "activation_delay_s": 60},
+            {"write_path": "entity"},
+            {"count": "-", "power": "-", "opening": "-", "delay": "60"},
+        ),
+        ({"count_threshold": 3}, {}, None),  # control not set up: nothing to tell
     ],
-    ids=["ran_counting_zones", "answer_kept", "not_set_up"],
+    ids=["defaults", "every_setting", "a_delay", "not_set_up"],
 )
-async def test_an_entry_from_before_keeps_counting_zones(
-    hass: HomeAssistant, control: dict[str, Any], expected: dict[str, Any]
+async def test_vts_central_boiler_takes_over_the_demand_settings(
+    hass: HomeAssistant, control: dict[str, Any], expected: dict[str, Any], told: dict | None
 ) -> None:
-    """Minor version 21 (the user's decision of 2026-10-14): VT's devices are counted by
-    default now; a control section from before counted zones and keeps that, written into it;
-    a stored answer stays; a section not set up gets the new default once it is."""
+    """Minor version 22 (I12, the user's decision of 2026-11-25): VT's central boiler decides
+    whether the boiler heats, with its own thresholds and delay — the plugin's demand settings
+    leave the control section. Where one was set that VT's central boiler must now be given — a
+    count above 1, a power or opening threshold, a delay above 0 — one persistent warning says
+    so, with the values. Negative: the defaults, or control not set up, tell nothing."""
+    from homeassistant.helpers import issue_registry as ir
+
     from custom_components.vtherm_smart_boiler import async_migrate_entry
 
     entry = MockConfigEntry(
@@ -1946,19 +2120,74 @@ async def test_an_entry_from_before_keeps_counting_zones(
         data={},
         options={"control": control},
         version=1,
-        minor_version=20,
+        minor_version=21,
     )
     entry.add_to_hass(hass)
     assert await async_migrate_entry(hass, entry)
-    assert entry.minor_version == 21
+    assert entry.minor_version == 25
     assert entry.options["control"] == expected
+    found = ir.async_get(hass).async_get_issue(DOMAIN, f"vt_settings_moved_{entry.entry_id}")
+    if told is None:
+        assert found is None
+        return
+    assert found is not None
+    assert found.translation_key == "vt_settings_moved"
+    assert found.translation_placeholders == told
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.is_persistent
+
+
+@pytest.mark.parametrize(
+    ("control", "told"),
+    [
+        ({"write_path": "entity", "frost_limit": 4.0, "frost_release": 6.0}, True),
+        ({"write_path": "entity"}, True),  # the defaults: the plugin's frost protection ran too
+        ({"frost_limit": 4.0}, False),  # control not set up: nothing to tell
+    ],
+    ids=["frost_set", "defaults", "not_set_up"],
+)
+async def test_frost_protection_moving_to_vt_is_told_once(
+    hass: HomeAssistant, control: dict[str, Any], told: bool
+) -> None:
+    """Minor version 24 (I12.10, the user's decision of 2026-11-25): the plugin's frost
+    protection goes, and where control was set up one persistent warning says that frost
+    protection is VT's alone now — a house that relied on the plugin's would otherwise be
+    unprotected without knowing it. Negative: control not set up tells nothing; the issue goes
+    with the entry."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.vtherm_smart_boiler import async_migrate_entry, async_remove_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options={"control": control},
+        version=1,
+        minor_version=23,
+    )
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    assert entry.minor_version == 25
+    assert not {"frost_limit", "frost_release"} & set(entry.options["control"])
+    issue_id = f"frost_moved_to_vt_{entry.entry_id}"
+    found = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    if not told:
+        assert found is None
+        return
+    assert found is not None
+    assert found.translation_key == "frost_moved_to_vt"
+    assert found.severity is ir.IssueSeverity.WARNING
+    assert found.is_persistent
+    await async_remove_entry(hass, entry)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
 @pytest.mark.parametrize("minor", sorted(STORED_BY_MINOR))
 async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_options(
     hass: HomeAssistant, minor: int
 ) -> None:
-    """P-124: from minor version 1 through 2 to 20 to this one (21), each step applied once and in
+    """P-124: from minor version 1 through 2 to 22 to this one (23), each step applied once and in
     order from where the entry stands — ``boiler.shared_return`` and 0.2.1's removed control
     options go (2), the lowest water temperature 0.2.1 used is kept (3, X6), the low-pressure
     limits become the "add water" threshold and the reactions decision 7 no longer offers go,
@@ -1969,8 +2198,11 @@ async def test_an_entry_of_any_earlier_minor_version_migrates_to_this_ones_optio
     answers (13, I8), room temperature only (14, I8), the MQTT topics stored once (15, I8),
     the gateway's monitor mode as monitoring only (16, I8), the relay's answer with the age
     limits of signals not mapped (17, I8), the read-backs as signals (18, I8), the highest
-    water temperature as the circuit's (19, I8), the zones as the circuits' (20, I8) and the
-    count by zones it ran with (21, 2026-10-14). Every starting point ends with the same options;
+    water temperature as the circuit's (19, I8), the zones as the circuits' (20, I8), the
+    count by zones it ran with (21, 2026-10-14), the demand settings gone (22, I12): VT's
+    central boiler decides, the learning pauses gone (23, I12.9), the frost settings gone (24,
+    I12.10): frost protection is VT's, and the zones' section with the only circuit's list (25,
+    I12.11): the rooms are VT's. Every starting point ends with the same options;
     an entry already current is left as it is, and warns of nothing."""
     from homeassistant.helpers import issue_registry as ir
 
@@ -2254,17 +2486,23 @@ async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
 ) -> None:
     """R6, A2: a TPI zone at 10 % keeps its duty cycle through the cycle while its relay pulses.
     Burns that follow the relay — lit after it closes, out after it opens — lost no flame; the
-    same short burns going out while the relay is still closed are flames lost."""
+    same short burns going out while the relay is still closed are flames lost. The room enters
+    the history as the refresh that follows its change reads it (I12.7b)."""
     freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     zones.add("living", on_percent=0.1)
     await setup(hass, entry_for(boiler, zones))
     entry = hass.config_entries.async_entries(DOMAIN)[0]
+
+    async def relay(action: str) -> None:
+        zones.set("living", hvac_action=action, on_percent=0.1)
+        await entry.runtime_data.async_refresh()
+
     # Y1: a count is judged with the flame known for half its window at least (12 h a day).
     freezer.tick(timedelta(hours=12))
     for _ in range(12):  # twelve five-minute cycles, 30 s on each
-        zones.set("living", hvac_action="heating", on_percent=0.1)
+        await relay("heating")
         freezer.tick(timedelta(seconds=10))
         boiler.set(Signal.FLAME, True)
         await hass.async_block_till_done()
@@ -2272,10 +2510,10 @@ async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
             freezer.tick(timedelta(seconds=15))
             boiler.set(Signal.FLAME, False)  # out while the relay is still closed
             freezer.tick(timedelta(seconds=5))
-            zones.set("living", hvac_action="idle", on_percent=0.1)
+            await relay("idle")
         else:
             freezer.tick(timedelta(seconds=20))
-            zones.set("living", hvac_action="idle", on_percent=0.1)
+            await relay("idle")
             freezer.tick(timedelta(seconds=2))
             boiler.set(Signal.FLAME, False)  # out once the relay has opened
         await hass.async_block_till_done()
@@ -2466,7 +2704,14 @@ async def test_everything_stored_survives_a_restart(
     stored = {
         "monitoring_since": created,
         "factors": {living: {"value": 0.8, "at": now - 600, "output_w": None}},
-        "measured": {"loss_coefficient": {"value": 0.25, "confidence": 0.6, "at": now - DAY}},
+        "measured": {
+            "loss_coefficient": {
+                "value": 0.25,
+                "confidence": 0.6,
+                "at": now - DAY,
+                "range_share": 0.18,  # I13.4: kept with its range
+            }
+        },
         "daily": {str(int(start)): day.to_dict()},
     }
     key = f"{DOMAIN}.{entry.entry_id}"
@@ -2477,7 +2722,7 @@ async def test_everything_stored_survives_a_restart(
     assert coordinator.daily == {start: day}
     loss = coordinator.parameters.get(ParameterKey.LOSS_COEFFICIENT).estimate(Source.MEASURED)
     assert loss is not None
-    assert (loss.value, loss.confidence) == (0.25, 0.6)
+    assert (loss.value, loss.confidence, loss.range_share) == (0.25, 0.6, 0.18)
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     saved = hass_storage[key]["data"]
@@ -2561,6 +2806,13 @@ async def test_a_lost_control_store_without_control_is_a_warning(
     assert [record.levelname for record in said] == ["WARNING"]
 
 
+def atomic(store: object) -> bool:
+    """Whether a Home Assistant store writes atomically: its own flag up to 2026.10, its file
+    writer's from 2026.11 (``Store._io``)."""
+    io = getattr(store, "_io", store)
+    return bool(getattr(io, "_atomic_writes", False))
+
+
 async def test_both_stores_are_written_atomically(hass: HomeAssistant) -> None:
     """V1, R1: a crash while writing leaves the old file whole, for either store and for every
     place that writes them."""
@@ -2571,11 +2823,11 @@ async def test_both_stores_are_written_atomically(hass: HomeAssistant) -> None:
     entry = entry_for(boiler)
     await setup(hass, entry)
     coordinator = entry.runtime_data
-    assert coordinator._store._atomic_writes
-    assert coordinator._control_store._atomic_writes
+    assert atomic(coordinator._store)
+    assert atomic(coordinator._control_store)
     assert coordinator._control_store.key == f"{DOMAIN}.{entry.entry_id}.control"
-    assert main_store(hass, entry.entry_id)._atomic_writes
-    assert control_store(hass, entry.entry_id)._atomic_writes
+    assert atomic(main_store(hass, entry.entry_id))
+    assert atomic(control_store(hass, entry.entry_id))
 
 
 async def test_a_relay_only_entry_monitors_without_boiler_signals(
@@ -2774,8 +3026,9 @@ async def test_home_assistants_stop_writes_the_last_run_record(
 ) -> None:
     """PB-57: Home Assistant's stop unloads no entry, so the record was written only every ten
     minutes — up to ten minutes before each restart counted as downtime. A shutdown job writes
-    it at the stop, and stays in Home Assistant's list while the jobs run; an unload without a
-    stop removes it (negative: nothing of the entry left behind)."""
+    it — and the rooms' history (I12.7b) — at the stop, and stays in Home Assistant's list while
+    the jobs run; an unload without a stop removes it (negative: nothing of the entry left
+    behind)."""
     freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
@@ -2797,6 +3050,9 @@ async def test_home_assistants_stop_writes_the_last_run_record(
     await ours()[0].job.target()
     await hass.async_block_till_done()
     assert hass_storage[_alive_key(entry)]["data"]["alive_at"] == pytest.approx(stop)
+    # I12.7b: the rooms' history too — Home Assistant's stop unloads no entry (PB-57).
+    rooms = hass_storage[f"{DOMAIN}.{entry.entry_id}.rooms"]["data"]
+    assert rooms["saved_at"] == pytest.approx(stop)
     assert len(ours()) == 1  # the job does not remove itself while the jobs run
 
 
@@ -3007,7 +3263,7 @@ async def test_the_last_run_record_has_a_store_of_its_own(
     await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     assert coordinator._alive_store.key == _alive_key(entry)
-    assert coordinator._alive_store._atomic_writes
+    assert atomic(coordinator._alive_store)
     assert _alive_key(entry) not in hass_storage  # nothing yet: written every ten minutes
     for _ in range(5):  # the start's own save of the main store goes out first, as before
         freezer.tick(60)
@@ -3591,7 +3847,7 @@ def test_text_attributes_stay_out_of_the_recorder() -> None:
         (BoilerSensor, {"reasons_text"}),
         (
             ControlStateSensor,
-            {"reasons_text", "blockers_text", "blockers_waiting_text", "latched_by_text"},
+            {"reasons_text", "blockers_text", "latched_by_text"},
         ),
         (ControlSensor, {"blockers_text", "blocked_by_text"}),  # the switch's place (I11.3)
         (FeaturesSensor, {f"{feature.value}_missing_text" for feature in Feature}),

@@ -1,36 +1,63 @@
-"""The only module that reads Versatile Thermostat zones and VT's central configuration.
+"""The only module that reads Versatile Thermostat's thermostats and VT's settings.
 
-It reads VT's climate entities (state and top-level attributes, see ``vtherm_attributes``) and
-VT's central mode select. It detects what is installed instead of assuming it: VT, its version,
-``vtherm_api`` and SmartPI may be missing or older.
+They go only through ``vtherm_api`` (the user's rule, 2026-11-24/25; I12.7): VT hands each of
+its thermostats to the plugin's feature manager, which keeps it here (``register_thermostat``).
+The plugin's rooms are the thermostats VT hands over whose ``entry_infos`` say VT's central
+boiler counts them (``used_by_controls_central_boiler``; I12.11, the user's decision of
+2026-11-25): VT's central boiler decides whether the boiler heats from those alone (``rooms``).
+One handed over and not marked is no room (``not_counted``). The link keeps a room it knew while
+VT holds no thermostat for it — VT reloading it, or not started yet — as not known rather than
+gone (``VThermLink.rooms``, decision 3). A room is matched by its declared
+``entity_id`` and named by its declared ``name``; its live values are the members the API
+declares (``vtherm_attributes.RUNTIME_MEMBERS``), its settings its ``entry_infos`` — the
+thermostat's settings merged over VT's central entry's (VT 10.6.5 ``base_thermostat.py``). VT
+started it once it called the manager's ``refresh_state`` (``thermostat_started``: VT calls it
+first only once the thermostat is ready), and the duty and valve opening VT applied come from its
+power hook (``thermostat_power``: each cycle start, valve update and stop; never for a plain
+over_climate). A thermostat VT has not handed over — one VT started before the plugin
+registered, until VT's reload — is no room yet: nothing of VT's climate entity stands in for it.
+Nothing of SmartPI is read (I12.9), nor VT's central mode (I12.11).
 
-Moving over from VT's own central boiler (X8, R14), it reads — never writes — what VT's central
-entry keeps (its commands, activation delay and keep-alive) and VT's two threshold numbers, so
-the relay path's form can offer them for confirmation before the user unticks VT's central
-boiler, which deletes the commands. The commands are split by the plugin's own reading of VT's
-documented format ``entity_id/domain.service[/attribute:value]``.
+Nothing of VT's climate entities is read, nor goes into the history: the rooms' history is what
+the plugin read here, kept in its own store (I12.7b). What the plugin takes from Home Assistant
+about VT is Home Assistant's own information, not VT's data (gap 19): VT's version and whether VT
+is loaded (its integrations and config entries), and its entity registry — whether VT has climate
+entities at all (the first installation's reload repair, ``vt_climates_registered``) and an
+entity's area (a circuit's area shortcut, ``rooms_in_area``).
+
+VT's central boiler decides whether the boiler heats (I12): its settings reach the plugin in each
+handed-over thermostat's ``entry_infos``, read here only to check that its commands switch the
+helper the user picked, never the boiler (``vt_central_boiler``). The commands are split by the
+plugin's own reading of VT's documented format ``entity_id/domain.service[/attribute:value]``.
+
+The rooms' trust (I12, decision 8): a room's temperature judges the curve only while VT does not
+run its thermostat in safety mode — VT's safety event, listened to here while the plugin runs
+(``VThermLink.start``) and kept per thermostat until it ends or VT hands over another one —, its
+thermometer is available — the room's sensor ``entry_infos`` names, the user's device, its state
+read from Home Assistant —, and VT's ``last_temperature_measure`` for it is newer than the
+plugin's start (``core.zones.room_trusted``). A room's window is open while VT holds it off for a
+window (``hvac_off_reason``), VT's automatic window detection says so (its event), or the window
+sensor ``entry_infos`` names reads on (the critical zone's window rule, ``core.critical_zone``).
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 from awesomeversion import AwesomeVersion
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
-    ATTR_RESTORED,
-    EVENT_HOMEASSISTANT_STARTED,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import CoreState, Event, HomeAssistant, State, callback
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
@@ -38,96 +65,85 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, OPENTHERM_GW_DOMAIN, VT_DOMAIN
 from .core.readings import ZoneState
-from .transport.entities import reported_at
-from .units import parse_number
-from .vtherm_attributes import CentralMode, central_mode, zone_values
+from .core.zones import room_trusted
+from .vtherm_attributes import RUNTIME_MEMBERS, live_zone
 
 _LOGGER = logging.getLogger(__name__)
 
-SMARTPI_DOMAIN = "vtherm_smartpi"
-CENTRAL_MODE_UNIQUE_ID = "central_mode"
-CENTRAL_BOILER_UNIQUE_ID = "central_boiler_state"
-CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"  # in VT's central entry (VT 10.4.0)
-# VT's central boiler seen configured at any moment of this Home Assistant run (X7): VT's manager
-# lives in its API and may switch the boiler until Home Assistant restarts, even once unticked,
-# with or without its keep-alive (VT 10.4.0 to 10.6.4; 10.6.5 stops its listeners when the
-# central entry unloads, ``__init__.py`` — kept as it is for the older versions). Kept in Home
-# Assistant's data, so a reload of the plugin does
-# not clear it and a restart does; never from VT's keep-alive. Also set (decision 9 of plan
-# 0.2.3) when VT's central entry changed in this run while no entry of the plugin watched VT —
-# its ``modified_at`` — or VT's sensor is a stand-in written in this run while the entry says
-# off: VT provided it in this run, so its central boiler was on, and removed it since.
-VT_CENTRAL_SEEN = f"{DOMAIN}_vt_central_seen"
-# What the plugin knows of this Home Assistant run for that latch (``VtRun``); a restart starts
-# it anew.
-VT_RUN = f"{DOMAIN}_vt_run"
-# Home Assistant's start neither seen by the plugin nor bounded by the recorder: anything VT's
-# entries show may be from this run — a doubt keeps the latch (decision 9).
-RUN_START_UNKNOWN = datetime.min.replace(tzinfo=UTC)
-# VT's central entry running or being set up again (a reload, Home Assistant starting): its
-# stored setting answers (P-105). In any other state — a failed setup (setup error or retry,
-# migration error, failed unload), or one a later Home Assistant adds — only "off" rules VT's
-# central boiler out: its manager may still run (P-20).
-_CENTRAL_RUNNING = frozenset(
-    {
-        ConfigEntryState.LOADED,
-        ConfigEntryState.SETUP_IN_PROGRESS,
-        ConfigEntryState.UNLOAD_IN_PROGRESS,
-        ConfigEntryState.NOT_LOADED,
-    }
-)
-# VT loads outside feature managers from this version on (research/2026-09-27-q3-1-vt-feature-
-# manager-version.md; provisional, K4): VT 10.0 and 10.1 use ``vtherm_api`` for control
-# algorithms only — a registration there succeeds, and no manager is ever created (P-60).
-VT_FEATURE_MANAGERS_FROM = "10.2.0"
-VT_TESTED = "10.5.1"  # the VT version the plugin is tested with (10.4.0 until 2026-10-13)
-# VT's central entry is the one whose ``thermostat_type`` is this (VT 10.4.0 ``const.py``); its
-# central boiler's activation delay, 0–600 s, stays in its data once the feature is unticked.
-THERMOSTAT_TYPE = "thermostat_type"
-CENTRAL_CONFIG = "thermostat_central_config"
-ACTIVATION_DELAY = "central_boiler_activation_delay_sec"
-VT_ACTIVATION_DELAY_MAX_S = 600.0
-# VT's central boiler commands and keep-alive in its central entry (VT 10.4.0 ``const.py``), and
-# the unique IDs of its two threshold numbers (``number.py``), read for the migration (R14).
+# VT's thermostats as VT handed them to the plugin's feature manager, for this Home Assistant run:
+# kept across the plugin's reloads, as the managers are (``feature_manager``).
+THERMOSTATS_KEY = f"{DOMAIN}_vt_thermostats"
+# Whether VT has handed any thermostat over in this Home Assistant run (I12.11): one stopped
+# while VT reloads leaves it set.
+HANDED_OVER_KEY = f"{DOMAIN}_vt_handed_over"
+# VT's central boiler settings as a thermostat last handed them over in this Home Assistant run
+# (I12): while VT reloads its thermostats none is held, and the last ones stand.
+VT_SETTINGS_KEY = f"{DOMAIN}_vt_central_boiler"
+# VT's central boiler settings, as ``entry_infos`` carries them (VT 10.6.5 ``const.py``).
+CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"
 ACTIVATION_SERVICE = "central_boiler_activation_service"
 DEACTIVATION_SERVICE = "central_boiler_deactivation_service"
-KEEP_ALIVE = "keep_alive_boiler_delay_sec"
-# The key a zone algorithm writes into VT's ``specific_states`` when it uses the plugin's water
-# data (I9; water-interface.md §3.4 — SmartPI's, Annex A).
-WATER_DATA_KEY = "water_factor"
-COUNT_THRESHOLD_UNIQUE_ID = "boiler_activation_threshold"
-POWER_THRESHOLD_UNIQUE_ID = "boiler_power_activation_threshold"
-# The plugin's repeat interval takes VT's keep-alive only within its own range (R3).
-REPEAT_RANGE_S = (10.0, 300.0)
-OVER_SWITCH = "over_switch"  # VT's ``configuration`` ``type`` of a zone it switches on and off
-HVAC_OFF_REASON = "hvac_off_reason"  # in a thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5)
-# SmartPI 0.4.0 (G11 C): the VT climate's ``specific_states`` names its diagnostic sensor, whose
-# state is the phase — "bootstrap_hysteresis" its learning phase, run on/off (``handler.py``,
-# ``sensor.py``). Any other state, or none, tells nothing: the phase is unknown.
-SMARTPI_DIAGNOSTICS = "regulation_diagnostics"
-SMARTPI_LEARNING_PHASE = "bootstrap_hysteresis"
-SMARTPI_PHASES = frozenset({SMARTPI_LEARNING_PHASE, "stable", "calibration", "inactive"})
-ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
-# The entities a thermostat drives — switches, valves or climates — in its entry's data (VT 10.4.0
-# ``const.py:63``, ``CONF_UNDERLYING_LIST``; migrated there from the older per-slot keys).
+# VT's central boiler event (``vtherm_api``'s ``EventType.CENTRAL_BOILER_EVENT``; the same name
+# in VT 10.4.0 to 10.6.5): ``central_boiler`` once its command has gone out, or
+# ``delayed_activation_sec`` when its activation delay starts (``feature_central_boiler_manager``).
+CENTRAL_BOILER_EVENT = "versatile_thermostat_central_boiler_event"
+EVENT_SWITCHED = "central_boiler"
+EVENT_DELAY = "delayed_activation_sec"
+# VT's safety and automatic window events (``vtherm_api``'s ``EventType.SAFETY_EVENT`` and
+# ``WINDOW_AUTO_EVENT``; VT 10.6.5 ``feature_safety_manager.py`` 199–227,
+# ``feature_window_manager.py`` 301–304 and 357–360): ``type`` "start" or "end", the thermostat
+# in ``entity_id`` (``const.py`` ``send_vtherm_event``, 654).
+SAFETY_EVENT = "versatile_thermostat_safety_event"
+WINDOW_AUTO_EVENT = "versatile_thermostat_window_auto_event"
+EVENT_START = "start"
+EVENT_END = "end"
+# What VT's central boiler commands may do to the helper (I12): turn it on to heat, off to stop.
+HELPER_ON = frozenset({("input_boolean", "turn_on"), ("homeassistant", "turn_on")})
+HELPER_OFF = frozenset({("input_boolean", "turn_off"), ("homeassistant", "turn_off")})
+# The oldest VT supported (I12.6, the user's decision of 2026-11-25): 10.6.5, the newest stable at
+# the beta. Its manifest says 10.6.4 (the tag's ``manifest.json``), and Home Assistant reports what
+# the manifest says, so the floor is compared as 10.6.4 and named 10.6.5 to the user; a real
+# 10.6.4, which drops its API with its last entry, gets the factory again when a VT entry is set
+# up (``feature_manager``). Older VT: no registration, control blocked (``vt_too_old``).
+VT_OLDEST = "10.6.4"
+VT_OLDEST_SHOWN = "10.6.5"
+VT_TESTED = "10.6.5"  # the VT version the plugin is tested with (10.5.1 until 2026-11-25)
+HVAC_OFF_REASON = "hvac_off_reason"  # a member ``vtherm_api`` declares (0.9.0 ``interfaces.py``)
+WINDOW_DETECTION = "hvac_off_window_detection"  # VT holds the zone off for a window (``const.py``)
+# A thermostat's settings in its ``entry_infos`` (VT 10.6.5 ``const.py``): the user's devices VT
+# reads for a room (65, 72), its type (111; the type of a zone VT switches on and off, 113), its
+# cycle in minutes (90) and whether VT's central boiler counts it (240).
+ROOM_THERMOMETER = "temperature_sensor_entity_id"
+WINDOW_SENSOR = "window_sensor_entity_id"
+THERMOSTAT_TYPE = "thermostat_type"
+OVER_SWITCH = "thermostat_over_switch"
+CYCLE_MIN = "cycle_min"
+USED_BY_CENTRAL_BOILER = "used_by_controls_central_boiler"
+# The kinds of device VT's power hook names (``vtherm_api`` 0.9.0 ``underlying_hooks.py``
+# ``UnderlyingPowerCommand.underlying_type``: "switch", "valve" or "valve_regulation"): for a
+# valve, the applied value is its opening.
+VALVE_DEVICES = frozenset({"valve", "valve_regulation"})
+# A device of the user's that has no state at all: removed, or not set up yet.
+_MISSING = "missing"
+# The room thermometer's states that leave the room's temperature out (I12, decision 8): gone too,
+# as VT then keeps its last reading.
+_LOST = frozenset({STATE_UNAVAILABLE, STATE_UNKNOWN, _MISSING})
+# The entities a thermostat drives — switches, valves or climates — in its ``entry_infos`` (VT
+# 10.6.5 ``const.py:63``, ``CONF_UNDERLYING_LIST``).
 UNDERLYING = "underlying_entity_ids"
 
 
 @dataclass(frozen=True, slots=True)
 class ZoneAlgorithm:
-    proportional_function: str | None = None  # "tpi" or "smartpi"
-    smartpi_learning: bool | None = None  # SmartPI's learning flag; None: not SmartPI
-    auto_tpi: bool = False  # Auto-TPI learning is on (a session or continuous kext)
+    """A zone's settings, from its thermostat's ``entry_infos`` (I12.7)."""
+
     used_by_central_boiler: bool | None = None
-    # I9 (water-interface.md §3.4): the zone's algorithm uses the plugin's water data — the key
-    # it writes into VT's ``specific_states`` is there.
-    uses_water_data: bool = False
-    # K4 (2026-11-17): VT's thermostat type ("over_switch", "over_valve", "over_climate", …) and
-    # its cycle in minutes (``configuration``, VT 10.5.1 and 10.6.5 ``base_thermostat.py``).
+    # K4 (2026-11-17): VT's thermostat type ("thermostat_over_switch", "thermostat_over_valve",
+    # "thermostat_over_climate") and its cycle in minutes.
     vtherm_type: str | None = None
     cycle_min: float | None = None
-    # PB-47: VT's state was read — the zone known and its configuration published; else none
-    # of the above can be told (VT not started, the zone unknown or unavailable).
+    # PB-47: the thermostat's settings were read; else none of the above can be told (VT has not
+    # handed the thermostat over).
     known: bool = False
 
     @property
@@ -148,34 +164,39 @@ class VtCommand:
     value: str | None = None
 
 
-class VtCommands(StrEnum):
-    """What VT's central boiler commands are, for the relay path."""
+class VtBoilerCheck(StrEnum):
+    """What VT's central boiler settings say against the helper picked (I12): the blockers."""
 
-    NONE = "none"  # VT keeps none (never set, or deleted once unticked)
-    RELAY = "relay"  # a switch turned on and off, or a boiler thermostat set to heat and off
-    NOT_SUPPORTED = "not_supported"  # anything else: the user picks the relay
+    NOT_SET = "vt_central_boiler_not_set"  # not ticked, or a command missing
+    NOT_HELPER = "vt_command_not_helper"  # a command switches anything but the helper: two
+    # controllers
 
 
 @dataclass(frozen=True, slots=True)
 class VtCentralBoiler:
-    """VT's central boiler settings, as the relay path's form may offer them (R14). ``None``
-    wherever the plugin cannot use a value: the field stays empty and the user decides."""
+    """VT's central boiler settings as ``entry_infos`` carries them (I12): ticked or not, and its
+    two commands as VT keeps them — ``None`` where empty."""
 
     configured: bool  # "use a central boiler" ticked in VT
-    commands: VtCommands
-    relay: str | None = None
-    activation_delay_s: float | None = None
-    keep_alive_s: float | None = None  # VT's keep-alive, above 0
-    repeat_s: float | None = None  # the keep-alive where it lies within 10–300 s
-    power_threshold_kw: float | None = None  # as VT used it: whole numbers in its unit
-    count_threshold: int | None = None  # one device per zone VT counts; VT's 0 beside power
-    # VT's count as it counts — devices —, for a count of devices (2026-10-14); 0 as above.
-    count_threshold_devices: int | None = None
+    activation: str | None = None
+    deactivation: str | None = None
 
-    @property
-    def exists(self) -> bool:
-        """VT's central boiler is configured, or its commands are still kept."""
-        return self.configured or self.commands is not VtCommands.NONE
+    def check(self, helper: str | None) -> tuple[VtBoilerCheck | None, str | None]:
+        """Whether VT's central boiler switches the helper alone: ticked, with both commands —
+        VT counts it as configured with one, but then the helper would never turn back — the
+        activation command turning ``helper`` on, the deactivation command turning it off. The
+        problem, and the entity a command targets instead — the command as VT keeps it where the
+        plugin cannot read it — for the user to see; ``(None, None)`` where all is right."""
+        if not self.configured or self.activation is None or self.deactivation is None:
+            return VtBoilerCheck.NOT_SET, None
+        for raw, allowed in ((self.activation, HELPER_ON), (self.deactivation, HELPER_OFF)):
+            command = parse_vt_command(raw)
+            if command is None:
+                return VtBoilerCheck.NOT_HELPER, raw
+            does = (command.domain, command.service)
+            if command.entity_id != helper or does not in allowed or command.attribute:
+                return VtBoilerCheck.NOT_HELPER, command.entity_id
+        return None, None
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,29 +204,17 @@ class VtCapabilities:
     vt_loaded: bool
     vt_version: str | None
     vtherm_api_version: str | None
-    smartpi_loaded: bool
-
-
-def room_sensor(hass: HomeAssistant, entity_id: str) -> str | None:
-    """The room temperature sensor VT reads for a zone, from the thermostat's entry (VT 10.4.0
-    keeps it in the entry's data); ``None`` where it is not found."""
-    registered = er.async_get(hass).async_get(entity_id)
-    if registered is None or registered.config_entry_id is None:
-        return None
-    entry = hass.config_entries.async_get_entry(registered.config_entry_id)
-    sensor = entry.data.get(ROOM_SENSOR) if entry is not None else None
-    return sensor if isinstance(sensor, str) and sensor else None
 
 
 def zone_underlying_entities(hass: HomeAssistant, entity_id: str) -> tuple[str, ...] | None:
-    """The entities VT drives for a zone, from the thermostat's entry (VT 10.4.0 keeps them in
-    the entry's data); ``None`` where they cannot be read — the thermostat not registered, its
-    entry away, or an entry without the list (an older VT)."""
-    registered = er.async_get(hass).async_get(entity_id)
-    if registered is None or registered.config_entry_id is None:
-        return None
-    entry = hass.config_entries.async_get_entry(registered.config_entry_id)
-    raw = entry.data.get(UNDERLYING) if entry is not None else None
+    """The entities VT drives for a zone, from its thermostat's ``entry_infos``; ``None`` where
+    they cannot be read — VT has not handed the thermostat over, or its settings hold no list."""
+    thermostat = vt_thermostat(hass, entity_id)
+    return None if thermostat is None else _underlying(thermostat)
+
+
+def _underlying(thermostat: Any) -> tuple[str, ...] | None:
+    raw = _entry_infos(thermostat).get(UNDERLYING)
     if not isinstance(raw, list | tuple):
         return None
     return tuple(item for item in raw if isinstance(item, str) and item)
@@ -219,7 +228,8 @@ def zones_on_boiler_thermostat(
     registered, or that sits on the same device as an entity the plugin maps as a boiler signal
     or controls through (``boiler_entities``; provisional, K4: also the OTGW firmware's MQTT
     climate and an EMS thermostat's). Such a zone would ask for heat whenever the flame burns. A
-    zone whose VT entry cannot be read is not counted: the check repeats at every step."""
+    zone whose thermostat VT has not handed over cannot be read and is not counted: the check
+    repeats at every step."""
     registry = er.async_get(hass)
     devices = {
         registered.device_id
@@ -244,11 +254,10 @@ def zones_on_boiler_thermostat(
 
 def relay_used_by_zone(hass: HomeAssistant, entity_id: str) -> bool:
     """R2: a VT thermostat — any of them, not only the plugin's zones — lists the entity among
-    the devices it drives: it switches it for a room, so it cannot be the boiler's relay."""
-    return any(
-        entity_id in (zone_underlying_entities(hass, zone) or ())
-        for zone in vt_climate_entities(hass)
-    )
+    the devices it drives (its ``entry_infos``): it switches it for a room, so it cannot be the
+    boiler's relay. A thermostat VT has not handed over is not seen: the check repeats at every
+    step."""
+    return any(entity_id in (_underlying(kept.thermostat) or ()) for kept in _handed_over(hass))
 
 
 def relay_of_boiler_interface(hass: HomeAssistant, entity_id: str) -> bool:
@@ -260,11 +269,11 @@ def relay_of_boiler_interface(hass: HomeAssistant, entity_id: str) -> bool:
 
 def parse_vt_command(raw: object) -> VtCommand | None:
     """One of VT's central boiler commands in VT's documented format
-    ``entity_id/domain.service[/attribute:value]`` (the plugin's own reading of the format);
-    ``None`` for anything else."""
+    ``entity_id/domain.service[/attribute:value]`` (the plugin's own reading of the format; the
+    value may hold a template, ``/`` included, VT 10.6.1); ``None`` for anything else."""
     if not isinstance(raw, str):
         return None
-    parts = [part.strip() for part in raw.strip().split("/")]
+    parts = [part.strip() for part in raw.strip().split("/", 2)]
     if len(parts) not in (2, 3):
         return None
     entity_id, service = parts[0], parts[1]
@@ -283,286 +292,50 @@ def parse_vt_command(raw: object) -> VtCommand | None:
     return VtCommand(entity_id, domain, name, attribute, value)
 
 
-def relay_from_vt_commands(on: VtCommand | None, off: VtCommand | None) -> str | None:
-    """The relay VT's two commands switch, where they fit the relay path: one switch turned on
-    and off, or one boiler thermostat set to heat and off; ``None`` for any other pair — VT's
-    free-form actions are not supported (Open after 0.2.2)."""
-    if on is None or off is None or on.entity_id != off.entity_id:
-        return None
-    entity = on.entity_id
-    kind = entity.split(".")[0]
-    if kind == "switch":
-        turns = (on.domain, on.service, off.domain, off.service)
-        plain = on.attribute is None and off.attribute is None
-        return entity if plain and turns == ("switch", "turn_on", "switch", "turn_off") else None
-    if kind == "climate":
-        sets = all(
-            (c.domain, c.service, c.attribute) == ("climate", "set_hvac_mode", "hvac_mode")
-            for c in (on, off)
-        )
-        return entity if sets and (on.value, off.value) == ("heat", "off") else None
-    return None
-
-
-def vt_central_boiler_settings(hass: HomeAssistant, zones: Sequence[str]) -> VtCentralBoiler | None:
-    """VT's central boiler as the relay path's form may pre-fill it (R14), read-only; ``None``
-    without VT's central entry. ``zones``: the plugin's zones, which cap the count. The
-    thresholds as VT used them — each the whole number of its state in VT's own unit — the
-    power converted to kW (``W`` ÷ 1000, ``kW`` as is, any other unit not pre-filled), each only
-    above 0; the count only where every zone VT counts has one heating device, as VT counts
-    devices and the plugin rooms, or 0 where VT's count is 0 beside a power threshold — and as
-    VT counts, for a count of devices. VT's keep-alive becomes the repeat interval only within
-    10–300 s."""
-    entry = vt_central_entry(hass)
-    if entry is None:
-        return None
-    data = entry.data
-    raw_on, raw_off = data.get(ACTIVATION_SERVICE), data.get(DEACTIVATION_SERVICE)
-    relay = relay_from_vt_commands(parse_vt_command(raw_on), parse_vt_command(raw_off))
-    if relay is not None:
-        commands = VtCommands.RELAY
-    elif any(isinstance(raw, str) and raw.strip() for raw in (raw_on, raw_off)):
-        commands = VtCommands.NOT_SUPPORTED
-    else:
-        commands = VtCommands.NONE
-    keep_alive = _positive(data.get(KEEP_ALIVE))
-    low, high = REPEAT_RANGE_S
-    return VtCentralBoiler(
-        configured=data.get(CENTRAL_BOILER_FEATURE) is True,
-        commands=commands,
-        relay=relay,
-        activation_delay_s=VThermLink(hass, zones).vt_central_activation_delay(),
-        keep_alive_s=keep_alive,
-        repeat_s=keep_alive if keep_alive is not None and low <= keep_alive <= high else None,
-        power_threshold_kw=_vt_power_threshold(hass),
-        count_threshold=_vt_count_threshold(hass, len(zones)),
-        count_threshold_devices=_vt_device_count_threshold(hass),
-    )
-
-
-def _positive(raw: object) -> float | None:
-    value = parse_number(raw)
-    return value if value is not None and value > 0 else None
-
-
-def _vt_number(hass: HomeAssistant, unique_id: str) -> State | None:
-    entity_id = er.async_get(hass).async_get_entity_id("number", VT_DOMAIN, unique_id)
-    return None if entity_id is None else hass.states.get(entity_id)
-
-
-def _vt_power_threshold(hass: HomeAssistant) -> float | None:
-    """VT's power threshold as VT uses it: the whole number of its value in VT's power unit."""
-    state = _vt_number(hass, POWER_THRESHOLD_UNIQUE_ID)
-    value = None if state is None else parse_number(state.state)
-    if value is None or int(value) <= 0:
-        return None
-    unit = state.attributes.get("unit_of_measurement") if state is not None else None
-    factor = {"W": 0.001, "kW": 1.0}.get(unit if isinstance(unit, str) else "")
-    return None if factor is None else int(value) * factor
-
-
-def _vt_device_count_threshold(hass: HomeAssistant) -> int | None:
-    """VT's device-count threshold as VT counts — devices —, for a count of devices
-    (2026-10-14): its whole number above 0; its 0 beside a power threshold, as for rooms; a
-    count missing or unreadable pre-fills nothing."""
-    state = _vt_number(hass, COUNT_THRESHOLD_UNIQUE_ID)
-    value = None if state is None else parse_number(state.state)
-    if value is None or value < 0:
-        return None
-    if int(value) == 0:
-        return 0 if _vt_power_threshold(hass) is not None else None
-    return int(value)
-
-
-def _vt_count_threshold(hass: HomeAssistant, zone_count: int) -> int | None:
-    """VT's device-count threshold, as a count of rooms: only where every thermostat VT's
-    central boiler counts has exactly one device, capped at the plugin's zone count. VT's
-    count of 0 is "off" in VT 10.4.0 (``is_nb_active_active_for_boiler_exceeded``): beside a
-    power threshold the plugin carries over, it is pre-filled 0, the power criterion alone as
-    VT used it (SB-07, decision 7); a count missing or unreadable pre-fills nothing."""
-    state = _vt_number(hass, COUNT_THRESHOLD_UNIQUE_ID)
-    value = None if state is None else parse_number(state.state)
-    if value is not None and int(value) == 0 and value >= 0:
-        return 0 if _vt_power_threshold(hass) is not None else None
-    if value is None or int(value) <= 0 or zone_count <= 0:
-        return None
-    link = VThermLink(hass, ())
-    counted = [
-        zone
-        for zone in vt_climate_entities(hass)
-        if link.zone_algorithm(zone).used_by_central_boiler is True
-    ]
-    if not counted:
-        return None
-    if any(len(zone_underlying_entities(hass, zone) or ()) != 1 for zone in counted):
-        return None
-    return min(int(value), zone_count)
-
-
-def is_vt_climate(hass: HomeAssistant, entity_id: str) -> bool:
-    """Whether an entity is a climate Versatile Thermostat registered — what a zone must be
-    (review question 19, provisional, K4)."""
-    registered = er.async_get(hass).async_get(entity_id)
-    return (
-        registered is not None
-        and registered.domain == "climate"
-        and registered.platform == VT_DOMAIN
-    )
-
-
-def vt_zones_in_area(hass: HomeAssistant, area_id: str) -> list[str]:
-    """The VT climates in an area (I8, decision F2: a circuit's shortcut to its zones) — an
-    entity's own area, else its device's — in the registry's order."""
+def rooms_in_area(hass: HomeAssistant, area_id: str) -> list[str]:
+    """The rooms in an area (I8, decision F2: a circuit's shortcut to its rooms), in the rooms'
+    order: a room's entity in it, or its device — Home Assistant's registries, not VT's data."""
     entities = er.async_get(hass)
     devices = dr.async_get(hass)
     found: list[str] = []
-    for entry in entities.entities.values():
-        if entry.domain != "climate" or entry.platform != VT_DOMAIN:
+    for room in rooms(hass):
+        entry = entities.async_get(room)
+        if entry is None:
             continue
         area = entry.area_id
         if area is None and entry.device_id is not None:
             device = devices.async_get(entry.device_id)
             area = device.area_id if device is not None else None
         if area == area_id:
-            found.append(entry.entity_id)
+            found.append(room)
     return found
 
 
-def zones_of_another_kind(hass: HomeAssistant, zones: Sequence[str]) -> list[str]:
-    """Zones known not to be VT climates (a hand edit): registered by another integration or of
-    another domain, or not registered at all yet reported — VT registers every thermostat. A
-    zone neither registered nor reported is unknown, not of another kind (VT away)."""
-    registry = er.async_get(hass)
-    found: list[str] = []
-    for zone in zones:
-        registered = registry.async_get(zone)
-        if registered is None:
-            if hass.states.get(zone) is not None:
-                found.append(zone)
-        elif registered.domain != "climate" or registered.platform != VT_DOMAIN:
-            found.append(zone)
-    return found
-
-
-def zone_name(hass: HomeAssistant, entity_id: str) -> str:
-    """A zone's name as the user sees it. While the thermostat has no state (VT not started
-    yet at the plugin's setup), its registry entry's — the user's name, its own, then its
-    device's (PB-80); its entity ID only outside the registry."""
-    state = hass.states.get(entity_id)
-    if state is not None and state.name:
-        return state.name
-    entry = er.async_get(hass).async_get(entity_id)
-    if entry is None:
-        return entity_id
-    if entry.name or entry.original_name:
-        return str(entry.name or entry.original_name)
-    device = dr.async_get(hass).async_get(entry.device_id) if entry.device_id else None
-    if device is not None and (device.name_by_user or device.name):
-        return str(device.name_by_user or device.name)
-    return entity_id
-
-
-def vt_climate_entities(hass: HomeAssistant) -> list[str]:
-    """Every climate entity registered by VT."""
-    registry = er.async_get(hass)
-    return sorted(
-        entry.entity_id
-        for entry in registry.entities.values()
-        if entry.platform == VT_DOMAIN and entry.domain == "climate"
+def vt_climates_registered(hass: HomeAssistant) -> bool:
+    """Whether Home Assistant's entity registry holds a climate entity of VT's that is not
+    disabled — Home Assistant's information, no state of VT's: VT has thermostats (I12.11, the
+    first installation's reload repair)."""
+    return any(
+        entry.platform == VT_DOMAIN and entry.domain == "climate" and entry.disabled_by is None
+        for entry in er.async_get(hass).entities.values()
     )
 
 
-def zone_devices(hass: HomeAssistant) -> dict[str, str]:
-    """Each VT zone's own devices with the zone, as a circuit's form offers them (I8.8c): what
-    each thermostat's entry lists; a zone whose list cannot be read offers none. A device two
-    zones name stays with the first, in the zones' order."""
+def room_devices(hass: HomeAssistant) -> dict[str, str]:
+    """Each room's own devices with the room, as a circuit's form offers them (I8.8c): what each
+    thermostat's ``entry_infos`` lists. A device two rooms name stays with the first, in the
+    rooms' order."""
     found: dict[str, str] = {}
-    for zone in vt_climate_entities(hass):
-        for device in zone_underlying_entities(hass, zone) or ():
-            found.setdefault(device, zone)
+    for room in rooms(hass):
+        for device in zone_underlying_entities(hass, room) or ():
+            found.setdefault(device, room)
     return found
-
-
-def vt_central_entry(hass: HomeAssistant) -> ConfigEntry | None:
-    """VT's central configuration entry — the VT entry whose ``thermostat_type`` says so (VT
-    10.4.0) — whatever its state; ``None`` without one. With more than one, an enabled entry in
-    a running state, else an enabled one, else the first: not a disabled or failed one VT has
-    replaced (PB-49). Read only: the plugin never writes to VT's entries."""
-    centrals = [
-        entry
-        for entry in hass.config_entries.async_entries(VT_DOMAIN)
-        if entry.data.get(THERMOSTAT_TYPE) == CENTRAL_CONFIG
-    ]
-
-    def preference(entry: ConfigEntry) -> tuple[bool, bool]:
-        enabled = entry.disabled_by is None
-        return enabled and entry.state in _CENTRAL_RUNNING, enabled
-
-    return max(centrals, key=preference, default=None)  # the first of the best
-
-
-@dataclass
-class VtRun:
-    """What the plugin knows of this Home Assistant run, for VT's central boiler's restart latch
-    (decision 9): ``started`` — when Home Assistant had started, ``None`` while it starts;
-    ``watchers`` — the plugin's entries watching VT now; ``unwatched_since`` — when the last of
-    them stopped."""
-
-    started: datetime | None = None
-    watchers: int = 0
-    unwatched_since: datetime | None = None
-
-
-def vt_run(hass: HomeAssistant) -> VtRun:
-    """This run's record, made at the plugin's first setup in the run. While Home Assistant
-    starts, its start is taken once it has started — after it wrote the stand-ins of the
-    registered entities nobody provides, so those predate it. A plugin first set up later has
-    not seen it: the recorder's start (before VT was set up) stands for it, else nothing does
-    and everything counts as this run's (a doubt keeps the latch)."""
-    run = hass.data.get(VT_RUN)
-    if isinstance(run, VtRun):
-        return run
-    run = VtRun()
-    hass.data[VT_RUN] = run
-    if hass.state in (CoreState.not_running, CoreState.starting):
-
-        @callback
-        def _started(_event: Event) -> None:
-            run.started = dt_util.utcnow()
-
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started)
-    else:
-        run.started = _recording_start(hass) or RUN_START_UNKNOWN
-    return run
-
-
-def _recording_start(hass: HomeAssistant) -> datetime | None:
-    """When the recorder began recording in this run; ``None`` without a recorder or one that
-    does not say."""
-    if "recorder" not in hass.config.components:
-        return None
-    try:
-        from homeassistant.helpers.recorder import get_instance
-
-        start = get_instance(hass).recorder_runs_manager.recording_start
-    except Exception:  # an older or changed recorder: not known
-        _LOGGER.debug("The recorder's start could not be read", exc_info=True)
-        return None
-    return start if isinstance(start, datetime) and start.tzinfo is not None else None
-
-
-def _changed_since(entry: ConfigEntry, since: datetime) -> bool:
-    """Whether a config entry changed after ``since``; a change time it does not give, or one
-    without a time zone, counts as changed (a doubt keeps the latch)."""
-    modified = getattr(entry, "modified_at", None)
-    if not isinstance(modified, datetime) or modified.tzinfo is None:
-        return True
-    return modified > since
 
 
 def vt_version(hass: HomeAssistant) -> str | None:
     """VT's version as its manifest gives it (Home Assistant refuses a custom integration
-    without a valid one); ``None`` while VT is not loaded or on any loader problem."""
+    without a valid one); ``None`` while VT is not loaded or on any loader problem. Home
+    Assistant's information about its integrations, not VT's data (gap 19)."""
     try:
         integration = async_get_loaded_integration(hass, VT_DOMAIN)
         return None if integration.version is None else str(integration.version)
@@ -571,42 +344,339 @@ def vt_version(hass: HomeAssistant) -> str | None:
         return None
 
 
-def vt_loads_feature_managers(version: str | None) -> bool | None:
-    """Whether a VT version creates the feature managers other integrations register (P-60);
-    ``None`` when the version is unknown or cannot be compared — capability detection decides
-    then. A beta of the first version counts as older: support is under-claimed, never over."""
+def vt_supported(version: str | None) -> bool | None:
+    """Whether a VT version is one the plugin supports (``VT_OLDEST``); ``None`` when the version
+    is unknown or cannot be compared — capability detection decides then. A beta of the oldest
+    counts as older: support is under-claimed, never over."""
     if not version:
         return None
     try:
-        return AwesomeVersion(version) >= AwesomeVersion(VT_FEATURE_MANAGERS_FROM)
+        return AwesomeVersion(version) >= AwesomeVersion(VT_OLDEST)
     except Exception:  # a version of another form
         return None
 
 
-def smartpi_learning_phase(hass: HomeAssistant, state: State | None) -> bool | None:
-    """Whether a zone's SmartPI runs its learning phase (G11 C), as its diagnostic sensor shows:
-    ``True`` in it, ``False`` in another phase, ``None`` where it cannot be told — not SmartPI,
-    an older one without that sensor, the sensor away, or a state this version does not know."""
-    if state is None:
+@dataclass(slots=True)
+class _Handed:
+    """A thermostat VT handed to the plugin's feature manager, with what VT told the manager of
+    it since: started (its ``refresh_state``), and the duty and valve opening VT last applied (its
+    power hook) — ``None`` until VT's first call."""
+
+    thermostat: Any
+    started: bool = False
+    duty: float | None = None
+    valve: float | None = None
+
+
+def _handed_over(hass: HomeAssistant) -> list[_Handed]:
+    kept: list[_Handed] = hass.data.setdefault(THERMOSTATS_KEY, [])
+    return kept
+
+
+def _record(hass: HomeAssistant, thermostat: Any) -> _Handed | None:
+    return next((kept for kept in _handed_over(hass) if kept.thermostat is thermostat), None)
+
+
+def register_thermostat(hass: HomeAssistant, thermostat: Any) -> None:
+    """Keep a thermostat VT handed to the plugin's feature manager (``vtherm_api``)."""
+    if _record(hass, thermostat) is None:
+        _handed_over(hass).append(_Handed(thermostat))
+    hass.data[HANDED_OVER_KEY] = True
+
+
+def any_handed_over(hass: HomeAssistant) -> bool:
+    """Whether VT has handed any thermostat over in this Home Assistant run (I12.11)."""
+    return hass.data.get(HANDED_OVER_KEY) is True
+
+
+def holds_thermostats(hass: HomeAssistant) -> bool:
+    """Whether VT holds any thermostat handed over now — none while it reloads them."""
+    return bool(_handed_over(hass))
+
+
+def _declared(kept: _Handed) -> str | None:
+    """A thermostat's declared ``entity_id``; ``None`` where VT's property fails or is no
+    entity."""
+    try:
+        declared = kept.thermostat.entity_id
+    except Exception:  # VT's property failed: not this one
         return None
-    specific = state.attributes.get("specific_states")
-    sensor = specific.get(SMARTPI_DIAGNOSTICS) if isinstance(specific, dict) else None
-    if not isinstance(sensor, str) or not sensor:
+    return declared if isinstance(declared, str) and declared else None
+
+
+def _marked(hass: HomeAssistant) -> dict[str, bool]:
+    """Each thermostat VT holds now by its declared entity — the newest where two declare one,
+    as ``_kept`` picks — with whether its ``entry_infos`` say VT's central boiler counts it
+    (only a clear true counts)."""
+    found: dict[str, bool] = {}
+    for kept in reversed(_handed_over(hass)):
+        entity_id = _declared(kept)
+        if entity_id is None or entity_id in found:
+            continue
+        found[entity_id] = _entry_infos(kept.thermostat).get(USED_BY_CENTRAL_BOILER) is True
+    return found
+
+
+def rooms(hass: HomeAssistant) -> list[str]:
+    """The plugin's rooms (I12.11): the thermostats VT holds now whose ``entry_infos`` say VT's
+    central boiler counts them, by their declared entity, sorted — VT hands them over in no set
+    order."""
+    return sorted(entity_id for entity_id, marked in _marked(hass).items() if marked)
+
+
+def not_counted(hass: HomeAssistant) -> list[str]:
+    """The thermostats VT holds now that VT's central boiler does not count — no rooms of the
+    plugin's (I12.11), sorted."""
+    return sorted(entity_id for entity_id, marked in _marked(hass).items() if not marked)
+
+
+def room_name(hass: HomeAssistant, entity_id: str) -> str:
+    """A room's name: its thermostat's declared ``name``; its entity ID while VT holds no
+    thermostat for it, or the name cannot be read."""
+    thermostat = vt_thermostat(hass, entity_id)
+    if thermostat is None:
+        return entity_id
+    try:
+        name = thermostat.name
+    except Exception:  # VT's property failed
+        return entity_id
+    return name if isinstance(name, str) and name else entity_id
+
+
+def unregister_thermostat(hass: HomeAssistant, thermostat: Any) -> None:
+    """Forget a thermostat VT stopped (its manager's ``stop_listening``), and with it what VT
+    told of it: a thermostat VT hands over again starts unknown."""
+    kept = _handed_over(hass)
+    kept[:] = [record for record in kept if record.thermostat is not thermostat]
+
+
+def thermostat_started(hass: HomeAssistant, thermostat: Any) -> None:
+    """VT called the manager's ``refresh_state``: VT 10.6.5 calls it first in
+    ``init_underlyings_completed`` and then in its control loop, each only once the thermostat is
+    ready (``base_thermostat.py`` 735–760, 1959–2005) — the thermostat has started."""
+    record = _record(hass, thermostat)
+    if record is not None:
+        record.started = True
+
+
+def thermostat_power(hass: HomeAssistant, thermostat: Any, command: Any) -> None:
+    """VT's power hook (``async_on_underlying_power``, ``vtherm_api`` 0.9.0
+    ``underlying_hooks.py``): the share of the cycle VT applied to one of the thermostat's devices
+    at a cycle start, a valve update or a stop (0 then) — the zone's duty, and for a valve its
+    opening. A command that cannot be read changes nothing."""
+    record = _record(hass, thermostat)
+    applied = _applied(command)
+    if record is None or applied is None:
+        return
+    record.duty, record.valve = applied
+
+
+def _applied(command: Any) -> tuple[float, float | None] | None:
+    """The duty VT applied, and the valve's opening where the device is a valve; ``None`` for a
+    command without a share from 0 to 1."""
+    try:
+        applied = command.applied_on_percent
+        device = command.underlying_type
+    except Exception:  # not a power command of this ``vtherm_api``
         return None
-    diagnostics = hass.states.get(sensor)
-    if diagnostics is None or diagnostics.state not in SMARTPI_PHASES:
+    if (
+        not isinstance(applied, int | float)
+        or isinstance(applied, bool)
+        or not math.isfinite(applied)
+        or not 0.0 <= applied <= 1.0
+    ):
         return None
-    return diagnostics.state == SMARTPI_LEARNING_PHASE
+    share = float(applied)
+    return share, share if device in VALVE_DEVICES else None
+
+
+def _kept(hass: HomeAssistant, entity_id: str) -> _Handed | None:
+    """The thermostat behind a climate entity as VT handed it to the plugin: the one whose
+    declared ``entity_id`` matches, the newest kept, as VT's own ``get_feature_manager`` picks.
+    ``None`` for a thermostat VT never handed over — one VT started before the plugin
+    registered, until VT's reload."""
+    for kept in reversed(_handed_over(hass)):
+        if _declared(kept) == entity_id:
+            return kept
+    return None
+
+
+def vt_thermostat(hass: HomeAssistant, entity_id: str) -> Any | None:
+    """The VT thermostat behind a climate entity, as VT handed it to the plugin (``_kept``)."""
+    kept = _kept(hass, entity_id)
+    return None if kept is None else kept.thermostat
+
+
+def _cycle_min(infos: Mapping[str, Any]) -> float | None:
+    """A thermostat's cycle in minutes from its ``entry_infos``; ``None`` where missing, not a
+    number or not above 0."""
+    cycle = infos.get(CYCLE_MIN)
+    if isinstance(cycle, int | float) and not isinstance(cycle, bool) and cycle > 0:
+        return float(cycle)
+    return None
+
+
+def _entry_infos(thermostat: Any) -> Mapping[str, Any]:
+    """A thermostat's ``entry_infos``; empty where it is missing, fails or is not a mapping."""
+    infos = runtime_readings(thermostat, ("entry_infos",)).get("entry_infos")
+    return infos if isinstance(infos, Mapping) else {}
+
+
+def vt_central_boiler(hass: HomeAssistant) -> VtCentralBoiler | None:
+    """VT's central boiler settings (I12), from the ``entry_infos`` of the newest thermostat VT
+    handed over — the thermostat's settings merged over VT's central entry's, so every
+    thermostat carries them. While VT holds none (it reloads them all when its central entry
+    changes), the settings last handed over in this Home Assistant run stand; ``None`` while VT
+    has handed none over in this run (as at every start, until VT starts its thermostats). Read
+    defensively: a thermostat whose ``entry_infos`` is missing, fails or is not a mapping is
+    passed over."""
+    for kept in reversed(_handed_over(hass)):
+        infos = runtime_readings(kept.thermostat, ("entry_infos",)).get("entry_infos")
+        if isinstance(infos, Mapping):
+            settings = VtCentralBoiler(
+                configured=infos.get(CENTRAL_BOILER_FEATURE) is True,
+                activation=_command(infos.get(ACTIVATION_SERVICE)),
+                deactivation=_command(infos.get(DEACTIVATION_SERVICE)),
+            )
+            hass.data[VT_SETTINGS_KEY] = settings
+            return settings
+    last = hass.data.get(VT_SETTINGS_KEY)
+    return last if isinstance(last, VtCentralBoiler) else None
+
+
+def _command(raw: object) -> str | None:
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
+def _vt_event(member: str, fallback: str) -> str:
+    """A VT event's name, as ``vtherm_api`` gives it; the name it has had in every VT supported
+    where this ``vtherm_api`` does not."""
+    try:
+        from vtherm_api.const import EventType
+
+        return str(getattr(EventType, member).value)
+    except ImportError, AttributeError:
+        return fallback
+
+
+def central_boiler_event() -> str:
+    """VT's central boiler event's name."""
+    return _vt_event("CENTRAL_BOILER_EVENT", CENTRAL_BOILER_EVENT)
+
+
+def safety_event() -> str:
+    """VT's safety event's name."""
+    return _vt_event("SAFETY_EVENT", SAFETY_EVENT)
+
+
+def window_auto_event() -> str:
+    """VT's automatic window detection event's name."""
+    return _vt_event("WINDOW_AUTO_EVENT", WINDOW_AUTO_EVENT)
+
+
+@dataclass(frozen=True, slots=True)
+class VtBoilerEvent:
+    """What VT's central boiler event says (I12): its command went out (``switched``), or its
+    activation delay starts, this many seconds long (``delay_s``)."""
+
+    switched: bool = False
+    delay_s: float | None = None
+
+
+def read_central_boiler_event(data: Mapping[str, Any]) -> VtBoilerEvent | None:
+    """VT's central boiler event's data; ``None`` for anything this version does not read — a
+    delay that is no positive, finite number of seconds included."""
+    if EVENT_SWITCHED in data:
+        return VtBoilerEvent(switched=True)
+    delay = data.get(EVENT_DELAY)
+    if (
+        isinstance(delay, int | float)
+        and not isinstance(delay, bool)
+        and math.isfinite(delay)
+        and delay > 0
+    ):
+        return VtBoilerEvent(delay_s=float(delay))
+    return None
+
+
+def runtime_readings(thermostat: Any, members: Sequence[str]) -> dict[str, object]:
+    """The members a VT thermostat gives now; one that is missing, fails, or is a method where
+    ``vtherm_api`` declares a property is left out — not known."""
+    found: dict[str, object] = {}
+    for member in members:
+        try:
+            value = getattr(thermostat, member)
+        except Exception:  # missing in this VT, or its property failed
+            continue
+        if not callable(value):
+            found[member] = value
+    return found
 
 
 class VThermLink:
-    """Zones as the core sees them, read from VT's climate entities."""
+    """The rooms as the core sees them, read through ``vtherm_api`` only (I12.7, I12.11)."""
 
-    def __init__(self, hass: HomeAssistant, zone_entities: Sequence[str]) -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
-        self._zones = tuple(zone_entities)
         self._api_version: str | None = None
-        self._watching = False
+        # The rooms the plugin knows (I12.11, decision 3): those VT counted while it held their
+        # thermostat in this run, and those the last run knew (``expect``), in order.
+        self._known: dict[str, None] = {}
+        # The plugin's start: a room's temperature counts once VT measured it after this.
+        self._started_at = dt_util.utcnow().timestamp()
+        # The thermostats VT's events said are in safety mode, or have a window open by its
+        # automatic detection: each with the thermostat VT handed over then (``None``: none), so
+        # a new one handed over — VT reloaded it — is not taken for the old one.
+        self._safety: dict[str, Any] = {}
+        self._window_auto: dict[str, Any] = {}
+
+    def start(self, now: float) -> CALLBACK_TYPE:
+        """Start following VT's safety and automatic window events, from ``now`` — the plugin's
+        start, which a room's measurement must be newer than. Returns what stops it."""
+        self._started_at = now
+        self._safety.clear()
+        self._window_auto.clear()
+        stops = [
+            self._hass.bus.async_listen(safety_event(), self._on_safety),
+            self._hass.bus.async_listen(window_auto_event(), self._on_window_auto),
+        ]
+
+        @callback
+        def stop() -> None:
+            for unsubscribe in stops:
+                unsubscribe()
+
+        return stop
+
+    @callback
+    def _on_safety(self, event: Event[dict[str, Any]]) -> None:
+        self._follow_event(self._safety, event.data)
+
+    @callback
+    def _on_window_auto(self, event: Event[dict[str, Any]]) -> None:
+        self._follow_event(self._window_auto, event.data)
+
+    def _follow_event(self, held: dict[str, Any], data: Mapping[str, Any]) -> None:
+        """A VT event that starts or ends a state of one thermostat; anything else is passed
+        over."""
+        entity_id = data.get("entity_id")
+        if not isinstance(entity_id, str):
+            return
+        kind = data.get("type")
+        if kind == EVENT_START:
+            held[entity_id] = vt_thermostat(self._hass, entity_id)
+        elif kind == EVENT_END:
+            held.pop(entity_id, None)
+
+    def _held(self, held: dict[str, Any], entity_id: str, thermostat: Any) -> bool:
+        """Whether an event's state still holds for a zone: started, not ended, and VT has not
+        handed over another thermostat since — that one is forgotten."""
+        if entity_id not in held:
+            return False
+        if held[entity_id] is not thermostat:
+            del held[entity_id]
+            return False
+        return True
 
     async def async_detect(self) -> None:
         """Read what does not change while Home Assistant runs — the installed ``vtherm_api``
@@ -614,62 +684,92 @@ class VThermLink:
         self._api_version = await self._hass.async_add_executor_job(_vtherm_api_version)
 
     def zone(self, entity_id: str) -> ZoneState:
-        state = self._hass.states.get(entity_id)
-        zone = self.zone_from_state(entity_id, state)
-        lost = zone.safety_on or self._room_sensor_lost(entity_id)
-        learning = smartpi_learning_phase(self._hass, state)
-        return replace(zone, room_sensor_lost=lost, smartpi_learning_phase=learning)
-
-    def _room_sensor_lost(self, entity_id: str) -> bool:
-        """The room sensor VT reads is gone, unavailable or unknown: VT keeps its last
-        temperature, and its own safety check sleeps while the zone is off (R6, T2). A steady
-        sensor is fine, however long ago it changed. VT's own safety mode on counts the same
-        (S-35): VT has seen the sensor go quiet, and runs the zone on its safety duty."""
-        sensor = room_sensor(self._hass, entity_id)
-        if sensor is None:
-            return False
-        state = self._hass.states.get(sensor)
-        return state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
-
-    def zone_from_state(self, entity_id: str, state: State | None) -> ZoneState:
-        """A zone from a given state of its climate entity (current or recorded)."""
-        if state is None:
-            return ZoneState(entity_id, reported=False)
-        unit = str(self._hass.config.units.temperature_unit)
-        values = zone_values(state.state, state.attributes, unit)
+        """A room as its thermostat gives it now (I12.7): its live members, the duty and valve
+        VT last applied and whether VT has started it, as VT told the manager; read now, so fresh.
+        Not known — not started, no mode — while VT has not handed the thermostat over."""
+        kept = _kept(self._hass, entity_id)
+        if kept is None:
+            return ZoneState(entity_id, started=False, room_sensor_lost=True)
+        thermostat = kept.thermostat
+        raw = runtime_readings(thermostat, RUNTIME_MEMBERS)
+        values = live_zone(raw, str(self._hass.config.units.temperature_unit))
+        infos = _entry_infos(thermostat)
+        trusted = room_trusted(
+            safety=self._held(self._safety, entity_id, thermostat),
+            thermometer_lost=self._device_state(infos.get(ROOM_THERMOMETER)) in _LOST,
+            measured_at=values.get("temperature_at"),  # VT's own clock
+            started_at=self._started_at,
+        )
+        window = (
+            raw.get(HVAC_OFF_REASON) == WINDOW_DETECTION
+            or self._held(self._window_auto, entity_id, thermostat)
+            or self._device_state(infos.get(WINDOW_SENSOR)) == "on"
+        )
+        cycle = _cycle_min(infos)
         return ZoneState(
             entity_id,
-            temperature=values.temperature,
-            target=values.target,
-            heating_enabled=values.heating_enabled,
-            calling=values.calling,
-            on_percent=values.on_percent,
-            valve_open=values.valve_open,
-            power=values.power,
-            reported_at=reported_at(state),
-            auto_mode=values.auto_mode,
-            device_active=values.device_active,
-            devices_active=values.devices_active,
-            # What a count of devices is capped by (2026-10-14): the devices VT's entry lists.
-            device_count=len(zone_underlying_entities(self._hass, entity_id) or ()) or None,
-            ready=values.ready,
-            temperature_at=values.temperature_at,
-            max_on_percent=values.max_on_percent,
-            mean_power=values.mean_power,
-            safety_on=values.safety_on,
-            shedding=values.shedding,
-            reported=values.reported,
+            **values,
+            on_percent=kept.duty,
+            valve_open=kept.valve,
+            reported_at=dt_util.utcnow().timestamp(),
+            started=kept.started,
+            room_sensor_lost=not trusted,
+            window_open=window,
+            # I13.3: the comfort correction's pace follows the rooms' own cycles.
+            cycle_s=None if cycle is None else cycle * 60.0,
         )
 
+    def _device_state(self, entity_id: object) -> str | None:
+        """The state of a device of the user's that VT names for a room — its thermometer, its
+        window sensor —, read from Home Assistant: ``"missing"`` for one that has no state;
+        ``None`` where VT names none."""
+        if not isinstance(entity_id, str) or not entity_id:
+            return None
+        state = self._hass.states.get(entity_id)
+        return _MISSING if state is None else state.state
+
+    def expect(self, entity_ids: Iterable[str]) -> None:
+        """The rooms the last run knew — its rooms' store (I12.7b) —, expected until VT hands
+        their thermostats over: at a start, before VT has handed them over, a room is not known
+        yet rather than no room, so decision 3's recognition period waits for it."""
+        for entity_id in entity_ids:
+            self._known.setdefault(entity_id, None)
+
+    def rooms(self) -> list[str]:
+        """The rooms now, read at each refresh and control step (I12.11): the thermostats VT
+        holds and its central boiler counts (``rooms``), and those the plugin knew while VT
+        holds no thermostat for them — VT reloading them, or not started yet — so a room VT
+        reloads is not known for a while rather than gone, as decision 3 wants. A known room
+        goes once VT hands its thermostat over not counted, or once Home Assistant's registry no
+        longer lists its entity (removed or renamed: Home Assistant's information). Sorted."""
+        marked = _marked(self._hass)
+        for entity_id, counted in marked.items():
+            if counted:
+                self._known.setdefault(entity_id, None)
+            else:
+                self._known.pop(entity_id, None)
+        registry = er.async_get(self._hass)
+        for entity_id in list(self._known):
+            if entity_id not in marked and registry.async_get(entity_id) is None:
+                del self._known[entity_id]
+        return sorted(self._known)
+
+    def not_counted(self) -> list[str]:
+        """The thermostats VT holds now that its central boiler does not count."""
+        return not_counted(self._hass)
+
     def zones(self) -> list[ZoneState]:
-        return [self.zone(entity_id) for entity_id in self._zones]
+        """Each room as its thermostat gives it now."""
+        return [self.zone(entity_id) for entity_id in self.rooms()]
 
     def zone_name(self, entity_id: str) -> str:
-        return zone_name(self._hass, entity_id)
+        """A room's name: its thermostat's declared ``name`` (``room_name``)."""
+        return room_name(self._hass, entity_id)
 
-    def zones_of_another_kind(self) -> list[str]:
-        """The zones known not to be VT climates (a hand edit, X5.7)."""
-        return zones_of_another_kind(self._hass, self._zones)
+    def vt_too_old(self) -> bool:
+        """VT is loaded and older than the oldest the plugin supports (I12.6); not while its
+        version is unknown."""
+        return vt_supported(vt_version(self._hass)) is False
 
     def relay_used_by_zone(self, relay: str) -> bool:
         """R2: a VT thermostat drives the relay for a room (``relay_used_by_zone``)."""
@@ -680,228 +780,29 @@ class VThermLink:
         return relay_of_boiler_interface(self._hass, relay)
 
     def zones_on_boiler_thermostat(self, boiler_entities: Sequence[str]) -> list[str]:
-        """The zones built on the boiler's or the gateway's own thermostat (X5.19), as VT's
-        entries say now: VT can be reconfigured without the plugin's options changing."""
-        return zones_on_boiler_thermostat(self._hass, self._zones, boiler_entities)
-
-    def recorded_state(self, entity_id: str) -> State | None:
-        """A zone's current state as the history records it."""
-        return self._hass.states.get(entity_id)
-
-    def zone_off_reason(self, entity_id: str) -> str | None:
-        """Why VT keeps a zone off (SB-27): ``hvac_off_reason``, which VT publishes in the
-        thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5 ``base_thermostat.py``:
-        ``hvac_off_manual``, ``hvac_off_sleep_mode``, ``hvac_off_window_detection``,
-        ``hvac_off_central_mode``, ``hvac_off_safety_detection``, ``hvac_off_auto_start_stop``;
-        from 10.6.1 ``hvac_off_inhibition``, a plugin that took the thermostat out of VT's
-        control). Beside the other attributes only where ``specific_states`` lacks it (assumed,
-        a VT not seen). ``None`` when it is away, missing or not a text."""
-        state = self._hass.states.get(entity_id)
-        if state is None:
-            return None
-        specific = state.attributes.get("specific_states")
-        reason = specific.get(HVAC_OFF_REASON) if isinstance(specific, dict) else None
-        if reason is None:
-            reason = state.attributes.get(HVAC_OFF_REASON)
-        return reason if isinstance(reason, str) else None
-
-    def shows_attribute(self, entity_id: str, attribute: str) -> bool | None:
-        """Whether a zone's thermostat carries an attribute now; ``None`` when it is away."""
-        state = self._hass.states.get(entity_id)
-        return None if state is None else attribute in state.attributes
+        """The rooms built on the boiler's or the gateway's own thermostat (X5.19), as VT's
+        settings say now: VT can be reconfigured without the plugin's options changing."""
+        return zones_on_boiler_thermostat(self._hass, self.rooms(), boiler_entities)
 
     def zone_algorithm(self, entity_id: str) -> ZoneAlgorithm:
-        """What runs a zone, from VT's live attributes (not kept by the recorder)."""
-        state = self._hass.states.get(entity_id)
-        if state is None:
+        """A zone's settings, from its thermostat's ``entry_infos`` (I12.7); not known while VT
+        has not handed the thermostat over."""
+        thermostat = vt_thermostat(self._hass, entity_id)
+        if thermostat is None:
             return ZoneAlgorithm()
-        configuration = state.attributes.get("configuration")
-        specific = state.attributes.get("specific_states")
-        known = isinstance(configuration, dict) and state.state not in (
-            STATE_UNAVAILABLE,
-            STATE_UNKNOWN,
-        )
-        configuration = configuration if isinstance(configuration, dict) else {}
-        specific = specific if isinstance(specific, dict) else {}
-        smartpi = specific.get("smartpi_learning_enabled")
-        used = configuration.get("is_used_by_central_boiler")
-        function = configuration.get("proportional_function")
-        kind = configuration.get("type")
-        cycle = configuration.get("cycle_min")
+        infos = _entry_infos(thermostat)
+        used = infos.get(USED_BY_CENTRAL_BOILER)
+        kind = infos.get(THERMOSTAT_TYPE)
         return ZoneAlgorithm(
-            proportional_function=function if isinstance(function, str) else None,
-            smartpi_learning=smartpi if isinstance(smartpi, bool) else None,
-            # VT publishes these keys for every TPI zone; "on" means Auto-TPI is learning.
-            auto_tpi="on"
-            in (specific.get("auto_tpi_state"), specific.get("auto_tpi_continuous_kext")),
             used_by_central_boiler=used if isinstance(used, bool) else None,
-            uses_water_data=WATER_DATA_KEY in specific,
             vtherm_type=kind if isinstance(kind, str) else None,
-            cycle_min=(
-                float(cycle)
-                if isinstance(cycle, int | float) and not isinstance(cycle, bool) and cycle > 0
-                else None
-            ),
-            known=known,
+            cycle_min=_cycle_min(infos),
+            known=bool(infos),
         )
-
-    def vt_central_boiler_configured(self) -> bool | None:
-        """Whether VT's own central boiler is set up — then it must not run alongside; ``None``
-        while it cannot be ruled out (X7: P-20, P-105).
-
-        In this order: seen configured at any moment of this Home Assistant run → there until the
-        restart VT needs (``VT_CENTRAL_SEEN``; also set by ``watch_vt_central``). VT's sensor for
-        it provided → what it says. Else VT's central entry answers — VT creates the sensor only
-        while the feature is on, and Home Assistant keeps its registry entry, with a stand-in
-        "unavailable" state, once VT no longer provides it: the entry gone or disabled by the
-        user → not there; running or being set up again (a reload, Home Assistant starting) →
-        its stored setting, unknown without it; stuck in a failed setup → not there only where
-        its setting says "off" — unless the stand-in was written in this run after Home
-        Assistant had started and VT's central entry changed since, so VT provided the sensor in
-        this run (decision 9): there; one from Home Assistant's start, the entry unchanged
-        since, is not (M1 of the part-2 check). Without
-        the sensor in the registry, only VT's central entry saying "on" counts (VT has not
-        registered the sensor yet)."""
-        hass = self._hass
-        if hass.data.get(VT_CENTRAL_SEEN):
-            return True
-        found = self._vt_central_boiler_now()
-        if found is True:
-            hass.data[VT_CENTRAL_SEEN] = True
-            _LOGGER.info(
-                "Versatile Thermostat's central boiler is configured: control stays blocked "
-                "until Home Assistant restarts, even once it is unticked"
-            )
-        return found
-
-    def _vt_central_boiler_now(self) -> bool | None:
-        registry = er.async_get(self._hass)
-        entity_id = registry.async_get_entity_id(
-            "binary_sensor", VT_DOMAIN, CENTRAL_BOILER_UNIQUE_ID
-        )
-        if entity_id is None:
-            central = vt_central_entry(self._hass)
-            if central is None or central.data.get(CENTRAL_BOILER_FEATURE) is not True:
-                return False
-            return _central_entry_says(central)
-        state = self._hass.states.get(entity_id)
-        entry = registry.async_get(entity_id)
-        provided = state is not None and not state.attributes.get(ATTR_RESTORED)
-        if state is not None and provided and not (entry is not None and entry.disabled):
-            configured = state.attributes.get("is_central_boiler_configured")
-            if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN) or configured is None:
-                return None
-            return configured is True
-        owner = self._central_owner(entry)
-        if owner is None:
-            return False  # left behind by a VT entry that is gone
-        says = _central_entry_says(owner)
-        if says is False and state is not None and self._stand_in_of_this_run(state, owner):
-            return True  # VT's central boiler on in this run, unticked since (decision 9)
-        return says
-
-    def _stand_in_of_this_run(self, state: State, owner: ConfigEntry) -> bool:
-        """A stand-in Home Assistant wrote after it had started, with VT's central entry
-        changed since: the entity was provided in this run and removed since. Not judged while
-        Home Assistant starts — the stand-ins it writes then are for entities nobody provided.
-
-        VT's central entry unchanged since the run's start (M1 of the part-2 check): the
-        stand-in is the one Home Assistant writes at its start for every registered entity
-        nobody provides (``entity_registry.py``, ``_write_unavailable_states`` on
-        ``EVENT_HOMEASSISTANT_START``, Home Assistant 2026.9.3) — VT's central boiler was off
-        before this run began. VT creates the sensor only while its central entry's setting is
-        on (VT 10.4.0 ``binary_sensor.py``), and the setting changes only through an update of
-        the entry, which moves its ``modified_at`` (``config_entries.py``): a sensor VT provided
-        in this run, now off, means the entry changed in this run. Home Assistant keeps no time
-        of its start a plugin set up later could read — the recorder's start, before it, stands
-        for it — so the entry's change, not the stand-in's time, tells the two apart. A change
-        time unknown, or no start known, keeps the latch (a doubt)."""
-        if not state.attributes.get(ATTR_RESTORED):
-            return False
-        started = vt_run(self._hass).started
-        return (
-            started is not None and state.last_updated > started and _changed_since(owner, started)
-        )
-
-    def watch_vt_central(self) -> None:
-        """An entry of the plugin begins watching VT (its coordinator starts). VT's central
-        entry changed in this Home Assistant run while none watched — an untick the plugin did
-        not see, VT's manager perhaps still switching the boiler — latches VT's central boiler as
-        there until the restart (decision 9). A watch begun while Home Assistant starts has no
-        unwatched time of this run before it."""
-        if self._watching:
-            return
-        self._watching = True
-        run = vt_run(self._hass)
-        since = run.unwatched_since or run.started
-        run.watchers += 1
-        if run.watchers > 1 or since is None:
-            return
-        central = vt_central_entry(self._hass)
-        if central is None or not _changed_since(central, since):
-            return
-        self._hass.data[VT_CENTRAL_SEEN] = True
-        _LOGGER.info(
-            "Versatile Thermostat's central entry changed in this Home Assistant run before this "
-            "integration watched it: control stays blocked until Home Assistant restarts"
-        )
-
-    def stop_watching_vt_central(self) -> None:
-        """The entry's coordinator stops: once no entry watches, the time is kept."""
-        if not self._watching:
-            return
-        self._watching = False
-        run = vt_run(self._hass)
-        run.watchers = max(0, run.watchers - 1)
-        if run.watchers == 0:
-            run.unwatched_since = dt_util.utcnow()
-
-    def _central_owner(self, sensor: er.RegistryEntry | None) -> ConfigEntry | None:
-        """The entry of VT's central-boiler sensor; without the sensor in the registry, VT's
-        central entry."""
-        if sensor is None:
-            return vt_central_entry(self._hass)
-        if not sensor.config_entry_id:
-            return None
-        return self._hass.config_entries.async_get_entry(sensor.config_entry_id)
-
-    def vt_central_entry_failed(self) -> bool:
-        """VT's central entry is stuck in a failed setup and not disabled: VT's manager may still
-        switch the boiler, so an unknown VT central boiler gets no grace there (P-20)."""
-        registry = er.async_get(self._hass)
-        entity_id = registry.async_get_entity_id(
-            "binary_sensor", VT_DOMAIN, CENTRAL_BOILER_UNIQUE_ID
-        )
-        owner = self._central_owner(None if entity_id is None else registry.async_get(entity_id))
-        return (
-            owner is not None and owner.disabled_by is None and owner.state not in _CENTRAL_RUNNING
-        )
-
-    def vt_central_activation_delay(self) -> float | None:
-        """VT's central boiler activation delay, in seconds, as VT keeps it in its central
-        entry — also once its central boiler is unticked (decision 5); ``None`` without VT, a
-        central entry, or a number within VT's 0–600 s. A pre-fill for the form only: the
-        plugin's own option is what counts."""
-        entry = vt_central_entry(self._hass)
-        if entry is None:
-            return None
-        raw = entry.data.get(ACTIVATION_DELAY)
-        if isinstance(raw, bool) or not isinstance(raw, int | float):
-            return None
-        value = float(raw)
-        inside = math.isfinite(value) and 0.0 <= value <= VT_ACTIVATION_DELAY_MAX_S
-        return value if inside else None
-
-    def central_mode(self) -> CentralMode | None:
-        """VT's central mode, or ``None`` when VT has no central configuration."""
-        registry = er.async_get(self._hass)
-        entity_id = registry.async_get_entity_id("select", VT_DOMAIN, CENTRAL_MODE_UNIQUE_ID)
-        if entity_id is None:
-            return None
-        state = self._hass.states.get(entity_id)
-        return None if state is None else central_mode(state.state)
 
     def capabilities(self) -> VtCapabilities:
+        """VT loaded and its version, and the installed ``vtherm_api``: Home Assistant's
+        information about its integrations and config entries, not VT's data (gap 19)."""
         components = self._hass.config.components
         # Loaded only with an entry that is: VT set up with every entry failed runs no zones.
         vt_loaded = VT_DOMAIN in components and any(
@@ -912,7 +813,6 @@ class VThermLink:
             vt_loaded,
             vt_version(self._hass) if vt_loaded else None,
             self._api_version,
-            SMARTPI_DOMAIN in components,
         )
 
 
@@ -923,16 +823,3 @@ def _vtherm_api_version() -> str | None:
         return version("vtherm_api")
     except ImportError, PackageNotFoundError:
         return None
-
-
-def _central_entry_says(entry: ConfigEntry) -> bool | None:
-    """What VT's central entry says of its central boiler while its sensor does not: disabled
-    by the user → not there; in a failed setup → not there only where its setting is "off", as
-    VT's manager may still run (P-20); otherwise — running, or being set up again (P-105) — its
-    stored setting, unknown without one."""
-    if entry.disabled_by is not None:
-        return False
-    feature = entry.data.get(CENTRAL_BOILER_FEATURE)
-    if entry.state not in _CENTRAL_RUNNING:
-        return False if feature is False else None
-    return feature if isinstance(feature, bool) else None

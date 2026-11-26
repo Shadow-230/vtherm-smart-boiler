@@ -72,7 +72,6 @@ def test_every_form_field_and_select_option_is_translated() -> None:
     options = {
         "level": "advanced",
         "circuits": [{"id": "main"}, {"id": "second"}],
-        "zones": [{"entity_id": "climate.a"}],
         # I6.1: a boiler that burns fuel and heats hot water shows every field of the panels.
         "boiler": {"connection": "opentherm_gw", "heat_source": "gas", "type": "combi"},
     }
@@ -85,7 +84,6 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "circuit": flow.circuit_schema(
             options, {}, {"control": "passive_fixed", "zones": ["c.a"]}, removable=True
         ),
-        "zones": flow.zones_schema(options | {"circuits": [{"id": "a", "zones": ["c.a"]}]}),
         "building": flow.building_schema(options),
         "monitor": flow.monitor_schema(options),
     }
@@ -106,13 +104,11 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "interface": _interface_schemas(flow),
         "control_curve": flow.control_curve_schema(options),
         "control_behaviour": flow.control_behaviour_schema(options),
-        "control_frost": flow.control_frost_schema(options),  # I8 (decision H4)
         "control_alarms": flow.control_alarms_schema(options),
         "control_return_confirm": flow.control_return_confirm_schema(),
         "confirm_blocking": flow.confirm_blocking_schema(),  # X5.12
         # X8: the relay path's steps.
         "control_relay": flow.control_relay_schema(options),
-        "control_relay_from_vt": flow.control_relay_schema(options),
     }
     for section in ("config", "options"):
         steps = schemas | (options_only if section == "options" else {})
@@ -141,7 +137,6 @@ def test_every_config_error_code_can_be_shown() -> None:
     codes = {
         "missing_signal",
         "implausible_parameter",
-        "zone_without_circuit",
     } | {
         code.value
         for code in IssueCode
@@ -153,13 +148,12 @@ def test_every_config_error_code_can_be_shown() -> None:
     codes |= {
         "invalid_boiler",
         "invalid_circuit",
-        "invalid_zone",
         "invalid_monitor",
         "invalid_building",
         "invalid_freshness",
         "unreadable_options",
         "entity_not_suitable",
-        "zone_not_vt",
+        "zone_not_room",  # I12.11: a room is a thermostat VT hands over and counts
         "entity_for_two_signals",
         "zone_on_boiler_thermostat",
         "zone_in_another_circuit",  # I8 (F4): a zone belongs to one circuit
@@ -184,8 +178,8 @@ def test_every_config_error_code_can_be_shown() -> None:
     assert options_only <= set(SOURCE["options"]["error"])
     zone = SOURCE["config"]["error"]["zone_on_boiler_thermostat"]
     assert set(PLACEHOLDER.findall(zone)) == {"zone"}  # the zones step names the zone
-    unfed = SOURCE["options"]["error"]["zone_feeds_no_criterion"]  # PB-23 names the zone
-    assert set(PLACEHOLDER.findall(unfed)) == {"zone"}
+    for key in ("vt_helper_not_input_boolean", "vt_helper_missing"):  # I12: the helper's field
+        assert SOURCE["options"]["error"][key], key
 
 
 def test_every_control_entity_blocker_and_issue_is_translated() -> None:
@@ -203,10 +197,19 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     }
     assert "name" in SOURCE["entity"]["sensor"]["control_setpoint"]
     assert "name" in SOURCE["entity"]["binary_sensor"]["control"]
-    for key in ("auto_tpi_blocked", "learning_not_paused"):
+    # I12.9: the learning pauses and their issues are gone.
+    for key in ("learning_not_paused", "learning_not_resumed", "learning_left_off_after_removal"):
+        assert key not in SOURCE["issues"], key
+    # I12: VT's commands on anything but the helper; VT's decision unknown; the settings moved.
+    for key, placeholders in (
+        ("vt_command_not_helper", {"entity", "helper"}),
+        ("vt_decision_unknown_off", {"helper"}),
+        ("vt_decision_unknown_handed_back", {"helper"}),
+        ("vt_settings_moved", {"count", "power", "opening", "delay"}),
+    ):
         issue = SOURCE["issues"][key]
-        assert "{zones}" in issue["description"]
-        assert issue["title"]
+        assert issue["title"], key
+        assert set(PLACEHOLDER.findall(issue["description"])) == placeholders, key
     taken = SOURCE["issues"]["hand_back_taken_by_other"]  # V5
     assert "{target}" in taken["description"]
     assert taken["title"]
@@ -220,19 +223,24 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     for key in ("control_stopped_heating", "control_latched"):  # V7's two repair issues
         assert SOURCE["issues"][key]["title"], key
         assert SOURCE["issues"][key]["description"], key
+    # I12.11: the first installation's "reload VT once", with its "done" step and the error it
+    # shows while no thermostat has come; the thermostats VT's central boiler does not count.
+    reload = SOURCE["issues"]["vt_reload_once"]
+    assert reload["title"]
+    assert reload["fix_flow"]["step"]["done"]["description"]
+    assert reload["fix_flow"]["error"]["no_thermostats_yet"]
+    assert "vt_reload_needed" not in SOURCE["issues"]
+    counted = SOURCE["issues"]["vt_thermostats_not_counted"]
+    assert set(PLACEHOLDER.findall(counted["description"])) == {"zones"}
+    assert "Used by central boiler" in counted["description"]  # VT's own label
+    assert "reload" in SOURCE["selector"]["menu_state"]["options"]["reload_vt"]
     for kind in ("off", "handed_back", "monitor"):  # decision 3's repair issue (X3)
         no_zone = SOURCE["issues"][f"no_zone_known_{kind}"]
         assert no_zone["title"], kind
         assert set(PLACEHOLDER.findall(no_zone["description"])) == {"zones"}, kind
-        # PB-03: the zones known, no criterion judged — the issue names the criteria.
-        no_criterion = SOURCE["issues"][f"no_criterion_judged_{kind}"]
-        assert no_criterion["title"], kind
-        assert set(PLACEHOLDER.findall(no_criterion["description"])) == {"criteria"}, kind
-    # Decision 4 (X4); SB-27: the advice by VT's reason for closing the room.
-    for advice in ("", "_window", "_central_mode", "_vt_function", "_inhibition", "_mixed"):
-        frost = SOURCE["issues"][f"frost_zone_closed{advice}"]
-        assert frost["title"], advice
-        assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}, advice
+    assert "no_criterion_judged_off" not in SOURCE["issues"]  # I12: VT's decision instead
+    # I12.10: frost protection is VT's — the plugin's closed-room issue went.
+    assert not any(key.startswith("frost_zone_closed") for key in SOURCE["issues"])
     assert SOURCE["entity"]["button"]["reset_comfort_correction"]["name"]  # answer J (X4)
     too_hot = SOURCE["entity"]["binary_sensor"]["alarm_circuit_too_hot"]["state_attributes"]
     # Y1 (S-16): held through a gap in the flow, then unknown with its reason; not judged while
@@ -287,17 +295,16 @@ def test_coded_states_and_attributes_are_translated() -> None:
     assert _values(SOURCE["entity"]["binary_sensor"]["control"], "outage_effect") == {
         "heating_stops"
     }
-    # 2026-10-14: why the boiler is not called, and what the count counts, wherever shown.
+    # 2026-10-14: why the boiler is not called, wherever shown.
     from custom_components.vtherm_smart_boiler.core.boiler_call import CallReason
-    from custom_components.vtherm_smart_boiler.core.demand import CountBy
 
     reasons = {reason.value for reason in CallReason}
     assert _values(binary["boiler_called"], "call_reason") == reasons
     assert _values(sensors["control_state"], "call_reason") == reasons
-    counted = {by.value for by in CountBy}
-    for entity in (binary["boiler_called"], sensors["demand_count"], sensors["control_state"]):
-        assert _values(entity, "count_by") == counted
-    assert set(SOURCE["selector"]["count_by"]["options"]) == counted
+    # I12.9: why the boiler gives no heat.
+    from custom_components.vtherm_smart_boiler.core.boiler_call import NoHeatReason
+
+    assert _values(binary["no_heat"], "reason") == {reason.value for reason in NoHeatReason}
 
 
 def test_every_icon_belongs_to_an_entity() -> None:
@@ -361,32 +368,27 @@ def test_x6_texts_are_translated() -> None:
 
 
 def test_x7_texts_are_translated() -> None:
-    """X7: VT's central entry not running (P-20), an entity removed (P-19), VT without feature
-    managers naming the first version that loads them and the one tested (P-60), the restart
-    the "VT central boiler active" blocker waits for, and the zone value's public name (P-61) —
-    each issue with the placeholders the code fills in."""
+    """X7: an entity removed (P-19), VT without feature managers naming the first version that
+    loads them and the one tested (P-60), and the zone value's public name (P-61) — each issue
+    with the placeholders the code fills in; I12: the blockers of VT's central boiler say what
+    to do in VT."""
     from custom_components.vtherm_smart_boiler import REMOVED_ISSUE
-    from custom_components.vtherm_smart_boiler.control import VT_CENTRAL_ISSUE
     from custom_components.vtherm_smart_boiler.feature_manager import UNSUPPORTED_ISSUE
     from custom_components.vtherm_smart_boiler.vtherm_link import VT_TESTED
 
-    central = SOURCE["issues"][VT_CENTRAL_ISSUE]
-    assert central["title"]
-    assert not PLACEHOLDER.findall(central["description"])
     removed = SOURCE["issues"][REMOVED_ISSUE]
     assert removed["title"]
     assert set(PLACEHOLDER.findall(removed["description"])) == {"field", "entity"}
     unsupported = SOURCE["issues"][UNSUPPORTED_ISSUE]["description"]
     assert set(PLACEHOLDER.findall(unsupported)) == {"version"}
     assert f"VT {VT_TESTED}" in unsupported
-    active = SOURCE["exceptions"]["blocked_vt_central_boiler_active"]["message"]
-    assert "until Home Assistant has restarted, even once you have unticked it" in active
-    # F5 of the test report: VT's central configuration made after Home Assistant started, with
-    # no central boiler, waits for one restart too — the text says so, not only "configured".
-    assert "created or changed after Home Assistant started" in active
-    assert "even without a central boiler" in active
-    state = SOURCE["entity"]["sensor"]["control_state"]["state_attributes"]["blockers"]["state"]
-    assert "one restart of Home Assistant" in state["vt_central_boiler_active"]
+    exceptions = SOURCE["exceptions"]
+    assert "input_boolean.turn_on" in exceptions["blocked_vt_central_boiler_not_set"]["message"]
+    assert "two controllers" in exceptions["blocked_vt_command_not_helper"]["message"]
+    assert "reload VT once" in exceptions["blocked_vt_central_boiler_unknown"]["message"]
+    assert "blocked_vt_central_boiler_active" not in exceptions
+    relay = SOURCE["issues"]["vt_command_not_helper"]["description"]
+    assert "If {entity} is the boiler's relay, pick it as the relay" in relay
     flat = flatten(SOURCE)
     assert not [key for key, text in flat.items() if "hot-water and emitter" in text]
 
@@ -458,9 +460,8 @@ def test_x8_texts_are_translated() -> None:
     step = SOURCE["options"]["step"]
     timer = step["control_relay"]["data_description"]["relay_off_timer"]
     assert 'whether a Shelly restarts it on a repeated "on" is not documented' in timer
-    assert 'untick "Use a central boiler"' in step["control_relay_from_vt"]["description"]
-    for key in ("relay_off_timer_min_missing", "vt_commands_not_supported"):
-        assert SOURCE["options"]["error"][key], key
+    assert "control_relay_from_vt" not in step  # I12: no moving over from VT's central boiler
+    assert SOURCE["options"]["error"]["relay_off_timer_min_missing"]
     assert "blocked_boiler_not_flow_setpoint" not in SOURCE["exceptions"]
     for signals in (SOURCE["config"]["step"]["signals"], step["signals"]):
         assert "None is required" in signals["description"]
@@ -687,7 +688,6 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     and the options each translated selector offers."""
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
-    zones = {"zones": [{"entity_id": "climate.a"}, {"entity_id": "climate.b"}]}
     circuits = {"circuits": [{"id": "main", "max_flow": 45}, {"id": "second"}]}
     signals = {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x"), "weather": "weather.x"}
     controls = [
@@ -716,7 +716,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "heat_source": "gas",
                 "type": "combi",
             }
-            options = {"level": level, **zones, **circuits, **signals, "boiler": boiler}
+            options = {"level": level, **circuits, **signals, "boiler": boiler}
             options["control"] = control
             schemas = {
                 "connection": flow.connection_schema(options),
@@ -727,20 +727,17 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "freshness": flow.freshness_schema(options),
                 "boiler": flow.boiler_schema(options),
                 "circuit": flow.circuit_schema(options, {}, removable=True),
-                "zones": flow.zones_schema(options),
                 "building": flow.building_schema(options),
                 "monitor": flow.monitor_schema(options),
                 "control": flow.control_schema(options),
                 "control_entity": flow.control_entity_schema(options),
                 "interface": _interface_schemas(flow),
                 "control_curve": flow.control_curve_schema(options),
-                "control_behaviour": flow.control_behaviour_schema(options, vt_delay=120.0),
-                "control_frost": flow.control_frost_schema(options),
+                "control_behaviour": flow.control_behaviour_schema(options),
                 "control_alarms": flow.control_alarms_schema(options),
                 "control_return_confirm": flow.control_return_confirm_schema(),
                 "confirm_blocking": flow.confirm_blocking_schema(),
                 "control_relay": flow.control_relay_schema(options),
-                "control_relay_from_vt": flow.control_relay_schema(options),
             }
             for step, schema in schemas.items():
                 for marker, validator in schema.schema.items():
@@ -786,9 +783,8 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         schema = flow.control_entity_schema(options, answers)
         fields["control_entity"] |= {str(m) for m in schema.schema}
     powered = options | {"signals": {"boiler_power": "sensor.x"}}
-    relay = flow.control_relay_schema(powered, None, {"relay_off_timer": "minutes"})
-    for step in ("control_relay", "control_relay_from_vt"):
-        fields[step] |= {str(m) for m in relay.schema}
+    relay = flow.control_relay_schema(powered, {"relay_off_timer": "minutes"})
+    fields["control_relay"] |= {str(m) for m in relay.schema}
     # I6.2: the signals step reads its hint for the connection into its description.
     from custom_components.vtherm_smart_boiler.control_config import Connection
 
@@ -797,9 +793,10 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     selectors.setdefault(flow.FRESHNESS_NOTE, set()).update(("water", "relay"))
     # I6.3: and the heat source's, where it changes what to pick.
     selectors.setdefault(flow.SOURCE_HINT, set()).update(("electric", "oil"))
-    # I7: the menus read what is left, what to fix and what changed into their descriptions.
+    # I7: the menus read what is left, what to fix and what changed into their descriptions;
+    # I12.11: the setup's last step, VT's reload where it applies.
     selectors.setdefault(flow.MENU_STATE, set()).update(
-        ("left", "fix", "ready", "changed", "unchanged")
+        ("left", "fix", "ready", "changed", "unchanged", "reload_vt")
     )
     return fields, selectors
 
@@ -944,7 +941,7 @@ def test_coded_lists_have_translated_text(language: str) -> None:
     assert _values(state, "latched_by") == latches
     assert _values(verdict, "reasons") == {code.value for code in ReasonCode}
     for owner, attributes in (
-        (state, ("reasons", "blockers", "blockers_waiting", "latched_by")),
+        (state, ("reasons", "blockers", "latched_by")),
         (switch, ("blockers", "blocked_by")),
         (verdict, ("reasons",)),
     ):
@@ -1036,10 +1033,8 @@ def test_entity_names_do_not_repeat_the_device(language: str) -> None:
 def test_y4_texts_are_translated() -> None:
     """Y4: the correction's limit says it is the only bound above the curve (P-66; I8 B6, the
     "correction range" gone); every freshness
-    field has its own description (P-103); the resumes given up have their issue, naming the
-    zones, and the control state its attribute; the verdict's low condensing through a relay
-    says why it is not changed — in every language."""
-    from custom_components.vtherm_smart_boiler.control import LEARNING_NOT_RESUMED_ISSUE
+    field has its own description (P-103); the verdict's low condensing through a relay says why
+    it is not changed — in every language."""
     from custom_components.vtherm_smart_boiler.core.controller import CORRECTION_MAX_K
 
     curve = SOURCE["options"]["step"]["control_curve"]  # with the correction (I8, H2)
@@ -1052,11 +1047,6 @@ def test_y4_texts_are_translated() -> None:
         texts = _texts(language)
         freshness = texts["options"]["step"]["freshness"]
         assert set(freshness["data_description"]) == set(freshness["data"]), language
-        issue = texts["issues"][LEARNING_NOT_RESUMED_ISSUE]
-        assert issue["title"], language
-        assert set(PLACEHOLDER.findall(issue["description"])) == {"zones"}, language
-        state = texts["entity"]["sensor"]["control_state"]["state_attributes"]
-        assert state["learning_not_resumed"]["name"], language
     detail = SOURCE["entity"]["sensor"]["verdict"]["state_attributes"]["detail"]["state"]
     assert "does not set the water temperature" in detail["water_not_controlled"]
     assert "anti-cycling" not in detail["water_not_controlled"]
@@ -1152,9 +1142,8 @@ def test_the_short_relay_timer_texts_are_translated() -> None:
             assert found == {"relay", "minutes"}, (language, rest)
             assert "30 min" in issue["description"], (language, rest)
         assert "10" in texts["options"]["error"]["relay_off_timer_min_short"], language
-        for step in ("control_relay", "control_relay_from_vt"):
-            length = texts["options"]["step"][step]["data_description"]["relay_off_timer_min"]
-            assert "10–120" in length, (language, step)
+        length = texts["options"]["step"]["control_relay"]["data_description"]
+        assert "10–120" in length["relay_off_timer_min"], language
     for rest in ("off", "on"):
         text = SOURCE["issues"][f"control_latched_relay_short_timer_{rest}"]["description"]
         assert "switched itself off about every {minutes} min" in text
@@ -1224,21 +1213,24 @@ def test_the_no_sign_the_boiler_heats_issue_is_translated() -> None:
 
 def test_the_comfort_correction_says_it_is_off_and_what_it_costs() -> None:
     """K4 (2026-11-17): the comfort correction's description says it is off by default, what it
-    costs — more gas, more starts — and the risk with VT's TPI zones: in the simulation about 2
-    to 6 times the starts for under 0.15 K of comfort, so a cold room's first step is the curve —
-    in the curve step — its one place at both levels (I8, decision H2) —, in every language; its
-    limit and the "curve too low" issue have their texts."""
+    costs — more gas, more starts — and the risk with VT's TPI zones: in the simulation up to
+    about 3.5 times the starts for under 0.15 K of comfort since I13.3's slower pace (about 2 to
+    6 before), so a cold room's first step is the curve — in the curve step — its one place at
+    both levels (I8, decision H2) —, in every language; it names its wait of an hour and its trim
+    below the curve (I13.3); its limit and the "curve too low" issue have their texts."""
     for step in ("control_curve",):
         text = SOURCE["options"]["step"][step]["data_description"]["comfort_correction"]
         assert text.startswith("Off by default."), step
         assert "more gas" in text, step
         assert "TPI" in text, step
-        assert "about 2 to 6 times the starts for under 0.15 K" in text, step
+        assert "up to about 3.5 times the starts for under 0.15 K" in text, step
         assert "raise the curve first" in text, step
-        assert "0.5 K" in text, step  # SmartPI's learning band (G11 C)
+        assert "for an hour" in text, step
+        assert "under 70 % open" in text, step
+        assert "SmartPI" not in text, step  # I12.9: no learning band any more (G11 C removed)
         for language in LANGUAGES:
             translated = _texts(language)["options"]["step"][step]["data_description"]
-            assert "2 do 6" in translated["comfort_correction"], (language, step)
+            assert "3,5 razy" in translated["comfort_correction"], (language, step)
             assert "0,15 K" in translated["comfort_correction"], (language, step)
     curve = SOURCE["options"]["step"]["control_curve"]["data_description"]
     assert "3 K a day" in curve["comfort_correction_max_k"]
@@ -1302,15 +1294,6 @@ def test_the_unreadable_notice_does_not_claim_the_hand_back() -> None:
     assert "goes once the boiler shows that hand-back" in text
 
 
-def test_the_auto_tpi_advice_names_what_clearing_the_flag_costs() -> None:
-    """PB-74: clearing VT's "used by the central boiler" also removes VT's own guard — Auto-TPI
-    then learns while zones call and the boiler does not heat; the issue says so."""
-    text = SOURCE["issues"]["auto_tpi_blocked"]["description"]
-    assert "the boiler does not heat" in text
-    assert "activation delay" in text
-    assert "monitoring period" in text
-
-
 # PB-82: attributes the plugin keeps in °C whatever unit Home Assistant shows (its states are
 # converted, its attributes are not) — each names the unit.
 CELSIUS_ATTRIBUTES = (
@@ -1347,7 +1330,6 @@ JOINED_LISTS = (
     ("binary_sensor", "control", "blockers"),
     ("binary_sensor", "control", "blocked_by"),
     ("binary_sensor", "connection", "problems"),
-    ("binary_sensor", "alarm_demand_criterion_no_data", "criteria"),
 )
 
 

@@ -13,6 +13,7 @@ import {
   entityText,
   signalList,
   verdictReasons,
+  verdictSizing,
   type AlarmInfo,
   type Localize,
   type ReasonInfo,
@@ -127,7 +128,11 @@ export class SmartBoilerStatus extends LitElement {
             ? this.t("checks.days", { value: this.number(v, 1) })
             : this.number(v, 0);
     const value = shown(reason.value);
-    return reason.limit == null ? value : this.t("checks.against", { value, limit: shown(reason.limit) });
+    const against = reason.limit == null ? value : this.t("checks.against", { value, limit: shown(reason.limit) });
+    // I13.5: beside the short burns' share, the share under 3 minutes.
+    return reason.very_short_share == null
+      ? against
+      : `${against} · ${this.t("checks.under_3_min", { value: `${this.number(reason.very_short_share * 100, 0)} %` })}`;
   }
 
   private reasonNote(reason: ReasonInfo): string {
@@ -179,7 +184,25 @@ export class SmartBoilerStatus extends LitElement {
             })}
           </ul>`
         : nothing}
+      ${this.sizingLine(sensor)}
     </section>`;
+  }
+
+  /** I13.4: the boiler's outputs against the house's design load, each where known. */
+  private sizingLine(sensor: HassEntity): TemplateResult | typeof nothing {
+    const sizing = verdictSizing(sensor);
+    if (!sizing) return nothing;
+    const parts: string[] = [];
+    if (sizing.minPower != null) parts.push(this.t("checks.sizing_min", { value: this.number(sizing.minPower, 1) }));
+    if (sizing.maxPower != null) parts.push(this.t("checks.sizing_max", { value: this.number(sizing.maxPower, 1) }));
+    if (sizing.designLoad != null && sizing.designOutdoor != null)
+      parts.push(
+        this.t("checks.sizing_load", {
+          value: this.number(sizing.designLoad, 1),
+          outdoor: this.number(sizing.designOutdoor, 0),
+        }),
+      );
+    return html`<p class="muted small"><b>${this.t("checks.sizing")}:</b> ${parts.join(" · ")}</p>`;
   }
 
   // -------------------------------------------------------------------------------- the alarms

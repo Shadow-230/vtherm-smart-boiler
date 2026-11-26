@@ -20,7 +20,6 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     EntityCategory,
-    UnitOfPower,
     UnitOfRatio,
     UnitOfTemperature,
     UnitOfTime,
@@ -45,6 +44,7 @@ from .core.signal_check import (
 )
 from .core.signals import Signal
 from .core.verdict import Reason, Verdict
+from .core.weekly import MIN_WEEK_DEGREE_DAYS
 from .core.zones import SelectionStatus
 from .entity import (
     DEMAND_ATTRIBUTES,
@@ -106,6 +106,13 @@ def _short_share(data: MonitorData) -> Value:
     return None if day is None else _percent(day.heating.short_burn_share)
 
 
+def _short_attributes(data: MonitorData) -> dict[str, Any]:
+    """I13.5: beside the short burns' share, the share under 3 minutes (%), where the
+    efficiency cost of cycling sits."""
+    day = _day(data)
+    return {} if day is None else {"under_3_min": _percent(day.heating.very_short_burn_share)}
+
+
 def _condensing(data: MonitorData) -> Value:
     day = _day(data)
     return None if day is None or day.condensing is None else _percent(day.condensing.value)
@@ -120,9 +127,15 @@ def _degree_days(data: MonitorData) -> Value:
 
 def _gas_per_degree_day(data: MonitorData) -> Value:
     """Gas per degree-day in the meter's unit; the unit is added by the sensor, which shows no
-    value until the meter's unit is known (P-75)."""
+    value until the meter's unit is known (P-75), nor over a week milder than
+    ``MIN_WEEK_DEGREE_DAYS`` (I13.5)."""
     week = _week(data)
-    return None if week is None else _round(week.gas_per_degree_day, 3)
+    if week is None or week.degree_days is None:
+        return None
+    degree_days = week.degree_days.estimated_total()
+    if degree_days is None or degree_days < MIN_WEEK_DEGREE_DAYS:
+        return None
+    return _round(week.gas_per_degree_day, 3)
 
 
 def _gas_attributes(data: MonitorData) -> dict[str, Any]:
@@ -152,17 +165,29 @@ def _reason(reason: Reason) -> dict[str, Any]:
         shown["changed_by_control"] = reason.changed_by_control
     if reason.detail is not None:
         shown["detail"] = reason.detail
+    if reason.very_short_share is not None:  # I13.5: beside the short burns' share
+        shown["very_short_share"] = round(reason.very_short_share, 3)
     return shown
 
 
 def _verdict_attributes(data: MonitorData) -> dict[str, Any]:
     verdict = None if data.analysis is None else data.analysis.verdict
     reasons = [] if verdict is None else verdict.reasons
+    sizing = None if verdict is None else verdict.sizing
     return {
         "reasons": [_reason(r) for r in reasons],
         "monitoring_since": _time(data.monitoring_since),
         # P-96: days left out because the plugin controlled the boiler in them.
         "days_left_out": None if verdict is None else verdict.days_left_out,
+        # I13.4: the boiler's lowest and highest output against the house's design load.
+        "sizing": None
+        if sizing is None
+        else {
+            "min_power_kw": _round(sizing.min_power_kw, 1),
+            "max_power_kw": _round(sizing.max_power_kw, 1),
+            "design_load_kw": _round(sizing.design_load_kw, 1),
+            "design_outdoor": _round(sizing.design_outdoor, 1),
+        },
     }
 
 
@@ -234,10 +259,10 @@ def _parameter_attributes(
             "measured_confidence": None if measured is None else round(measured.confidence, 2),
             "mismatch": parameter.mismatch() is not None,
         }
-        if key is ParameterKey.LOSS_COEFFICIENT:  # K4: a measured loss with its likely range
-            low, high = (None, None) if measured is None else measured_range(measured.value)
+        if key is ParameterKey.LOSS_COEFFICIENT:  # I13.4: a measured loss with its likely range
+            found = None if measured is None else measured_range(measured)
             result["measured_range"] = (
-                None if low is None or high is None else [round(low, digits), round(high, digits)]
+                None if found is None else [round(found[0], digits), round(found[1], digits)]
             )
         return result
 
@@ -320,6 +345,7 @@ BOILER_SENSORS: tuple[BoilerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_registry_visible_default=False,
         value_fn=_short_share,
+        attributes_fn=_short_attributes,
     ),
     BoilerSensorDescription(
         key="condensing_share",
@@ -415,8 +441,7 @@ async def async_setup_entry(
     ]
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))
-        # What VT's central boiler shows beside its sensor (2026-10-14).
-        entities += [DemandCountSensor(coordinator), DemandPowerSensor(coordinator)]
+        entities.append(DemandCountSensor(coordinator))  # the rooms calling (2026-10-14)
         if coordinator.control.options.write_path is not WritePath.RELAY:
             # A relay sets no water temperature (R15).
             entities.append(ControlSetpointSensor(coordinator))
@@ -432,6 +457,7 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
         {
             "reasons",
             "reasons_text",
+            "sizing",
             "signals",
             "temperature",
             "setpoint",
@@ -614,22 +640,19 @@ class FeaturesSensor(SmartBoilerEntity, SensorEntity):
 
 class ControlStateSensor(ControlEntity, SensorEntity):
     """What control does now and why: mode, reasons, blockers, latch and hand-back; each coded
-    list with its text (P-39); SmartPI zones whose learning the plugin could not switch back on
-    for a day, no longer tried (Y4)."""
+    list with its text (P-39)."""
 
     _unrecorded_attributes = frozenset(
         {
             "reasons",
             "reasons_text",
             "blockers_text",
-            "blockers_waiting_text",
             "latched_by_text",
             "target",
             "heating_on",
             "heating_confirmation",
             "unknown_zones",
             "room_sensor_lost_zones",
-            "learning_paused",
             "hand_back_confirmation",
             "comfort_correction",
             "activation_at",
@@ -663,9 +686,6 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "reasons_text": self._text("reasons", status.reasons),
             "blockers": list(status.blockers),
             "blockers_text": self._text("blockers", status.blockers),
-            # Blockers that do not count yet: VT's central boiler unknown in its grace (P-105).
-            "blockers_waiting": list(status.blockers_waiting),
-            "blockers_waiting_text": self._text("blockers", status.blockers_waiting),
             "target": _round(status.target, 1),
             "heating_on": status.heating_on,
             "heating_confirmation": status.heating_check,
@@ -675,9 +695,6 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "latched_by_text": self._text("latched_by", status.latched_by),
             "unknown_zones": list(status.unknown_zones),
             "room_sensor_lost_zones": list(status.room_sensor_lost_zones),
-            "learning_paused": list(status.paused_zones),
-            # Y4: SmartPI zones the plugin could not switch back on for a day: no longer tried.
-            "learning_not_resumed": list(status.learning_not_resumed),
             "writes_stopped": status.writes_stopped,
             "monitor_failed_since": _time(status.monitor_failed_since),
             # The comfort correction the session learned, K (P-38); the button resets it.
@@ -688,13 +705,13 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             # And the outdoor temperature it was decided with, as the curve reads it — the lower
             # of the current and the averaged: the Boiler page puts "where we are" on the curve.
             "curve_outdoor": _round(status.curve_outdoor, 1),
-            # Whether the boiler is called and why not, the demand against its thresholds — and
-            # when a start waiting VT's activation delay is due (decision 5) — as VT's central
-            # boiler shows them (2026-10-14).
+            # Whether the boiler is called and why not, the rooms calling, and when VT's central
+            # boiler's activation delay ends (I12).
             "boiler_called": status.boiler_called,
             "call_reason": status.call_reason,
             **demand_attributes(status),
             **self._relay(status),
+            **_cap(status),
         }
 
     def _relay(self, status: Any) -> dict[str, Any]:
@@ -709,14 +726,23 @@ class ControlStateSensor(ControlEntity, SensorEntity):
         }
 
 
-class DemandCountSensor(ControlEntity, SensorEntity):
-    """The devices — or zones, as the count is set — calling for heat now, what VT's central
-    boiler shows as its active devices (2026-10-14); unknown with no zone known. Its threshold,
-    the zones calling and the devices VT lists active in its attributes."""
+def _cap(status: Any) -> dict[str, Any]:
+    """I13.7: the modulation cap in force, in %, and why it is applied or released — only where
+    the user switched it on, or one is left to release."""
+    if status.modulation_cap_state is None:
+        return {}
+    return {
+        "modulation_cap": status.modulation_cap,
+        "modulation_cap_state": status.modulation_cap_state,
+    }
 
-    _unrecorded_attributes = frozenset(
-        {"count_threshold", "count_by", "calling_zones", "active_devices"}
-    )
+
+class DemandCountSensor(ControlEntity, SensorEntity):
+    """The rooms calling for heat now (2026-10-14); unknown with no zone known. Which they are,
+    and the circuits they are on, in its attributes. The circuits are recorded: the Boiler page
+    replays from them which circuits took water (I12.12); the rooms are not."""
+
+    _unrecorded_attributes = frozenset({"calling_zones"})
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
@@ -730,33 +756,9 @@ class DemandCountSensor(ControlEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
         return {
-            "count_threshold": status.count_threshold,
-            "count_by": status.count_by,
             "calling_zones": list(status.calling_zones),
-            "active_devices": list(status.active_devices),
+            "calling_circuits": list(status.calling_circuits),
         }
-
-
-class DemandPowerSensor(ControlEntity, SensorEntity):
-    """The zones' mean power summed, as VT's central boiler shows its total (2026-10-14) —
-    counted toward its threshold only while a calling zone's valve is open or device on; unknown
-    where no zone gives a power. Its threshold in its attributes."""
-
-    _unrecorded_attributes = frozenset({"power_threshold_kw"})
-    _attr_device_class = SensorDeviceClass.POWER
-    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
-        super().__init__(coordinator, "demand_power")
-
-    @property
-    def native_value(self) -> float | None:
-        return _round(self.control.status.demand_power_kw, 3)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return {"power_threshold_kw": self.control.status.power_threshold_kw}
 
 
 class ControlSetpointSensor(ControlEntity, SensorEntity):

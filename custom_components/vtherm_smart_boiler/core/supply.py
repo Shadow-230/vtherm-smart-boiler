@@ -9,12 +9,10 @@ from .installation import Circuit, CircuitControl
 
 
 class SupplyReason(StrEnum):
-    """Why a circuit's water is not known (docs/en/specification/water-interface.md, §4.1): lasting
-    — nothing to measure it with, or a zone in circuits with different water — or momentary."""
+    """Why a circuit's water is not known: lasting — nothing to measure it with — or momentary."""
 
     NOT_MAPPED = "not_mapped"  # lasting: no boiler flow mapped and no circuit sensor
     CIRCUIT_NOT_MEASURED = "circuit_not_measured"  # lasting: a mixed circuit without its sensor
-    SEVERAL_CIRCUITS = "several_circuits"  # lasting: a zone's circuits differ, or one is unknown
     FLOW_UNKNOWN = "flow_unknown"  # momentary: the sensor reads nothing usable now
     FLOW_STALE = "flow_stale"  # momentary: its last reading is past its age limit
 
@@ -25,7 +23,6 @@ class Supply:
 
     temperature: float | None
     reason: SupplyReason | None = None
-    measured_at: float | None = None  # when the reading used was taken; only with a temperature
 
 
 def circuit_return(circuit: Circuit, boiler_return: float | None) -> float | None:
@@ -43,8 +40,6 @@ def circuit_supply(
     flow_mapped: bool = True,
     own_mapped: bool = False,
     own_stale: bool = False,
-    flow_at: float | None = None,
-    own_at: float | None = None,
 ) -> Supply:
     """What the circuit's emitters receive.
 
@@ -54,10 +49,10 @@ def circuit_supply(
     known, lasting or momentary (I9): no water sensor at all (``flow_mapped`` false and no
     ``own_mapped``) is ``not_mapped``; a circuit's own sensor that is mapped but gives nothing
     now is ``flow_unknown``, or ``flow_stale`` (``own_stale``) — a straight circuit then takes the
-    boiler's flow. ``flow_at`` and ``own_at``: when each reading was taken.
+    boiler's flow.
     """
     if circuit_flow is not None:
-        return Supply(circuit_flow, measured_at=own_at)
+        return Supply(circuit_flow)
     lost = None
     if own_mapped:
         lost = SupplyReason.FLOW_STALE if own_stale else SupplyReason.FLOW_UNKNOWN
@@ -70,5 +65,5 @@ def circuit_supply(
     if not flow_fresh:
         return Supply(None, SupplyReason.FLOW_STALE)
     if circuit.control is CircuitControl.PASSIVE_FIXED and circuit.fixed_temperature is not None:
-        return Supply(min(boiler_flow, circuit.fixed_temperature), measured_at=flow_at)
-    return Supply(boiler_flow, measured_at=flow_at)
+        return Supply(min(boiler_flow, circuit.fixed_temperature))
+    return Supply(boiler_flow)
