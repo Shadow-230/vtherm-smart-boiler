@@ -1029,6 +1029,7 @@ BASE_EXPECT: dict[str, dict[str, object]] = {
         "hand_back": "value",
         "hand_back_value": 0.0,
         "own_room_controller": False,
+        "vt_boiler_helper": "input_boolean.j4_vt_central_boiler",  # I12.8
         "comfort_correction": False,
         "curve.room_mode": "manual",
     },

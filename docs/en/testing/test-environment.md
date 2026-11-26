@@ -152,7 +152,7 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
 
 1. **VT central configuration**: with the central mode select, and VT's central boiler on, its
    thresholds at VT's defaults and its two commands on the helper
-   `input_boolean.j4_vt_central_boiler` (`devenv/config/configuration.yaml`):
+   `input_boolean.j4_vt_central_boiler`, which every configuration in `devenv/config/` holds:
    `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` and `…/input_boolean.turn_off`.
    VT decides whether the boiler heats; the plugin follows the helper (I12.8). Never point these
    commands at the simulated boiler.

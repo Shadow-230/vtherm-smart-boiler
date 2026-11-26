@@ -1,15 +1,18 @@
 """J4's test configurations (devenv/config/*.yaml): each names its role for the runner and
-base.py (input_text.j4_role, the test session's review of 2026-11-22), and the gateway's carries
-the automation through which J4's I2 switches control."""
+base.py (input_text.j4_role, the test session's review of 2026-11-22), each holds the helper VT's
+central boiler switches (I12.8), and the gateway's carries the automation through which J4's I2
+switches control."""
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import pytest
 import yaml
 
-CONFIG = Path(__file__).resolve().parents[1] / "devenv" / "config"
+DEVENV = Path(__file__).resolve().parents[1] / "devenv"
+CONFIG = DEVENV / "config"
 ROLES = {
     "configuration": "gateway",
     "relay": "relay",
@@ -30,6 +33,21 @@ def test_every_configuration_is_listed() -> None:
 @pytest.mark.parametrize(("name", "role"), sorted(ROLES.items()))
 def test_each_configuration_names_its_role(name: str, role: str) -> None:
     assert _load(name)["input_text"]["j4_role"]["initial"] == role
+
+
+@pytest.mark.parametrize("name", sorted(ROLES))
+def test_each_configuration_holds_vt_s_boiler_helper(name: str) -> None:
+    """I12.8: without the helper VT's central boiler switches, control stays blocked in every
+    role, not only the gateway's (the test session's review of 2026-11-26)."""
+    # The runner's options, by their file: a pure module, as tests/integration/test_j4_walk.py
+    # loads it.
+    spec = importlib.util.spec_from_file_location("j4_options", DEVENV / "j4" / "options.py")
+    assert spec is not None
+    assert spec.loader is not None
+    options = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(options)
+    domain, object_id = options.VT_HELPER.split(".")
+    assert object_id in _load(name)[domain]
 
 
 def test_the_gateway_configuration_switches_control_by_an_automation() -> None:
