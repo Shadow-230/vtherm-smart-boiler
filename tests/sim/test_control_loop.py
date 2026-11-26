@@ -14,6 +14,7 @@ from custom_components.boiler_sim.profiles import (
     BoilerProfile,
     light_bedroom_zones,
     radiator_zones,
+    underfloor_zones,
 )
 
 from custom_components.vtherm_smart_boiler.control_config import parse_control
@@ -654,3 +655,63 @@ def test_the_documented_starts_ratios_hold(
     ratio = starts(controlled, DAY, 2 * DAY) / starts(own, DAY, 2 * DAY)
     assert low <= ratio <= high, ratio
     assert all(short <= 0.05 for short in comfort_shortfall(own, controlled).values())
+
+
+# --- I13.8: the slower outdoor mean of an underfloor circuit ---------------------------------
+
+
+def underfloor_loop() -> LoopConfig:
+    """The control the plugin runs for the underfloor house (``parse_control``): one circuit,
+    every room underfloor, its highest water 45 °C; the curve's design flow 38 °C, its lowest
+    20 °C, through 20 °C (Manual) — what its options give, the outdoor mean included."""
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("main", max_flow=45.0),),
+        tuple(Zone(z.zone_id, "main", z.emitter) for z in underfloor_zones()),
+    )
+    control = {
+        "write_path": "opentherm_gw",
+        "gateway_id": "sim",
+        "confirmed_entity": "sensor.gateway_control_setpoint",
+        "topology": "gateway_standalone",
+        "thermostat_kind": "none",
+        "curve": {"design_outdoor": -15.0, "design_flow": 38.0, "room_mode": "manual"},
+        "hard_min": 20.0,
+    }
+    return parse_control(control, installation, None).loop
+
+
+def test_an_underfloor_house_on_the_slower_outdoor_mean_is_no_colder() -> None:
+    """I13.8 on the simulator: the underfloor house (22 h) on sunny days at +3 °C, a ±6 K daily
+    swing. Its options give the 12-hour outdoor mean; against the 3-hour mean the water keeps
+    nearer the night's — its lowest about 1.4 K higher (28.7 °C against 27.3 °C) — no room is
+    colder, the gas is within 1 % (185.5 kWh against 185.4 kWh over two days) and the burner
+    starts under once an hour. The simulator shows no gain either: its floors pass their heat on
+    within about 2 h (P-112), where real rooms with underfloor heating take 20–70 h (Kull et al.
+    2017) — the reason for the slower mean."""
+    slow = underfloor_loop()
+    assert slow.control.outdoor_time_constant_s == 12 * HOUR
+    assert slow.control.curve.exponent == 1.1
+    fast = replace(slow, control=replace(slow.control, outdoor_time_constant_s=3 * HOUR))
+    runs = {}
+    for loop in (fast, slow):
+        controller = LoopController(loop)
+        result = simulate(
+            scenario(
+                [3.0, 3.0, 3.0],
+                controller,
+                boiler=BOILERS["condensing_small"],
+                zones=underfloor_zones(),
+                outdoor=daily_cycle([3.0, 3.0, 3.0], amplitude=6.0),
+            )
+        )
+        lowest = min(v for t, v in controller.setpoints if t >= DAY)
+        runs[loop.control.outdoor_time_constant_s] = (result, lowest)
+    (fast_run, fast_lowest), (slow_run, slow_lowest) = runs[3 * HOUR], runs[12 * HOUR]
+    assert slow_lowest >= fast_lowest + 1.0
+    fast_rooms = late_rooms(fast_run, DAY, 3 * DAY)
+    for zid, temps in late_rooms(slow_run, DAY, 3 * DAY).items():
+        assert min(temps) >= min(fast_rooms[zid]) - 0.1, zid  # the rooms read to 0.1 K
+    fast_gas, slow_gas = sum(fast_run.daily_ch_kwh[1:]), sum(slow_run.daily_ch_kwh[1:])
+    assert abs(slow_gas / fast_gas - 1.0) <= 0.01
+    assert starts(slow_run, DAY, 3 * DAY) / 48.0 <= 1.0

@@ -2114,7 +2114,8 @@ class ControlUnit:
             session.loop,
             inputs,
             confirmed,
-            # The curve's default exponent from the rooms VT hands over (I12.17).
+            # The curve's default exponent (I12.17) and its outdoor mean (I13.8) from the rooms
+            # VT hands over.
             with_rooms_curve(self.options, installation).loop,
             self._confirmed_heating(),
             setpoint_context=setpoint_context,

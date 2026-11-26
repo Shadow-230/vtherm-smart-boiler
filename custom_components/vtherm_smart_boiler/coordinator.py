@@ -1682,8 +1682,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         return heating_starts(analysed.day.burns, now)
 
     def control_now(self) -> ControlOptions:
-        """The control options as they apply now: the curve's default exponent from the rooms VT
-        hands over (I12.17, ``with_rooms_curve``)."""
+        """The control options as they apply now: the curve's default exponent (I12.17) and its
+        outdoor mean (I13.8) from the rooms VT hands over (``with_rooms_curve``)."""
         config = self.config
         return with_rooms_curve(config.control, config.installation.with_rooms(self.link.rooms()))
 

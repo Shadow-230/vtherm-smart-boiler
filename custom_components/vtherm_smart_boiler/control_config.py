@@ -53,6 +53,7 @@ from .core.curve import (
     DESIGN_FLOW_OVER_ROOM_K,
     DESIGN_OUTDOOR_UNDER_ROOM_K,
     HeatingCurve,
+    outdoor_time_constant,
 )
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
@@ -993,35 +994,41 @@ def curve_circuit(installation: Installation) -> Circuit | None:
     return direct[0] if direct else (installation.circuits[0] if installation.circuits else None)
 
 
+def _curve_emitters(installation: Installation) -> frozenset[EmitterType]:
+    """The emitters of the rooms on the circuit the curve serves; none without a circuit."""
+    circuit = curve_circuit(installation)
+    return installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
+
+
 def default_exponent(installation: Installation) -> float:
     """The curve's exponent where the user entered none: the lowest of the emitters in the
     circuit it serves — underfloor 1.1, radiators 1.3, convectors 1.4; 1.3 with none."""
-    circuit = curve_circuit(installation)
-    emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
-    return min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
+    return min((EXPONENT_BY_EMITTER[e] for e in _curve_emitters(installation)), default=1.3)
 
 
 def with_rooms_curve(control: ControlOptions, installation: Installation) -> ControlOptions:
-    """I12.17: the control options with the curve's default exponent from the rooms VT hands
-    over now — ``installation`` as ``Installation.with_rooms`` gives it, where with one circuit a
-    room on no emitter list is a radiator. The stored options know only the listed rooms (one
-    circuit stores no room list since I12.11), so only convectors listed gave 1.4 though the other
-    rooms have radiators. Unchanged where the user entered an exponent, or where the curve's
-    circuit has no room now: the exponent then stays as configured rather than jump."""
-    if not control.configured or control.exponent_entered:
+    """The control options with what the curve reads from the rooms VT hands over now —
+    ``installation`` as ``Installation.with_rooms`` gives it, where with one circuit a room on no
+    emitter list is a radiator. The stored options know only the listed rooms (one circuit stores
+    no room list since I12.11), so only convectors listed gave 1.4 though the other rooms have
+    radiators. I12.17: the default exponent, unless the user entered one. I13.8: the outdoor
+    mean's time constant, 12 hours with an underfloor room, whatever the exponent. Unchanged where
+    the curve's circuit has no room now: both then stay as configured rather than jump."""
+    if not control.configured:
         return control
     circuit = curve_circuit(installation)
     if circuit is None or not installation.zones_in(circuit.circuit_id):
         return control
-    curve = control.loop.control.curve
-    exponent = default_exponent(installation)
-    if curve.exponent == exponent:
+    config = control.loop.control
+    curve = config.curve
+    exponent = curve.exponent if control.exponent_entered else default_exponent(installation)
+    time_constant = outdoor_time_constant(_curve_emitters(installation))
+    if curve.exponent == exponent and config.outdoor_time_constant_s == time_constant:
         return control
-    loop = control.loop
-    return replace(
-        control,
-        loop=replace(loop, control=replace(loop.control, curve=replace(curve, exponent=exponent))),
+    now = replace(
+        config, curve=replace(curve, exponent=exponent), outdoor_time_constant_s=time_constant
     )
+    return replace(control, loop=replace(control.loop, control=now))
 
 
 def parse_control(
@@ -1121,6 +1128,8 @@ def parse_control(
         # never a hand-back for the boiler's signals, which never gate it.
         on_off=on_off,
         stale_hand_back_s=None if on_off else OUTAGE_LOST_S,
+        # I13.8: a slower outdoor mean where the curve's circuit has underfloor heating.
+        outdoor_time_constant_s=outdoor_time_constant(_curve_emitters(installation)),
     )
     loop = LoopConfig(
         control=control,

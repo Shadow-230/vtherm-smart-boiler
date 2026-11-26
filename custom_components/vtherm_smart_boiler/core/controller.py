@@ -252,6 +252,9 @@ class ControlConfig:
     # The boiler link is lost once its stale steps cover this long within the last
     # ``OUTAGE_WINDOW_S`` (X2): control then hands back. ``None``: never lost (tests, simulator).
     stale_hand_back_s: float | None = OUTAGE_LOST_S
+    # The outdoor mean's time constant: 3 h, 12 h where the curve's circuit has underfloor
+    # heating (I13.8, ``core.curve.outdoor_time_constant``, which the options apply). The hold of
+    # the last value is its own (decision 9).
     outdoor_time_constant_s: float = DEFAULT_TIME_CONSTANT_S
     outdoor_hold_s: float = DEFAULT_HOLD_S
     # Decision 3: with every zone unknown, a working thermostat is handed the boiler — a gateway

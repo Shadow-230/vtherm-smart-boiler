@@ -320,6 +320,15 @@ While heating is on, the plugin sets the boiler's water (flow) temperature:
 The water temperature changes slowly (the ramp, default 1 K per minute). It is re-decided every
 5 minutes by default (the decision interval).
 
+The outdoor temperature the curve reads is the lower of the current one and its mean over the
+last hours: a cold morning raises the water at once, a mild afternoon lowers it only slowly. The
+mean covers about 3 hours. Where the circuit the curve serves has a room with underfloor
+heating, it covers about 12 hours (provisional): a floor takes a day or more to warm up or cool
+down, so its water should not follow a short mild spell; the water then stays a little warmer
+for longer when it gets mild. The plugin does not know how heavy your house is: a heavy house
+with radiators keeps the 3-hour mean. The control state shows the value in use
+(`curve_outdoor`).
+
 If the outdoor temperature is lost, the plugin uses the weather entity, then keeps the last
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
 outdoor sensor never means zero heat.

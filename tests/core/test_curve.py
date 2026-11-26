@@ -9,13 +9,18 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.curve import (
     AUTO_ROOM_MAX,
+    DEFAULT_HOLD_S,
+    DEFAULT_TIME_CONSTANT_S,
     HOUR,
+    UNDERFLOOR_TIME_CONSTANT_S,
     HeatingCurve,
     OutdoorSource,
     OutdoorState,
     auto_room,
+    outdoor_time_constant,
     update_outdoor,
 )
+from custom_components.vtherm_smart_boiler.core.installation import EmitterType
 
 
 def test_curve_passes_through_room_and_design_point() -> None:
@@ -196,3 +201,94 @@ def test_a_short_time_constant_weighs_by_its_own_law(time_constant_s: float, wei
     state = update_outdoor(OutdoorState(), 0.0, None, EPOCH)
     later = update_outdoor(state, 10.0, None, EPOCH + 1.0, time_constant_s=time_constant_s)
     assert later.average == pytest.approx(10.0 * weight)
+
+
+# --- I13.8: a slower outdoor mean for an underfloor circuit ---
+
+R, C, U = EmitterType.RADIATOR, EmitterType.CONVECTOR, EmitterType.UNDERFLOOR
+
+
+@pytest.mark.parametrize(
+    ("emitters", "expected"),
+    [
+        ({U}, 12 * HOUR),
+        ({R, U}, 12 * HOUR),  # one floor on the circuit: the water serves it too
+        ({C, U}, 12 * HOUR),
+        ({R}, 3 * HOUR),
+        ({C}, 3 * HOUR),
+        ({R, C}, 3 * HOUR),
+        (set(), 3 * HOUR),  # no room known: as for radiators
+    ],
+    ids=["floor", "with_radiators", "with_convectors", "radiators", "convectors", "both", "none"],
+)
+def test_an_underfloor_circuit_takes_the_slower_outdoor_mean(
+    emitters: set[EmitterType], expected: float
+) -> None:
+    """I13.8: a floor answers over tens of hours (Kull et al. 2017: 20–70 h), so the curve's
+    circuit with an underfloor room follows a 12-hour outdoor mean; radiators and convectors keep
+    3 hours (provisional, K4)."""
+    assert UNDERFLOOR_TIME_CONSTANT_S == 12 * HOUR
+    assert DEFAULT_TIME_CONSTANT_S == 3 * HOUR
+    assert outdoor_time_constant(frozenset(emitters)) == expected
+
+
+@pytest.mark.parametrize(
+    ("time_constant_s", "after_an_hour"),
+    [(DEFAULT_TIME_CONSTANT_S, 6.42), (UNDERFLOOR_TIME_CONSTANT_S, 5.40)],
+    ids=["three_hours", "twelve_hours"],
+)
+def test_the_slower_mean_follows_a_mild_hour_slowly_and_a_cold_morning_at_once(
+    time_constant_s: float, after_an_hour: float
+) -> None:
+    """I13.8: from 5 °C, an hour at 10 °C moves the effective outdoor temperature to 6.4 °C with
+    3 h and to 5.4 °C with 12 h — the water stays nearer the night's; a colder reading is the
+    effective at once with either: the lower of now and the mean is kept, so the water never
+    follows a mild mean on a cold morning."""
+    state = update_outdoor(OutdoorState(), 5.0, None, EPOCH, time_constant_s=time_constant_s)
+    mild = update_outdoor(state, 10.0, None, EPOCH + HOUR, time_constant_s=time_constant_s)
+    assert mild.effective == pytest.approx(after_an_hour, abs=0.005)
+    cold = update_outdoor(mild, 0.0, None, EPOCH + HOUR + 60.0, time_constant_s=time_constant_s)
+    assert cold.effective == 0.0
+    assert cold.average is not None
+    assert cold.average > 5.0  # the mean itself stays mild; the lower of the two counts
+
+
+def test_after_a_short_cold_dip_the_slower_mean_reads_the_current_temperature() -> None:
+    """I13.8, the other side: mild days at 10 °C, three hours at 0 °C, then 6 °C. The 3-hour mean
+    fell with the dip (3.7 °C), so its curve reads less than now; the 12-hour mean kept the mild
+    days (7.8 °C), so its curve reads the current 6 °C — less water than with 3 h, never less than
+    the current temperature asks for."""
+    effective = {}
+    for time_constant_s in (DEFAULT_TIME_CONSTANT_S, UNDERFLOOR_TIME_CONSTANT_S):
+        state = update_outdoor(OutdoorState(), 10.0, None, EPOCH, time_constant_s=time_constant_s)
+        dip = update_outdoor(state, 0.0, None, EPOCH + 3 * HOUR, time_constant_s=time_constant_s)
+        back = update_outdoor(dip, 6.0, None, EPOCH + 3 * HOUR, time_constant_s=time_constant_s)
+        assert back.effective is not None
+        effective[time_constant_s] = back.effective
+    assert effective[DEFAULT_TIME_CONSTANT_S] == pytest.approx(3.68, abs=0.005)
+    assert effective[UNDERFLOOR_TIME_CONSTANT_S] == 6.0
+
+
+def test_the_slower_mean_leaves_the_three_hour_hold_as_it_is() -> None:
+    """I13.8, negative: the hold of the last value when every reading is lost (decision 9) stays
+    3 hours with the 12-hour mean — the two values are apart."""
+    assert DEFAULT_HOLD_S == 3 * HOUR
+    slow = UNDERFLOOR_TIME_CONSTANT_S
+    state = update_outdoor(OutdoorState(), 2.0, None, EPOCH, time_constant_s=slow)
+    held = update_outdoor(state, None, None, EPOCH + 3 * HOUR - 1.0, time_constant_s=slow)
+    assert held.source is OutdoorSource.HELD
+    gone = update_outdoor(held, None, None, EPOCH + 3 * HOUR + 1.0, time_constant_s=slow)
+    assert gone.source is OutdoorSource.NONE
+
+
+def test_a_changed_time_constant_carries_the_mean_on() -> None:
+    """I13.8: the rooms VT hands over may change the circuit's emitters while control runs; the
+    mean goes on from where it stood, weighed by the new constant — no restart, no jump."""
+    state = update_outdoor(OutdoorState(), 0.0, None, EPOCH)
+    fast = update_outdoor(state, 10.0, None, EPOCH + HOUR)
+    assert fast.average is not None
+    slow = update_outdoor(
+        fast, 10.0, None, EPOCH + 2 * HOUR, time_constant_s=UNDERFLOOR_TIME_CONSTANT_S
+    )
+    expected = fast.average + (10.0 - fast.average) * (1 - math.exp(-1 / 12))
+    assert slow.average == pytest.approx(expected)
