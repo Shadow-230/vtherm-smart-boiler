@@ -18,15 +18,26 @@ version is decided then.
   condensing share, with hot-water draws told apart.
 - Degree-days and gas per degree-day — measured with a gas meter you map, else estimated — and the
   change in use against the day before, split into weather, hot water, settings and the rest.
-- A verdict on whether control is worth enabling, after 7 days of data by default.
+- A verdict on whether control is worth enabling, after 7 days of data by default. Frequent
+  short burns name a large boiler as a common cause, never "the main cause", and the boiler's
+  lowest and highest output are shown against the house's design load.
+- The building's heat loss with its range, taken from the fit with an allowance for days that
+  follow each other (never narrower than ±15 %); the heating threshold found from the days once
+  there are days on both sides of it; the energy signature with and without control compared
+  with their ranges ("no difference shown" where they overlap).
+- Gas per degree-day week by week, shown from 14 degree-days a week, with a band from the house's
+  own day-to-day scatter; burns under 3 minutes counted beside those under 10; a check that gas
+  classed as hot water does not follow the outdoor temperature, with a notice where it does.
 - The past from the boiler's signals in the recorder; whether the boiler was called for heat from
-  the helper VT's central boiler switches, its recorder history included; the rooms' details from
+  the helper VT's central boiler switches, its recorder history included, or a circuit run by
+  other automation asking; the rooms' details from
   the plugin's own reads, kept 8 days in its own storage — nothing is read back from VT's
   thermostats in the recorder, so room details start from the installation.
 - Signal health, and each feature active only with its data: the sensor **Features** says why
   one is not.
 - Alarms and early warnings: water pressure low, high or falling; flue gas; frequent starts;
-  unstable ignition; heating hysteresis drifting; low flow; a circuit's water too hot; an outdoor
+  unstable ignition; heating hysteresis drifting, fast or over weeks; low flow; a circuit's water
+  too hot; an outdoor
   sensor stuck or deviating; a long burn without warming. Notifications as repair issues.
 - A suggested lowest water temperature, never applied.
 - Forecasts recorded from a weather entity, for later releases.
@@ -50,14 +61,24 @@ version is decided then.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
   connected is the setup's first question. Control never writes through a cloud service.
-- A fallback setpoint when no outdoor temperature is known; the comfort correction.
+- The curve reads the lower of the outdoor temperature now and its mean over 3 hours, over
+  12 hours for a circuit with underfloor heating. A fallback setpoint when no outdoor temperature
+  is known.
+- The comfort correction (off by default): it counts a room short only after it has been fully
+  open and short for two of its cycles and an hour, rises at most 1 K per four cycles of the
+  slowest room it reads, waits while a room warms back after its setpoint was raised, and trims
+  the water below the curve — at most 3 K, slowly — while every room is well under open.
+- A modulation cap, opt-in and off by default, on the paths that can set it: never below the
+  boiler's minimum, released during hot water, at every hand-back and when it is switched off,
+  lifted for 3 hours when the house is not getting enough heat.
 - A room's temperature judges the curve only while it is trusted: not while VT runs it in safety
   mode, its thermometer is unavailable, or VT has not measured it since the plugin started. A
   room with its window open, or still warming back after it closes, is not the critical zone.
-- **Gives no heat**: one binary sensor, on while the boiler gives the rooms no heat — VT's central
-  boiler not calling, its activation delay, hot water, a boiler fault, or the plugin unable to
-  vouch for heat — with the reason. Pick it in SmartPI 1.0's "heating unavailable" setting, or
-  use it in an automation.
+- **Gives no heat**: one binary sensor, on while a room calls for heat and the boiler gives none —
+  VT's central boiler not calling, its activation delay, hot water, a boiler fault, or the plugin
+  unable to vouch for heat — with the reason; off while no room calls, so a zone algorithm can
+  learn from the rest. Pick it in SmartPI 1.0's "heating unavailable" setting, or use it in an
+  automation.
 
 **Versatile Thermostat through `vtherm_api`** (step I12)
 
@@ -80,6 +101,10 @@ version is decided then.
   start, the boiler's own limit and another controller — never fought.
 - The safe hand-back on every exit, read back and retried until confirmed: control switched off,
   an alarm, a lost boiler link, Home Assistant stopping, and after a restart without a clean stop.
+- A boiler link lost again within an hour is taken back only after 10 minutes of fresh data, so a
+  link that keeps dropping does not hand the boiler back and take it again every few minutes. A
+  signal earns its freshness limit after four unchanged repeats, never shorter than twice its
+  second-longest pause.
 - Nothing written to the boiler's permanent memory: a target declared persistent, or of unknown
   type, is never written.
 - Control refused where it could leave the house without heat: an on/off thermostat on the
@@ -132,6 +157,6 @@ version is decided then.
 
 ### Requirements
 
-- Home Assistant 2026.10.4 or later; Versatile Thermostat 10.6.5 or later (it shows itself as
-  10.6.4 in Home Assistant); `vtherm_api` 0.9.0 or later.
+- Home Assistant 2026.10.4 or later, tested on 2026.10.4 and 2026.11.3; Versatile Thermostat
+  10.6.5 or later (it shows itself as 10.6.4 in Home Assistant); `vtherm_api` 0.9.0 or later.
 - Translations: English and Polish.
