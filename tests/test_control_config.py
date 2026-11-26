@@ -23,6 +23,7 @@ from custom_components.vtherm_smart_boiler.control_config import (
     parse_control,
     with_rooms_curve,
 )
+from custom_components.vtherm_smart_boiler.core.curve import HOUR
 from custom_components.vtherm_smart_boiler.core.guards import WriteType
 from custom_components.vtherm_smart_boiler.core.installation import (
     Boiler,
@@ -129,6 +130,7 @@ def test_underfloor_exponent_and_circuit_cap() -> None:
     options = parse_control(OTGW, installation, None)
     assert options.loop.control.curve.exponent == 1.1
     assert options.loop.control.circuit_max == 40.0
+    assert options.loop.control.outdoor_time_constant_s == 12 * HOUR  # I13.8
 
 
 # One circuit stores only the rooms on its emitter lists (I12.11): here one convector room.
@@ -169,6 +171,62 @@ def test_an_entered_exponent_is_kept_whatever_the_rooms() -> None:
     assert with_rooms_curve(entered, rooms) is entered
     unset = parse_control({}, ONE_CONVECTOR, None)
     assert with_rooms_curve(unset, rooms) is unset
+
+
+# I13.8: one circuit, one room listed with underfloor heating.
+ONE_FLOOR = Installation(
+    Boiler(BoilerClass.FLOW_SETPOINT),
+    (Circuit("main", max_flow=40.0),),
+    (Zone("climate.floor", "main", EmitterType.UNDERFLOOR),),
+)
+
+
+@pytest.mark.parametrize(
+    ("rooms", "hours"),
+    [
+        (["climate.floor", "climate.bed"], 12),  # the floor among the rooms: its water too
+        (["climate.bed"], 3),  # the floor not handed over now: radiators only
+        ([], 12),  # no room now (VT reloading): as configured, no jump
+    ],
+    ids=["floor_and_radiator", "radiator_only", "no_room_now"],
+)
+@pytest.mark.parametrize("exponent", [None, 1.25], ids=["exponent_default", "exponent_entered"])
+def test_the_outdoor_mean_follows_the_floors_on_the_curves_circuit(
+    rooms: list[str], hours: int, exponent: float | None
+) -> None:
+    """I13.8: the curve's circuit with an underfloor room takes the 12-hour outdoor mean, read
+    from the rooms VT hands over as the default exponent reads them (I12.17) — whether or not the
+    user entered an exponent, which stays as entered; without a floor, 3 hours. With no room now,
+    the stored rooms' value stays."""
+    curve = CURVE if exponent is None else CURVE | {"exponent": exponent}
+    options = parse_control(OTGW | {"curve": curve}, ONE_FLOOR, None)
+    assert options.loop.control.outdoor_time_constant_s == 12 * HOUR  # the stored rooms
+    now = with_rooms_curve(options, ONE_FLOOR.with_rooms(rooms)).loop.control
+    assert now.outdoor_time_constant_s == hours * HOUR
+    if exponent is not None:
+        assert now.curve.exponent == exponent
+
+
+@pytest.mark.parametrize(
+    "floor",
+    [
+        Circuit("floor", CircuitControl.PASSIVE_FIXED, fixed_temperature=35.0),
+        Circuit("floor", CircuitControl.SEPARATE),
+    ],
+    ids=["fixed_valve", "other_automation"],
+)
+def test_a_floor_behind_a_mixer_leaves_the_curve_on_the_three_hour_mean(floor: Circuit) -> None:
+    """I13.8, negative: the curve serves the circuit fed straight from the boiler; a floor behind
+    a mixer or a fixed valve has its own water, so the curve keeps the 3-hour mean."""
+    installation = Installation(
+        Boiler(BoilerClass.FLOW_SETPOINT),
+        (Circuit("radiators"), floor),
+        (Zone("climate.a", "radiators"), Zone("climate.f", "floor", EmitterType.UNDERFLOOR)),
+    )
+    options = parse_control(OTGW, installation, None)
+    assert options.loop.control.outdoor_time_constant_s == 3 * HOUR
+    rooms = installation.with_rooms(["climate.a", "climate.f"])
+    assert with_rooms_curve(options, rooms) is options
 
 
 @pytest.mark.parametrize(

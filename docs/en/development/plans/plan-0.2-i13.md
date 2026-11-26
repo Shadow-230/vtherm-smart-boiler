@@ -88,13 +88,16 @@ by a large shortfall or hot water, never delaying a stop, off by default, with i
 Offered as a suggestion only, to lengthen burns at low load; never below the boiler's reported
 minimum modulation (DESNZ, HEM-VAL-05, 2023). Off by default.
 
-### I13.8 The outdoor mean for heavy houses and underfloor heating
+### I13.8 The outdoor mean for heavy houses and underfloor heating ✅
 
 The effective outdoor temperature is the lower of now and a 3-hour mean for every house. Rooms
 with underfloor heating respond over 20–70 hours (Kull et al. 2017); weather compensators filter
 the outdoor temperature over 10–20 hours for heavy buildings (Siemens, in the review of
 2026-11-16). A longer mean (provisional 12 h, K4) for an underfloor circuit or a heavy
 building (the building's answers), the lower of now and the mean kept.
+
+Built: 12 h where the curve's circuit has an underfloor room (from VT's rooms, as the exponent
+reads them); underfloor only, as the building's mass went in I8 (B5).
 
 ### I13.9 Documents
 

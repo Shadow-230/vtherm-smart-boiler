@@ -7,15 +7,18 @@ excess over the room to the power ``n``, and the house's need grows linearly wit
 ``room − outdoor``, so the excess needed grows with that difference to the power ``1/n``.
 
 The effective outdoor temperature is the lower of the current value and a moving average: a
-sudden cold snap is followed at once, a quick warm-up only slowly — the cautious side.
+sudden cold snap is followed at once, a quick warm-up only slowly — the cautious side. The
+average is slower where the curve serves underfloor heating (I13.8, ``outdoor_time_constant``).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+
+from .installation import EmitterType
 
 HOUR = 3600.0
 # The curve step's own checks (X5.8, P-68; provisional, K4): the design flow at least this far
@@ -84,7 +87,26 @@ class OutdoorState:
 
 
 DEFAULT_TIME_CONSTANT_S = 3 * HOUR
+# I13.8 (provisional, K4): rooms with underfloor heating answer over 20–70 hours (Kull et al.
+# 2017), and a weather compensator's manual filters the outdoor temperature with a building time
+# constant of 10–20 hours for most buildings (Siemens LMS14): the curve of an underfloor circuit
+# follows a slower mean.
+UNDERFLOOR_TIME_CONSTANT_S = 12 * HOUR
+# The hold is its own value (decision 9), whatever the mean's time constant.
 DEFAULT_HOLD_S = 3 * HOUR  # the last effective value stands in this long, then the fallback
+
+
+def outdoor_time_constant(emitters: Collection[EmitterType]) -> float:
+    """The outdoor mean's time constant for the curve's circuit, from its rooms' ``emitters``
+    (I13.8): 12 hours where one of them is underfloor — the circuit's water serves that floor
+    too, as the curve's default exponent reads it — else 3 hours, with no room known too. The
+    effective value stays the lower of now and the mean, so a cold morning is followed at once
+    and the water never falls below the curve at the current temperature. The slower mean keeps
+    the water up longer through a mild spell; after a short cold dip within mild days it remembers
+    the mild days, so the water comes back to the current temperature's sooner."""
+    if EmitterType.UNDERFLOOR in emitters:
+        return UNDERFLOOR_TIME_CONSTANT_S
+    return DEFAULT_TIME_CONSTANT_S
 
 
 def update_outdoor(

@@ -720,6 +720,16 @@ How control decides (principle 12):
   limits, and changes at the ramp's rate, in K per minute, at every step. The ramp is skipped
   only for installation limits — the highest water temperature, a circuit, the boiler — not for
   a falling curve (S-23).
+- **The effective outdoor temperature** is the lower of the current one and its moving mean, so
+  a cold snap is followed at once and a mild spell only slowly. The mean's time constant is 3 h;
+  12 h where the circuit the curve serves has a room with underfloor heating, read from the rooms
+  VT hands over as the curve's default exponent reads them (I13.8; provisional, K4): such rooms
+  answer over 20–70 h (Kull et al. 2017), and a weather compensator's manual filters the outdoor
+  temperature over 10–20 h for most buildings (Siemens LMS14). The other side: after a short
+  cold dip within mild days the 12-h mean still holds the mild days, so the water comes back to
+  the current temperature's sooner — never below it. The plugin records no building mass (it
+  went in I8, decision B5), so a heavy house with radiators keeps 3 h. The hold of the last value
+  when the readings are lost is its own, 3 h (decision 9).
 - **The lowest water temperature** (decision 2; the key `hard_min`) bounds the curve from below,
   10–50 °C, default 20 °C (provisional, K4), set by the user like a curve setting. Its text names
   both risks: too low — the boiler stops by itself again and again in mild weather, and a
@@ -1193,7 +1203,7 @@ reviews every provisional value at K4.
 | Rewrite window 24 h | `core/guards.py` | decided 2026-09-25 |
 | Hand-back retry 60 s | `control.py` | existing |
 | Lost link: 5 min stale within 10 min; back after 60 s fresh, after 10 min following a second loss within an hour (I13.2) | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
-| Outdoor hold 3 h; outdoor time constant 3 h | `core/curve.py` | the hold: decision 9; the time constant: provisional, K4 (reason to confirm; Open after 0.2.2, #27) |
+| Outdoor hold 3 h; outdoor time constant 3 h, 12 h where the curve's circuit has a room with underfloor heating (I13.8) | `core/curve.py` | the hold: decision 9; the time constants: provisional, K4 (3 h: reason to confirm, Open after 0.2.2, #27; 12 h: rooms with underfloor heating answer over 20–70 h, Kull et al. 2017, and a weather compensator's manual filters over 10–20 h for most buildings, Siemens LMS14 — 12 h in the lower part, as a longer mean keeps the water up longer through a mild spell) |
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
 | Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
 | Long burn without warming: a run of 3 h, the flame's gaps up to 30 min kept; a room rising under 0.2 K is not warming; the water has reached its setpoint when the flow, at some moment of the last 30 min, is under it by at most 1 K or above it, the burner stopping or not (J4's F15: a boiler at its minimum above a setpoint too low; the user's note of 2026-11-22: the boiler's own hysteresis and delays); 90 % is high modulation, with the flame on throughout for the power limit; every room 0.3 K over for 1 h is too hot; 30-min averages | `core/long_run.py` | the gaps decided at K4 (the user, 2026-11-17, J4's F10: a boiler cycling at its minimum with the rooms short is the same case); the rest provisional (G11 E) |

@@ -338,6 +338,15 @@ Gdy grzanie jest włączone, wtyczka ustawia temperaturę wody w kotle (temperat
 Temperatura wody zmienia się powoli (rampa, domyślnie 1 K na minutę). Domyślnie jest ustalana
 na nowo co 5 minut (odstęp decyzji).
 
+Temperatura zewnętrzna, którą czyta krzywa, to niższa z bieżącej i jej średniej z ostatnich
+godzin: zimny poranek od razu podnosi wodę, łagodne popołudnie obniża ją tylko powoli. Średnia
+obejmuje około 3 godzin. Gdy w obiegu, któremu służy krzywa, jest pokój z ogrzewaniem
+podłogowym, obejmuje około 12 godzin (wartość tymczasowa): podłoga nagrzewa się i stygnie dobę
+albo dłużej, więc jej woda nie powinna iść za krótkim ociepleniem; przy ociepleniu woda zostaje
+wtedy dłużej nieco cieplejsza. Wtyczka nie wie, jak ciężki jest Twój dom: ciężki dom z
+grzejnikami zostaje przy średniej z 3 godzin. Stan sterowania pokazuje używaną wartość
+(`curve_outdoor`).
+
 Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3 godziny trzyma
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
 krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.

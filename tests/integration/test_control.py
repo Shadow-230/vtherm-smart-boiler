@@ -3716,6 +3716,36 @@ async def test_a_steady_outdoor_reading_is_not_a_stale_one(rig: Rig) -> None:
     assert "outdoor_sensor" in rig.state("sensor", "control_state").attributes["reasons"]
 
 
+@pytest.mark.parametrize(
+    ("underfloor", "after_an_hour"), [(True, 5.4), (False, 6.4)], ids=["underfloor", "radiators"]
+)
+async def test_an_underfloor_curve_follows_a_slower_outdoor_mean(
+    rig: Rig, underfloor: bool, after_an_hour: float
+) -> None:
+    """I13.8: one circuit, its room listed with underfloor heating: the curve reads the lower of
+    now and a 12-hour outdoor mean — an hour at 10 °C after 5 °C moves it to 5.4 °C, where a
+    radiator's 3-hour mean gives 6.4 °C. A colder reading is followed at once either way."""
+    living = rig.zones.entities["living"]
+    circuit: dict[str, Any] = {"max_flow": 40} | ({"underfloor": [living]} if underfloor else {})
+    await set_up(rig, add_entry(rig, with_circuit(rig, circuit)))
+    hours = 12 if underfloor else 3
+    control = rig.entry.runtime_data.control_now().loop.control
+    assert control.outdoor_time_constant_s == hours * 3600.0
+    await rig.switch(True)
+    await rig.advance(60)
+
+    def curve_outdoor() -> float:
+        return rig.state("sensor", "control_state").attributes["curve_outdoor"]
+
+    assert curve_outdoor() == OUTDOOR
+    rig.outdoor = 10.0
+    await rig.advance(3600, step=60.0)
+    assert curve_outdoor() == pytest.approx(after_an_hour, abs=0.051)
+    rig.outdoor = 0.0  # colder: at once
+    await rig.advance(60)
+    assert curve_outdoor() == 0.0
+
+
 async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

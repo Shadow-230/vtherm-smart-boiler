@@ -756,6 +756,17 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   i zmienia się w tempie rampy, w K na minutę, przy każdym kroku. Rampa jest pomijana tylko dla
   limitów instalacji — najwyższej temperatury wody, obiegu, kotła — nie dla opadającej krzywej
   (S-23).
+- **Efektywna temperatura zewnętrzna** to niższa z bieżącej i jej średniej ruchomej, więc za
+  nagłym mrozem idzie od razu, a za ociepleniem tylko powoli. Stała czasowa średniej to 3 h;
+  12 h, gdy w obiegu, któremu służy krzywa, jest pokój z ogrzewaniem podłogowym, odczytany z
+  pokoi przekazanych przez VT tak, jak czyta je domyślny wykładnik krzywej (I13.8; tymczasowo,
+  K4): takie pokoje reagują w ciągu 20–70 h (Kull i in. 2017), a instrukcja regulatora
+  pogodowego filtruje temperaturę zewnętrzną przez 10–20 h dla większości budynków (Siemens
+  LMS14). Druga strona: po krótkim ochłodzeniu wśród łagodnych dni średnia z 12 h wciąż pamięta
+  łagodne dni, więc woda szybciej wraca do tej dla bieżącej temperatury — nigdy poniżej niej.
+  Wtyczka nie zapisuje masy budynku (usunięta w I8, decyzja B5), więc ciężki dom z grzejnikami
+  zostaje przy 3 h. Utrzymanie ostatniej wartości po utracie odczytów jest osobne, 3 h
+  (decyzja 9).
 - **Najniższa temperatura wody** (decyzja 2; klucz `hard_min`) ogranicza krzywą od dołu, 10–50 °C,
   domyślnie 20 °C (tymczasowo, K4), ustawiana przez użytkownika jak ustawienie krzywej. Jej tekst
   wymienia oba ryzyka: za niska — kocioł w łagodną pogodę raz po raz sam się wyłącza, a w kotle
@@ -1268,7 +1279,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Okno ponownego zapisu 24 h | `core/guards.py` | postanowione 2026-09-25 |
 | Ponowienie oddania sterowania co 60 s | `control.py` | istniejące |
 | Utrata łączności: 5 min nieświeże w ciągu 10 min; powrót po 60 s świeżych, po 10 min po drugiej utracie w ciągu godziny (I13.2) | `core/controller.py` | 5 min postanowione 2026-09-25; okno i powrót tymczasowe, K4 |
-| Utrzymanie temperatury zewnętrznej 3 h; stała czasowa temperatury zewnętrznej 3 h | `core/curve.py` | utrzymanie: decyzja 9; stała czasowa: tymczasowe, K4 (powód do potwierdzenia; Open after 0.2.2, #27) |
+| Utrzymanie temperatury zewnętrznej 3 h; stała czasowa temperatury zewnętrznej 3 h, 12 h, gdy w obiegu krzywej jest pokój z ogrzewaniem podłogowym (I13.8) | `core/curve.py` | utrzymanie: decyzja 9; stałe czasowe: tymczasowe, K4 (3 h: powód do potwierdzenia, Open after 0.2.2, #27; 12 h: pokoje z ogrzewaniem podłogowym reagują w ciągu 20–70 h, Kull i in. 2017, a instrukcja regulatora pogodowego filtruje przez 10–20 h dla większości budynków, Siemens LMS14 — 12 h w dolnej części, bo dłuższa średnia dłużej trzyma wodę wyżej podczas ocieplenia) |
 | Zawieszony czujnik: jedna wartość trzymana 12 h, gdy pogoda zmienia się o 3 K lub więcej; odchylenie 6 K na przestrzeni co najmniej 2 h nakładających się danych | `core/signal_check.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Korekta komfortu +3 K (domyślna wartość jej limitu, opcja od 0.5 do 10 K od G11), 30 min na K, 3 h na krawędzi, 1 K powyżej zatrzymuje wzrost; zaspokojona poniżej 70 %, brakuje 0.3 K | `core/controller.py` | postanowione 2026-09-25 |
 | Długie palenie bez nagrzewania: przebieg 3 h, przerwy płomienia do 30 min zachowane; pokój, który rośnie o mniej niż 0.2 K, się nie nagrzewa; woda doszła do nastawy, gdy zasilanie choć raz w ostatnich 30 min jest najwyżej 1 K poniżej niej albo powyżej, czy palnik gaśnie, czy nie (F15 z J4: kocioł na minimum ponad zbyt niską nastawą; uwaga użytkownika z 2026-11-22: własna histereza i opóźnienia kotła); 90 % to wysoka modulacja, przy granicy mocy z płomieniem przez cały czas; każdy pokój o 0.3 K ponad nastawą przez 1 h to woda za ciepła; średnie z 30 min | `core/long_run.py` | przerwy postanowione w K4 (użytkownik, 2026-11-17, F10 z J4: kocioł taktujący na minimum przy niedogrzanych pokojach to ten sam przypadek); reszta tymczasowa (G11 E) |

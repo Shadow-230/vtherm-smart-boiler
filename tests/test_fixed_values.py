@@ -54,6 +54,7 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("lost link: back after 60 s", controller.OUTAGE_BACK_S, 60.0),
     ("outdoor hold 3 h", curve.DEFAULT_HOLD_S, 3 * H),
     ("outdoor time constant 3 h", curve.DEFAULT_TIME_CONSTANT_S, 3 * H),
+    ("outdoor time constant 12 h with underfloor", curve.UNDERFLOOR_TIME_CONSTANT_S, 12 * H),
     ("stuck sensor: one value held 12 h", signal_check.STUCK_WINDOW_S, 12 * H),
     ("stuck sensor: the weather moves 3 K", signal_check.STUCK_WEATHER_RANGE_K, 3.0),
     ("stuck sensor: deviation 6 K", signal_check.DEFAULT_MAX_DEVIATION_K, 6.0),
