@@ -35,7 +35,8 @@ circuit, and per-circuit curves come with CH2 (`docs/en/specification/scope.md` 
 Three layers:
 
 1. `core/` tests — plain pytest, no Home Assistant.
-2. Integration tests — `pytest-homeassistant-custom-component`: Home Assistant runs inside the
+2. Integration tests — `pytest-homeassistant` (Home Assistant 2026.11) and, on the oldest version
+   supported, `pytest-homeassistant-custom-component` (2026.10.4): Home Assistant runs inside the
    test process; no instance, no network.
 3. Test HA — a dedicated Proxmox LXC running the official Home Assistant container at a pinned
    version, set up by the user (`devenv/`). The plugin, VT and SmartPI come from this project;
@@ -101,8 +102,8 @@ named the Marketplace. A repository that is not on its list can still be added f
 
 **Versions.** The tests move to the newest versions; the plugin's code must work with them (the
 user's decision, 2026-11-16). VT 10.6.5 and `vtherm_api` 0.9.0 came with I12.6; SmartPI left the
-tests with I12.9, as the plugin reads nothing of it. Home Assistant 2026.11 is a step of its own,
-after the corrections that follow I12 (the user, 2026-11-26). The oldest Home Assistant supported
+tests with I12.9, as the plugin reads nothing of it. Home Assistant 2026.11.3 is the version tested
+since 2026-11-26, with the new harness `pytest-homeassistant`. The oldest Home Assistant supported
 follows the newest VT: 2026.10.4, as VT 10.6.5 needs (the user, 2026-11-17; `hacs.json`, CI's two
 harness pins).
 

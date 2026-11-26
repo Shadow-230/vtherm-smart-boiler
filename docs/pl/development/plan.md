@@ -35,7 +35,8 @@ obieg, a krzywe dla poszczególnych obiegów przychodzą z CH2 (`docs/pl/specifi
 Trzy warstwy:
 
 1. Testy `core/` — zwykły pytest, bez Home Assistanta.
-2. Testy integracji — `pytest-homeassistant-custom-component`: Home Assistant działa wewnątrz procesu
+2. Testy integracji — `pytest-homeassistant` (Home Assistant 2026.11), a na najstarszej obsługiwanej
+   wersji `pytest-homeassistant-custom-component` (2026.10.4): Home Assistant działa wewnątrz procesu
    testowego; bez instancji, bez sieci.
 3. Testowy HA — dedykowany LXC w Proxmox z oficjalnym kontenerem Home Assistanta w przypiętej wersji,
    przygotowany przez użytkownika (`devenv/`). Wtyczka, VT i SmartPI pochodzą z tego projektu;
@@ -102,10 +103,10 @@ i nazywa się Marketplace. Repozytorium spoza jego listy nadal można dodać z l
 
 **Wersje.** Testy przechodzą na najnowsze wersje; kod wtyczki musi z nimi działać (decyzja
 użytkownika, 2026-11-16). VT 10.6.5 i `vtherm_api` 0.9.0 weszły z I12.6; SmartPI wyszedł z testów z
-I12.9, bo wtyczka nic z niego nie czyta. Home Assistant 2026.11 to osobny krok, po poprawkach
-następujących po I12 (użytkownik, 2026-11-26). Najstarszy obsługiwany Home Assistant idzie za
-najnowszym VT: 2026.10.4, jak wymaga VT 10.6.5 (użytkownik, 2026-11-17; `hacs.json`, dwie wersje
-środowiska testowego w CI).
+I12.9, bo wtyczka nic z niego nie czyta. Home Assistant 2026.11.3 jest wersją testowaną od
+2026-11-26, z nowym narzędziem testowym `pytest-homeassistant`. Najstarszy obsługiwany Home
+Assistant idzie za najnowszym VT: 2026.10.4, jak wymaga VT 10.6.5 (użytkownik, 2026-11-17;
+`hacs.json`, dwie wersje środowiska testowego w CI).
 
 **Home Assistant 2027.11** usuwa pięć starych interfejsów. Wtyczka używała jednego — starego
 sposobu zmiany ID encji — i jest gotowa na nowy (#147, 2026-11-16). VT 10.6.5 nadal używa starych

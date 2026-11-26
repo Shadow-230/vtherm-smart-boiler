@@ -436,8 +436,10 @@ zapisywane, zanim go odczytano. Znika razem z innymi magazynami wpisu, gdy wpis 
 Trzy warstwy ([`docs/pl/development/plan.md`, „Test environment”](../development/plan.md#środowisko-testowe)):
 
 1. **Testy rdzenia** (`tests/core/`) — zwykły pytest, bez HA, bez sieci.
-2. **Testy integracyjne** — `pytest-homeassistant-custom-component`: HA działa wewnątrz procesu
-   testów; bez instancji, bez sieci. Ciągła integracja (CI) pobiera też VT 10.6.5 z jego tagu,
+2. **Testy integracyjne** — `pytest-homeassistant` 2026.11.3 (Home Assistant 2026.11.3), a na
+   najstarszej obsługiwanej wersji jego poprzednik `pytest-homeassistant-custom-component` 0.13.375
+   (Home Assistant 2026.10.4); testy importują nową nazwę, którą na najstarszej wersji obsługuje
+   stary pakiet (`tests/conftest.py`). HA działa wewnątrz procesu testów; bez instancji, bez sieci. Ciągła integracja (CI) pobiera też VT 10.6.5 z jego tagu,
    więc testy z prawdziwym VT działają przy każdej zmianie. Pobiera też SmartPI 0.4.0, tylko do
    wdrożenia na testowy HA: wtyczka nie czyta niczego ze SmartPI.
 3. **Testowy HA** — osobny kontener (`devenv/`) z wtyczką, VT, SmartPI i symulatorem, w którym

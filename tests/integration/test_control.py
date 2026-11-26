@@ -33,7 +33,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage as ha_storage
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     MockModule,
     async_capture_events,
@@ -92,6 +92,9 @@ START = datetime(2026, 1, 12, 8, tzinfo=UTC)
 # needs a real file on disk (under its tmp_path) puts it back for its own body only (with
 # monkeypatch, whose undo may run after the mock's, the mock would outlive the test).
 REAL_STORE_LOAD = ha_storage.Store._async_load
+# From Home Assistant 2026.11 a store reads and writes through ``_FileStoreIO``, which the mock
+# replaces instead: the real class, taken the same way (``None`` before 2026.11).
+REAL_FILE_IO = getattr(ha_storage, "_FileStoreIO", None)
 # The store layouts an earlier run may have left (V1): 0.2.1's, and 0.2.2's control store.
 LAYOUTS = ("0.2.1", "0.2.2")
 
@@ -4403,7 +4406,11 @@ async def test_a_corrupt_store_file_hands_back_first(
     storage = tmp_path / ".storage"
     storage.mkdir()
     monkeypatch.setattr(hass.config, "config_dir", str(tmp_path))
-    real_files = patch.object(ha_storage.Store, "_async_load", REAL_STORE_LOAD)
+    real_files = (
+        patch.object(ha_storage.Store, "_async_load", REAL_STORE_LOAD)
+        if REAL_FILE_IO is None
+        else patch.object(ha_storage, "_FileStoreIO", REAL_FILE_IO)
+    )
     real_files.start()
     try:
         await _corrupt_store_file_hands_back_first(rig, storage)
@@ -4438,8 +4445,14 @@ async def _corrupt_store_file_hands_back_first(rig: Rig, storage: Path) -> None:
     await set_up(rig, entry)
     await rig.advance(30)
     files = await hass.async_add_executor_job(lambda: {path.name for path in storage.iterdir()})
-    assert control_key(entry) not in files
     assert any(name.startswith(f"{control_key(entry)}.corrupt.") for name in files)  # kept
+    if REAL_FILE_IO is None:
+        assert control_key(entry) not in files  # moved away; writes go to the mock
+    else:
+        # From 2026.11 the store writes through the real file layer here too: a whole control
+        # file written since stands where the damaged one was.
+        written = await hass.async_add_executor_job((storage / control_key(entry)).read_text)
+        assert json.loads(written)["key"] == control_key(entry)
     registry = ir.async_get(hass)
     assert any(
         domain == "homeassistant"
@@ -11602,7 +11615,7 @@ class FakeRelay:
 @pytest.fixture
 async def relay(rig: Rig) -> FakeRelay:
     from homeassistant.setup import async_setup_component
-    from pytest_homeassistant_custom_component.common import setup_test_component_platform
+    from pytest_homeassistant.common import setup_test_component_platform
 
     fake = FakeRelay(rig.hass)
     fake.entity = _RelayEntity(fake)
@@ -12685,7 +12698,7 @@ async def test_a_boiler_thermostat_relay_follows_vt_and_judges_only_a_persons_ch
     an outside change. Commanded off, a person sets it to heat: written back once; the second
     time within a day the plugin steps aside — the rest state "off" written once (answer C)."""
     from homeassistant.setup import async_setup_component
-    from pytest_homeassistant_custom_component.common import setup_test_component_platform
+    from pytest_homeassistant.common import setup_test_component_platform
 
     hass = rig.hass
     relay = _ClimateRelay()

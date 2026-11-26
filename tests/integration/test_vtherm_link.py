@@ -296,7 +296,7 @@ def test_vt_versions_the_plugin_supports(version: str | None, expected: bool | N
 
 async def test_vt_is_loaded_only_with_a_loaded_entry(hass: HomeAssistant) -> None:
     from homeassistant.config_entries import ConfigEntryState
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     hass.config.components.add("versatile_thermostat")
     entry = MockConfigEntry(domain="versatile_thermostat", state=ConfigEntryState.SETUP_ERROR)
@@ -474,7 +474,7 @@ async def test_only_climates_of_the_boilers_devices_count_as_its_thermostat(
     gateway, a climate of another device, an underlying climate not registered, a zone VT has
     not handed over."""
     from homeassistant.helpers import device_registry as dr
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     from custom_components.vtherm_smart_boiler.vtherm_link import zones_on_boiler_thermostat
 
@@ -523,7 +523,7 @@ async def test_the_rooms_in_an_area_by_the_registry(hass: HomeAssistant, zones: 
     does not count, a room elsewhere, one outside the registry."""
     from homeassistant.helpers import area_registry as ar
     from homeassistant.helpers import device_registry as dr
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     from custom_components.vtherm_smart_boiler.vtherm_link import rooms_in_area
 

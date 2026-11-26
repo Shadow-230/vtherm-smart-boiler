@@ -13,7 +13,7 @@ from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zone
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.coordinator import SmartBoilerCoordinator
@@ -2806,6 +2806,13 @@ async def test_a_lost_control_store_without_control_is_a_warning(
     assert [record.levelname for record in said] == ["WARNING"]
 
 
+def atomic(store: object) -> bool:
+    """Whether a Home Assistant store writes atomically: its own flag up to 2026.10, its file
+    writer's from 2026.11 (``Store._io``)."""
+    io = getattr(store, "_io", store)
+    return bool(getattr(io, "_atomic_writes", False))
+
+
 async def test_both_stores_are_written_atomically(hass: HomeAssistant) -> None:
     """V1, R1: a crash while writing leaves the old file whole, for either store and for every
     place that writes them."""
@@ -2816,11 +2823,11 @@ async def test_both_stores_are_written_atomically(hass: HomeAssistant) -> None:
     entry = entry_for(boiler)
     await setup(hass, entry)
     coordinator = entry.runtime_data
-    assert coordinator._store._atomic_writes
-    assert coordinator._control_store._atomic_writes
+    assert atomic(coordinator._store)
+    assert atomic(coordinator._control_store)
     assert coordinator._control_store.key == f"{DOMAIN}.{entry.entry_id}.control"
-    assert main_store(hass, entry.entry_id)._atomic_writes
-    assert control_store(hass, entry.entry_id)._atomic_writes
+    assert atomic(main_store(hass, entry.entry_id))
+    assert atomic(control_store(hass, entry.entry_id))
 
 
 async def test_a_relay_only_entry_monitors_without_boiler_signals(
@@ -3256,7 +3263,7 @@ async def test_the_last_run_record_has_a_store_of_its_own(
     await hass.async_block_till_done(wait_background_tasks=True)
     coordinator = entry.runtime_data
     assert coordinator._alive_store.key == _alive_key(entry)
-    assert coordinator._alive_store._atomic_writes
+    assert atomic(coordinator._alive_store)
     assert _alive_key(entry) not in hass_storage  # nothing yet: written every ten minutes
     for _ in range(5):  # the start's own save of the main store goes out first, as before
         freezer.tick(60)

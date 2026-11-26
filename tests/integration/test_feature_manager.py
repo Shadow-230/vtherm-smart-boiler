@@ -18,7 +18,7 @@ from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 from vtherm_api.vtherm_api import VThermAPI
 
 from custom_components.vtherm_smart_boiler import feature_manager, vtherm_link

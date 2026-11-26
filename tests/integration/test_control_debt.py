@@ -42,7 +42,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import storage as ha_storage
 from homeassistant.util import dt as dt_util
 from homeassistant.util.file import WriteError
-from pytest_homeassistant_custom_component.common import mock_restore_cache
+from pytest_homeassistant.common import mock_restore_cache
 
 from custom_components.vtherm_smart_boiler import control as control_module
 from custom_components.vtherm_smart_boiler.const import DOMAIN
