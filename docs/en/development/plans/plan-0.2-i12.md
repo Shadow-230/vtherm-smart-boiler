@@ -246,10 +246,15 @@ shows the plugin's own count of rooms calling, with a link to VT for administrat
 taking water come from the plugin's new recorded attribute `calling_circuits`; the water flows
 while the plugin's heat call is on or the flame burns; the page reads nothing of VT.
 
-#### I12.13 Docs and a guard
+#### I12.13 Docs and a guard ✅
 
 The specification, technical description and user guide in English and Polish; a test that no
 module reads VT's entities, entries or states.
+Done 2026-11-26: every current document brought in line; `references.md` lists the codes whose
+subject is gone, with the step that removed each. The guard (`tests/test_vt_boundary.py`) pins
+every read of Home Assistant's states, entries, events and history to a listed function with its
+reason; it found one read of VT's data — the relay form read a VT climate's modes before refusing
+it — fixed by refusing VT's entities by the registry first.
 
 #### I12.14 VT's author 🔒
 

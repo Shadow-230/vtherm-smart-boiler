@@ -12,7 +12,7 @@ samym miejscu pod `docs/pl/`.
 |---|---|---|
 | [`user-guide/`](user-guide/user-guide.md) | jak zainstalować, ustawić i używać wtyczki | użytkownicy |
 | [`technical/`](technical/technical.md) | jak wtyczka jest zbudowana: jej części, jeden krok sterowania, testy | programiści |
-| [`specification/`](specification/scope.md) | co wtyczka robi i dlaczego: zakres, interfejs danych o wodzie, kody używane w kodzie | programiści, recenzenci |
+| [`specification/`](specification/scope.md) | co wtyczka robi i dlaczego: zakres, połączenia kotła, kody używane w kodzie | programiści, recenzenci |
 | [`development/`](development/plan.md) | plan rozwoju; plany każdego wydania i przeglądy (tylko po angielsku) | programiści |
 | [`testing/`](testing/test-environment.md) | testowy Home Assistant i raporty z testów | testerzy |
 | `../images/` | obrazy wspólne dla wszystkich języków | — |

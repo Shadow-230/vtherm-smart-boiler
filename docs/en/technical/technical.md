@@ -24,9 +24,9 @@ Queuing Telemetry Transport (MQTT).
 
 ## 1. Overview
 
-The integration (domain `vtherm_smart_boiler`) is a plugin of VT. It replaces VT's on/off
-central boiler: it reads VT's zones, decides when the boiler heats and how warm its water is,
-writes that to the boiler and hands the boiler back on every exit.
+The integration (domain `vtherm_smart_boiler`) is a plugin of VT. VT's central boiler decides
+when the boiler heats, through a helper the plugin follows; the plugin decides how warm the water
+is, writes that to the boiler and hands the boiler back on every exit.
 
 - **Pure logic in `core/`.** Every control and learning law, the monitor's analysis and the
   verdict are pure Python with no HA imports — a test parses the imports of `core/` to enforce
@@ -56,7 +56,9 @@ writes that to the boiler and hands the boiler back on every exit.
   Assistant about VT is Home Assistant's information, not VT's data: whether VT is loaded and its
   version (its integrations and config entries), and its entity registry — whether VT has
   climate entities (the reload repair below) and an entity's area (a circuit's area shortcut).
-  It reads nothing of SmartPI. No other module looks up a zone's state by entity name.
+  It reads nothing of SmartPI. No other module looks up a zone's state by entity name, and a
+  test (`tests/test_vt_boundary.py`) lists every place in the integration that reads a state, a
+  state's history or a config entry, with whose entity it is: none is VT's.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
   `register_feature_manager`) is the channel VT hands each thermostat through. It keeps what VT
   tells it — its `refresh_state` and its power hook `async_on_underlying_power` — and publishes
@@ -216,13 +218,13 @@ step of its own (`core/relay.py`).
 **Controller (`core/controller.py`, `decide`).** A state machine that turns what the plugin
 knows into a boiler command, in a fixed order of precedence: control switched off; a latch or
 an alarm set to hand back; a missing precondition (a blocker); the boiler link lost or stale; the
-boiler's own fault; otherwise heating on or off from frost protection and the zones' demand, and
-the water temperature from the curve (`core/curve.py`), limits and ramp.
+boiler's own fault; otherwise heating on or off from VT's decision (the helper), and the water
+temperature from the curve (`core/curve.py`), limits and ramp.
 
-**Demand (`core/demand.py`, `boiler_demand`).** What VT's central boiler decided, now the
-plugin's job: devices or zones calling (VT's devices by default, as its central boiler counts
-them), total power or valve opening, each zone counted only while VT reports it clearly; where
-VT gives no device state, VT's own rule — a valve open at all, else a duty cycle above 0.
+**Demand (`core/demand.py`, `boiler_demand`).** VT's decision — the helper on, off or not
+known — and the rooms counted: how many call (shown), which are unknown, and whether anything
+can ask at all (decision 3). A room calls while VT says one of its devices is active; where VT
+gives no device state, by VT's own rule — a valve open at all, else a duty cycle above 0.
 
 **Circuits run by other automation (`core/circuit_requests.py`, `circuits_asking`).** A circuit
 whose mixer or pump something else drives asks for heat through its own entity or its zones; an
@@ -253,9 +255,9 @@ never assumed applied. Reading the boiler is in `transport/entities.py`, which w
 
 **Configuration (`config_flow.py`, `config.py`, `control_config.py`).** The setup and options
 forms, and the control options as core objects with the blockers that keep control from
-starting. Both flows are one menu of sections; control is five of its items, each one form —
-the control device, the heating curve, the control behaviour, frost protection, the alarm
-reactions (`CONTROL_ITEMS`) —, each shown where it applies and opened with the write path's
+starting. Both flows are one menu of sections; control is four of its items, each one form —
+the control device, the heating curve, the control behaviour, the alarm reactions
+(`CONTROL_ITEMS`) —, each shown where it applies and opened with the write path's
 own checks (`_control_path`). A form shows itself again with the fields an answer reveals
 (`entity_form_fields`, `relay_form_fields`); a value whose field is hidden is kept. Control reads its section with the connection's MQTT topics and the signals'
 read-backs put in (`with_boiler_inputs`): each value is stored once. The rooms are VT's
@@ -279,10 +281,10 @@ flowchart TD
     B -- no --> Z[No decision this step]
     B -- yes --> C[Read inputs: boiler snapshot and freshness, zones via vtherm_link, hot water]
     C --> D[Blockers and latches]
-    D --> E[Zones' demand, circuits asking and frost protection: boiler_demand, circuits_asking, follow_zones]
+    D --> E[VT's decision, circuits asking and the zones: boiler_demand, circuits_asking, follow_zones]
     E --> F{Controller decides: decide}
     F -- hand back --> H[Hand-back writes: lowest water, heating on where taken over, release]
-    F -- heat, idle or frost --> G[Guards judge the read-back: plan_write, classify]
+    F -- heat or idle --> G[Guards judge the read-back: plan_write, classify]
     G -- another controller --> S[Step aside: hand back and latch]
     S --> H
     G -- allowed --> W[Writer writes setpoint and heating on or off]
@@ -297,8 +299,8 @@ flowchart TD
   over a window (lost once stale steps cover 5 minutes within 10; back after 60 seconds fresh).
 - **Blockers and latches** come before demand: a latch, or an alarm set to hand back, hands
   back whatever the zones ask.
-- **Decide:** heating on or off is decided at every step — the zones' demand, or a circuit run
-  by other automation asking; the water temperature every decision interval (5 minutes by
+- **Decide:** heating on or off is decided at every step — VT's decision (the helper), or a
+  circuit run by other automation asking; the water temperature every decision interval (5 minutes by
   default), and at once after a blocker or fault ends or when a circuit's need changes: the
   curve, never below an asking circuit's need, capped by
   the circuits fed straight from the boiler and the boiler's maximum. With several circuits the

@@ -150,8 +150,12 @@ Proxmox host, so the firewall there is out of its reach.
 
 Set up in the user interface — or by Claude through the API at J4, once you say to start:
 
-1. **VT central configuration**: with the central mode select. Do not configure VT's central
-   boiler — the plugin replaces it, and control refuses to start while it exists.
+1. **VT central configuration**: with the central mode select, and VT's central boiler on, its
+   thresholds at VT's defaults and its two commands on the helper
+   `input_boolean.j4_vt_central_boiler` (`devenv/config/configuration.yaml`):
+   `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` and `…/input_boolean.turn_off`.
+   VT decides whether the boiler heats; the plugin follows the helper (I12.8). Never point these
+   commands at the simulated boiler.
 2. **One VT thermostat per simulated zone** (`zone_living`, `zone_bedroom`, `zone_bath`):
    type "over switch"; underlying switch `switch.boiler_sim_<zone>_valve`; room temperature
    `sensor.boiler_sim_<zone>_temperature`; outdoor temperature `sensor.boiler_sim_outdoor`. Use
@@ -179,7 +183,8 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
    `sensor.otgw_sim_boiler_control_setpoint` (heating setpoint the boiler received) and
    `binary_sensor.otgw_sim_boiler_master_ch_enabled` (heating on/off); **Control device** — the
    write path "OpenTherm Gateway", only for an entry made before the connection question;
-   **Heating curve** — design flow 55 °C. The runner puts this base back after each scenario
+   **Heating curve** — design flow 55 °C; **Control behaviour** — the helper
+   `input_boolean.j4_vt_central_boiler`. The runner puts this base back after each scenario
    that changes it (`devenv/j4/options.py`, saved item by item through the menu by
    `devenv/j4/walk.py`; `tests/integration/test_j4_walk.py` walks the same base through the
    real options flow), also when the scenario stops half-way, and enables again any VT zone entry

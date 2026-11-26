@@ -43,22 +43,36 @@ version is decided then.
   by other automation and circuits behind a fixed valve. A circuit run by other automation holds
   the water at its need while it asks, nothing added; a fixed valve sets no lower bound — the
   boiler follows its curve, the valve standing open at or below its setting.
-- Heating on and off following VT's zones — devices calling as VT counts them (or zones), total
-  power or valve opening — and VT's central modes; VT's activation delay. What VT's central
-  boiler showed: **Heat call** with the reason it is not, the devices calling and their
-  power against the thresholds, and an event when the call changes.
+- Heating on and off as VT's central boiler decides: with its own thresholds and activation
+  delay, it switches an on/off helper (`input_boolean`) that the plugin follows at once, in both
+  directions. **Heat call** shows the plugin's call with the reason when it is off, **Calling for
+  heat** the rooms that call, and an event follows each change of the call.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
   connected is the setup's first question. Control never writes through a cloud service.
-- A fallback setpoint when no outdoor temperature is known; the comfort correction. Frost
-  protection is VT's — its frost preset and central mode make a room call — not the plugin's.
+- A fallback setpoint when no outdoor temperature is known; the comfort correction.
 - A room's temperature judges the curve only while it is trusted: not while VT runs it in safety
   mode, its thermometer is unavailable, or VT has not measured it since the plugin started. A
   room with its window open, or still warming back after it closes, is not the critical zone.
 - **Gives no heat**: one binary sensor, on while the boiler gives the rooms no heat — VT's central
   boiler not calling, its activation delay, hot water, a boiler fault, or the plugin unable to
   vouch for heat — with the reason. Pick it in SmartPI 1.0's "heating unavailable" setting, or
-  use it in an automation; the plugin pauses no zone's learning itself.
+  use it in an automation.
+
+**Versatile Thermostat through `vtherm_api`** (step I12)
+
+- The plugin takes from VT only what `vtherm_api` gives. The rooms are the thermostats VT hands
+  to the plugin and counts for its central boiler ("Used by central boiler" ticked in VT): the
+  plugin keeps no list of rooms, and reads no state of VT's climates, none of the settings in
+  VT's config entries, and no history of them. VT 10.6.5 is the oldest supported. At a first installation while VT runs, reload VT
+  once; a repair issue reminds you.
+- What stays VT's: when to heat and the activation delay, frost protection (VT's frost preset and
+  central mode), and the zone algorithms' learning — the plugin pauses none and publishes nothing
+  on VT's thermostats.
+- An entry from an earlier test build moves over by itself: the plugin's own demand thresholds,
+  activation delay, frost protection and learning pauses go with their settings. A repair notice
+  lists the values that were set, to set them in VT, and a one-time warning says that frost
+  protection is VT's alone.
 
 **Safety**
 
@@ -118,6 +132,6 @@ version is decided then.
 
 ### Requirements
 
-- Home Assistant 2026.9 or later; Versatile Thermostat 10.2.0 or later (10.5.1 tested; 10.5 or
-  later for zones whose valve may not close fully); `vtherm_api` 0.5.0 or later.
+- Home Assistant 2026.10.4 or later; Versatile Thermostat 10.6.5 or later (it shows itself as
+  10.6.4 in Home Assistant); `vtherm_api` 0.9.0 or later.
 - Translations: English and Polish.

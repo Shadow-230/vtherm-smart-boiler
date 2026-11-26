@@ -12,7 +12,7 @@ the same place under `docs/pl/`.
 |---|---|---|
 | [`user-guide/`](user-guide/user-guide.md) | how to install, set up and use the plugin | users |
 | [`technical/`](technical/technical.md) | how the plugin is built: its parts, one control step, tests | developers |
-| [`specification/`](specification/scope.md) | what the plugin does and why: the scope, the water data interface, the codes used in the code | developers, reviewers |
+| [`specification/`](specification/scope.md) | what the plugin does and why: the scope, the boiler connections, the codes used in the code | developers, reviewers |
 | [`development/`](development/plan.md) | the development plan; the plans of each release and the reviews | developers |
 | [`testing/`](testing/test-environment.md) | the test Home Assistant and the test reports | testers |
 | `../images/` | pictures shared by every language | — |

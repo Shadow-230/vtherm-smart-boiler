@@ -1886,13 +1886,14 @@ def relay_entity_error(
         return "entity_not_suitable"
     if entity.split(".", 1)[0] not in RELAY_DOMAINS:
         return "relay_domain_not_supported"
+    if relay_used_by_zone(hass, entity):
+        return "relay_used_by_zone"
+    # VT's own entities are refused by the registry before any state is read (I12.13).
+    if relay_of_boiler_interface(hass, entity):
+        return "relay_of_boiler_interface"
     modes = relay_hvac_modes(hass.states.get(entity))
     if entity.startswith("climate.") and modes is not None and not {"heat", "off"} <= modes:
         return "relay_climate_modes"
-    if relay_used_by_zone(hass, entity):
-        return "relay_used_by_zone"
-    if relay_of_boiler_interface(hass, entity):
-        return "relay_of_boiler_interface"
     if through_cloud(hass, entity):
         return "write_through_cloud"
     from .config import named_entities

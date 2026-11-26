@@ -1146,6 +1146,7 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Decyzja VT nie jest znana (2 warianty) | sprawdź pomocnika i to, czy kocioł centralny VT go przełącza |
 | Kocioł centralny VT przełącza coś innego niż pomocnika | skieruj polecenia VT na pomocnika |
 | Ustaw progi wezwania ciepła w kotle centralnym VT | po aktualizacji: ustaw swoje dawne wartości w VT |
+| Ochrona przed mrozem należy teraz tylko do Versatile Thermostat | po aktualizacji: daj każdemu termostatowi preset ochrony przed mrozem w VT albo użyj trybu centralnego VT „Frost protection” |
 | Obieg grzewczy nie ma pomieszczeń | przy kilku obiegach: dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
@@ -1184,7 +1185,6 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Termostat ścienny utrzymałby w domu chłód po oddaniu sterowania | podnieś jego ustawienie |
 | Termostat ścienny nie podaje nastawy | sprawdź jego ustawienie i sygnał |
 | Encja używana przez wtyczkę zniknęła | wybierz inną w opcjach |
-| Centralna konfiguracja Versatile Thermostat nie działa | napraw centralną konfigurację VT |
 | Czujniki ESPHome nie powtarzają niezmienionych wartości | dodaj im `force_update: true` w ESP |
 
 ### 7.5 Monitor i sama wtyczka
@@ -1291,7 +1291,7 @@ domyślnie wyłączone.
 
 | Encja | Co pokazuje albo robi |
 |---|---|
-| Sterowanie (eksperymentalne) | włącza i wyłącza sterowanie; jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
+| Sterowanie (eksperymentalne) | czy sterowanie jest włączone; niczego nie przełącza (sterowanie przełącza się w opcjach). Jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
 | Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
@@ -1311,7 +1311,8 @@ Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w
 
 ## 10. Jak często odświeżają się dane
 
-- Sygnały kotła i strefy są czytane przy każdej zmianie i co najmniej co **30 s**.
+- Sygnały kotła są czytane przy każdej zmianie i co najmniej co **30 s**; pokoje, przez
+  termostaty VT, co **30 s** i przy każdym kroku sterowania.
 - Sterowanie robi krok co **10 s**; nastawa, która wygasa, jest powtarzana co **30 s**, trzymana
   przez urządzenie — przy zmianie i co 5 minut.
 - Wskaźniki monitora i werdykt są liczone co **5 minut**.
@@ -1335,7 +1336,7 @@ Najważniejsze — opisane, nie doradzane:
 
 | Opcja | Domyślnie | Co robi i czym ryzykuje |
 |---|---|---|
-| Sterowanie (przełącznik) | wyłączone | włączone: wtyczka zapisuje do kotła; wyłączone: kocioł pracuje jak dotąd |
+| Sterowanie włączone (w **Trybie sterowania**) | wyłączone | włączone: wtyczka zapisuje do kotła; wyłączone: kocioł pracuje jak dotąd |
 | Krzywa grzewcza | temperatura projektowa zasilania bez wartości domyślnej — wpisujesz ją | za wysoka marnuje gaz i każe palnikowi taktować; za niska zostawia pomieszczenia zimne |
 | Najniższa temperatura wody | 20 °C (tymczasowo) | za niska: przy łagodnej pogodzie kocioł raz po raz sam staje, a kocioł niekondensacyjny skrapla się w kominie (wartość podaje jego instrukcja) |
 | Najwyższa temperatura wody obiegu | 70 °C, gdy pole puste | ogranicza każdą nastawę w obiegach zasilanych prosto z kotła; kocioł może ją przekroczyć o własną histerezę |
@@ -1387,12 +1388,21 @@ automation:
           message: "Werdykt sterowania: {{ states('sensor.boiler_control_verdict') }}"
 ```
 
-Oddaj kocioł przed wizytą serwisu — robi to wyłączenie sterowania:
+Oddaj kocioł przed wizytą serwisu — robi to wyłączenie sterowania. Odznacz **Sterowanie
+włączone** w opcjach albo zleć to automatyzacji, tu wtedy, gdy włączysz utworzonego przez siebie
+pomocnika. Każda osoba, która może przełączyć tego pomocnika, przełącza wtedy sterowanie:
 
 ```yaml
-action: switch.turn_off
-target:
-  entity_id: switch.boiler_control_experimental
+automation:
+  - alias: "Kocioł: sterowanie wyłączone na wizytę serwisu"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.boiler_service_visit
+        to: "on"
+    actions:
+      - action: vtherm_smart_boiler.set_control
+        data:
+          enabled: false
 ```
 
 ## 14. Rozwiązywanie problemów
@@ -1403,6 +1413,10 @@ target:
 - **Stan sterowania zostaje „Oddane kotłu”.** Wtyczka się wycofała — inny sterownik, kocioł
   ignorujący „grzanie wył.”, alarm ustawiony na oddanie. Usuń przyczynę, potem wyłącz i włącz
   sterowanie.
+- **Wtyczka nie zna żadnego pokoju albo któregoś brakuje.** VT przekazuje termostat dopiero
+  wtedy, gdy go uruchamia: po pierwszej instalacji uruchom ponownie Home Assistanta albo raz
+  przeładuj wpisy VT. Pokój liczy się tylko z zaznaczonym **Używane przez kocioł centralny**
+  w jego termostacie w VT; zgłoszenia w Naprawach podają termostaty, którym tego brakuje.
 - **Werdykt mówi „Jeszcze za mało danych” albo brakuje czujnika.** Czujniki **Funkcje** i
   **Problemy z sygnałami** wskazują brakujące albo nieświeże sygnały.
 - **„Sygnały” są wyłączone.** Płomień albo zasilanie jest nieświeże lub nieznane: sprawdź
