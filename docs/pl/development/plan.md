@@ -164,7 +164,8 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
   skracana przy dużym niedogrzaniu albo ciepłej wodzie, nigdy nieopóźniająca
   wyłączenia (Siemens LMS14, czas przeciw taktowaniu w kotłach Vaillant; około 0,04 K przy −5 °C) —
   oraz histereza wezwania do grzania (ASHRAE Guideline 36). Obie są sprzeczne z zasadą 12 (grzanie
-  od razu za VT): decyduje użytkownik.
+  od razu za VT): decyduje użytkownik. Przerwę przed ponownym startem sprawdzono w symulatorze w
+  I13.6 (2026-11-26) i jej nie zbudowano: nie zmniejszyła liczby startów (zakres, §11).
 - **Szablony urządzeń** (decyzje użytkownika z 2026-11-22): to, czym różnią się połączenia kotła,
   przechodzi do jednego pliku YAML na urządzenie, w trzech warstwach: protokół, zachowanie i drogi
   do urządzenia. Po pierwszym wydaniu, przed pracami nad 0.3:
@@ -218,7 +219,7 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
 - 0.2, krok I13 — `docs/en/development/plans/plan-0.2-i13.md`: poprawki z literatury — „Nie daje
   ciepła” tylko wtedy, gdy pokojowi brakuje ciepła, połączenie z kotłem bez migania, tempo
   korekty komfortu, przedział dla budynku i werdykt, liczby monitora, przerwa przed ponownym
-  startem (domyślnie wyłączona), ograniczenie modulacji (na życzenie), dłuższa średnia temperatury
-  zewnętrznej dla ciężkich domów, dokumenty (decyzja użytkownika z 2026-11-26)
+  startem (sprawdzona, niezbudowana), ograniczenie modulacji (na życzenie), dłuższa średnia
+  temperatury zewnętrznej dla ciężkich domów, dokumenty (decyzja użytkownika z 2026-11-26)
 - Szablony urządzeń — `docs/en/development/plans/plan-device-templates.md`: jeden plik parametrów na
   urządzenie kotła, po pierwszym wydaniu (decyzje użytkownika z 2026-11-22)
