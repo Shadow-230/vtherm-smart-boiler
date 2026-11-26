@@ -148,6 +148,7 @@ READS: dict[tuple[str, str], str] = {
     ),
     ("forecasts.py", "ForecastRecorder.async_take"): "the weather the user picks",
     ("journal.py", "Journal.async_follow"): "Home Assistant's stop event",
+    ("modulation_cap.py", "CapUnit._read_back"): _WRITE + ": the cap's number entity (I13.7)",
     ("repairs.py", "entry_busy"): _OWN_ENTRY,
     ("repairs.py", "async_release"): _OWN_ENTRY,
     ("repairs.py", "_async_release_stored"): _OWN_ENTRY,

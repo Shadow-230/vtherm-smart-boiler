@@ -13473,3 +13473,246 @@ async def test_gives_no_heat_exists_only_with_control(rig: Rig) -> None:
         )
         is None
     )
+
+
+# --- I13.7: the modulation cap ------------------------------------------------------------------
+
+CAP_ON = {"modulation_cap": True, "modulation_cap_pct": 50}
+
+
+def record_cap(rig: Rig) -> list[int]:
+    """The gateway's ``set_max_modulation``: each level it gets (``-1`` clears the cap)."""
+    levels: list[int] = []
+
+    async def set_max_modulation(call: ServiceCall) -> None:
+        levels.append(int(call.data["level"]))
+
+    rig.hass.services.async_register("opentherm_gw", "set_max_modulation", set_max_modulation)
+    return levels
+
+
+def cap_shown(rig: Rig) -> tuple[Any, Any]:
+    attributes = rig.state("sensor", "control_state").attributes
+    return attributes.get("modulation_cap"), attributes.get("modulation_cap_state")
+
+
+async def test_the_modulation_cap_holds_while_control_holds_and_goes_with_the_hand_back(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """I13.7 through the gateway: the cap goes out once control holds the boiler — stored first,
+    so a crash leaves a release to make — and again every 5 minutes; hot water releases it until
+    the draw ends; switching off releases it with the hand-back, and nothing more is written."""
+    levels = record_cap(rig)
+    await start(rig, **CAP_ON)
+    await rig.advance(20)
+    assert levels == []  # control off: nothing capped
+    assert cap_shown(rig) == (None, "not_holding")
+    await rig.switch(True)
+    await rig.advance(10)
+    assert levels == [50]
+    assert cap_shown(rig) == (50.0, "applied")
+    assert stored_control(hass_storage, rig)["modulation_cap_in_force"] is True
+    await rig.advance(290)
+    assert levels == [50, 50]  # MM= is held by the gateway: every 5 minutes
+    rig.dhw = True
+    await rig.advance(10)
+    assert levels == [50, 50, -1]
+    assert cap_shown(rig) == (None, "hot_water")
+    rig.dhw = False
+    await rig.advance(10)
+    assert levels[-1] == 50
+    await rig.switch(False)
+    assert levels[-1] == -1
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
+    assert "modulation_cap_in_force" not in stored_control(hass_storage, rig)
+    count = len(levels)
+    await rig.advance(120)
+    assert len(levels) == count
+    unit = unit_of(rig)
+    assert ("opentherm_gw", "set_max_modulation") in unit.allowed_services
+
+
+async def test_hot_water_not_known_leaves_the_cap_off(rig: Rig) -> None:
+    """A combi's hot water that cannot be told: the cap would starve the tap, so none."""
+    levels = record_cap(rig)
+    await start(rig, **CAP_ON)
+    rig.dhw = None  # type: ignore[assignment]
+    rig.live()
+    await rig.switch(True)
+    await rig.advance(30)
+    assert levels == []
+    assert cap_shown(rig) == (None, "hot_water_unknown")
+
+
+async def test_the_cap_is_lifted_when_the_boiler_cannot_reach_its_water(rig: Rig) -> None:
+    """The flame on and the flow more than 5 K under the setpoint for 10 minutes: the cap goes
+    for 3 hours, whatever the flow does meanwhile."""
+    levels = record_cap(rig)
+    await start(rig, **CAP_ON)
+    await rig.switch(True)
+    await rig.advance(10)
+    assert levels == [50]
+    rig.flame, rig.flow = True, EXPECTED - 8.0
+    await rig.advance(620)
+    assert levels[-1] == -1
+    assert cap_shown(rig) == (None, "lifted")
+    rig.flow = EXPECTED
+    await rig.advance(3600)
+    assert levels[-1] == -1
+    await rig.advance(2 * 3600 + 600)
+    assert levels[-1] == 50
+    assert cap_shown(rig) == (50.0, "applied")
+
+
+async def test_the_cap_is_never_below_the_boilers_minimum(rig: Rig) -> None:
+    """The boiler's powers entered, 8 to 24 kW: a cap of 30 % becomes the minimum's share plus
+    10 points, 44 %."""
+    levels = record_cap(rig)
+    entry_options = options(rig.zones, modulation_cap=True, modulation_cap_pct=30)
+    entry_options["parameters"] = {"boiler_min_power": 8.0, "boiler_max_power": 24.0}
+    await set_up(rig, add_entry(rig, entry_options))
+    await rig.switch(True)
+    await rig.advance(10)
+    assert levels == [44]
+
+
+async def test_a_cap_the_last_run_left_is_released_at_the_start(rig: Rig) -> None:
+    """The store says the boiler may hold a cap of ours, the cap switched off since: released at
+    the first step, once."""
+    levels = record_cap(rig)
+    entry = add_entry(rig, options(rig.zones))
+    ran_before(rig, entry, {"modulation_cap_in_force": True})
+    await set_up(rig, entry)
+    await rig.advance(30)
+    assert levels == [-1]
+
+
+async def test_the_cap_is_released_when_home_assistant_stops(rig: Rig) -> None:
+    levels = record_cap(rig)
+    await start(rig, **CAP_ON)
+    await rig.switch(True)
+    await rig.advance(10)
+    await rig.hass.async_stop()
+    assert levels == [50, -1]
+
+
+async def test_a_failing_cap_write_is_shown_and_sent_again_a_minute_later(rig: Rig) -> None:
+    """No ``set_max_modulation`` (the gateway's integration without it): shown, sent again a
+    minute later, heating untouched; once it works, applied."""
+    await start(rig, **CAP_ON)
+    await rig.switch(True)
+    await rig.advance(10)
+    assert cap_shown(rig) == (None, "write_failed")
+    assert rig.state("sensor", "control_state").state == "heating"
+    levels = record_cap(rig)
+    await rig.advance(30)
+    assert levels == []  # not before a minute
+    await rig.advance(30)
+    assert levels == [50]
+    assert cap_shown(rig) == (50.0, "applied")
+
+
+@dataclass
+class FakeCap:
+    """A number entity that takes the cap (EMS-ESP's ``selburnpow``, say): records its writes and
+    shows them, unless ``stuck`` (a device that keeps its own value)."""
+
+    hass: HomeAssistant
+    entity_id: str = "number.fake_selburnpow"
+    writes: list[float] = field(default_factory=list)
+    stuck: bool = False
+    value: float = 100.0
+
+    def register(self) -> None:
+        async def set_value(call: ServiceCall) -> None:
+            self.writes.append(float(call.data["value"]))
+            if not self.stuck:
+                self.value = float(call.data["value"])
+            self.publish()
+
+        self.hass.services.async_register("number", "set_value", set_value)
+        self.publish()
+
+    def publish(self) -> None:
+        attributes = {"unit_of_measurement": "%", "min": 0, "max": 254, "step": 1}
+        self.hass.states.async_set(self.entity_id, str(self.value), attributes)
+
+
+def cap_entity_path(rig: Rig, cap: FakeCap, **extra: Any) -> dict[str, Any]:
+    """Control through a writable entity with a heating switch, the cap on its number entity."""
+    flow = FakeNumber(rig.hass)
+    flow.register()
+    switch = FakeSwitch(rig.hass)
+    switch.register()
+    cap.register()
+    section = held_entity(flow, ch_entity=switch.entity_id, ch_write_type="held", **extra)
+    return section | {"modulation_cap_entity": cap.entity_id, **CAP_ON}
+
+
+async def test_a_lapsing_cap_entity_is_repeated_and_released_by_one_write(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """I13.7 on the entity path with values that lapse (EMS-ESP's ``selburnpow``): the cap
+    repeated every keep-alive, as the expiring setpoint; switched off, released by one write of
+    100 % whatever the entity shows — written again it would keep writing to the boiler after
+    the hand-back, and the value lapses within a minute anyway."""
+    cap = FakeCap(rig.hass, stuck=True)
+    await start(rig, **cap_entity_path(rig, cap, write_type="expiring"))
+    await rig.switch(True)
+    await rig.advance(60)
+    assert cap.writes[:3] == [50.0, 50.0, 50.0]  # at once, then every 30 s
+    await rig.switch(False)
+    assert cap.writes[-1] == 100.0
+    count = len(cap.writes)
+    await rig.advance(180)
+    assert len(cap.writes) == count
+    assert "modulation_cap_in_force" not in stored_control(hass_storage, rig)
+
+
+async def test_a_held_cap_entity_is_released_until_it_shows_it(rig: Rig) -> None:
+    """I13.7 on the entity path with values held (ESPHome's maximum relative modulation): the
+    cap written at once and every 5 minutes; switched off, released to 100 % and read back — a
+    release the entity does not show is sent again every minute until it does."""
+    cap = FakeCap(rig.hass)
+    await start(rig, **cap_entity_path(rig, cap))
+    await rig.switch(True)
+    await rig.advance(290)
+    assert cap.writes == [50.0]
+    await rig.advance(10)
+    assert cap.writes == [50.0, 50.0]
+    assert cap_shown(rig) == (50.0, "applied")
+    cap.stuck = True
+    await rig.switch(False)
+    assert cap.writes[-1] == 100.0
+    count = len(cap.writes)
+    await rig.advance(30)
+    assert len(cap.writes) == count
+    await rig.advance(40)
+    assert len(cap.writes) == count + 1  # not shown: sent again a minute later
+    cap.stuck = False
+    await rig.advance(60)
+    assert cap.value == 100.0
+    count = len(cap.writes)
+    await rig.advance(120)
+    assert len(cap.writes) == count  # shown: done
+
+
+async def test_a_cap_the_device_does_not_show_is_named(rig: Rig) -> None:
+    cap = FakeCap(rig.hass, stuck=True)
+    await start(rig, **cap_entity_path(rig, cap))
+    await rig.switch(True)
+    await rig.advance(60)
+    assert cap_shown(rig) == (50.0, "applied")  # its read-back gets two minutes
+    await rig.advance(90)
+    assert cap_shown(rig) == (50.0, "not_shown")
+
+
+async def test_a_cap_without_its_entity_is_named_and_blocks_nothing(rig: Rig) -> None:
+    cap = FakeCap(rig.hass)
+    section = cap_entity_path(rig, cap)
+    section["modulation_cap_entity"] = None
+    await start(rig, **section)
+    await rig.switch(True)
+    await rig.advance(20)
+    assert cap_shown(rig) == (None, "no_target")
+    assert rig.state("sensor", "control_state").state == "heating"

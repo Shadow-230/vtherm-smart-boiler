@@ -20,6 +20,7 @@ from custom_components.vtherm_smart_boiler import config_flow
 from custom_components.vtherm_smart_boiler.config import EntryConfig
 from custom_components.vtherm_smart_boiler.control_config import (
     ALWAYS_HAND_BACK_ALARMS,
+    CONTROL_BOUNDS,
     CONTROL_DEFAULTS,
     CURVE_DEFAULTS,
     OPTIONAL_HAND_BACK_ALARMS,
@@ -107,6 +108,10 @@ OWN_CONTROL_FORM = form_defaults(
 RELAY_FORM = form_defaults(config_flow.control_relay_schema({}))
 CIRCUIT_FORM = form_defaults(config_flow.circuit_schema({}, {"zones": ["c.a"]}))
 BEHAVIOUR_FORM = form_defaults(config_flow.control_behaviour_schema(ADVANCED))
+# I13.7: the modulation cap's fields, offered where the path can set it (a gateway).
+GATEWAY_BEHAVIOUR_FORM = form_defaults(
+    config_flow.control_behaviour_schema(ADVANCED | {"control": {"write_path": "opentherm_gw"}})
+)
 SIGNALS_FORM = form_defaults(config_flow.signals_schema({}))
 # An entity field offers its entity as a suggested value, not a default.
 SIGNALS_SUGGESTED = {
@@ -208,6 +213,14 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ),
     ("comfort correction: its limit (parser)", lambda: BARE.loop.control.correction_max_k, 3.0),
     ("comfort correction: its limit (core)", lambda: CORRECTION_MAX_K, 3.0),
+    # Modulation cap (I13.7) | off; ticked, 70 % (30–100 %) (provisional, K4)
+    ("modulation cap: off", lambda: CONTROL_DEFAULTS["modulation_cap"], False),
+    ("modulation cap: off (form)", lambda: GATEWAY_BEHAVIOUR_FORM["modulation_cap"], False),
+    ("modulation cap: off (parser)", lambda: BARE.modulation_cap_pct, None),
+    ("modulation cap: 70 %", lambda: CONTROL_DEFAULTS["modulation_cap_pct"], 70.0),
+    ("modulation cap: 70 % (form)", lambda: GATEWAY_BEHAVIOUR_FORM["modulation_cap_pct"], 70.0),
+    ("modulation cap: 70 % (parser)", lambda: _ticked_cap(), 70.0),
+    ("modulation cap: 30-100 %", lambda: CONTROL_BOUNDS["modulation_cap_pct"], (30.0, 100.0)),
     # Alarm reaction | information; the hand-backs of decision 7 always
     ("alarm reaction: information (parser)", lambda: dict(BARE.alarm_reactions), {}),
     (
@@ -343,3 +356,9 @@ def test_the_bare_sections_parse_to_their_paths() -> None:
         WritePath.RELAY,
     )
     assert BARE_ENTITY.hand_back is not HandBack.TIMEOUT
+
+
+def _ticked_cap() -> float | None:
+    """The cap's value where only the tick is stored."""
+    data = {"write_path": WritePath.OPENTHERM_GW.value, "modulation_cap": True}
+    return parse_control(data, INSTALLATION, None).modulation_cap_pct

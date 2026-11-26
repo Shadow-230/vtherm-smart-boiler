@@ -1458,3 +1458,113 @@ async def test_a_number_whose_device_unit_is_not_known_keeps_its_shown_step(
     plain = read_grid(hass, "input_number.flow")
     assert plain is not None
     assert plain.step == pytest.approx(0.5)
+
+
+# --- I13.7: the modulation cap's writers ----------------------------------------------------------
+
+CAP = {"modulation_cap": True, "modulation_cap_pct": 50}
+CAP_ENTITY_PATH = {
+    "write_path": "entity",
+    "setpoint_entity": "number.flow",
+    "write_type": "expiring",
+    "hand_back": "timeout",
+    "modulation_cap_entity": "number.selburnpow",
+}
+
+
+async def test_the_gateways_cap_and_its_clear(hass: HomeAssistant) -> None:
+    """``MM=`` through opentherm_gw (``-1`` clears it) and through the firmware's MQTT (a
+    non-numeric value clears it); a gateway read-back unavailable makes it a failure."""
+    calls = record(hass, ("opentherm_gw", "set_max_modulation"), ("mqtt", "publish"))
+    hass.states.async_set(READ_BACK, "45.0", {"unit_of_measurement": "°C"})
+    otgw = writers.make_cap_writer(
+        hass, options(**GATEWAYS["opentherm_gw"], confirmed_entity=READ_BACK, **CAP)
+    )
+    assert isinstance(otgw, writers.OpenthermGwCapWriter)
+    assert otgw.read_back is None
+    assert otgw.services == {("opentherm_gw", "set_max_modulation")}
+    assert await otgw.write_cap(45) == 45.0
+    assert await otgw.release() is None
+    mqtt = writers.make_cap_writer(
+        hass, options(**GATEWAYS["otgw_mqtt"], confirmed_entity=READ_BACK, **CAP)
+    )
+    assert isinstance(mqtt, writers.OtgwMqttCapWriter)
+    assert mqtt.read_back is None
+    assert mqtt.services == {("mqtt", "publish")}
+    assert await mqtt.write_cap(45) == 45.0
+    assert await mqtt.release() is None
+    topic = "OTGW/set/otgw-1/maxmodulation"
+    assert calls == [
+        ("opentherm_gw", "set_max_modulation", {"gateway_id": "gw1", "level": 45}),
+        ("opentherm_gw", "set_max_modulation", {"gateway_id": "gw1", "level": -1}),
+        ("mqtt", "publish", {"topic": topic, "payload": "45"}),
+        ("mqtt", "publish", {"topic": topic, "payload": "-"}),
+    ]
+    hass.states.async_set(READ_BACK, "unavailable")
+    with pytest.raises(WriteError, match="not connected"):
+        await otgw.write_cap(45)
+    for level in (0, 101):
+        with pytest.raises(WriteError, match="modulation cap"):
+            await mqtt.write_cap(level)
+
+
+async def test_the_cap_entity_is_written_as_it_takes_values(hass: HomeAssistant) -> None:
+    """A percentage on its step from its minimum, rounded up; a cap above its maximum refused —
+    it would cap lower than asked; a release takes 100 %, or its maximum where lower."""
+    calls = record(hass, ("number", "set_value"))
+    writer = writers.make_cap_writer(hass, options(**CAP_ENTITY_PATH, **CAP))
+    assert isinstance(writer, writers.EntityCapWriter)
+    assert writer.read_back == "number.selburnpow"
+    assert writer.services == {("number", "set_value")}
+    percent = {"unit_of_measurement": "%", "min": 0, "max": 254, "step": 1}
+    hass.states.async_set("number.selburnpow", "100", percent)
+    assert await writer.write_cap(45) == 45.0
+    assert await writer.release() == 100.0
+    hass.states.async_set("number.selburnpow", "100", percent | {"step": 5, "min": 20})
+    assert await writer.write_cap(43) == 45.0  # up to its step
+    assert await writer.write_cap(10) == 20.0  # never below its minimum
+    hass.states.async_set("number.selburnpow", "80", {"max": 80})
+    assert await writer.release() == 80.0
+    with pytest.raises(WriteError, match="above what it takes"):
+        await writer.write_cap(90)
+    hass.states.async_set("number.selburnpow", "40", {"unit_of_measurement": "°C"})
+    with pytest.raises(WriteError, match="not a percentage"):
+        await writer.write_cap(45)
+    hass.states.async_set("number.selburnpow", "unavailable")
+    with pytest.raises(WriteError, match="unavailable"):
+        await writer.release()
+    assert [call[2]["value"] for call in calls] == [45.0, 100.0, 45.0, 20.0, 80.0]
+
+
+def test_the_caps_services_and_targets() -> None:
+    """The cap's service and entity count among a writer's only with the cap switched on; never
+    for a relay, nor without a target."""
+    entity = options(**CAP_ENTITY_PATH, **CAP)
+    assert writer_services(entity) == {("number", "set_value")}
+    assert writer_entities(entity) == ("number.flow", "number.selburnpow")
+    off = options(**CAP_ENTITY_PATH)
+    assert writers.cap_services(off) == frozenset()
+    assert writer_entities(off) == ("number.flow",)
+    no_target = options(**{**CAP_ENTITY_PATH, "modulation_cap_entity": None}, **CAP)
+    assert writers.cap_services(no_target) == frozenset()
+    gateway = options(**GATEWAYS["opentherm_gw"], **CAP)
+    assert writer_services(gateway) == {
+        ("opentherm_gw", "set_control_setpoint"),
+        ("opentherm_gw", "set_central_heating_ovrd"),
+        ("opentherm_gw", "set_max_modulation"),
+    }
+    assert writers.cap_services(options(**GATEWAYS["otgw_mqtt"], **CAP)) == {("mqtt", "publish")}
+    relay = options(write_path="relay", relay_entity="switch.relay", **CAP)
+    assert writers.cap_services(relay) == frozenset()
+
+
+async def test_no_cap_writer_without_a_target(hass: HomeAssistant) -> None:
+    assert (
+        writers.make_cap_writer(hass, options(write_path="relay", relay_entity="switch.r")) is None
+    )
+    assert (
+        writers.make_cap_writer(hass, options(**{**CAP_ENTITY_PATH, "modulation_cap_entity": None}))
+        is None
+    )
+    # Switched off, a writer is still made: a cap the last run left is released through it.
+    assert writers.make_cap_writer(hass, options(**CAP_ENTITY_PATH)) is not None

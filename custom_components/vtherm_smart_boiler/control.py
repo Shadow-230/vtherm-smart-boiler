@@ -253,6 +253,7 @@ from .core.loop import (
     parse_last_command,
     remember_command,
 )
+from .core.parameters import ParameterKey
 from .core.readings import BoilerSnapshot, ZoneState
 from .core.relay import (
     PROOF_WINDOW_S,
@@ -270,6 +271,7 @@ from .core.relay import (
 from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
 from .core.zone_watch import in_recognition, no_zone_issue_due, vt_unknown_issue_due
+from .modulation_cap import CapUnit, CapWriterFactory
 from .transport.entities import (
     read_bounds,
     read_grid,
@@ -289,6 +291,7 @@ from .transport.writers import (
     RelayWriter,
     WriteError,
     Writer,
+    make_cap_writer,
     make_writer,
     writer_entities,
     writer_services,
@@ -749,6 +752,10 @@ class ControlStatus:
     calling_circuits: tuple[str, ...] = ()
     # I12.9: whether the boiler gives the rooms no heat now, and why (``core.boiler_call``).
     no_heat: NoHeat = NO_HEAT_UNKNOWN
+    # I13.7: the modulation cap in force now, in % (``None``: none), and why it is applied or
+    # released (``None``: switched off, none left).
+    modulation_cap: float | None = None
+    modulation_cap_state: str | None = None
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -809,10 +816,16 @@ class ControlUnit:
         writer_factory: WriterFactory = make_writer,
         raw: Mapping[str, Any] | None = None,
         hand_back_only: bool = False,
+        cap_writer_factory: CapWriterFactory = make_cap_writer,
     ) -> None:
         self._hass = hass
         self._coordinator = coordinator
         self.options = options
+        # I13.7: the modulation cap, with its own writer; whether the boiler may hold a cap of
+        # ours is stored with the rest.
+        self._cap = CapUnit(
+            hass, options, lambda: self._coordinator.async_save_control_now(), cap_writer_factory
+        )
         self._raw = dict(raw or {})
         self.hand_back_only = hand_back_only
         self._writer_factory = writer_factory
@@ -1142,6 +1155,8 @@ class ControlUnit:
             # The lost link's hand-back issue is up: the next run raises it again at once while
             # the wish is on — Home Assistant brings it back inactive after a restart (PB-14).
             "link_lost_issue": HAND_BACK_LINK in self._hand_back_issues and not self.hand_back_only,
+            # I13.7: the boiler may hold a modulation cap of ours: released at the next start.
+            **({"modulation_cap_in_force": True} if self._cap.in_force else {}),
         }
 
     def restore(self, data: Mapping[str, Any]) -> None:
@@ -1243,6 +1258,8 @@ class ControlUnit:
         # Read cautiously too: raised at the start only while the wish is on, and gone once
         # control holds the boiler again or is switched off (PB-14).
         self._link_issue_stored = _flag(data.get("link_lost_issue")) and not self.hand_back_only
+        # I13.7: read cautiously too: what cannot be read counts as in force, and is released.
+        self._cap.in_force = _flag(data.get("modulation_cap_in_force"))
         self._plan_restore(dt_util.utcnow().timestamp())
         # From now on the stores get this unit's state: a save made before its start must not
         # write the state loaded earlier over a hand-back made since.
@@ -1982,6 +1999,7 @@ class ControlUnit:
             await self._async_hand_back_writes(now)
         else:
             await self._async_writes(out, now)
+        await self._async_follow_cap(now, out, snapshot, dhw)
         await self._follow_restore(now, blockers, out.hand_back)
         if self._relay_path:
             await self._async_follow_relay(now, out)
@@ -2051,6 +2069,29 @@ class ControlUnit:
                 starting=bool(blockers) and set(blockers) <= KEPT_IN_RECOGNITION,
                 rooms_calling=_rooms_calling(out.decision),
             ),
+            modulation_cap=self._cap.status.level,
+            modulation_cap_state=self._cap.status.state,
+        )
+
+    async def _async_follow_cap(
+        self, now: float, out: LoopOutput, snapshot: BoilerSnapshot, dhw: bool | None
+    ) -> None:
+        """I13.7: the modulation cap, where the user switched it on — applied while this session
+        holds the boiler, released otherwise. Nothing is written while another controller has
+        the boiler; its step aside hands back, the cap with it."""
+        if out.blocked and not out.hand_back:
+            return
+        coordinator = self._coordinator
+        parameters = coordinator.parameters
+        await self._cap.async_follow(
+            now,
+            holding=self._session.loop.control.controlling and not out.hand_back,
+            hot_water=dhw,
+            flame=snapshot.flag(Signal.FLAME, coordinator.max_age(Signal.FLAME)),
+            flow=snapshot.number(Signal.FLOW, coordinator.max_age(Signal.FLOW)),
+            setpoint=self._session.loop.setpoint.written,
+            min_power_kw=parameters.value(ParameterKey.BOILER_MIN_POWER),
+            max_power_kw=parameters.value(ParameterKey.BOILER_MAX_POWER),
         )
 
     async def _async_ready_to_decide(self, now: float) -> bool:
@@ -2075,6 +2116,7 @@ class ControlUnit:
             else:
                 await self._async_follow_hand_back(now)
         if self.hand_back_only:
+            await self._cap.async_release(now)  # I13.7: a cap the last run left
             self._report_owed()
             return False
         if not self._restored and not self._enabled_now():
@@ -3336,6 +3378,7 @@ class ControlUnit:
         there is nothing to give back."""
         if self._holding or self._hand_back_pending:
             await self._async_try_hand_back(now, new=True)
+        await self._async_release_cap(now)  # I13.7: with every hand-back
         self._hand_back_at = now
         self._last_change_at = now
         self._forget_last_command()  # the session ended; a stop's own hand-back keeps it
@@ -4192,7 +4235,18 @@ class ControlUnit:
         hand-back owed is made: at a stop one attempt at once; ``after_error`` — the control
         step failed — by its own rules, at most once a minute and judged by its confirmation, as
         at every step (PB-05). One the boiler may still need with nothing marked owed — a step
-        that failed after deciding the hand-back, before its mark — is made whole now (PB-04)."""
+        that failed after deciding the hand-back, before its mark — is made whole now (PB-04).
+        A modulation cap the boiler may hold is released with it (I13.7)."""
+        try:
+            await self._async_hand_back_owed_now(now, after_error=after_error)
+        finally:
+            await self._async_release_cap(now)
+
+    async def _async_release_cap(self, now: float) -> None:
+        """I13.7: the modulation cap released, each write capped as the hand-back's at a stop."""
+        await self._cap.async_release(now, STOP_WRITE_TIMEOUT_S if self._stopping else None)
+
+    async def _async_hand_back_owed_now(self, now: float, *, after_error: bool) -> None:
         loop = self._session.loop
         if loop.control.controlling:
             try:

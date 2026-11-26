@@ -5937,3 +5937,147 @@ async def test_the_limits_come_with_their_sensor_in_the_same_session(
     await hass.async_block_till_done()
     monitor = hass.config_entries.async_get_entry(entry_id).options["monitor"]
     assert (monitor["add_water_below"], monitor["flue_gas_warning"]) == (0.8, 80)
+
+
+# --- I13.7: the modulation cap ------------------------------------------------------------------
+
+
+async def test_the_modulation_cap_is_offered_off_by_default_and_stored_only_while_ticked(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """At the advanced level on a gateway: the tick off by default, 70 % by default; ticked,
+    stored with its value; unticked, both go. The form's text names no suggestion without the
+    monitor's data."""
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_control_behaviour(hass, entry_id)
+    shown = result["data_schema"]({"vt_boiler_helper": "input_boolean.vt"})
+    assert shown["modulation_cap"] is False
+    assert shown["modulation_cap_pct"] == 70.0
+    assert "modulation_cap_entity" not in shown  # a gateway takes MM=
+    assert result["description_placeholders"] == {"cap_suggestion": "—"}
+    result = await options_step(
+        hass, result, {"off_setpoint": 10, "modulation_cap": True, "modulation_cap_pct": 45}
+    )
+    assert result["step_id"] == "control_alarms"
+    result = await options_step(hass, result, {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["control"]["modulation_cap"] is True
+    assert entry.options["control"]["modulation_cap_pct"] == 45
+    assert entry.runtime_data.config.control.modulation_cap_pct == 45.0
+
+    result = await to_control_behaviour(hass, entry_id)
+    assert (
+        result["data_schema"]({"vt_boiler_helper": "input_boolean.vt"})["modulation_cap_pct"] == 45
+    )
+    result = await options_step(hass, result, {"off_setpoint": 10, "modulation_cap": False})
+    result = await options_step(hass, result, {})
+    await hass.async_block_till_done()
+    control = hass.config_entries.async_get_entry(entry_id).options["control"]
+    assert "modulation_cap" not in control
+    assert "modulation_cap_pct" not in control
+
+
+def test_the_modulation_cap_is_not_offered_for_a_relay_nor_at_the_simple_level() -> None:
+    from custom_components.vtherm_smart_boiler.config_flow import control_behaviour_schema
+
+    relay = {"level": "advanced", "control": {"write_path": "relay"}}
+    simple = {"level": "simple", "control": {"write_path": "opentherm_gw"}}
+    nothing = {"level": "advanced", "control": {}}
+    for options in (relay, simple, nothing):
+        fields = {str(m) for m in control_behaviour_schema(options).schema}
+        assert not fields & {"modulation_cap", "modulation_cap_pct", "modulation_cap_entity"}
+
+
+def test_hidden_cap_answers_stay_as_stored() -> None:
+    """At the simple level the cap's fields are not shown: what is stored stays (I8, A3)."""
+    from custom_components.vtherm_smart_boiler.config_flow import apply_control_behaviour
+
+    stored = {"write_path": "opentherm_gw", "modulation_cap": True, "modulation_cap_pct": 40}
+    options = {"level": "simple", "control": dict(stored)}
+    apply_control_behaviour(options, {"vt_boiler_helper": "input_boolean.vt"})
+    assert options["control"] == stored | {"vt_boiler_helper": "input_boolean.vt"}
+
+
+async def test_the_cap_entity_is_required_in_no_other_role_and_never_through_a_cloud(
+    hass: HomeAssistant, entities: dict[str, str]
+) -> None:
+    """On the entity path the cap needs its number entity — none, one in another role, or one of
+    an integration that works through a cloud is refused; a local one of its own is stored, and
+    named among the boiler's entities."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.vtherm_smart_boiler.config_flow import boiler_side_entities
+
+    mock_integration(hass, MockModule("maker", partial_manifest={"iot_class": "cloud_polling"}))
+    cloud = er.async_get(hass).async_get_or_create("number", "maker", "cap").entity_id
+    hass.states.async_set(cloud, "100", {"unit_of_measurement": "%"})
+    hass.states.async_set("number.boiler_selburnpow", "100", {"unit_of_measurement": "%"})
+    entry_id = await create_entry(hass, entities, "advanced", ("living",))
+    result = await to_control_entity(hass, entry_id)
+    details = {
+        "setpoint_entity": BOILER_FLOW,
+        "write_type": "expiring",
+        "ch_entity": CH_SWITCH,
+        "ch_write_type": "held",
+        "hand_back": "timeout",
+    }
+    result = await options_step(hass, result, details)
+    result = await options_step(hass, result, ADVANCED_CURVE)
+    assert result["step_id"] == "control_behaviour"
+    assert "modulation_cap_entity" in {str(m) for m in result["data_schema"].schema}
+    ticked = {"modulation_cap": True, "modulation_cap_pct": 50}
+    result = await options_step(hass, result, ticked)
+    assert result["errors"] == {"modulation_cap_entity": "modulation_cap_entity_missing"}
+    result = await options_step(hass, result, ticked | {"modulation_cap_entity": BOILER_FLOW})
+    assert result["errors"] == {"modulation_cap_entity": "modulation_cap_entity_in_another_role"}
+    result = await options_step(hass, result, ticked | {"modulation_cap_entity": cloud})
+    assert result["errors"] == {"modulation_cap_entity": "write_through_cloud"}
+    answer = ticked | {"modulation_cap_entity": "number.boiler_selburnpow"}
+    result = await options_step(hass, result, answer)
+    assert result["step_id"] == "control_alarms"
+    result = await options_step(hass, result, {})
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry.options["control"]["modulation_cap_entity"] == "number.boiler_selburnpow"
+    assert "number.boiler_selburnpow" in boiler_side_entities(entry.options)
+
+
+def test_the_suggested_cap_in_the_forms_text() -> None:
+    """The verdict's short burns, the boiler's powers and a heat loss entered: the cap that
+    covers the design load with its margin; else "—"."""
+    from custom_components.vtherm_smart_boiler.config_flow import modulation_cap_suggestion
+    from custom_components.vtherm_smart_boiler.core.parameters import (
+        Estimate,
+        ParameterKey,
+        ParameterSet,
+        Source,
+    )
+    from custom_components.vtherm_smart_boiler.core.verdict import (
+        Reason,
+        ReasonCode,
+        ReasonKind,
+        Verdict,
+        VerdictResult,
+    )
+
+    parameters = ParameterSet()
+    for key, value in (
+        (ParameterKey.BOILER_MIN_POWER, 4.0),
+        (ParameterKey.BOILER_MAX_POWER, 24.0),
+        (ParameterKey.LOSS_COEFFICIENT, 0.2),
+        (ParameterKey.DESIGN_OUTDOOR, -20.0),
+    ):
+        parameters = parameters.with_estimate(key, Estimate(value, Source.ENTERED))
+    short = Reason(ReasonCode.SHORT_BURNS, ReasonKind.PROBLEM, 0.7, 0.5, changed_by_control=False)
+
+    class Runtime:
+        def __init__(self, verdict: VerdictResult | None) -> None:
+            self.parameters = parameters
+            self.analysis = None if verdict is None else type("A", (), {"verdict": verdict})()
+
+    found = Runtime(VerdictResult(Verdict.NOT_WORTH_IT, (short,)))
+    assert modulation_cap_suggestion(found) == "40 %"
+    assert modulation_cap_suggestion(Runtime(None)) == "—"
+    assert modulation_cap_suggestion(None) == "—"

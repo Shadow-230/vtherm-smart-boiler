@@ -349,18 +349,24 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym przy pełnym sterowaniu: rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
+        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym przy pełnym sterowaniu: rampa, odstęp decyzji, bez przełącznika grzania nastawa „wyłączone”, oraz ograniczenie modulacji kotła, gdzie połączenie pozwala je ustawić (domyślnie wyłączone).",
         "data": {
           "vt_boiler_helper": "Pomocnik przełączany przez kocioł centralny VT",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
-          "off_setpoint": "Nastawa „wyłączone”"
+          "off_setpoint": "Nastawa „wyłączone”",
+          "modulation_cap": "Ogranicz maksymalną modulację kotła",
+          "modulation_cap_pct": "Maksymalna modulacja",
+          "modulation_cap_entity": "Encja maksymalnej modulacji"
         },
         "data_description": {
           "vt_boiler_helper": "Pomocnik wł./wył. (input_boolean), którego kocioł centralny Versatile Thermostat włącza i wyłącza. VT decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia; wtyczka idzie za tym pomocnikiem i ustala temperaturę wody. Utwórz pomocnika, daj kotłowi centralnemu VT polecenia input_boolean.turn_on i input_boolean.turn_off na nim i wybierz go tutaj. Nigdy nie kieruj poleceń VT na sam kocioł: dwa sterowniki by się kłóciły. Brak wartości domyślnej: sterowanie czeka, aż go wybierzesz.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie od razu za kotłem centralnym VT. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
-          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana."
+          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
+          "modulation_cap": "Domyślnie wyłączone. Włączone: gdy wtyczka steruje kotłem, ogranicza jego największą moc (maksymalną modulację), więc palnik może pracować dłużej, gdy potrzeba mało ciepła. Nie obniża najmniejszej mocy kotła: gdy dom potrzebuje mniej, kocioł i tak się włącza i wyłącza. Zysk nie jest dobrze potwierdzony (jedna próba w laboratorium i rady instalatorów). Ryzyko: mniej ciepła w mróz — nigdy nie używaj tego do oszczędzania gazu w najzimniejsze dni. Wtyczka zdejmuje ograniczenie na 3 godziny, gdy woda przez 10 minut jest 5 K poniżej zadanej, zwalnia je, gdy grzeje się ciepła woda albo nie da się tego stwierdzić, i przy każdym oddaniu sterowania. Niedostępne dla przekaźnika.",
+          "modulation_cap_pct": "Największa modulacja z ograniczeniem, w %, od 30 do 100; domyślnie 70. Nigdy poniżej 30 % ani bliżej niż 10 punktów od najmniejszej mocy kotła (jego moce w pozycji Kocioł). Propozycja z danych tego domu: {cap_suggestion} — projektowe zapotrzebowanie domu na ciepło z zapasem 20 %, pokazywane tylko, gdy palnik pracuje głównie krótko, a moce kotła i zapotrzebowanie są znane; nigdy nie ustawiana sama.",
+          "modulation_cap_entity": "Przy zapisywalnej encji: encja liczbowa, która ustawia maksymalną modulację kotła — w EMS-ESP wybrana moc palnika (selburnpow), nigdy maksymalna moc palnika (burnmaxpower), którą kocioł zapisuje w pamięci; w ESPHome OpenTherm maksymalna względna modulacja. Zapisywana tak, jak zadeklarowano encję temperatury wody: co 30 s, gdy wartości wygasają, co 5 minut, gdy są trzymane. Nie wybieraj niczego, co kocioł zapisuje w pamięci. Wymagana przy ograniczeniu."
         }
       },
       "control_alarms": {
@@ -474,7 +480,9 @@
       "device_in_another_circuit": "{zone} jest już na liście innego obiegu: urządzenie należy do jednego obiegu.",
       "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie.",
       "vt_helper_not_input_boolean": "Wybierz pomocnika wł./wył. (input_boolean).",
-      "vt_helper_missing": "Ten pomocnik nie istnieje w Home Assistant."
+      "vt_helper_missing": "Ten pomocnik nie istnieje w Home Assistant.",
+      "modulation_cap_entity_missing": "Wybierz encję liczbową, która ustawia maksymalną modulację kotła, albo wyłącz ograniczenie.",
+      "modulation_cap_entity_in_another_role": "Ta encja ma już inną rolę w sterowaniu: wybierz tę od maksymalnej modulacji."
     }
   },
   "options": {
@@ -848,18 +856,24 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym przy pełnym sterowaniu: rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
+        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym przy pełnym sterowaniu: rampa, odstęp decyzji, bez przełącznika grzania nastawa „wyłączone”, oraz ograniczenie modulacji kotła, gdzie połączenie pozwala je ustawić (domyślnie wyłączone).",
         "data": {
           "vt_boiler_helper": "Pomocnik przełączany przez kocioł centralny VT",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
-          "off_setpoint": "Nastawa „wyłączone”"
+          "off_setpoint": "Nastawa „wyłączone”",
+          "modulation_cap": "Ogranicz maksymalną modulację kotła",
+          "modulation_cap_pct": "Maksymalna modulacja",
+          "modulation_cap_entity": "Encja maksymalnej modulacji"
         },
         "data_description": {
           "vt_boiler_helper": "Pomocnik wł./wył. (input_boolean), którego kocioł centralny Versatile Thermostat włącza i wyłącza. VT decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia; wtyczka idzie za tym pomocnikiem i ustala temperaturę wody. Utwórz pomocnika, daj kotłowi centralnemu VT polecenia input_boolean.turn_on i input_boolean.turn_off na nim i wybierz go tutaj. Nigdy nie kieruj poleceń VT na sam kocioł: dwa sterowniki by się kłóciły. Brak wartości domyślnej: sterowanie czeka, aż go wybierzesz.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie od razu za kotłem centralnym VT. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
-          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana."
+          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
+          "modulation_cap": "Domyślnie wyłączone. Włączone: gdy wtyczka steruje kotłem, ogranicza jego największą moc (maksymalną modulację), więc palnik może pracować dłużej, gdy potrzeba mało ciepła. Nie obniża najmniejszej mocy kotła: gdy dom potrzebuje mniej, kocioł i tak się włącza i wyłącza. Zysk nie jest dobrze potwierdzony (jedna próba w laboratorium i rady instalatorów). Ryzyko: mniej ciepła w mróz — nigdy nie używaj tego do oszczędzania gazu w najzimniejsze dni. Wtyczka zdejmuje ograniczenie na 3 godziny, gdy woda przez 10 minut jest 5 K poniżej zadanej, zwalnia je, gdy grzeje się ciepła woda albo nie da się tego stwierdzić, i przy każdym oddaniu sterowania. Niedostępne dla przekaźnika.",
+          "modulation_cap_pct": "Największa modulacja z ograniczeniem, w %, od 30 do 100; domyślnie 70. Nigdy poniżej 30 % ani bliżej niż 10 punktów od najmniejszej mocy kotła (jego moce w pozycji Kocioł). Propozycja z danych tego domu: {cap_suggestion} — projektowe zapotrzebowanie domu na ciepło z zapasem 20 %, pokazywane tylko, gdy palnik pracuje głównie krótko, a moce kotła i zapotrzebowanie są znane; nigdy nie ustawiana sama.",
+          "modulation_cap_entity": "Przy zapisywalnej encji: encja liczbowa, która ustawia maksymalną modulację kotła — w EMS-ESP wybrana moc palnika (selburnpow), nigdy maksymalna moc palnika (burnmaxpower), którą kocioł zapisuje w pamięci; w ESPHome OpenTherm maksymalna względna modulacja. Zapisywana tak, jak zadeklarowano encję temperatury wody: co 30 s, gdy wartości wygasają, co 5 minut, gdy są trzymane. Nie wybieraj niczego, co kocioł zapisuje w pamięci. Wymagana przy ograniczeniu."
         }
       },
       "control_alarms": {
@@ -1015,7 +1029,9 @@
       "device_in_another_circuit": "{zone} jest już na liście innego obiegu: urządzenie należy do jednego obiegu.",
       "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie.",
       "vt_helper_not_input_boolean": "Wybierz pomocnika wł./wył. (input_boolean).",
-      "vt_helper_missing": "Ten pomocnik nie istnieje w Home Assistant."
+      "vt_helper_missing": "Ten pomocnik nie istnieje w Home Assistant.",
+      "modulation_cap_entity_missing": "Wybierz encję liczbową, która ustawia maksymalną modulację kotła, albo wyłącz ograniczenie.",
+      "modulation_cap_entity_in_another_role": "Ta encja ma już inną rolę w sterowaniu: wybierz tę od maksymalnej modulacji."
     }
   },
   "selector": {
@@ -1690,6 +1706,23 @@
           },
           "demand_count": {
             "name": "Wołające o ciepło"
+          },
+          "modulation_cap": {
+            "name": "Ograniczenie modulacji"
+          },
+          "modulation_cap_state": {
+            "name": "Stan ograniczenia modulacji",
+            "state": {
+              "applied": "Włączone",
+              "not_holding": "Zwolnione: wtyczka nie steruje teraz kotłem",
+              "hot_water": "Zwolnione na czas grzania ciepłej wody",
+              "hot_water_unknown": "Zwolnione: nie da się stwierdzić ciepłej wody",
+              "lifted": "Zdjęte na 3 godziny: kocioł nie osiągał temperatury wody",
+              "full_range": "Nie ma czego ograniczać: dozwolone ograniczenie to 100 %",
+              "no_target": "Niewłączone: nie wybrano dla niego encji",
+              "write_failed": "Zapis się nie udał; ponowiony za minutę",
+              "not_shown": "Urządzenie nie pokazuje ograniczenia"
+            }
           }
         }
       },
