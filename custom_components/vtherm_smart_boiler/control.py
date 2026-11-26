@@ -177,6 +177,7 @@ from .control_config import (
     rename_in_control,
     section_as_migrated,
     vt_helper_valid,
+    with_rooms_curve,
     working_thermostat,
 )
 from .core.alarms import UNKNOWN_HOLD_S, fault_stops, follow_fault
@@ -2098,11 +2099,13 @@ class ControlUnit:
         was_latched = session.loop.control.latched
         before = session.loop
         setpoint_context, heating_context = self._contexts(now, dhw)
+        installation = self._coordinator.config.installation.with_rooms([z.zone_id for z in zones])
         session.loop, out = loop_step(
             session.loop,
             inputs,
             confirmed,
-            self.options.loop,
+            # The curve's default exponent from the rooms VT hands over (I12.17).
+            with_rooms_curve(self.options, installation).loop,
             self._confirmed_heating(),
             setpoint_context=setpoint_context,
             heating_context=heating_context,

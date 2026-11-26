@@ -56,7 +56,14 @@ from .core.curve import (
 )
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
-from .core.installation import Boiler, BoilerClass, CircuitControl, EmitterType, Installation
+from .core.installation import (
+    Boiler,
+    BoilerClass,
+    Circuit,
+    CircuitControl,
+    EmitterType,
+    Installation,
+)
 from .core.limits import FlowLimits
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
 from .core.relay import (
@@ -572,6 +579,9 @@ class ControlOptions:
     # stored, or one this version cannot read. Only a gateway topology reads it.
     thermostat_kind: ThermostatKind | None = None
     curve_entered: bool = False
+    # The curve's exponent entered by the user; else its default follows the emitters of the rooms
+    # VT hands over (I12.17, ``with_rooms_curve``).
+    exponent_entered: bool = False
     loop: LoopConfig = field(default_factory=lambda: LoopConfig(ControlConfig(HeatingCurve())))
     alarm_reactions: Mapping[str, AlarmReaction] = field(default_factory=dict)
     # After stepping aside from another controller, take the boiler back by itself once nothing
@@ -976,6 +986,44 @@ def parse_thermostat_kind(raw: object) -> ThermostatKind | None:
         return None
 
 
+def curve_circuit(installation: Installation) -> Circuit | None:
+    """The circuit the curve serves (I8, decision F6): the one fed straight from the boiler —
+    else, with none, the first, as before."""
+    direct = [c for c in installation.circuits if c.control is CircuitControl.UNMIXED_SHARED]
+    return direct[0] if direct else (installation.circuits[0] if installation.circuits else None)
+
+
+def default_exponent(installation: Installation) -> float:
+    """The curve's exponent where the user entered none: the lowest of the emitters in the
+    circuit it serves — underfloor 1.1, radiators 1.3, convectors 1.4; 1.3 with none."""
+    circuit = curve_circuit(installation)
+    emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
+    return min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
+
+
+def with_rooms_curve(control: ControlOptions, installation: Installation) -> ControlOptions:
+    """I12.17: the control options with the curve's default exponent from the rooms VT hands
+    over now — ``installation`` as ``Installation.with_rooms`` gives it, where with one circuit a
+    room on no emitter list is a radiator. The stored options know only the listed rooms (one
+    circuit stores no room list since I12.11), so only convectors listed gave 1.4 though the other
+    rooms have radiators. Unchanged where the user entered an exponent, or where the curve's
+    circuit has no room now: the exponent then stays as configured rather than jump."""
+    if not control.configured or control.exponent_entered:
+        return control
+    circuit = curve_circuit(installation)
+    if circuit is None or not installation.zones_in(circuit.circuit_id):
+        return control
+    curve = control.loop.control.curve
+    exponent = default_exponent(installation)
+    if curve.exponent == exponent:
+        return control
+    loop = control.loop
+    return replace(
+        control,
+        loop=replace(loop, control=replace(loop.control, curve=replace(curve, exponent=exponent))),
+    )
+
+
 def parse_control(
     data: Mapping[str, Any] | None,
     installation: Installation,
@@ -996,12 +1044,7 @@ def parse_control(
         return ControlOptions(connection=connection, control_mode=control_mode)
     path = WritePath(data["write_path"])
     curve_data = _mapping(data, "curve")
-    # I8 (decision F6): the curve serves the circuit fed straight from the boiler — else, with
-    # none, the first, as before.
     direct = [c for c in installation.circuits if c.control is CircuitControl.UNMIXED_SHARED]
-    circuit = direct[0] if direct else (installation.circuits[0] if installation.circuits else None)
-    emitters = installation.emitters_in(circuit.circuit_id) if circuit is not None else frozenset()
-    default_exponent = min((EXPONENT_BY_EMITTER[e] for e in emitters), default=1.3)
     entered = {} if design_outdoor is None else {"design_outdoor": design_outdoor}
     curve_value = {**CURVE_DEFAULTS, **entered, **curve_data}
     exponent = _checked(curve_value, "exponent", CURVE_BOUNDS)
@@ -1009,7 +1052,7 @@ def parse_control(
         design_outdoor=_required(curve_value, "design_outdoor", CURVE_BOUNDS),
         design_flow=_required(curve_value, "design_flow", CURVE_BOUNDS),
         room=_required(curve_value, "room", CURVE_BOUNDS),
-        exponent=default_exponent if exponent is None else exponent,
+        exponent=default_exponent(installation) if exponent is None else exponent,
         offset=_required(curve_value, "offset", CURVE_BOUNDS),
     )
     value = {**CONTROL_DEFAULTS, **{k: v for k, v in data.items() if v is not None}}
@@ -1134,6 +1177,7 @@ def parse_control(
         topology=Topology(data["topology"]) if data.get("topology") else None,
         thermostat_kind=parse_thermostat_kind(data.get("thermostat_kind")),
         curve_entered=bool(curve_data.get("design_flow")),
+        exponent_entered=exponent is not None,
         loop=loop,
         alarm_reactions=reactions,
         # Decision 6: the return by itself is not offered for relays.

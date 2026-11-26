@@ -25,7 +25,10 @@ from custom_components.vtherm_smart_boiler.websocket_api import async_setup_webs
 from .harness import FakeBoiler
 from .test_control import (  # the rig fixture comes with them
     Rig,
+    add_entry,
+    options,
     rig,  # noqa: F401
+    set_up,
     start,
 )
 from .test_setup import entity_id, entry_for, setup
@@ -177,6 +180,21 @@ async def test_the_curve_as_control_decides_it(rig: Rig, hass_ws_client: Any) ->
             ).value
         )
     assert reply["result"]["problems"] == []
+
+
+async def test_the_curves_default_exponent_follows_the_rooms(rig: Rig, hass_ws_client: Any) -> None:
+    """I12.17: one circuit, the living room listed with convectors and the bedroom on no list —
+    a radiator: the curve control runs and the page shows takes the radiators' 1.3, not the 1.4
+    of the listed room alone (one circuit stores no room list since I12.11)."""
+    rig.zones.add("bedroom", hvac_action="idle")
+    living = rig.zones.entities["living"]
+    entry_options = options(rig.zones) | {"circuits": [{"id": "main", "convectors": [living]}]}
+    await set_up(rig, add_entry(rig, entry_options))
+    coordinator = rig.entry.runtime_data
+    assert coordinator.config.control.loop.control.curve.exponent == 1.4  # the stored rooms only
+    assert coordinator.control_now().loop.control.curve.exponent == 1.3
+    client = await connect(rig.hass, hass_ws_client)
+    assert (await client.ask("installation"))["result"]["curve"]["exponent"] == 1.3
 
 
 async def test_a_draft_is_checked_as_the_settings_check_it(rig: Rig, hass_ws_client: Any) -> None:

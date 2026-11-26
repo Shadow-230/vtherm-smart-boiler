@@ -21,6 +21,7 @@ from custom_components.vtherm_smart_boiler.control_config import (
     connection_suggested_by,
     fixed_keys,
     parse_control,
+    with_rooms_curve,
 )
 from custom_components.vtherm_smart_boiler.core.guards import WriteType
 from custom_components.vtherm_smart_boiler.core.installation import (
@@ -128,6 +129,46 @@ def test_underfloor_exponent_and_circuit_cap() -> None:
     options = parse_control(OTGW, installation, None)
     assert options.loop.control.curve.exponent == 1.1
     assert options.loop.control.circuit_max == 40.0
+
+
+# One circuit stores only the rooms on its emitter lists (I12.11): here one convector room.
+ONE_CONVECTOR = Installation(
+    Boiler(BoilerClass.FLOW_SETPOINT),
+    (Circuit("main"),),
+    (Zone("climate.hall", "main", EmitterType.CONVECTOR),),
+)
+
+
+@pytest.mark.parametrize(
+    ("rooms", "expected"),
+    [
+        (["climate.hall", "climate.bed"], 1.3),  # the bedroom on no list: a radiator
+        (["climate.hall"], 1.4),  # every room a convector
+        ([], 1.4),  # no room now (VT reloading): as configured, no jump
+    ],
+    ids=["a_radiator_room_too", "convectors_only", "no_room_now"],
+)
+def test_the_default_exponent_follows_the_rooms_vt_hands_over(
+    rooms: list[str], expected: float
+) -> None:
+    """I12.17: with one circuit, a room on no emitter list is a radiator — the default exponent
+    is the lowest of the rooms' emitters as VT hands the rooms over, not of the listed ones only
+    (only convectors listed gave 1.4 though the other rooms have radiators). With no room now
+    the exponent stays as configured."""
+    options = parse_control(OTGW, ONE_CONVECTOR, None)
+    assert options.loop.control.curve.exponent == 1.4  # the stored rooms only
+    now = with_rooms_curve(options, ONE_CONVECTOR.with_rooms(rooms))
+    assert now.loop.control.curve.exponent == expected
+
+
+def test_an_entered_exponent_is_kept_whatever_the_rooms() -> None:
+    """I12.17, negative: an exponent the user entered stays; so do options without control."""
+    entered = parse_control(OTGW | {"curve": CURVE | {"exponent": 1.25}}, ONE_CONVECTOR, None)
+    rooms = ONE_CONVECTOR.with_rooms(["climate.hall", "climate.bed"])
+    assert entered.exponent_entered
+    assert with_rooms_curve(entered, rooms) is entered
+    unset = parse_control({}, ONE_CONVECTOR, None)
+    assert with_rooms_curve(unset, rooms) is unset
 
 
 @pytest.mark.parametrize(

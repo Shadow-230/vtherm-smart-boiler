@@ -105,7 +105,14 @@ from .const import (
     rooms_store_key,
     stored_flag,
 )
-from .control_config import Connection, Topology, WritePath, wall_thermostat_applies
+from .control_config import (
+    Connection,
+    ControlOptions,
+    Topology,
+    WritePath,
+    wall_thermostat_applies,
+    with_rooms_curve,
+)
 from .core.alarms import (
     CIRCUIT_NOT_MEASURED,
     HELD,
@@ -1669,6 +1676,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return None
         return heating_starts(analysed.day.burns, now)
 
+    def control_now(self) -> ControlOptions:
+        """The control options as they apply now: the curve's default exponent from the rooms VT
+        hands over (I12.17, ``with_rooms_curve``)."""
+        config = self.config
+        return with_rooms_curve(config.control, config.installation.with_rooms(self.link.rooms()))
+
     def dhw_takes_heat(self, snapshot: BoilerSnapshot) -> bool | None:
         """Hot water taking the heat from the rooms now: hot water running where it has
         priority (I6, decision 8) — a combi, a tank charged through a three-way valve. Without
@@ -2316,7 +2329,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             source = SetpointSource.READ_BACK
         else:
             source = None
-        limits = control.loop.control
+        limits = self.control_now().loop.control
         caps = [circuit.max_flow for circuit in config.installation.circuits if circuit.max_flow]
         if control.configured:
             # The curve's own cap, and the circuit's — its default where it gives none (I8, F2).
