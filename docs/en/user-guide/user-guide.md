@@ -907,7 +907,9 @@ minutes within the last 10, the link is lost:
 
 - the alarm "Control: boiler link lost" appears and the plugin hands back;
 - with a thermostat, the thermostat takes over; stand-alone, heating stops;
-- control resumes by itself once the data has been fresh for 60 seconds without a break.
+- control resumes by itself once the data has been fresh for 60 seconds without a break — for
+  10 minutes where the link was lost again within an hour, so a link that keeps dropping does not
+  hand the boiler back and take it again every few minutes.
 
 A failed outdoor sensor is not a lost link: the plugin uses a fallback setpoint, never zero heat.
 
@@ -956,7 +958,7 @@ control off.
 | "Heating off" or "on" ignored; a relay stops taking "off" | off and on, after fixing it |
 | An internal error | when you switch control off and on |
 | Any other value ignored from the start | at the next session |
-| Boiler link lost | by itself, after 60 seconds of fresh data |
+| Boiler link lost | by itself, after 60 seconds of fresh data (10 minutes after a second loss within an hour) |
 | Relay out of reach | by itself, when the relay returns |
 | The boiler's own fault | by itself, when the fault clears |
 | No zone answers | by itself, when a zone answers |
@@ -980,7 +982,8 @@ set in the options under **Freshness limits**, in minutes, one per mapped signal
 weather entity; a signal removed from **Boiler signals** takes its limit with it:
 
 - **Empty (default): automatic.** No limit until the source is seen repeating an unchanged value
-  at least twice in the run; then five times its own rhythm, 10 to 30 minutes for the boiler's
+  at least four times in the run; then five times its own rhythm and at least twice its
+  second-longest pause, 10 to 30 minutes for the boiler's
   signals and 3 to 12 hours for the weather entity. A source that reports only changes never gets
   one: a steady value is not a stale one, and a limit would stop control in steady weather.
 - **0: no limit** — only whether the entity is available counts.

@@ -880,9 +880,10 @@ c.o., ograniczenie modulacji, wartości trybu działającego jak termostat (0.3)
   limicie; każdy sygnał ma własny limit, także płomień, a encja pogody ma limit własny. Stały odczyt
   nie jest odczytem nieświeżym — wiele źródeł melduje tylko zmiany — więc limit nigdy nie jest
   zakładany (I6, decyzja 9; tymczasowo, K4): jest to limit użytkownika (0: brak) albo, gdy pole
-  zostanie puste, limit, na który źródło zasłuży, gdy co najmniej dwa razy w trakcie działania
+  zostanie puste, limit, na który źródło zasłuży, gdy co najmniej cztery razy w trakcie działania
   zobaczymy, że powtarza niezmienioną wartość (raport, w którym od poprzedniego nic się nie zmieniło,
-  według jego własnego czasu zmiany) — pięciokrotność mediany jego odstępu między sygnałami życia,
+  według jego własnego czasu zmiany) — pięciokrotność mediany jego odstępu między sygnałami życia i
+  co najmniej dwukrotność drugiego największego odstępu (I13.2),
   od 10 do 30 min dla sygnałów kotła, od 3 do 12 h dla pogody; źródło, które melduje tylko zmiany,
   nigdy takiego limitu nie zdobywa, więc źródło, które zawiesza się bez przejścia w stan
   „niedostępne”, nie zostanie wykryte, i opis opcji tak mówi. W firmware OTGW przez MQTT i w EMS-ESP
@@ -1248,7 +1249,7 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Zaznaczenie „osobny styk” przekaźnika | nie zaznaczone — sterowanie nie startuje bez niego | ustawienie zapisane w pamięci kotła zużywałoby się przy każdym przełączeniu (odpowiedź G) |
 | Samoczynny powrót po innym sterowniku | wyłączony | inny sterownik może nadal działać; użytkownik najpierw sprawdza |
 | Samoczynny powrót po oddaniu sterowania przez włącznik sterowania zewnętrznego | wyłączony — własna opcja | włącznik pokazuje „wyłączony” także wtedy, gdy człowiek celowo wyłączył sterowanie zewnętrzne (decyzja 10 z `docs/en/development/plans/plan-0.2.3.md`) |
-| Limit wieku świeżości | automatyczny: brak, dopóki źródło dwa razy nie powtórzy niezmienionej wartości, potem 5 × jego rytm, 10–30 min (pogoda 3–12 h) (tymczasowe, K4) | wiele źródeł raportuje tylko przy zmianie; założony limit na takim źródle zatrzymałby sterowanie przy niezmiennej pogodzie |
+| Limit wieku świeżości | automatyczny: brak, dopóki źródło cztery razy nie powtórzy niezmienionej wartości, potem 5 × jego rytm i co najmniej 2 × jego drugi największy odstęp (I13.2), 10–30 min (pogoda 3–12 h) (tymczasowe, K4) | wiele źródeł raportuje tylko przy zmianie; założony limit na takim źródle zatrzymałby sterowanie przy niezmiennej pogodzie |
 | Krótkie palenie (monitor, 1–60 min) | poniżej 10 min (tymczasowe, K4) | liczba krótkich paleń w monitorze i jego sugestie z niej korzystają; zbyt krótki limit ukrywa krótkie cykle, zbyt długi liczy normalne palenia jako krótkie |
 
 Stałe wartości (S-37) — nie są opcjami. Każdy wiersz jest albo postanowiony (podana jest jego
@@ -1266,7 +1267,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Własne wygaśnięcie wtyczki po 60 s ciszy | `core/guards.py` | nadpisanie OTGW wygasa po około minucie |
 | Okno ponownego zapisu 24 h | `core/guards.py` | postanowione 2026-09-25 |
 | Ponowienie oddania sterowania co 60 s | `control.py` | istniejące |
-| Utrata łączności: 5 min nieświeże w ciągu 10 min; powrót po 60 s świeżych | `core/controller.py` | 5 min postanowione 2026-09-25; okno i powrót tymczasowe, K4 |
+| Utrata łączności: 5 min nieświeże w ciągu 10 min; powrót po 60 s świeżych, po 10 min po drugiej utracie w ciągu godziny (I13.2) | `core/controller.py` | 5 min postanowione 2026-09-25; okno i powrót tymczasowe, K4 |
 | Utrzymanie temperatury zewnętrznej 3 h; stała czasowa temperatury zewnętrznej 3 h | `core/curve.py` | utrzymanie: decyzja 9; stała czasowa: tymczasowe, K4 (powód do potwierdzenia; Open after 0.2.2, #27) |
 | Zawieszony czujnik: jedna wartość trzymana 12 h, gdy pogoda zmienia się o 3 K lub więcej; odchylenie 6 K na przestrzeni co najmniej 2 h nakładających się danych | `core/signal_check.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Korekta komfortu +3 K (domyślna wartość jej limitu, opcja od 0.5 do 10 K od G11), 30 min na K, 3 h na krawędzi, 1 K powyżej zatrzymuje wzrost; zaspokojona poniżej 70 %, brakuje 0.3 K | `core/controller.py` | postanowione 2026-09-25 |

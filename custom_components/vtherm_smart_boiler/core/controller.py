@@ -139,6 +139,11 @@ OVERHEAT_K = 1.0  # a zone this far over its setpoint stops the rise
 OUTAGE_LOST_S = 300.0  # decided: five minutes (the user's answer I; decision 7)
 OUTAGE_WINDOW_S = 600.0  # provisional, K4
 OUTAGE_BACK_S = 60.0  # provisional, K4
+# I13.2: a loss beginning within ``OUTAGE_REPEAT_S`` of the one before ends only after
+# ``OUTAGE_BACK_REPEAT_S`` good — a link that keeps dropping does not hand the boiler back and take
+# it again every few minutes (Adnan 2013: a longer confirmation after a repeat; provisional, K4).
+OUTAGE_REPEAT_S = 3600.0
+OUTAGE_BACK_REPEAT_S = 600.0
 # The blocker "Home Assistant is starting": it does not stop a command kept or restored in the
 # recognition period, which it keeps from ending (decision 3).
 HA_STARTING = "ha_starting"
@@ -214,6 +219,7 @@ class OutageWindow:
     lost: bool = False  # bad for five minutes within ten; stays until good for a minute
     lost_from: float | None = None  # the first bad moment in the window when the loss began
     good_since: float | None = None  # the first check of the current run of good ones
+    losses: tuple[float, ...] = ()  # when the losses of the last hour began (I13.2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,8 +429,10 @@ def follow_outage(
 
     A loss begins once bad checks cover ``lost_s`` (``OUTAGE_LOST_S``) within the last
     ``OUTAGE_WINDOW_S`` — a source that keeps dropping out counts, not only one gone for good —
-    and ends once the checks have been good for ``OUTAGE_BACK_S`` without a break; its checks are
-    then cleared, so a single failure afterwards is no loss. No check yet counts as nothing bad.
+    and ends once the checks have been good for ``OUTAGE_BACK_S`` without a break —
+    ``OUTAGE_BACK_REPEAT_S`` where it began within ``OUTAGE_REPEAT_S`` of the loss before (I13.2);
+    its checks are then cleared, so a single failure afterwards is no loss. No check yet counts as
+    nothing bad.
     A check earlier than the last one means the wall clock was set back: the later ones go (C9);
     a moment taken just before the last check is judged at that check.
     """
@@ -439,15 +447,18 @@ def follow_outage(
     at = max(now, checks[-1][0]) if checks else now
     start = at - OUTAGE_WINDOW_S
     checks = tuple(check for check in checks if check[0] > start - MAX_STEP_S)
+    # A loss later than now means the clock was set back: it goes, as the later checks did (C9).
+    losses = tuple(t for t in window.losses if at - OUTAGE_REPEAT_S < t <= at)
     if window.lost:
-        if good_since is not None and at - good_since >= OUTAGE_BACK_S:
-            return OutageWindow(good_since=good_since)
-        return replace(window, checks=checks, good_since=good_since)
+        back_s = OUTAGE_BACK_REPEAT_S if len(losses) > 1 else OUTAGE_BACK_S
+        if good_since is not None and at - good_since >= back_s:
+            return OutageWindow(good_since=good_since, losses=losses)
+        return replace(window, checks=checks, good_since=good_since, losses=losses)
     if bad_time(checks, at) >= lost_s:
         spans = _spans(checks, at)
         first = min(max(t, start) for t, end, failed in spans if failed and end > start)
-        return OutageWindow(checks, True, first, good_since)
-    return OutageWindow(checks, False, None, good_since)
+        return OutageWindow(checks, True, first, good_since, (*losses, first))
+    return OutageWindow(checks, False, None, good_since, losses)
 
 
 def fallback_setpoint(config: ControlConfig) -> float:

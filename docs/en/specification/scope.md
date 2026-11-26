@@ -836,7 +836,8 @@ the thermostat-like mode's values (0.3) and a relay:
   many sources report only on change — so a limit is never assumed (I6, decision 9; provisional,
   K4): the user's own (0: none), or, left empty, one a source earns once it has been seen
   repeating an unchanged value (a report with nothing changed since, by its own change time) at
-  least twice in the run — five times its median heartbeat gap, 10 to 30 min for the boiler's
+  least four times in the run — five times its median heartbeat gap and at least twice its
+  second-largest (I13.2), 10 to 30 min for the boiler's
   signals, 3 to 12 h for the weather; a change-only source never earns one, so a source that
   freezes without going unavailable is not caught, and the option's description says so. On the
   OTGW firmware over MQTT and EMS-ESP the plugin listens to the device's own MQTT repeats
@@ -1173,7 +1174,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Relay "separate contact" tick | not ticked — control does not start without it | a setting stored in the boiler's memory would be worn by every switching (answer G) |
 | Return by itself after another controller | off | the other controller may still be there; the user checks first |
 | Return by itself after an external-control switch's hand-back | off — its own option | the switch reads "off" also when a person turned external control off on purpose (decision 10 of `docs/en/development/plans/plan-0.2.3.md`) |
-| Freshness age limit | automatic: none until the source repeats an unchanged value twice, then 5 × its rhythm, 10–30 min (weather 3–12 h) (provisional, K4) | many sources report only on change; an assumed limit on such a source would stop control in steady weather |
+| Freshness age limit | automatic: none until the source repeats an unchanged value four times, then 5 × its rhythm and at least 2 × its second-largest gap (I13.2), 10–30 min (weather 3–12 h) (provisional, K4) | many sources report only on change; an assumed limit on such a source would stop control in steady weather |
 | A short burn (monitor, 1–60 min) | under 10 min (provisional, K4) | the monitor's short-burn count and its suggestions use it; too short hides short-cycling, too long counts normal burns as short |
 
 Fixed values (S-37) — not options. Each row is either decided (its decision or date named) or
@@ -1191,7 +1192,7 @@ reviews every provisional value at K4.
 | The plugin's own lapse after 60 s of silence | `core/guards.py` | an OTGW override lapses after about a minute |
 | Rewrite window 24 h | `core/guards.py` | decided 2026-09-25 |
 | Hand-back retry 60 s | `control.py` | existing |
-| Lost link: 5 min stale within 10 min; back after 60 s fresh | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
+| Lost link: 5 min stale within 10 min; back after 60 s fresh, after 10 min following a second loss within an hour (I13.2) | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
 | Outdoor hold 3 h; outdoor time constant 3 h | `core/curve.py` | the hold: decision 9; the time constant: provisional, K4 (reason to confirm; Open after 0.2.2, #27) |
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
 | Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
