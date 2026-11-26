@@ -210,7 +210,8 @@ def pressure_alarms(
 
 DEFAULT_FREQUENT_STARTS_PER_HOUR = 12  # within one hour: the alarm (K4: its level ``alarm``)
 # K4 (the user's decision of 2026-11-17): more starts than gas boilers' TPI design value, 6 an
-# hour (UK room-thermostat manuals; Bennett 2019: 70 % of heating starts under 10 min), over the
+# hour (UK room-thermostat manuals; Bennett 2019: 70 % of the boilers averaged heating starts under
+# 10 min; a convention, not a harm threshold, I13.9), over the
 # last 3 h, is a warning — cycling the literature counts, below the alarm's hour.
 SUSTAINED_STARTS_PER_HOUR = 6
 SUSTAINED_S = 3 * HOUR

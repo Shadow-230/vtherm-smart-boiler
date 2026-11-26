@@ -242,7 +242,9 @@ centralnej VT, tak jak opisuje dokumentacja VT: jego progi (ile urządzeń woła
 opóźnienie włączenia i oba polecenia na pomocniku wł./wył. (`input_boolean`), którego tworzysz —
 nigdy na samym kotle. Potem wybierz tego pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
 idzie za pomocnikiem: włączony — kocioł grzeje; wyłączony — nie. Dokłada temperaturę wody i swoje
-zasady bezpieczeństwa.
+zasady bezpieczeństwa. Opóźnienie włączenia w VT działa jak zwłoka przy wezwaniu ciepła: pokój,
+który woła tylko przez chwilę, nie uruchamia kotła. Wtyczka nie dodaje własnej przerwy (przerwę
+przed ponownym startem palnika sprawdzono na symulatorze i nie pomogła, I13.6).
 
 - Wtyczka sprawdza co 10 sekund i od razu, gdy pomocnik się zmieni, w obie strony.
 - Sterowanie jest zablokowane bez pomocnika, dopóki kocioł centralny VT nie jest ustawiony

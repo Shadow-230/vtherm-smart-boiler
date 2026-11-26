@@ -138,8 +138,8 @@ z pierwszym wydaniem.
 
 | Wydanie | Zawartość |
 |---|---|
-| 0.2 Podstawa sterowania | monitor plus sterowanie temperaturą wody, grzanie włączane i wyłączane tak, jak decyduje kocioł centralny VT, bezpieczne oddanie kotła |
-| 0.3 Ochrona przed taktowaniem i tryb jak termostat | praca cykliczna, limit modulacji, planowanie z prognozy, tryb jak termostat, podłogówka za zaworem mieszającym |
+| 0.2 Podstawa sterowania | monitor plus sterowanie temperaturą wody, grzanie włączane i wyłączane tak, jak decyduje kocioł centralny VT, bezpieczne oddanie kotła, limit modulacji (na życzenie) |
+| 0.3 Ochrona przed taktowaniem i tryb jak termostat | praca cykliczna, planowanie z prognozy, tryb jak termostat, podłogówka za zaworem mieszającym |
 | 0.4 Uczenie i strojenie | uczenie po stronie wody, propozycje, sezonowe dostrojenie |
 | 0.5 Prognoza | wyprzedzanie dla wolnych grzejników na podstawie zapisanych prognoz |
 | Później | ładowanie ciepłej wody, domyślna lista HACS, więcej urządzeń |

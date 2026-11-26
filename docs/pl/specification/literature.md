@@ -33,6 +33,8 @@ pliki nie są trzymane w repozytorium. Przy każdej pozycji: co wtyczka z niej b
   liniowy: jego wykładnik to około 1,0.
 - Gritzki, R. i inni (2021). Can we still trust in EN 442? *REHVA Journal*. Wzór na moc grzejnika i
   jego wykładnik 1,3.
+- Siemens. *LMS14 boiler management unit*, dokumentacja. Minimalny czas postoju między startami
+  grzania i temperatura zewnętrzna filtrowana przez 10–20 godzin: średnia temperatury zewnętrznej.
 - Kull, T. M., Simson, R., Thalfeldt, M., Kurnitski, J. (2017). Influence of time constants on
   low energy buildings' heating control. 11th Nordic Symposium on Building Physics, *Energy
   Procedia* 132, 75–80. Pokoje z podłogówką reagują w ciągu 20–70 godzin: dłuższa średnia

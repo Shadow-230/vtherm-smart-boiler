@@ -232,7 +232,9 @@ configuration, as VT's documentation describes: its thresholds (how many devices
 power), its activation delay, and its two commands on an on/off helper (`input_boolean`) you
 create — never on the boiler itself. Then pick that helper in the plugin's **Control behaviour**.
 The plugin follows the helper: on, the boiler heats; off, it does not. It adds the water
-temperature and its safety rules.
+temperature and its safety rules. VT's activation delay is the heat call's on-delay: a room
+calling for a moment does not start the boiler. The plugin adds no pause of its own (a pause before
+the burner starts again was tried on the simulator and did not help, I13.6).
 
 - The plugin checks every 10 seconds, and at once when the helper changes, in both directions.
 - Control is blocked without the helper, while VT's central boiler is not set up (ticked, with
