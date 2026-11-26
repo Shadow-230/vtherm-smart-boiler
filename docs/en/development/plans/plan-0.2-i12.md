@@ -65,14 +65,15 @@ The public API in `hass.data` (`water-interface.md` §3.2) and the seven demand 
 manager (`demand_count` … `opening_threshold`) removed; the plugin's own entities still show the
 demand. The specification records the removal (its section 8).
 
-### I12.3 VT 10.6.5 the oldest supported 🔒 (moved to I12.6 by the second part)
+### I12.3 VT 10.6.5 the oldest supported ✅ (moved to I12.6 by the second part, done there)
 
 Waits for the user's consent to two things: VT 10.6.5's sources in `vendor/` for the local real-VT
 tests (today VT 10.5.1), and the `workflow` scope for one push (CI fetches VT 10.5.1 and SmartPI
 0.4.0 for its real-VT tests). Then: the version check, the code kept only for older VT removed,
 the user guide's requirements.
 
-### I12.4 What `vtherm_api` lacks 🔒 (replaced by the second part's review of every gap)
+### I12.4 What `vtherm_api` lacks ✅ (replaced by the second part's review of every gap; what is
+still asked of VT's author is I12.14)
 
 A discussion with VT's and SmartPI's authors, opened only with the user's consent to publish
 (`research/2026-11-24-vtherm-api-exchange-paths.md`, the proposal).
@@ -258,8 +259,45 @@ it — fixed by refusing VT's entities by the registry first.
 
 #### I12.14 VT's author 🔒
 
-Decision 9, once the user has read the issue and consented.
+Decision 9, once the user has read the issue and consented. Waits: nothing is published (the
+user, 2026-11-26). Meanwhile the plugin keeps to `SAFETY_EVENT` with the restart rule, and counts a
+room as fully open from 95 % applied (the duty cap is not in the API).
 
 #### I12.15 J4 and K4 🔒
 
-J4 over the whole on `qas`, then the review before the beta.
+J4 over the whole on `qas`, then the review before the beta. It comes after the corrections below
+(I12.16–I12.19) and the test environment's move to Home Assistant 2026.11, a step of its own after
+them (the user, 2026-11-26).
+
+### Third part: corrections after I12 (the user's go-ahead of 2026-11-26)
+
+Found in the steps' reports and checked in the code on `dev` f0483a5
+(`research/2026-11-26-corrections-after-i12-plan.md`). One pull request each, in this order.
+
+#### I12.16 "Gives no heat" at a start
+
+The signal turned on (`handed_back`) for a moment at every Home Assistant start, from the
+"starting" blocker. While the only blockers are Home Assistant starting or VT's settings not known
+yet, it keeps its last value, unavailable if none: SmartPI 1.0 no longer holds its integral at
+each start.
+
+#### I12.17 The curve's exponent with one circuit
+
+Since I12.11 the only circuit stores no room list, so the default exponent counted only the rooms
+on the underfloor and convector lists (only convectors listed: 1.4, though the other rooms have
+radiators). A room on no emitter list counts as a radiator, from VT's rooms at run time, as the
+user guide says and as before I12.11.
+
+#### I12.18 A circuit run by other automation in the analyses
+
+A burn while the helper was off counted as hot water, also while a circuit run by other automation
+asked for heat. The circuits' request entities (the user's entities) are read from the recorder
+beside the helper: a burn while one asks counts as heating.
+
+#### I12.19 Documents
+
+The development plan (the restart pause no longer cut short by the plugin's frost protection; the
+tests' move to Home Assistant 2026.11 as a step of its own), `CLAUDE.md` (CI fetches VT 10.6.5,
+SmartPI 0.4.0 only for the bench's deploy), the user guide (EN, PL) without SmartPI's version where
+the curve's outdoor term is described. Beside, not in the repository: the list "code against the
+literature" brought up to date after I12.
