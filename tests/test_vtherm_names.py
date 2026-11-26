@@ -13,7 +13,9 @@ COMPONENT = Path(__file__).resolve().parents[1] / "custom_components/vtherm_smar
 ALLOWED = {"vtherm_link.py", "vtherm_attributes.py"}
 
 # VT 10.4.0's climate attributes and central-configuration entry keys the plugin reads (nothing of
-# SmartPI's since I12.9); generic Home Assistant words ("heat", "temperature", "on") are not VT's.
+# SmartPI's since I12.9), and VT's events (I12.10: safety mode and the automatic window detection;
+# no safety attribute any more); generic Home Assistant words ("heat", "temperature", "on") are not
+# VT's.
 VT_NAMES = frozenset(
     {
         "central_boiler_activation_service",
@@ -33,14 +35,16 @@ VT_NAMES = frozenset(
         "overpowering_state",
         "power_manager",
         "power_unit",
-        "safety_manager",
-        "safety_state",
         "specific_states",
         "temperature_sensor_entity_id",
         "underlying_entity_ids",
         "use_central_boiler_feature",
         "valve_open_percent",
         "versatile_thermostat_central_boiler_event",
+        "versatile_thermostat_safety_event",
+        "versatile_thermostat_window_auto_event",
+        "window_sensor_entity_id",
+        "hvac_off_window_detection",
     }
 )
 

@@ -589,13 +589,26 @@ def test_the_learning_pauses_setting_goes_and_a_session_compares_as_migrated() -
     assert not hasattr(parse_control(OTGW, RADIATORS, None), "learning_pauses")
 
 
-def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
-    picked = parse_control(OTGW | {"frost_zone": "climate.a"}, RADIATORS, None)
-    assert picked.loop.control.frost.zone == "climate.a"
-    assert parse_control(OTGW, RADIATORS, None).loop.control.frost.zone is None
-    # A zone no longer configured must not leave frost protection watching nothing.
-    gone = parse_control(OTGW | {"frost_zone": "climate.gone"}, RADIATORS, None)
-    assert gone.loop.control.frost.zone is None
+def test_the_frost_settings_go_and_a_session_compares_as_migrated() -> None:
+    """I12.10 (minor version 24): frost protection is VT's — the frost settings leave the control
+    section; a section of another shape, or one without them, is left as it is; and the options
+    a stored session took the boiler with are read without them, so a restart after the update
+    compares like with like (no hand-back for settings that went)."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        FROST_REMOVED,
+        section_as_migrated,
+        without_frost,
+    )
+
+    frost = {"frost_limit": 4.0, "frost_release": 6.0, "frost_zone": "climate.a"}
+    assert set(frost) == set(FROST_REMOVED)
+    assert without_frost(OTGW | frost) == OTGW
+    assert without_frost(OTGW | {"frost_zone": "climate.a"}) == OTGW
+    assert without_frost(OTGW) is OTGW
+    assert without_frost(None) is None
+    assert without_frost(["frost_limit"]) == ["frost_limit"]
+    assert section_as_migrated(OTGW | frost) == section_as_migrated(OTGW)
+    assert not hasattr(parse_control(OTGW | frost, RADIATORS, None).loop.control, "frost")
 
 
 @pytest.mark.parametrize(("off", "blocked"), [(24.5, True), (24.0, False), (25.0, True)])
@@ -1031,16 +1044,17 @@ def test_the_offered_reaction_is_read_from_raw_options() -> None:
 def test_the_switch_says_who_keeps_frost_protection_after_a_hand_back(
     data: dict, after_hand_back: str | None
 ) -> None:
-    """S-57: while the session controls, the plugin keeps frost protection; otherwise whoever
-    the hand-back's effect leaves it with — the thermostat, the boiler's own (if it has one)
-    where the hand-back stops heating, or the boiler's or the device's own control."""
+    """S-57: while the session controls, VT keeps frost protection through the plugin (I12.10);
+    otherwise whoever the hand-back's effect leaves it with — the thermostat, the boiler's own
+    (if it has one) where the hand-back stops heating, or the boiler's or the device's own
+    control."""
     from custom_components.vtherm_smart_boiler.control_config import (
         FrostProtection,
         frost_protection_by,
     )
 
     options = parse_control(data, RADIATORS, None)
-    assert frost_protection_by(options, controlling=True) is FrostProtection.PLUGIN
+    assert frost_protection_by(options, controlling=True) is FrostProtection.VT
     shown = frost_protection_by(options, controlling=False)
     assert (None if shown is None else shown.value) == after_hand_back
 
@@ -1167,7 +1181,7 @@ def test_a_tick_with_a_hand_back_value_that_stops_heating_is_ignored() -> None:
     assert not working_thermostat(options)
 
 
-# --- X4: frost's closed zones (decision 4), the circuit alarm information only (decision 10) ---
+# --- X4: stored values, the circuit alarm information only (decision 10) ----------------------
 
 
 @pytest.mark.parametrize(
@@ -1191,20 +1205,9 @@ def test_stored_control_values_the_form_would_not_take_are_refused(changes: dict
 
 def test_stored_control_values_left_out_take_their_defaults() -> None:
     """The negative of PB-24: values not stored (``None``) take their cautious defaults."""
-    stored = dict.fromkeys(("hard_min", "frost_limit", "hand_back_value", "curve"))
+    stored = dict.fromkeys(("hard_min", "hand_back_value", "curve"))
     control = parse_control(OTGW | stored | {"curve": CURVE}, RADIATORS, None).loop.control
-    assert (control.limits.hard_min, control.frost.room_limit) == (20.0, 5.0)
-
-
-def test_zones_declared_closed_when_off_reach_frost_protection() -> None:
-    installation = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT),
-        (Circuit("main"),),
-        (Zone("climate.a", "main", closes_when_off=True), Zone("climate.b", "main")),
-    )
-    frost = parse_control(OTGW, installation, None).loop.control.frost
-    assert frost.closes_when_off == frozenset({"climate.a"})
-    assert parse_control(OTGW, RADIATORS, None).loop.control.frost.closes_when_off == frozenset()
+    assert control.limits.hard_min == 20.0
 
 
 def test_the_circuit_too_hot_alarm_is_information_only() -> None:

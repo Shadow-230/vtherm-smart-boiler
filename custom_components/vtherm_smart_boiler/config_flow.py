@@ -1399,9 +1399,6 @@ CONTROL_ADVANCED_KEYS = (
     "exponent",
     "offset",
     "fallback_setpoint",
-    "frost_limit",
-    "frost_release",
-    "frost_zone",
     "ramp_k_per_min",
     "decision_interval_min",
     "off_setpoint",
@@ -1811,29 +1808,6 @@ def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
     return vol.Schema(fields)
 
 
-# The "Frost protection" item's fields (I8, decision H4), at the advanced level as before.
-FROST_KEYS = ("frost_limit", "frost_release", "frost_zone")
-
-
-def control_frost_schema(options: dict[str, Any]) -> vol.Schema:
-    """The "Frost protection" item (I8, decision H4): the room limit, the release, the zone
-    watched — every zone where none is picked."""
-    control = options.get(CONTROL, {})
-    return vol.Schema(
-        {
-            vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): _number(
-                *CONTROL_BOUNDS[key], 0.5, "°C"
-            )
-            for key in FROST_KEYS[:2]
-        }
-        | {
-            _optional("frost_zone", control): selector.EntitySelector(
-                selector.EntitySelectorConfig(include_entities=_zone_entities(options))
-            )
-        }
-    )
-
-
 def _zone_entities(options: dict[str, Any]) -> list[str]:
     return watched_zones(options)
 
@@ -2182,12 +2156,6 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
     if _advanced(options):
         keys.append("fallback_setpoint")
     _set_or_drop(control, user_input, tuple(keys))
-    options[CONTROL] = control
-
-
-def apply_control_frost(options: dict[str, Any], user_input: dict[str, Any]) -> None:
-    control = dict(options.get(CONTROL, {}))
-    _set_or_drop(control, user_input, FROST_KEYS)
     options[CONTROL] = control
 
 
@@ -2705,7 +2673,6 @@ def has_hidden_advanced(options: dict[str, Any]) -> bool:
     control_defaults = (
         curve_defaults
         | _schema_defaults(control_behaviour_schema(advanced))
-        | _schema_defaults(control_frost_schema(advanced))
         | {RETURN_KEY: alarm_defaults[RETURN_KEY], RETURN_SWITCH_KEY: False}
     )
     return bool(
@@ -2839,8 +2806,9 @@ _SECTION_OF_STEP = {
 
 
 # I8 (decision H): control's menu items, each one form, in the menu's order — the control
-# device, the heating curve, the control behaviour, frost protection, the alarm reactions.
-CONTROL_ITEMS = ("control", "control_curve", "control_behaviour", "control_frost", "control_alarms")
+# device, the heating curve, the control behaviour, the alarm reactions. Frost protection is VT's
+# (I12.10, decision 4): its item went.
+CONTROL_ITEMS = ("control", "control_curve", "control_behaviour", "control_alarms")
 # The forms an item opens after its first: the device's, by the write path; the alarms' second
 # confirmation.
 _CONTROL_ITEM_OF_STEP = {
@@ -2866,16 +2834,14 @@ def control_path(options: Mapping[str, Any]) -> str | None:
 def control_item_shown(options: Mapping[str, Any], item: str) -> bool:
     """Whether a control item applies (I8, decision H): the device where it asks something —
     the writable entity, the relay, or the path of an entry made before the connection
-    question —; once a path is known, the curve with full control, the behaviour always,
-    frost protection at the advanced level, the alarm reactions where any applies."""
+    question —; once a path is known, the curve with full control, the behaviour always, the
+    alarm reactions where any applies."""
     if item == "control":
         return connection_path(options) in (None, WritePath.ENTITY, WritePath.RELAY)
     if control_path(options) in (None, NO_CONTROL):
         return False  # an entry made before the connection question picks its path first
     if item == "control_curve":
         return control_path(options) != WritePath.RELAY
-    if item == "control_frost":
-        return _advanced(options)
     if item == "control_alarms":
         return alarm_step_offered(options)
     return True
@@ -3711,25 +3677,6 @@ class _ControlSteps(_Steps):
                 return await self._after("control_behaviour")
         return self._form(step_id="control_behaviour", data_schema=schema, errors=errors)
 
-    async def async_step_control_frost(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """The "Frost protection" item (I8, decision H4)."""
-        if (elsewhere := await self._control_path()) is not None:
-            return elsewhere
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            if user_input["frost_limit"] >= user_input["frost_release"]:
-                errors = {"frost_release": "frost_release_not_above_limit"}
-            elif found := self._frost_zone_error(user_input):
-                errors = found
-            else:
-                apply_control_frost(self.options, user_input)
-                return await self._after("control_frost")
-        return self._form(
-            step_id="control_frost", data_schema=control_frost_schema(self.options), errors=errors
-        )
-
     def _curve_problems(self, user_input: dict[str, Any]) -> list[tuple[str, str]]:
         """X5.8 (P-68) at both levels: the curve's room as entered, else as stored, else its
         default."""
@@ -3750,15 +3697,6 @@ class _ControlSteps(_Steps):
         apply_control_curve(candidate, user_input)
         control = control_of(candidate)
         return control is not None and lowest_above_max(control.loop.control)
-
-    def _frost_zone_error(self, user_input: dict[str, Any]) -> dict[str, str]:
-        """The frost zone is one of the configured zones, as the form offers (P-79)."""
-        zone = user_input.get("frost_zone")
-        if zone in (None, "") or zone in _zone_entities(self.options):
-            return {}
-        if zones_not_vt(self.hass, [zone]):
-            return {"frost_zone": "zone_not_vt"}
-        return {"frost_zone": "entity_not_suitable"}
 
     def _off_near_hand_back_value(self, user_input: dict[str, Any]) -> bool:
         """S-49: "off" sent as a low setpoint next to a hand-back value that returns the boiler
@@ -3828,8 +3766,9 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # area, insulation and thermal mass go, an entered loss coefficient becoming the design load
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
-    # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 23
+    # the control mode monitoring only (see async_migrate_entry); 24: the frost settings go
+    # (I12.10: frost protection is VT's).
+    MINOR_VERSION = 24
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

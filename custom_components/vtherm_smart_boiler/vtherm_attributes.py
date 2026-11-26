@@ -9,8 +9,8 @@ opening 0–100 (valve types). These top-level keys are also kept by the recorde
 dictionaries such as ``power_manager`` are live only: in VT 10.4.0 it is published whether or
 not power management is configured, with ``device_power`` 0 when no power is set,
 ``mean_cycle_power`` (the device power times the cycle's duty) in ``power_unit``, and
-``overpowering_state`` only while shedding is configured; ``safety_manager`` with its
-``safety_state`` only where the safety feature is configured.
+``overpowering_state`` only while shedding is configured. VT's safety mode is not read here: VT's
+safety event tells it (I12.10, ``vtherm_link``).
 
 Before VT's first refresh of a thermostat (at a start, or during its reload) the climate shows a
 placeholder "off" with neither ``is_ready`` nor ``specific_states``; then, once one of its
@@ -54,7 +54,6 @@ class ZoneValues:
     temperature_at: float | None = None  # epoch seconds, live only
     max_on_percent: float | None = None  # 0 to 1, live only
     mean_power: float | None = None  # kW, VT's mean power over the cycle, live only
-    safety_on: bool = False  # VT's safety mode, live only
     shedding: bool = False  # VT's power shedding holds the zone off, live only
     reported: bool = False  # VT shows it started, with its mode known
 
@@ -71,8 +70,6 @@ def zone_values(
     ready = attributes.get("is_ready")
     manager = attributes.get("power_manager")
     manager = manager if isinstance(manager, Mapping) else {}
-    safety = attributes.get("safety_manager")
-    safety = safety if isinstance(safety, Mapping) else {}
     heating_enabled = _heating_enabled(state)
     # VT shows it started: ``is_ready`` true, or — an older VT without the key (assumed) — its
     # state with ``specific_states``. Neither: VT's placeholder before its first refresh.
@@ -96,7 +93,6 @@ def zone_values(
         temperature_at=_moment(specific.get("last_temperature_datetime")),
         max_on_percent=_cap(configuration.get("max_on_percent")),
         mean_power=_power(manager, "mean_cycle_power", positive=False),
-        safety_on=safety.get("safety_state") == "on",
         shedding=manager.get("overpowering_state") == "on",
         reported=started and heating_enabled is not None,
     )

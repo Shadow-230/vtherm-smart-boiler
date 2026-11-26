@@ -40,8 +40,8 @@ level where the hand-back stops heating; the monitor failing has V6's.
 
 Boiler protection (Y1): while the boiler reports its own fault that stops it for five minutes —
 measured on the control clock, from the fault signals the user mapped — control sends its usual
-"off", with no hand-back and no latch, frost heating included, and heats again in the step the
-fault reads off, unknown or unavailable.
+"off", with no hand-back and no latch, and heats again in the step the fault reads off, unknown or
+unavailable.
 
 How control resumes after it stopped (``docs/en/specification/scope.md`` §7):
 - another controller — an outside change always makes the plugin step aside, whatever reaction
@@ -87,10 +87,9 @@ neither on nor off — has its own alarm and repair issue.
 
 Control never stops heating silently: where a hand-back stops heating, the control switch says
 that frost protection rests on the boiler's own, and a room near freezing while control does
-not hold the boiler raises an alarm, which never starts heating itself (S-57). A watched room
-below the frost limit that VT keeps closed gets no frost heat — it could not reach it — and
-raises a repair issue instead, naming the room and its temperature, while control is switched on
-and outside the recognition period (decision 4).
+not hold the boiler raises an alarm, which never starts heating itself (S-57). Frost protection
+itself is VT's (I12.10, decision 4): its frost preset and central mode make the rooms call, and
+its central boiler turns the helper on, while control holds the boiler.
 
 The comfort correction is shown on the control state and in diagnostics, and the "Reset comfort
 correction" button sets it to 0 in the running session — nothing saved, reloaded or handed back
@@ -234,13 +233,7 @@ from .core.hand_back import (
     watch_foreign,
 )
 from .core.heat_sign import HeatSignSeen, HeatSignState, follow_heat_sign
-from .core.limits import (
-    Grid,
-    handed_back_in_frost,
-    watched_temperatures,
-    within_write_bounds,
-    write_bounds,
-)
+from .core.limits import Grid, handed_back_in_frost, within_write_bounds, write_bounds
 from .core.loop import (
     HEATING,
     HEATING_OFF_IGNORED,
@@ -276,7 +269,6 @@ from .core.relay import (
 from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
 from .core.zone_watch import in_recognition, no_zone_issue_due, vt_unknown_issue_due
-from .core.zones import plausible_room
 from .transport.entities import (
     read_bounds,
     read_grid,
@@ -389,31 +381,11 @@ RETURN_QUIET_S = 3600.0
 # under the same id once control has resumed (the user's answer I).
 MONITOR_ISSUE = "monitor_failed"
 MONITOR_NOTE = "monitor_recovered"
-# Decision 4: a watched room below the frost limit that VT keeps closed — a repair issue, not
-# raised while the zones report in the recognition period, and only while control is on
-# (provisional, K4). Shown again when a room's temperature has moved this much.
-FROST_CLOSED_ISSUE = "frost_zone_closed"
 # G11 B: the comfort correction at its limit for 3 h with rooms still short. One issue, its text
 # by how many rooms are short (additions 2 and 3): most — the curve first among the causes; fewer
 # — the room's radiator and its heat loss first, then the curve.
 CURVE_TOO_LOW_ISSUE = "curve_too_low"
 ROOM_SHORT_KEY = "room_short_at_limit"
-FROST_CLOSED_SHOWN_K = 1.0
-# SB-27: the issue's advice by VT's reason for keeping a room off (``hvac_off_reason``, VT
-# 10.4.0 to 10.6.5): "off" by hand or in sleep mode, or a reason not known — VT's frost preset
-# instead; an open window, VT's central mode, another VT function (safety, auto start/stop) —
-# the room stays unheated until VT opens it; a plugin that took the thermostat out of VT's
-# control (VT 10.6.1's inhibition) — until that plugin hands it back; rooms closed for
-# different reasons get every advice.
-_FROST_ADVICE: dict[str, str] = {
-    "hvac_off_window_detection": "_window",
-    "hvac_off_central_mode": "_central_mode",
-    "hvac_off_safety_detection": "_vt_function",
-    "hvac_off_auto_start_stop": "_vt_function",
-    "hvac_off_inhibition": "_inhibition",
-}
-_FROST_ADVICE_MIXED = "_mixed"
-ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 # PB-40: a write that failed is logged as working again only after this long without a failure,
 # so a flapping target (a Wi-Fi device dropping out every minute) is one warning, not one a
 # minute (provisional, K4).
@@ -649,8 +621,6 @@ class ControlAlarm(StrEnum):
     HAND_BACK_FAILED = "hand_back_failed"
     CONTROL_ERROR = "control_error"
     BOILER_LINK_LOST = "boiler_link_lost"  # the boiler's data lost while control is on (X2)
-    ZONE_UNKNOWN = "zone_unknown"  # a zone unknown for long: frost protection cannot see it
-    FROST_NOT_WARMING = "frost_not_warming"  # frost heating for long without the room warming
     CORRECTION_AT_LIMIT = "correction_at_limit"  # the comfort correction at 3 K for hours
     OUTDOOR_SENSOR_SUSPECT = "outdoor_sensor_suspect"  # stuck, or far from the weather
     MONITOR_FAILED = "monitor_failed"  # the plugin's own monitor fails for five minutes
@@ -733,7 +703,9 @@ class ControlStatus:
     alarms: frozenset[ControlAlarm] = frozenset()
     latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
     unknown_zones: tuple[str, ...] = ()  # zones whose state is not known now
-    room_sensor_lost_zones: tuple[str, ...] = ()  # VT keeps their last temperature
+    # The rooms whose temperature judges nothing of the curve now (I12, decision 8): VT's safety
+    # mode, their thermometer unavailable, or no measurement since the plugin started.
+    room_sensor_lost_zones: tuple[str, ...] = ()
     writes_stopped: bool = False  # another controller has the boiler: nothing is written
     hand_back_check: str | None = None  # where the last hand-back stands (HandBackConfirmation)
     monitor_failed_since: float | None = None  # the monitor's current run of failed refreshes
@@ -745,7 +717,6 @@ class ControlStatus:
     # The outdoor temperature the water was decided with, as the curve reads it (I10.3c), °C.
     curve_outdoor: float | None = None
     activation_at: float | None = None  # when VT's central boiler's activation delay ends
-    frost_closed_zones: tuple[str, ...] = ()  # watched rooms below the frost limit VT keeps closed
     # X8, the relay path (R15): the relay as seen ("on", "off", "other", "unreachable"), where
     # the command stands with it (``core.relay.RelayCheck``), whether the boiler shows it heats
     # (``core.relay.HeatEvidence``), and what control cannot confirm: "controlled without
@@ -878,7 +849,6 @@ class ControlUnit:
         # The boiler may hold a value of ours: set before every write attempt and stored at once,
         # cleared only by a confirmed hand-back. After a crash it makes the next start hand back.
         self._holding = False
-        self._unknown_since: dict[str, float] = {}
         self._hand_back_retry_at = 0.0
         self._hand_back_tried_at: float | None = None  # the step of the last attempt (L1)
         self._restored = False  # the user's wish is known: restored by the switch, or timed out
@@ -952,11 +922,8 @@ class ControlUnit:
         # the external-control switch, turned on, has not been seen on.
         self._not_shown_issue = False
         self._external_unseen_since: float | None = None
-        # Decision 4: the rooms the frost issue shows now, with the temperature it shows.
-        self._frost_issue_shown: dict[str, float] = {}
         # The rooms the "curve too low" issue names, and its text's key.
         self._curve_issue_shown: tuple[tuple[str, ...], str] = ((), "")
-        self._frost_issue_advice = ""  # the shown issue's advice (SB-27)
         # X8, the relay: whether its last change carried one of the plugin's own write contexts,
         # and whether it has shown a state since the unit started (its first report after a
         # start finds a lost command, answer C); the proof that the boiler heats (R12); and the
@@ -1463,10 +1430,8 @@ class ControlUnit:
             # the user settles it by hand.
             self._report_owed(persistent=True)
         # The issue of a blocker that stopped heating goes with the unit; the stored flag makes
-        # the next run raise it again while a blocker holds (S-10). So does the frost issue: the
-        # next run raises it again at its first step outside the recognition period.
+        # the next run raise it again while a blocker holds (S-10).
         self._delete_stopped_heating_issue()
-        self._show_frost_closed({})
         self._show_curve_too_low(())  # the next run tells again, after its own 3 hours
         self._show_store_issue(False)  # the next run tells again at its first write that fails
         self._show_vt_command_issue(None)  # the next run tells again at its first step
@@ -2013,9 +1978,8 @@ class ControlUnit:
         self._follow_stopped_heating(now, blockers)
         self._follow_vt_command_issue()
         self._follow_frost(now, zones)
-        self._follow_frost_closed(out.decision.frost_closed, zones)
         self._follow_curve_too_low(out.decision)
-        unknown = self._follow_unknown_zones(now, zones)
+        unknown = self._unknown_zones(now, zones)
         self._follow_no_zone_known(now, out.decision)
         self._follow_read_back_wait(now, out.decision.reasons)
         self._follow_decision_alarms(now, out, monitor_failed)
@@ -2059,7 +2023,6 @@ class ControlUnit:
             curve_room=out.decision.curve_room,
             curve_outdoor=out.decision.effective_outdoor,
             activation_at=self._vt_delay_end(now),
-            frost_closed_zones=tuple(self._frost_issue_shown),
             relay_state=relay_state,
             relay_check=relay_shown,
             boiler_heats=heats,
@@ -2199,7 +2162,6 @@ class ControlUnit:
             (self.enabled and out.decision.link_lost, ControlAlarm.BOILER_LINK_LOST),
             # The relay out of reach for five minutes while the switch is on (R6): no hand-back.
             (self.enabled and out.relay_unreachable, ControlAlarm.RELAY_UNREACHABLE),
-            (out.decision.frost_stuck, ControlAlarm.FROST_NOT_WARMING),  # heating goes on
             (out.decision.correction_at_limit, ControlAlarm.CORRECTION_AT_LIMIT),  # information
             (self._outdoor_suspect(now), ControlAlarm.OUTDOOR_SENSOR_SUSPECT),  # left out
             (monitor_failed, ControlAlarm.MONITOR_FAILED),  # a blocker: control is handed back
@@ -2545,40 +2507,12 @@ class ControlUnit:
                 return False
         return True
 
-    def _follow_unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
-        """Zones whose state is not known: the known ones decide meanwhile; one unknown for long
-        raises an alarm, as frost protection cannot see it. So does one whose room sensor is
-        lost for long, or whose VT safety mode is on (R6, T2, S-35): VT keeps the last
-        temperature and still runs the zone, so its demand counts; one VT has not started; and
-        one frost protection watches whose room temperature is implausible (S-06)."""
-        control = self.options.loop.control
-        max_age = control.zone_max_age_s
-        watched = control.frost.zone
-        unknown = tuple(z.zone_id for z in zones if not z.is_known(now, max_age))
-        blind = {
-            *unknown,
-            *(
-                z.zone_id
-                for z in zones
-                if z.room_sensor_lost
-                or not z.started
-                or (
-                    (watched is None or z.zone_id == watched)
-                    and z.temperature is not None
-                    and not plausible_room(z.temperature)
-                )
-            ),
-        }
-        # A start later than now — the clock set back — counts from now (C9, PB-28).
-        self._unknown_since = {
-            z: clock_start(self._unknown_since.get(z), now) for z in sorted(blind)
-        }
-        long_unknown = any(now - t >= ZONE_UNKNOWN_ALARM_S for t in self._unknown_since.values())
-        if self.enabled and long_unknown:
-            self._session.alarms.add(ControlAlarm.ZONE_UNKNOWN)
-        else:
-            self._session.alarms.discard(ControlAlarm.ZONE_UNKNOWN)
-        return unknown
+    def _unknown_zones(self, now: float, zones: Sequence[ZoneState]) -> tuple[str, ...]:
+        """Zones whose state is not known: the known ones decide meanwhile (decision 3). A room
+        whose temperature is not trusted is left out of the curve's judgement, with no alarm of
+        its own (I12.10: the "blind room" alarm went)."""
+        max_age = self.options.loop.control.zone_max_age_s
+        return tuple(z.zone_id for z in zones if not z.is_known(now, max_age))
 
     def _alarms(self) -> set[ControlAlarm]:
         alarms = set(self._session.alarms)
@@ -2623,17 +2557,16 @@ class ControlUnit:
     def _follow_frost(self, now: float, zones: Sequence[ZoneState]) -> None:
         """S-57: while control does not hold the boiler where a hand-back stops heating, a room
         near freezing raises the alarm "handed back in frost" at the step that sees it, and it
-        goes once every watched room with a known temperature is back at the release, or once
-        control holds the boiler again. With no watched room known it cannot be judged: its last
-        state holds for an hour, then it shows unknown — at once where nothing was known before
-        (S-16, Y1). Information only: it never starts heating."""
+        goes once every room with a known temperature is back at the release, or once control
+        holds the boiler again. With no room known it cannot be judged: its last state holds for
+        an hour, then it shows unknown — at once where nothing was known before (S-16, Y1).
+        Information only: it never starts heating."""
         control = self.options.loop.control
         was = self._frost_alarm
         judged = handed_back_in_frost(
             zones,
             now,
             control.zone_max_age_s,
-            control.frost,
             heating_stops=self._stops_heating(),
             controlling=self._session.loop.control.controlling,
             active=was is True,
@@ -2658,24 +2591,9 @@ class ControlUnit:
             _LOGGER.info("No room is near freezing any more, or control holds the boiler again")
         elif was is not None and raised is None and self._frost_known_at is not None:
             _LOGGER.info(
-                "No watched room has been known for an hour: the alarm 'handed back in frost' "
-                "shows unknown"
+                "No room has been known for an hour: the alarm 'handed back in frost' shows unknown"
             )
         self._frost_alarm = raised
-
-    def _follow_frost_closed(self, closed: Sequence[str], zones: Sequence[ZoneState]) -> None:
-        """Decision 4: a watched room below the frost limit that VT keeps closed raises a repair
-        issue at the step that sees it — the core flags it outside the recognition period and
-        holds its flags meanwhile — while control is switched on (provisional, K4: not with
-        control off or in monitor-only mode, where the plugin does no frost heating). It names
-        each room and its temperature; it goes once no room is flagged — at or above the
-        release, or able to take heat — or control is switched off."""
-        flagged = tuple(closed) if self.enabled and self.options.configured else ()
-        temperatures = {z.zone_id: z.temperature for z in zones if z.temperature is not None}
-        rooms = {zone: temperatures[zone] for zone in flagged if zone in temperatures}
-        link = self._coordinator.link
-        advice = {_FROST_ADVICE.get(link.zone_off_reason(zone) or "", "") for zone in rooms}
-        self._show_frost_closed(rooms, advice.pop() if len(advice) == 1 else _FROST_ADVICE_MIXED)
 
     def _follow_curve_too_low(self, decision: ControlDecision) -> None:
         """G11 B: the comfort correction at its limit for 3 h with rooms still short — the
@@ -2722,51 +2640,6 @@ class ControlUnit:
                 "limit": f"{limit:g}",
             },
         )
-
-    def _show_frost_closed(self, rooms: Mapping[str, float], advice: str = "") -> None:
-        """The frost issue for these rooms (°C), at error level (SB-27), its advice by VT's
-        reason (``advice``, a translation key's suffix): raised, updated when the rooms or the
-        advice change or a temperature moved by ``FROST_CLOSED_SHOWN_K``, deleted when there are
-        none."""
-        shown = self._frost_issue_shown
-        issue_id = f"{FROST_CLOSED_ISSUE}_{self._coordinator.config_entry.entry_id}"
-        if not rooms:
-            if shown:
-                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
-                _LOGGER.info("No watched room below the frost limit is kept closed any more")
-                self._frost_issue_shown = {}
-            return
-        moved = (
-            rooms.keys() != shown.keys()
-            or advice != self._frost_issue_advice
-            or any(abs(rooms[zone] - shown[zone]) >= FROST_CLOSED_SHOWN_K for zone in rooms)
-        )
-        if not moved:
-            return
-        if rooms.keys() != shown.keys():
-            _LOGGER.warning(
-                "A room below the frost limit cannot get heat: Versatile Thermostat keeps it "
-                "closed (%s)",
-                ", ".join(rooms),
-            )
-        unit = str(self._hass.config.units.temperature_unit)
-        named = ", ".join(
-            f"{self._coordinator.link.zone_name(zone)} "
-            f"({TemperatureConverter.convert(t, '°C', unit):.1f} {unit})"
-            for zone, t in rooms.items()
-        )
-        ir.async_create_issue(
-            self._hass,
-            DOMAIN,
-            issue_id,
-            is_fixable=False,
-            is_persistent=False,
-            severity=ir.IssueSeverity.ERROR,
-            translation_key=f"{FROST_CLOSED_ISSUE}{advice}",
-            translation_placeholders={"zones": named},
-        )
-        self._frost_issue_shown = dict(rooms)
-        self._frost_issue_advice = advice
 
     def _note_blocker_release(self, out: LoopOutput, blockers: tuple[str, ...]) -> None:
         """S-10: a blocker ends the session that held the boiler, where a hand-back stops
@@ -4639,9 +4512,10 @@ class ControlUnit:
         )
 
     def _rest_off_zones(self, now: float, zones: Sequence[ZoneState], out: LoopOutput) -> list[str]:
-        """R10: the rooms that ask for heat, or are near freezing where frost protection would
-        heat them, while a relay resting "off" is not held by control and reads off (or reports
-        no state), within reach, its hand-back not taken by another controller. None otherwise."""
+        """R10: the rooms that ask for heat — VT's frost preset making a cold room call included
+        (frost protection is VT's, I12.10) — while a relay resting "off" is not held by control and
+        reads off (or reports no state), within reach, its hand-back not taken by another
+        controller. None otherwise."""
         options = self.options
         relay = options.relay.entity
         if (
@@ -4656,19 +4530,10 @@ class ControlUnit:
         reports = options.relay.config.reports_state and seen.reports
         if not seen.known or (reports and seen.on is not False):
             return []
-        control = options.loop.control
-        max_age = control.zone_max_age_s
-        asking = [
+        max_age = options.loop.control.zone_max_age_s
+        return [
             zone.zone_id for zone in zones if zone.is_known(now, max_age) and zone_wants_heat(zone)
         ]
-        for zone in zones:
-            temperatures = watched_temperatures([zone], now, max_age, control.frost)
-            if (
-                any(t < control.frost.room_limit for t in temperatures)
-                and zone.zone_id not in asking
-            ):
-                asking.append(zone.zone_id)
-        return asking
 
     def _show_relay_issue(
         self,

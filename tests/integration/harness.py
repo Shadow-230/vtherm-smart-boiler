@@ -73,6 +73,39 @@ class FakeVtThermostat:
     unique_id: str = "fake_vt_stand_in"
 
 
+@dataclass
+class FakeZoneThermostat:
+    """A zone's thermostat as VT hands it over (I12.10): VT's central boiler settings as the
+    stand-in carries them, merged with the room's thermometer and window sensor — the user's
+    devices, in ``entry_infos`` — and VT's clock of its last measurement, ``vtherm_api``'s
+    ``last_temperature_measure``: by default a thermometer that measures all the time, so a room
+    counts once time has moved past the plugin's start; ``measured`` sets it."""
+
+    stand_in: FakeVtThermostat
+    entity_id: str
+    unique_id: str
+    thermometer: str
+    window_sensor: str
+    name: str = "zone"
+    measured: datetime | None = None
+
+    @property
+    def entry_infos(self) -> Any:
+        infos = self.stand_in.entry_infos
+        if not isinstance(infos, dict):
+            return infos
+        return infos | {
+            "temperature_sensor_entity_id": self.thermometer,
+            "window_sensor_entity_id": self.window_sensor,
+        }
+
+    @property
+    def last_temperature_measure(self) -> datetime:
+        from homeassistant.util import dt as dt_util
+
+        return self.measured or dt_util.utcnow()
+
+
 _UNITS: dict[SignalKind, dict[str, str]] = {
     SignalKind.TEMPERATURE: {"unit_of_measurement": "°C", "device_class": "temperature"},
     SignalKind.PERCENT: {"unit_of_measurement": "%"},
@@ -123,13 +156,16 @@ class FakeZones:
     VT's central boiler (I12): a thermostat handed over whose ``entry_infos`` say VT's central
     boiler is on with its commands on the helper, and the helper itself, which follows the zones
     as VT's count of 1 would — on while a known zone calls, off otherwise — each time a zone is
-    set, until a test takes it over (``set_helper``)."""
+    set, until a test takes it over (``set_helper``). Each zone's thermostat is handed over too
+    (``FakeZoneThermostat``), with its thermometer and window sensor as states: the thermometer
+    follows the zone's temperature, the window sensor reads "off"."""
 
     hass: HomeAssistant
     entities: dict[str, str] = field(default_factory=dict)
     helper: str = VT_HELPER
     follow: bool = True
     stand_in: FakeVtThermostat = field(default_factory=FakeVtThermostat)
+    thermostats: dict[str, FakeZoneThermostat] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
@@ -148,6 +184,29 @@ class FakeZones:
         if now is None or now.state != state:
             self.hass.states.async_set(self.helper, state)
 
+    def withdraw(self) -> None:
+        """VT has handed no thermostat over (as at every start, until VT starts them): the
+        stand-in and every zone's thermostat taken back."""
+        from custom_components.vtherm_smart_boiler.vtherm_link import unregister_thermostat
+
+        for thermostat in (self.stand_in, *self.thermostats.values()):
+            unregister_thermostat(self.hass, thermostat)
+
+    def hand_over(self) -> None:
+        """VT hands its thermostats over again: the stand-in and every zone's."""
+        from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
+
+        for thermostat in (self.stand_in, *self.thermostats.values()):
+            register_thermostat(self.hass, thermostat)
+
+    def vt_event(self, zone_id: str, kind: str, start: bool) -> None:
+        """VT's safety (``kind`` "safety") or automatic window (``kind`` "window_auto") event
+        for a zone, starting or ending, as VT 10.6.5 fires it."""
+        self.hass.bus.async_fire(
+            f"versatile_thermostat_{kind}_event",
+            {"type": "start" if start else "end", "entity_id": self.entities[zone_id]},
+        )
+
     def follow_zones(self) -> None:
         """VT's count of 1: the helper on while a known zone calls, as the plugin reads them."""
         from homeassistant.util import dt as dt_util
@@ -160,12 +219,28 @@ class FakeZones:
         calling = any(z.is_known(now, None) and zone_wants_heat(z) for z in zones)
         self.set_helper("on" if calling else "off", follow=True)
 
-    def add(self, zone_id: str, **attributes: Any) -> str:
+    def add(self, zone_id: str, *, handed_over: bool = True, **attributes: Any) -> str:
+        """A VT climate, registered as VT's, and — unless ``handed_over`` is false: a thermostat
+        VT started before the plugin registered — its thermostat handed over."""
         registry = er.async_get(self.hass)
         entry = registry.async_get_or_create(
             "climate", VT_PLATFORM, f"fake_{zone_id}", suggested_object_id=f"fake_{zone_id}"
         )
         self.entities[zone_id] = entry.entity_id
+        from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
+
+        thermostat = FakeZoneThermostat(
+            self.stand_in,
+            entry.entity_id,
+            f"fake_{zone_id}",
+            f"sensor.fake_{zone_id}_temperature",
+            f"binary_sensor.fake_{zone_id}_window",
+            name=zone_id,
+        )
+        self.thermostats[zone_id] = thermostat
+        if handed_over:
+            register_thermostat(self.hass, thermostat)
+        self.hass.states.async_set(thermostat.window_sensor, "off")
         self.set(zone_id, **attributes)
         return entry.entity_id
 
@@ -187,6 +262,13 @@ class FakeZones:
         for key in ("is_ready", "specific_states"):
             if values.get(key, False) is None:
                 del values[key]
+        thermostat = self.thermostats.get(zone_id)
+        if thermostat is not None and values.get("current_temperature") is not None:
+            self.hass.states.async_set(
+                thermostat.thermometer,
+                str(values["current_temperature"]),
+                {"unit_of_measurement": "°C", "device_class": "temperature"},
+            )
         self.hass.states.async_set(self.entities[zone_id], state, values)
         if self.follow:
             self.follow_zones()

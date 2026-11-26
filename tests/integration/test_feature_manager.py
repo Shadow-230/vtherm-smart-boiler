@@ -234,7 +234,7 @@ async def test_thermostats_started_before_the_registration_are_reported(
     """P107: a thermostat already running is handed over only at VT's next reload; once it is,
     the issue goes."""
     api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     entry = await setup(hass, zones)
     issue_id = f"vt_reload_needed_{entry.entry_id}"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None  # give VT time
@@ -347,11 +347,11 @@ async def test_the_reload_repair_skips_zones_that_are_away_or_not_ready(
     not ready, of unknown mode or away is not listed. Negative: none of them known, no
     issue."""
     vt_is_set_up(hass)
-    zones.add("living", hvac_action="heating")
-    zones.add("away")
-    zones.add("unavailable", state="unavailable")
-    zones.add("starting", state="off", is_ready=False)
-    zones.add("placeholder", state="off", is_ready=None, specific_states=None)
+    zones.add("living", handed_over=False, hvac_action="heating")
+    zones.add("away", handed_over=False)
+    zones.add("unavailable", handed_over=False, state="unavailable")
+    zones.add("starting", handed_over=False, state="off", is_ready=False)
+    zones.add("placeholder", handed_over=False, state="off", is_ready=None, specific_states=None)
     entry = await setup(hass, zones)
     hass.states.async_remove(zones.entities["away"])
     issue_id = f"vt_reload_needed_{entry.entry_id}"
@@ -658,7 +658,7 @@ async def test_the_manager_keeps_its_thermostat_for_the_zone_reads(
     ``vtherm_api`` (``vtherm_link``), matched by its unique ID; VT stopping it (the manager's
     ``stop_listening``) leaves the zone to its attributes."""
     api = vt_is_set_up(hass)
-    living = zones.add("living", hvac_action="heating", valve_open_percent=60)
+    living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     await setup(hass, zones)
     thermostat = Runtime("fake_living")
     manager = api.get_feature_manager(DOMAIN).create(thermostat)

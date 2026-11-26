@@ -41,7 +41,6 @@ FEATURE_ENTITIES: Mapping[Feature, tuple[str, ...]] = MappingProxyType(
         Feature.LOW_FLOW: ("alarm_low_flow",),
         Feature.OUTDOOR_CHECK: ("outdoor_sensor_problem", "alarm_outdoor_sensor_suspect"),
         Feature.COMFORT_CORRECTION: ("reset_comfort_correction", "alarm_correction_at_limit"),
-        Feature.FROST_PROTECTION: ("alarm_frost_not_warming", "alarm_handed_back_in_frost"),
         Feature.CIRCUIT_OVERSHOOT_ALARM: ("alarm_circuit_too_hot",),
         Feature.LOWEST_WATER_SUGGESTION: ("lowest_water_suggestion",),
         Feature.RELAY_PROOF: ("alarm_boiler_not_responding",),

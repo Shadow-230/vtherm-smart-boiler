@@ -92,14 +92,13 @@ class Feature(StrEnum):
     PRESSURE_TREND = "pressure_trend"
     UNSTABLE_IGNITION = "unstable_ignition"
     HYSTERESIS_DRIFT = "hysteresis_drift"
-    # Y4: the verdict, and the features of phase X — the comfort correction, frost protection
-    # and VT's activation delay (X4), the circuit's too-hot alarm (X4, decision 10), the lowest
+    # Y4: the verdict, and the features of phase X — the comfort correction and VT's activation
+    # delay (X4), the circuit's too-hot alarm (X4, decision 10), the lowest
     # water temperature's suggestion and the wall thermostat after a hand-back (X6), the relay's
     # proof that the boiler heats (X8; on the water paths too, decision 2 of 0.2.3) — and the
     # forecast snapshots.
     VERDICT = "verdict"
     COMFORT_CORRECTION = "comfort_correction"
-    FROST_PROTECTION = "frost_protection"
     ACTIVATION_DELAY = "activation_delay"
     CIRCUIT_OVERSHOOT_ALARM = "circuit_overshoot_alarm"
     LOWEST_WATER_SUGGESTION = "lowest_water_suggestion"
@@ -313,9 +312,8 @@ def _control_features(
     wall_thermostat: bool,
 ) -> dict[Feature, FeatureState]:
     """The features of control: each needs control configured; the comfort correction one that
-    sets the water temperature, and its option on; frost protection and the correction the
-    zones; the wall thermostat after a hand-back a gateway with an OpenTherm thermostat and its
-    setpoint signal (X6)."""
+    sets the water temperature, and its option on; the correction the zones; the wall thermostat
+    after a hand-back a gateway with an OpenTherm thermostat and its setpoint signal (X6)."""
     configured = [] if control is not None else [CONTROL]
     zones = [] if zone_data else [ZONE_DATA]
     water = configured or ([] if control is ControlKind.WATER else [WATER_CONTROL])
@@ -323,7 +321,6 @@ def _control_features(
         Feature.COMFORT_CORRECTION: _state(
             water + zones + ([] if comfort_correction else [TURNED_OFF])
         ),
-        Feature.FROST_PROTECTION: _state(configured + zones),
         Feature.ACTIVATION_DELAY: _state(configured),
         Feature.WALL_THERMOSTAT_FALLBACK: _state(
             ([] if wall_thermostat else [WALL_THERMOSTAT])

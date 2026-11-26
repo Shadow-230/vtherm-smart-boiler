@@ -53,16 +53,21 @@ FIT_COVERAGE = 0.9  # a day the fit uses is known for this much of it
 DAY_MARGIN_S = 12 * HOUR
 DAY_SETTLE_S = 6 * HOUR
 # P-96 (A12): the control states in which the plugin controls the boiler, and the time under
-# control from which a day is left out of the verdict (provisional, K4).
+# control from which a day is left out of the verdict (provisional, K4). "frost": the plugin's own
+# frost heating, gone with I12.10 (decision 4), as the control-state history from before keeps it.
 CONTROLLED_MODES = frozenset(
-    mode.value
-    for mode in (
-        ControlMode.HEATING,
-        ControlMode.IDLE,
-        ControlMode.FROST,
-        ControlMode.FALLBACK,
-        ControlMode.BOILER_FAULT,
-    )
+    {
+        *(
+            mode.value
+            for mode in (
+                ControlMode.HEATING,
+                ControlMode.IDLE,
+                ControlMode.FALLBACK,
+                ControlMode.BOILER_FAULT,
+            )
+        ),
+        "frost",
+    }
 )
 CONTROLLED_DAY_S = HOUR
 # P-91: a day's outdoor temperatures are kept in whole °C within these ends, colder or warmer

@@ -262,8 +262,6 @@ CASES: list[tuple[str, str, Change, str, str]] = [
         "inactive",
         "turned_off",
     ),
-    ("frost_protection", "water", no_control, "inactive", "control"),
-    ("frost_protection", "water", no_zones, "inactive", "zone_data"),
     ("activation_delay", "water", no_control, "inactive", "control"),
     ("circuit_overshoot_alarm", "water", without(Signal.FLOW), "inactive", "flow"),
     (

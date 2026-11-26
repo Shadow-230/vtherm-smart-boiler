@@ -114,7 +114,7 @@ async def test_instance_1_base_is_asked_and_saved(
     assert control["comfort_correction"] is False
     assert control["vt_boiler_helper"] == j4_options.VT_HELPER
     assert "activation_delay_s" not in control
-    assert (control["frost_limit"], control["frost_release"]) == (5.0, 7.0)
+    assert not {"frost_limit", "frost_release", "frost_zone"} & set(control)  # I12.10: VT's
     assert options["circuits"][0].get("max_flow") is None
     # Asked where it applies: the path, by an entry made before the connection question.
     asked = set(result["seen"])
@@ -170,13 +170,13 @@ async def test_a_field_no_form_asks_saves_nothing(rig: Rig, hass_client: Any) ->
 
 
 async def test_a_refused_answer_comes_back_with_its_errors(rig: Rig, hass_client: Any) -> None:
-    """A form that refuses its answer — frost protection released below its limit — comes back
-    with its errors, and a strict save raises. G3: an on/off contact on the gateway's thermostat
-    terminals is taken by the form (the switch refuses it) or refused there; the runner sees
-    which."""
+    """A form that refuses its answer — the lowest water above the water at the hardest frost —
+    comes back with its errors, and a strict save raises. G3: an on/off contact on the gateway's
+    thermostat terminals is taken by the form (the switch refuses it) or refused there; the
+    runner sees which."""
     await start(rig, entry_options=ONE_CIRCUIT)
     rest = await _rest(rig, hass_client)
-    change = j4_options.BASE_GATEWAY | {"frost_release": 4.0}  # below the frost limit of 5 °C
+    change = j4_options.BASE_GATEWAY | {"hard_min": 50.0, "design_flow": 45.0}
     result = await walk.save_options(
         rest, _entry_id(rig), change, j4_options.GATEWAY_ITEMS, strict=False
     )

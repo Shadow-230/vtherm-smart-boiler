@@ -800,8 +800,6 @@ async def test_control_at_the_advanced_level_and_back(
             "room": 21,
             "exponent": 1.25,
             "offset": 1,
-            "frost_limit": 5,
-            "frost_release": 7,
         },
     )
     assert result["step_id"] == "control_behaviour"
@@ -937,8 +935,6 @@ ADVANCED_CURVE = {
     "room": 20,
     "exponent": 1.3,
     "offset": 0,
-    "frost_limit": 5,
-    "frost_release": 7,
 }
 
 
@@ -1218,8 +1214,6 @@ async def test_control_limits_must_suit_the_setpoint_entity(
         "design_flow": 50,
         "room": 20,
         "offset": 0,
-        "frost_limit": 5,
-        "frost_release": 7,
     }
     result = await options_step(hass, result, curve | {"hard_min": 25})
     assert result["step_id"] == "control_behaviour"
@@ -1370,8 +1364,6 @@ async def test_off_is_not_checked_as_a_setpoint_with_a_heating_switch(
         "design_flow": 50,
         "room": 20,
         "offset": 0,
-        "frost_limit": 5,
-        "frost_release": 7,
     }
     result = await options_step(hass, result, curve | {"hard_min": 20, "hard_max": 60})
     assert result["step_id"] == "control_behaviour"
@@ -2147,10 +2139,10 @@ async def test_the_helper_is_asked_at_the_simple_level_and_checked(
         (
             "opentherm_gw",
             "advanced",
-            ["control_curve", "control_behaviour", "control_frost", "control_alarms"],
+            ["control_curve", "control_behaviour", "control_alarms"],
         ),
         ("other_entity", "simple", ["control", "control_curve", "control_behaviour"]),
-        ("relay", "advanced", ["control", "control_behaviour", "control_frost"]),
+        ("relay", "advanced", ["control", "control_behaviour"]),
         (None, "advanced", ["control"]),
     ],
     ids=["gateway_simple", "gateway_advanced", "entity", "relay", "before_the_question"],
@@ -2160,8 +2152,8 @@ def test_the_control_items_follow_the_path_and_the_level(
 ) -> None:
     """I8 (decision H): the device where it asks something — the writable entity, the relay,
     the path an entry made before the connection question picks —, the curve with full
-    control, the behaviour always, frost protection at the advanced level, the alarm reactions
-    where any applies (never for a relay, Y1); before a path is picked, the device alone."""
+    control, the behaviour always, the alarm reactions where any applies (never for a relay,
+    Y1); before a path is picked, the device alone. No frost protection item (I12.10: VT's)."""
     from custom_components.vtherm_smart_boiler.config_flow import CONTROL_ITEMS, section_shown
 
     mode = "on_off" if connection == "relay" else "full"
@@ -2185,7 +2177,7 @@ async def test_each_control_item_checks_the_write_path_first(
     circuits = [{**circuit, "zones": []} for circuit in entry.options["circuits"]]
     hass.config_entries.async_update_entry(entry, options={**entry.options, "circuits": circuits})
     await hass.async_block_till_done()
-    for item in ("control_curve", "control_behaviour", "control_frost", "control_alarms"):
+    for item in ("control_curve", "control_behaviour", "control_alarms"):
         menu = await hass.config_entries.options.async_init(entry_id)
         assert item in menu["menu_options"]
         shown = await hass.config_entries.options.async_configure(
@@ -2504,21 +2496,6 @@ async def test_options_save_problem_returns_to_its_step(
     assert saved["building"]["design_load_kw"] == 12.0
 
 
-@pytest.mark.usefixtures("gateway")
-async def test_frost_release_must_be_above_the_limit(
-    hass: HomeAssistant, entities: dict[str, str]
-) -> None:
-    """T-37: at the advanced level on a gateway path, a release no warmer than the limit — in
-    the frost protection item (I8, decision H4)."""
-    entry_id = await create_entry(hass, entities, "advanced", ("living",))
-    result = await to_gateway_item(hass, entry_id, "control_frost")
-    result = await options_step(hass, result, {"frost_limit": 7, "frost_release": 7})
-    assert result["errors"] == {"frost_release": "frost_release_not_above_limit"}
-    answer = {"frost_limit": 7, "frost_release": 7.5}
-    result = await hass.config_entries.options.async_configure(result["flow_id"], answer)
-    assert result["type"] is FlowResultType.MENU  # the item saved to the menu
-
-
 async def test_off_must_stay_below_the_lowest_water_temperature_at_every_level(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
@@ -2572,7 +2549,7 @@ async def test_off_must_stay_below_the_lowest_water_temperature_at_every_level(
     result = await options_step(
         hass,
         result,
-        ADVANCED_CURVE | curve | {"hard_min": 10.5, "frost_limit": 5, "frost_release": 7},
+        ADVANCED_CURVE | curve | {"hard_min": 10.5},
     )
     assert result["step_id"] == "control_behaviour"
     result = await options_step(hass, result, {"off_setpoint": 5})
@@ -3611,24 +3588,15 @@ async def test_the_relay_path_asks_the_helper(
     hass: HomeAssistant, entities: dict[str, str], level: str
 ) -> None:
     """I12 on the relay path: its behaviour step asks VT's central boiler's helper alone, at the
-    simple level and the advanced one (I12.9: no learning pauses; frost protection is its own
-    item, I8 decision H4); T-37's check applies to frost protection on this path too."""
+    simple level and the advanced one (I12.9: no learning pauses; I12.10: no frost
+    protection)."""
     entry_id = await create_entry(hass, entities, level, ("living",), "on_off")
     result = await to_relay_step(hass, entry_id)
     result = await options_step(hass, result, RELAY_ANSWERS)
     assert result["step_id"] == "control_behaviour"
     fields = {str(marker) for marker in result["data_schema"].schema}
     assert fields == {"vt_boiler_helper"}
-    if level == "simple":
-        return
-    answer = {
-        "vt_boiler_helper": VT_HELPER,
-        "frost_limit": 7,
-        "frost_release": 7,
-    }
-    result = await options_step(hass, result, answer)
-    assert result["errors"] == {"frost_release": "frost_release_not_above_limit"}  # T-37
-    result = await options_step(hass, result, answer | {"frost_release": 9})
+    result = await options_step(hass, result, {"vt_boiler_helper": VT_HELPER})
     assert result["type"] is FlowResultType.CREATE_ENTRY  # no alarm step for relays (Y1)
 
 
@@ -4386,41 +4354,6 @@ async def test_the_relay_path_follows_the_allow_list_to_the_alarm_step(
     assert result["step_id"] == "control_alarms"
 
 
-async def test_a_frost_zone_must_be_a_configured_vt_zone(
-    hass: HomeAssistant, entities: dict[str, str], zones: FakeZones
-) -> None:
-    """P-79 for the frost zone. The form's own selector offers the configured zones only, and
-    Home Assistant refuses anything else before the step sees it; the step checks again on its
-    own — the frost protection item (I8, decision H4), on either path — for an answer that
-    reaches it unchecked (a stale form): a VT zone the options do not hold is not suitable, a
-    climate that is not VT's is no zone at all, and a configured zone passes."""
-    from homeassistant.data_entry_flow import InvalidData
-
-    from custom_components.vtherm_smart_boiler.config_flow import SmartBoilerOptionsFlow
-
-    other_vt = zones.add("attic")
-    hass.states.async_set("climate.not_vt", "heat")
-    loaded_gateway(hass, "living_room_gw")
-    entry_id = await create_entry(hass, entities, "advanced", ("living",))
-    result = await to_gateway_item(hass, entry_id, "control_frost")
-    with pytest.raises(InvalidData):
-        await options_step(hass, result, {"frost_zone": other_vt})
-    answer = {"frost_limit": 5, "frost_release": 7, "frost_zone": entities["living"]}
-    result = await hass.config_entries.options.async_configure(result["flow_id"], answer)
-    assert result["type"] is FlowResultType.MENU  # the item saved to the menu
-
-    flow = SmartBoilerOptionsFlow()
-    flow.hass = hass
-    flow.handler = entry_id
-    flow.flow_id = "unchecked"
-    flow._options = dict(hass.config_entries.async_get_entry(entry_id).options)
-    answer = {"frost_limit": 5, "frost_release": 7}
-    for zone, error in ((other_vt, "entity_not_suitable"), ("climate.not_vt", "zone_not_vt")):
-        shown = await flow.async_step_control_frost(answer | {"frost_zone": zone})
-        assert (shown["step_id"], shown["errors"]) == ("control_frost", {"frost_zone": error})
-    assert flow._frost_zone_error({"frost_zone": entities["living"]}) == {}
-
-
 async def test_the_lowest_water_temperature_must_suit_the_setpoint_entity(
     hass: HomeAssistant, entities: dict[str, str]
 ) -> None:
@@ -5046,8 +4979,7 @@ async def test_the_behaviour_step_does_not_check_a_fixed_off(
             "hand_back_entity_write_type": "unknown",
         },
         {"design_outdoor": -15, "design_flow": 55, "hard_min": 10, "hard_max": 70,
-         "room": 20, "offset": 0,
-         "frost_limit": 5, "frost_release": 7},
+         "room": 20, "offset": 0},
     ):  # fmt: skip
         result = await options_step(hass, result, answer)
     assert result["step_id"] == "control_behaviour", result.get("errors")
@@ -5830,11 +5762,11 @@ async def test_the_setup_menu_follows_the_mode_and_keeps_the_answers(
     assert form_default(result, "name") == "My boiler"
     assert form_default(result, "level") == "simple"
     result = await configure(hass, result, {"name": "My boiler", "level": "advanced"})
-    advanced = [*items, "control_frost", "control_alarms"]
-    assert result["menu_options"][-7:] == ["monitor", *advanced, "incomplete"]
+    advanced = [*items, "control_alarms"]
+    assert result["menu_options"][-6:] == ["monitor", *advanced, "incomplete"]
     assert result["description_placeholders"]["state"].endswith(
         "Monitor thresholds, Control device (experimental), Heating curve, Control behaviour,"
-        " Frost protection, Alarm reactions."
+        " Alarm reactions."
     )
 
 

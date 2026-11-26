@@ -1,10 +1,15 @@
 """Which VT zones count when the plugin picks one: taking part in heating, with valid readings.
 
-One plausibility rule serves every room reading, −30 to 45 °C (S-06; ``core.limits``): frost
-protection, the reference room and the critical zone alike — a narrower range would hide a cold
-room. Setpoints keep 5 to 35 °C. A zone whose room sensor is lost (or whose VT safety mode is
-on) keeps a frozen temperature, and one VT has not started runs nothing: neither is picked
-(P-18).
+One plausibility rule serves every room reading, −30 to 45 °C (S-06; ``core.limits``): the alarm
+"handed back in frost" and the critical zone alike — a narrower range would hide a cold room.
+Setpoints keep 5 to 35 °C. A room whose temperature is not trusted (``room_trusted``) may hold a
+frozen or stale reading, and one VT has not started runs nothing: neither is picked (P-18).
+
+The rooms' trust (I12, decision 8): a room's temperature judges the curve — the comfort
+correction, "curve too low", "water too cool", the critical zone — only while VT does not run it
+in safety mode, its thermometer is available, and VT has measured it since the plugin started:
+after a restart the plugin cannot know what it missed. The room still counts for whether it
+calls.
 """
 
 from __future__ import annotations
@@ -24,6 +29,19 @@ class SelectionStatus(StrEnum):
     OK = "ok"
     NO_ACTIVE_ZONE = "no_active_zone"
     NO_VALID_MEASUREMENT = "no_valid_measurement"
+
+
+def room_trusted(
+    *, safety: bool, thermometer_lost: bool, measured_at: float | None, started_at: float
+) -> bool:
+    """Whether a room's temperature may judge the curve (I12, decision 8): not while VT runs the
+    thermostat in safety mode (``safety``, from VT's safety event), nor while its thermometer is
+    unavailable or unknown (``thermometer_lost``), nor before VT's last measurement of it
+    (``measured_at``, epoch seconds; ``None``: not known) is newer than the plugin's start
+    (``started_at``)."""
+    if safety or thermometer_lost or measured_at is None:
+        return False
+    return measured_at > started_at
 
 
 def plausible_room(temperature: float) -> bool:
@@ -52,8 +70,8 @@ class Eligible:
 
 
 def eligible_zones(zones: Sequence[ZoneState], now: float, max_age: float | None) -> Eligible:
-    """Zones in a heating mode with valid readings, VT running them and their room sensor
-    there, or why there are none.
+    """Zones in a heating mode with valid readings, VT running them and their temperature
+    trusted, or why there are none.
 
     ``zones`` are the zones taking part in the plugin's heating (assigned to its circuits).
     """

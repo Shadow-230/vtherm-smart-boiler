@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.critical_zone import (
+    BACK_K,
+    READING_S,
+    WARMING_K,
+    WARMING_S,
     CriticalZone,
+    WindowHold,
     _clearly_worse,
     critical_zone,
+    follow_window,
+    keep_readings,
+    rise,
 )
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.core.zones import SelectionStatus
@@ -157,3 +167,96 @@ def test_fully_open_exactly_at_the_setpoint_is_not_saturated() -> None:
     result = pick([zone("a", 21.0, 21.0, 1.0)])
     assert result.zone_id == "a"
     assert not result.saturated
+
+
+def test_a_room_whose_temperature_is_not_trusted_is_never_the_critical_zone() -> None:
+    """I12, decision 8: VT's safety mode, its thermometer lost or no measurement since the
+    plugin's start keeps the room out, however open its valve."""
+    blind = zone("a", 18.0, 21.0, 1.0, room_sensor_lost=True)
+    assert pick([blind, zone("b", 20.5, 21.0, 0.5)]).zone_id == "b"
+    assert pick([blind]).status is SelectionStatus.NO_VALID_MEASUREMENT
+
+
+# --- I12.10: the window rule (gap 1 item 4, gap 22) ---------------------------------------------
+
+
+def test_the_window_rules_values() -> None:
+    """The user's decision of 2026-11-25: 0.2 K in 30 minutes is warming; 0.3 K is back."""
+    assert (WARMING_K, WARMING_S, BACK_K) == (0.2, 1800.0, 0.3)
+
+
+def test_a_room_held_off_by_its_window_is_neither_critical_nor_saturated() -> None:
+    """The fullest, coldest room has its window open: another room is picked, and none is
+    saturated; with only that room, none is critical."""
+    open_window = zone("a", 18.0, 21.0, 1.0)
+    other = zone("b", 20.8, 21.0, 0.5)
+    result = critical_zone("c", [open_window, other], NOW, AGE, held={"a"})
+    assert result.zone_id == "b"
+    assert not result.saturated
+    alone = critical_zone("c", [open_window], NOW, AGE, held={"a"})
+    assert alone == CriticalZone("c", SelectionStatus.NO_VALID_MEASUREMENT)
+    kept = critical_zone("c", [open_window, other], NOW, AGE, pick([open_window]), held={"a"})
+    assert kept.zone_id == "b"  # the previous critical zone is not kept while held
+
+
+def test_readings_are_kept_a_minute_apart_and_for_the_rise_only() -> None:
+    """A reading at most every ``READING_S``; none while unknown; the oldest kept is the newest
+    at or before the span's start; one later than now (a clock set back) goes."""
+    readings: tuple = ()
+    for t in range(0, 2401, 30):
+        readings = keep_readings(readings, float(t), 20.0 + t / 10_000)
+    assert all(b[0] - a[0] >= READING_S for a, b in pairwise(readings))
+    assert readings[0][0] == 600.0  # 2400 - 1800: the newest at or before the start
+    assert keep_readings(readings, 2460.0, None) == readings[1:]  # unknown: none added
+    assert keep_readings(((3000.0, 20.0),), 2500.0, 19.0) == ((2500.0, 19.0),)
+
+
+def test_the_rise_is_the_temperature_now_against_half_an_hour_ago() -> None:
+    readings = ((0.0, 18.0), (900.0, 18.5), (1800.0, 19.0))
+    assert rise(readings, 2000.0, 19.4) == pytest.approx(1.4)  # against 18.0 at 0 s
+    assert rise(readings, 2700.0, 19.4) == pytest.approx(0.9)  # against 18.5 at 900 s
+    assert rise(readings, 1700.0, 19.4) is None  # nothing half an hour old
+    assert rise(readings, 2000.0, None) is None
+
+
+def warming(start: float, end: float, at: float = 15.0, per_min: float = 0.05) -> tuple:
+    """A room's readings every minute from ``start`` to ``end``, warming ``per_min`` K."""
+    return tuple((t, at + per_min * (t - start) / 60) for t in range(int(start), int(end) + 1, 60))
+
+
+def test_the_hold_off_runs_while_open_and_after_it_closes_while_the_room_warms_back() -> None:
+    """Open: held. Closed at 0 s and warming 0.05 K a minute, far below its target: held past
+    half an hour; within 0.3 K of the target: released at once."""
+    hold = follow_window(WindowHold(), True, -60.0, (), 15.0, 21.0)
+    assert hold == WindowHold(open=True)
+    hold = follow_window(hold, False, 0.0, (), 15.0, 21.0)
+    assert hold == WindowHold(closed_at=0.0)
+    readings = warming(-600.0, 2400.0)
+    hold = follow_window(hold, False, 2400.0, readings, readings[-1][1], 21.0)
+    assert hold.held  # rose 1.5 K in the last half hour
+    assert follow_window(hold, False, 2460.0, readings, 20.8, 21.0) == WindowHold()
+
+
+def test_the_hold_off_ends_once_the_room_stops_warming() -> None:
+    """Closed at 0 s; at 40 minutes it rose 0.1 K over the last half hour: no longer warming,
+    released, though still 3 K short."""
+    readings = tuple((float(t), 18.0 + (0.1 if t >= 1800 else 0.0)) for t in range(0, 2401, 60))
+    hold = follow_window(WindowHold(closed_at=0.0), False, 2400.0, readings, 18.1, 21.0)
+    assert hold == WindowHold()
+    assert not hold.held
+
+
+def test_before_half_an_hour_closed_or_without_readings_the_hold_off_stays() -> None:
+    """Warming cannot be told yet: closed 20 minutes, a flat room stays held; so does one whose
+    readings do not reach half an hour back, or whose temperature is unknown."""
+    flat = tuple((float(t), 18.0) for t in range(0, 1201, 60))
+    assert follow_window(WindowHold(closed_at=0.0), False, 1200.0, flat, 18.0, 21.0).held
+    recent = tuple((float(t), 18.0) for t in range(1800, 2401, 60))
+    assert follow_window(WindowHold(closed_at=0.0), False, 2400.0, recent, 18.0, 21.0).held
+    assert follow_window(WindowHold(closed_at=0.0), False, 2400.0, flat, None, 21.0).held
+
+
+def test_no_hold_off_without_a_window_and_a_clock_set_back_counts_from_now() -> None:
+    assert follow_window(WindowHold(), False, 100.0, (), 15.0, 21.0) == WindowHold()
+    back = follow_window(WindowHold(closed_at=5000.0), False, 100.0, (), 15.0, 21.0)
+    assert back == WindowHold(closed_at=100.0)

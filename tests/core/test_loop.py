@@ -316,10 +316,10 @@ def test_a_new_session_keeps_the_zone_watch() -> None:
     assert out.setpoint is not None  # a decision at once, no new recognition period
 
 
-def test_ignored_from_the_start_keeps_the_other_target_and_frost() -> None:
+def test_ignored_from_the_start_keeps_the_other_target() -> None:
     """Decision 6: the setpoint ignored from the start — the heating switch is still written, and
-    frost heating still switches it on; no block, no latch; the setpoint is not written again this
-    session. A new session tries it again."""
+    VT asking for heat again still switches it on; no block, no latch; the setpoint is not written
+    again this session. A new session tries it again."""
     config = replace(CONFIG, switch_guard=EXPIRING_SWITCH)
     state, out = loop_step(LoopState(), inputs(0.0), 0.0, config)  # 0 before the plugin
     state, outs = run(state, config, 10.0, 360.0, 0.0)  # never taken
@@ -329,11 +329,10 @@ def test_ignored_from_the_start_keeps_the_other_target_and_frost() -> None:
     state, outs = run(state, config, 370.0, 400.0, 0.0, opening=0.0)
     assert outs[0][1].ch_enable is False  # heating off goes
     assert all(out.setpoint is None for _t, out in outs)
-    # Its valve a little open: frost heat can reach it (decision 4), and it does not call.
-    cold = ZoneState("z", 4.0, 21.0, True, reported_at=410.0, valve_open=0.04)
-    state, out = loop_step(state, inputs(410.0, zones=(cold,)), 0.0, config)
-    assert out.decision.mode.value == "frost"
-    assert out.ch_enable is True  # frost heating switches it on
+    # VT asks for heat again (its frost preset, say): heating goes on.
+    state, out = loop_step(state, inputs(410.0), 0.0, config)
+    assert out.decision.mode.value == "heating"
+    assert out.ch_enable is True  # VT's call switches it on
     assert out.setpoint is None
     assert not out.blocked
     assert not state.control.latched

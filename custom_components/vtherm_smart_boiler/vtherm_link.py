@@ -14,6 +14,15 @@ handed-over thermostat's ``entry_infos`` — the thermostat's settings merged ov
 entry's (VT 10.6.5 ``base_thermostat.py``) — read here only to check that its commands switch the
 helper the user picked, never the boiler (``vt_central_boiler``). The commands are split by the
 plugin's own reading of VT's documented format ``entity_id/domain.service[/attribute:value]``.
+
+The rooms' trust (I12, decision 8): a room's temperature judges the curve only while VT does not
+run its thermostat in safety mode — VT's safety event, listened to here while the plugin runs
+(``VThermLink.start``) and kept per thermostat until it ends or VT hands over another one —, its
+thermometer is available — the room's sensor ``entry_infos`` names, the user's device, its state
+read from Home Assistant —, and VT's ``last_temperature_measure`` for it is newer than the
+plugin's start (``core.zones.room_trusted``). A room's window is open while VT holds it off for a
+window (``hvac_off_reason``), VT's automatic window detection says so (its event), or the window
+sensor ``entry_infos`` names reads on (the critical zone's window rule, ``core.critical_zone``).
 """
 
 from __future__ import annotations
@@ -33,13 +42,15 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, OPENTHERM_GW_DOMAIN, VT_DOMAIN
 from .core.readings import ZoneState
+from .core.zones import room_trusted
 from .transport.entities import reported_at
 from .vtherm_attributes import (
     RUNTIME_MEMBERS,
@@ -68,6 +79,14 @@ DEACTIVATION_SERVICE = "central_boiler_deactivation_service"
 CENTRAL_BOILER_EVENT = "versatile_thermostat_central_boiler_event"
 EVENT_SWITCHED = "central_boiler"
 EVENT_DELAY = "delayed_activation_sec"
+# VT's safety and automatic window events (``vtherm_api``'s ``EventType.SAFETY_EVENT`` and
+# ``WINDOW_AUTO_EVENT``; VT 10.6.5 ``feature_safety_manager.py`` 199–227,
+# ``feature_window_manager.py`` 301–304 and 357–360): ``type`` "start" or "end", the thermostat
+# in ``entity_id`` (``const.py`` ``send_vtherm_event``, 654).
+SAFETY_EVENT = "versatile_thermostat_safety_event"
+WINDOW_AUTO_EVENT = "versatile_thermostat_window_auto_event"
+EVENT_START = "start"
+EVENT_END = "end"
 # What VT's central boiler commands may do to the helper (I12): turn it on to heat, off to stop.
 HELPER_ON = frozenset({("input_boolean", "turn_on"), ("homeassistant", "turn_on")})
 HELPER_OFF = frozenset({("input_boolean", "turn_off"), ("homeassistant", "turn_off")})
@@ -81,7 +100,16 @@ VT_OLDEST_SHOWN = "10.6.5"
 VT_TESTED = "10.6.5"  # the VT version the plugin is tested with (10.5.1 until 2026-11-25)
 OVER_SWITCH = "over_switch"  # VT's ``configuration`` ``type`` of a zone it switches on and off
 HVAC_OFF_REASON = "hvac_off_reason"  # in a thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5)
-ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
+WINDOW_DETECTION = "hvac_off_window_detection"  # VT holds the zone off for a window (``const.py``)
+# The user's devices VT reads for a room, in the thermostat's ``entry_infos`` (VT 10.6.5
+# ``const.py`` 65 and 72).
+ROOM_THERMOMETER = "temperature_sensor_entity_id"
+WINDOW_SENSOR = "window_sensor_entity_id"
+# A device of the user's that has no state at all: removed, or not set up yet.
+_MISSING = "missing"
+# The room thermometer's states that leave the room's temperature out (I12, decision 8): gone too,
+# as VT then keeps its last reading.
+_LOST = frozenset({STATE_UNAVAILABLE, STATE_UNKNOWN, _MISSING})
 # The entities a thermostat drives — switches, valves or climates — in its entry's data (VT 10.4.0
 # ``const.py:63``, ``CONF_UNDERLYING_LIST``; migrated there from the older per-slot keys).
 UNDERLYING = "underlying_entity_ids"
@@ -156,17 +184,6 @@ class VtCapabilities:
     vt_loaded: bool
     vt_version: str | None
     vtherm_api_version: str | None
-
-
-def room_sensor(hass: HomeAssistant, entity_id: str) -> str | None:
-    """The room temperature sensor VT reads for a zone, from the thermostat's entry (VT 10.4.0
-    keeps it in the entry's data); ``None`` where it is not found."""
-    registered = er.async_get(hass).async_get(entity_id)
-    if registered is None or registered.config_entry_id is None:
-        return None
-    entry = hass.config_entries.async_get_entry(registered.config_entry_id)
-    sensor = entry.data.get(ROOM_SENSOR) if entry is not None else None
-    return sensor if isinstance(sensor, str) and sensor else None
 
 
 def zone_underlying_entities(hass: HomeAssistant, entity_id: str) -> tuple[str, ...] | None:
@@ -423,15 +440,30 @@ def _command(raw: object) -> str | None:
     return raw.strip() if isinstance(raw, str) and raw.strip() else None
 
 
-def central_boiler_event() -> str:
-    """VT's central boiler event's name, as ``vtherm_api`` gives it; the name it has had in
-    every VT supported where this ``vtherm_api`` does not."""
+def _vt_event(member: str, fallback: str) -> str:
+    """A VT event's name, as ``vtherm_api`` gives it; the name it has had in every VT supported
+    where this ``vtherm_api`` does not."""
     try:
         from vtherm_api.const import EventType
 
-        return str(EventType.CENTRAL_BOILER_EVENT.value)
+        return str(getattr(EventType, member).value)
     except ImportError, AttributeError:
-        return CENTRAL_BOILER_EVENT
+        return fallback
+
+
+def central_boiler_event() -> str:
+    """VT's central boiler event's name."""
+    return _vt_event("CENTRAL_BOILER_EVENT", CENTRAL_BOILER_EVENT)
+
+
+def safety_event() -> str:
+    """VT's safety event's name."""
+    return _vt_event("SAFETY_EVENT", SAFETY_EVENT)
+
+
+def window_auto_event() -> str:
+    """VT's automatic window detection event's name."""
+    return _vt_event("WINDOW_AUTO_EVENT", WINDOW_AUTO_EVENT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,6 +514,61 @@ class VThermLink:
         self._zones = tuple(zone_entities)
         self._api_version: str | None = None
         self._through_api: set[str] = set()  # the zones read through ``vtherm_api`` last time
+        # The plugin's start: a room's temperature counts once VT measured it after this.
+        self._started_at = dt_util.utcnow().timestamp()
+        # The thermostats VT's events said are in safety mode, or have a window open by its
+        # automatic detection: each with the thermostat VT handed over then (``None``: none), so
+        # a new one handed over — VT reloaded it — is not taken for the old one.
+        self._safety: dict[str, Any] = {}
+        self._window_auto: dict[str, Any] = {}
+
+    def start(self, now: float) -> CALLBACK_TYPE:
+        """Start following VT's safety and automatic window events, from ``now`` — the plugin's
+        start, which a room's measurement must be newer than. Returns what stops it."""
+        self._started_at = now
+        self._safety.clear()
+        self._window_auto.clear()
+        stops = [
+            self._hass.bus.async_listen(safety_event(), self._on_safety),
+            self._hass.bus.async_listen(window_auto_event(), self._on_window_auto),
+        ]
+
+        @callback
+        def stop() -> None:
+            for unsubscribe in stops:
+                unsubscribe()
+
+        return stop
+
+    @callback
+    def _on_safety(self, event: Event[dict[str, Any]]) -> None:
+        self._follow_event(self._safety, event.data)
+
+    @callback
+    def _on_window_auto(self, event: Event[dict[str, Any]]) -> None:
+        self._follow_event(self._window_auto, event.data)
+
+    def _follow_event(self, held: dict[str, Any], data: Mapping[str, Any]) -> None:
+        """A VT event that starts or ends a state of one thermostat; anything else is passed
+        over."""
+        entity_id = data.get("entity_id")
+        if not isinstance(entity_id, str):
+            return
+        kind = data.get("type")
+        if kind == EVENT_START:
+            held[entity_id] = vt_thermostat(self._hass, entity_id)
+        elif kind == EVENT_END:
+            held.pop(entity_id, None)
+
+    def _held(self, held: dict[str, Any], entity_id: str, thermostat: Any) -> bool:
+        """Whether an event's state still holds for a zone: started, not ended, and VT has not
+        handed over another thermostat since — that one is forgotten."""
+        if entity_id not in held:
+            return False
+        if held[entity_id] is not thermostat:
+            del held[entity_id]
+            return False
+        return True
 
     async def async_detect(self) -> None:
         """Read what does not change while Home Assistant runs — the installed ``vtherm_api``
@@ -498,9 +585,24 @@ class VThermLink:
             zone = replace(zone, **found)
             self._through_api.add(entity_id)
         else:
+            found = {}
             self._through_api.discard(entity_id)
-        lost = zone.safety_on or self._room_sensor_lost(entity_id)
-        return replace(zone, room_sensor_lost=lost)
+        handed = vt_thermostat(self._hass, entity_id)  # whatever the climate shows now
+        infos = runtime_readings(handed, ("entry_infos",)).get("entry_infos") if handed else None
+        infos = infos if isinstance(infos, Mapping) else {}
+        trusted = room_trusted(
+            safety=self._held(self._safety, entity_id, handed),
+            thermometer_lost=self._device_state(infos.get(ROOM_THERMOMETER)) in _LOST,
+            # VT's own clock, through ``vtherm_api`` only: no thermostat handed over, no trust.
+            measured_at=found.get("temperature_at"),
+            started_at=self._started_at,
+        )
+        window = (
+            self.zone_off_reason(entity_id) == WINDOW_DETECTION
+            or self._held(self._window_auto, entity_id, handed)
+            or self._device_state(infos.get(WINDOW_SENSOR)) == "on"
+        )
+        return replace(zone, room_sensor_lost=not trusted, window_open=window)
 
     def _thermostat(self, entity_id: str, state: State | None) -> Any | None:
         """The zone's VT thermostat as VT handed it to the plugin, while VT shows it running: a
@@ -513,16 +615,14 @@ class VThermLink:
         """The zones whose values came through ``vtherm_api`` at their last read."""
         return sorted(self._through_api)
 
-    def _room_sensor_lost(self, entity_id: str) -> bool:
-        """The room sensor VT reads is gone, unavailable or unknown: VT keeps its last
-        temperature, and its own safety check sleeps while the zone is off (R6, T2). A steady
-        sensor is fine, however long ago it changed. VT's own safety mode on counts the same
-        (S-35): VT has seen the sensor go quiet, and runs the zone on its safety duty."""
-        sensor = room_sensor(self._hass, entity_id)
-        if sensor is None:
-            return False
-        state = self._hass.states.get(sensor)
-        return state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+    def _device_state(self, entity_id: object) -> str | None:
+        """The state of a device of the user's that VT names for a room — its thermometer, its
+        window sensor —, read from Home Assistant: ``"missing"`` for one that has no state;
+        ``None`` where VT names none."""
+        if not isinstance(entity_id, str) or not entity_id:
+            return None
+        state = self._hass.states.get(entity_id)
+        return _MISSING if state is None else state.state
 
     def zone_from_state(self, entity_id: str, state: State | None) -> ZoneState:
         """A zone from a given state of its climate entity (current or recorded)."""
@@ -549,7 +649,6 @@ class VThermLink:
             temperature_at=values.temperature_at,
             max_on_percent=values.max_on_percent,
             mean_power=values.mean_power,
-            safety_on=values.safety_on,
             shedding=values.shedding,
             reported=values.reported,
         )
@@ -587,7 +686,8 @@ class VThermLink:
         return self._hass.states.get(entity_id)
 
     def zone_off_reason(self, entity_id: str) -> str | None:
-        """Why VT keeps a zone off (SB-27): ``hvac_off_reason``, which VT publishes in the
+        """Why VT keeps a zone off — read for the window only (I12.10: VT holds it off for a
+        window, ``WINDOW_DETECTION``): ``hvac_off_reason``, which VT publishes in the
         thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5 ``base_thermostat.py``:
         ``hvac_off_manual``, ``hvac_off_sleep_mode``, ``hvac_off_window_detection``,
         ``hvac_off_central_mode``, ``hvac_off_safety_detection``, ``hvac_off_auto_start_stop``;

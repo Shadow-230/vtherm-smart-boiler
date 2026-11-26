@@ -661,8 +661,6 @@ def test_stored_numbers_at_the_form_bounds_are_kept() -> None:
 @pytest.mark.parametrize(
     ("changes", "key"),
     [
-        ({"frost_limit": "nan"}, "frost_limit"),
-        ({"frost_limit": 18, "frost_release": 20}, "frost_limit"),
         ({"curve": {"design_outdoor": -15, "design_flow": "nan"}}, "design_flow"),
         ({"fallback_setpoint": 95}, "fallback_setpoint"),
         ({"fallback_setpoint": NAN}, "fallback_setpoint"),
@@ -773,7 +771,6 @@ NAMING = {
         "ch_confirmed_entity": "binary_sensor.heating_echo",
         "thermostat_setpoint_entity": "sensor.thermostat_setpoint",
         "restart_entity": "sensor.uptime",
-        "frost_zone": "climate.bedroom",
         "curve": {"design_outdoor": -20, "design_flow": 50},
     },
 }
@@ -787,7 +784,7 @@ def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
         "weather.home": ("weather",),
         "sensor.circuit_flow": ("circuits.main.flow_entity",),
         "climate.living": ("zones",),
-        "climate.bedroom": ("zones", "control.frost_zone"),
+        "climate.bedroom": ("zones",),
         "number.setpoint": ("control.setpoint_entity",),
         "switch.heating": ("control.ch_entity",),
         "switch.external": ("control.hand_back_entity",),
@@ -804,7 +801,7 @@ def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
     ("old", "new", "changed"),
     [
         ("climate.living", "climate.lounge", ("zones",)),
-        ("climate.bedroom", "climate.guest_room", ("zones", "control")),
+        ("climate.bedroom", "climate.guest_room", ("zones",)),
         ("sensor.flow", "sensor.boiler_flow", ("signals",)),
         ("sensor.circuit_flow", "sensor.radiator_flow", ("circuits",)),
         ("weather.home", "weather.house", ("weather",)),

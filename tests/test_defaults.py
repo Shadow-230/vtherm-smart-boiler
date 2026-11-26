@@ -110,7 +110,6 @@ RELAY_FORM = form_defaults(config_flow.control_relay_schema({}))
 ZONE_FORM = form_defaults(config_flow.zones_schema({"circuits": [{"id": "a", "zones": ["c.a"]}]}))
 CIRCUIT_FORM = form_defaults(config_flow.circuit_schema({}, {"zones": ["c.a"]}))
 BEHAVIOUR_FORM = form_defaults(config_flow.control_behaviour_schema(ADVANCED))
-FROST_FORM = form_defaults(config_flow.control_frost_schema(ADVANCED))  # I8 (decision H4)
 SIGNALS_FORM = form_defaults(config_flow.signals_schema({}))
 # An entity field offers its entity as a suggested value, not a default.
 SIGNALS_SUGGESTED = {
@@ -193,26 +192,6 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
         "fallback: then the design flow",
         lambda: fallback_setpoint(BARE.loop.control),
         BARE.loop.control.curve.flow(BARE.loop.control.curve.design_outdoor),
-    ),
-    # Frost limit / release | 5 / 7 °C
-    ("frost limit", lambda: CONTROL_DEFAULTS["frost_limit"], 5.0),
-    ("frost limit (form)", lambda: FROST_FORM["frost_limit"], 5.0),
-    ("frost limit (parser)", lambda: BARE.loop.control.frost.room_limit, 5.0),
-    ("frost release", lambda: CONTROL_DEFAULTS["frost_release"], 7.0),
-    ("frost release (form)", lambda: FROST_FORM["frost_release"], 7.0),
-    ("frost release (parser)", lambda: BARE.loop.control.frost.release, 7.0),
-    # Frost protection | every zone, heated only where its emitter can take heat
-    ("frost protection: every zone (parser)", lambda: BARE.loop.control.frost.zone, None),
-    ("frost protection: every zone (form)", lambda: FROST_FORM["frost_zone"], vol.UNDEFINED),
-    (
-        'frost protection: no zone "closes when off"',
-        lambda: BARE.loop.control.frost.closes_when_off,
-        frozenset(),
-    ),
-    (
-        'frost protection: "closes when off" unticked (form)',
-        lambda: ZONE_FORM["closes_when_off"],
-        [],
     ),
     # Comfort correction | off (K4, the user's decision of 2026-11-17); up to its limit, 3 K by
     # default (at most 10 K), rising at most 3 K a day

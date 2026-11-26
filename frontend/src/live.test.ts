@@ -148,7 +148,7 @@ describe("liveView", () => {
     // Called — by the plugin's heat call, else by a mode that calls — the burner off for now.
     expect(status([heating, entity("binary_sensor.called", "on"), entity("binary_sensor.flame", "off")])).toBe("called");
     expect(status([heating, entity("binary_sensor.flame", "off")])).toBe("called");
-    expect(status([entity("sensor.control_state", "frost")])).toBe("called");
+    expect(status([entity("sensor.control_state", "fallback")])).toBe("called");
     // Lit: whatever control says, the burner burns (hot water too).
     expect(status([entity("sensor.control_state", "idle"), entity("binary_sensor.flame", "on")])).toBe("burning");
     // Not heating: idle, handed back, or a heat call that says no.

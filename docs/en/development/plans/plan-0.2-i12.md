@@ -213,10 +213,13 @@ Done 2026-11-26: the binary sensor "Gives no heat" (`no_heat`) with its reason; 
 control is off, so SmartPI is not held back meanwhile. `tests.yml` still names SmartPI and the
 deleted `water-interface.md`; it waits for a push with the `workflow` scope.
 
-#### I12.10 Frost and the rooms' trust
+#### I12.10 Frost and the rooms' trust ✅
 
 Decision 4 and the rooms' trust of decision 8; the "blind room" alarm removed; the critical
 zone's window rule.
+Done 2026-11-26, with a one-time warning at migration 24 where control was set up: frost
+protection is VT's alone now. The zones form's "valves close when off" answer, used only by the
+frost protection, goes with I12.11.
 
 #### I12.11 Rooms from VT
 

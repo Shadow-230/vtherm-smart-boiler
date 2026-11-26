@@ -26,7 +26,6 @@ NOT_CONTROLLING = BoilerCall(None, CallReason.NOT_CONTROLLING)
     ("mode", "reasons", "calling", "expected"),
     [
         (ControlMode.HEATING, (Reason.DEMAND,), 1, CALLED),
-        (ControlMode.FROST, (Reason.FROST,), 0, CALLED),
         # Heating without an outdoor temperature, on the fallback setpoint: called.
         (ControlMode.FALLBACK, (Reason.OUTDOOR_UNKNOWN, Reason.DEMAND), 1, CALLED),
         # A circuit run by other automation asking, no zone calling: called.
@@ -98,7 +97,6 @@ def on(reason: NoHeatReason) -> NoHeat:
         (ControlMode.HEATING, (Reason.DEMAND,), None, GIVEN),  # hot water unknown: not counted
         (ControlMode.FALLBACK, (Reason.OUTDOOR_UNKNOWN, Reason.DEMAND), None, GIVEN),
         (ControlMode.HEATING, (Reason.CIRCUIT_ASKS,), None, GIVEN),
-        (ControlMode.FROST, (Reason.FROST,), None, GIVEN),
         # The recognition period keeping a heating command: heating.
         (ControlMode.HEATING, (Reason.ZONES_RECOGNITION,), None, GIVEN),
         # Hot water while heating is wanted.

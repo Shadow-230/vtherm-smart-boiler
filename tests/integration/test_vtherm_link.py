@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import replace
+from datetime import datetime, timedelta
 from importlib.metadata import version
 from typing import Any
 
@@ -187,40 +188,124 @@ async def test_vt_is_loaded_only_with_a_loaded_entry(hass: HomeAssistant) -> Non
     assert VThermLink(hass, []).capabilities().vt_loaded
 
 
-async def test_a_zone_whose_room_sensor_is_lost_says_so(hass: HomeAssistant) -> None:
-    """R6, T2: VT keeps the last temperature of a room sensor that went away, and its own
-    safety check sleeps while the zone is off. The sensor VT reads — in VT's entry — tells: gone,
-    unavailable or unknown, the zone's temperature is no measurement now. A steady sensor
-    stays fine, however long ago it last changed; history is VT's own view."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-    vt = MockConfigEntry(
-        domain="versatile_thermostat", data={"temperature_sensor_entity_id": "sensor.room"}
-    )
-    vt.add_to_hass(hass)
-    climate = er.async_get(hass).async_get_or_create(
-        "climate", VT_PLATFORM, "room", suggested_object_id="room", config_entry=vt
-    )
-    hass.states.async_set(
-        climate.entity_id, "heat", {"current_temperature": 20.0, "hvac_action": "idle"}
-    )
-    link = VThermLink(hass, [climate.entity_id])
-    hass.states.async_set("sensor.room", "20.0")
-    assert link.zone(climate.entity_id).room_sensor_lost is False
+async def test_a_rooms_thermometer_from_entry_infos_decides_its_trust(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I12, decision 8: the room's thermometer is the sensor the thermostat's ``entry_infos``
+    names (VT 10.6.5 ``temperature_sensor_entity_id``), the user's device: unavailable, unknown or
+    gone, the room's temperature is not trusted — VT keeps its last view and still runs the zone
+    on it. A steady thermometer stays fine, however long ago it changed."""
+    living = zones.add("living", current_temperature=20.0, hvac_action="idle")
+    thermometer = zones.thermostats["living"].thermometer
+    link = VThermLink(hass, [living])
+    stop = link.start(dt_util.utcnow().timestamp() - 60.0)
+    assert link.zone(living).room_sensor_lost is False
     for state in ("unavailable", "unknown"):
-        hass.states.async_set("sensor.room", state)
-        zone = link.zone(climate.entity_id)
+        hass.states.async_set(thermometer, state)
+        zone = link.zone(living)
         assert zone.room_sensor_lost is True
         assert zone.temperature == 20.0  # VT's view is kept: VT still runs the zone on it
-    hass.states.async_remove("sensor.room")
-    assert link.zone(climate.entity_id).room_sensor_lost is True
-    recorded = link.zone_from_state(climate.entity_id, hass.states.get(climate.entity_id))
-    assert recorded.room_sensor_lost is False  # a past state: its sensor then is not known
-    hass.config_entries.async_update_entry(vt, data={})  # a VT that keeps it elsewhere
-    assert link.zone(climate.entity_id).room_sensor_lost is False
+    hass.states.async_remove(thermometer)
+    assert link.zone(living).room_sensor_lost is True
+    hass.states.async_set(thermometer, "19.0")
+    assert link.zone(living).room_sensor_lost is False
+    # A thermostat whose entry_infos names no thermometer: nothing to judge by — trusted.
+    zones.stand_in.entry_infos = {}
+    zones.thermostats["living"].thermometer = ""
+    assert link.zone(living).room_sensor_lost is False
+    stop()
 
 
-# --- X5: a zone's underlying entities (X5.19), zones of another kind (X5.7) ---------------------
+async def test_vts_safety_event_leaves_a_room_out_until_it_ends(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I12, decision 8: VT's safety event (``versatile_thermostat_safety_event``, VT 10.6.5
+    ``feature_safety_manager.py``: ``type`` start or end, the thermostat in ``entity_id``) takes
+    the room out of the curve's judgement until it ends. Another thermostat's event, one of
+    another type or without a thermostat changes nothing; a thermostat VT hands over anew — VT
+    reloaded it — is not taken for the old one; once stopped, the link hears no more."""
+    living = zones.add("living", hvac_action="idle")
+    bedroom = zones.add("bedroom", hvac_action="idle")
+    link = VThermLink(hass, [living, bedroom])
+    stop = link.start(dt_util.utcnow().timestamp() - 60.0)
+
+    def lost() -> list[str]:
+        return [z.zone_id for z in link.zones() if z.room_sensor_lost]
+
+    zones.vt_event("living", "safety", start=True)
+    await hass.async_block_till_done()
+    assert lost() == [living]
+    for data in ({"type": "start"}, {"type": "pause", "entity_id": bedroom}, {"entity_id": 3}):
+        hass.bus.async_fire("versatile_thermostat_safety_event", data)
+    await hass.async_block_till_done()
+    assert lost() == [living]
+    zones.vt_event("living", "safety", start=False)
+    await hass.async_block_till_done()
+    assert lost() == []
+    zones.vt_event("bedroom", "safety", start=True)
+    await hass.async_block_till_done()
+    assert lost() == [bedroom]
+    old = zones.thermostats["bedroom"]
+    unregister_thermostat(hass, old)  # VT reloads it: a new thermostat handed over
+    renewed = replace(old)
+    register_thermostat(hass, renewed)
+    assert lost() == []  # forgotten with the old thermostat
+    stop()
+    zones.vt_event("living", "safety", start=True)
+    await hass.async_block_till_done()
+    assert lost() == []
+
+
+async def test_a_room_counts_only_once_vt_measured_it_after_the_plugins_start(
+    hass: HomeAssistant, zones: FakeZones
+) -> None:
+    """I12, decision 8: after the plugin starts, a room's temperature counts only once VT's
+    ``last_temperature_measure`` for it — through ``vtherm_api`` only — is newer than the
+    start; one VT never handed over has no such clock: never trusted."""
+    living = zones.add("living", hvac_action="idle")
+    away = zones.add("bedroom", handed_over=False, hvac_action="idle")
+    link = VThermLink(hass, [living, away])
+    start = dt_util.utcnow()
+    stop = link.start(start.timestamp())
+    thermostat = zones.thermostats["living"]
+    thermostat.measured = start - timedelta(minutes=5)
+    assert link.zone(living).room_sensor_lost is True
+    thermostat.measured = start
+    assert link.zone(living).room_sensor_lost is True  # not newer than the start
+    thermostat.measured = start + timedelta(seconds=1)
+    assert link.zone(living).room_sensor_lost is False
+    assert link.zone(away).room_sensor_lost is True
+    stop()
+
+
+@pytest.mark.parametrize("source", ["sensor", "vt_event", "vt_off_reason", "none"])
+async def test_a_rooms_window_is_open_by_vt_or_by_its_sensor(
+    hass: HomeAssistant, zones: FakeZones, source: str
+) -> None:
+    """I12.10 (gap 22): a room's window is open while VT holds it off for a window
+    (``hvac_off_reason`` ``hvac_off_window_detection``), VT's automatic window detection says so
+    (``versatile_thermostat_window_auto_event`` start, until its end), or the window sensor the
+    thermostat's ``entry_infos`` names (``window_sensor_entity_id``) reads on."""
+    living = zones.add("living", hvac_action="idle")
+    link = VThermLink(hass, [living])
+    stop = link.start(dt_util.utcnow().timestamp() - 60.0)
+    assert link.zone(living).window_open is False
+    if source == "sensor":
+        hass.states.async_set(zones.thermostats["living"].window_sensor, "on")
+    elif source == "vt_event":
+        zones.vt_event("living", "window_auto", start=True)
+        await hass.async_block_till_done()
+    elif source == "vt_off_reason":
+        reason = {"hvac_off_reason": "hvac_off_window_detection"}
+        zones.set("living", "off", hvac_action="off", specific_states=reason)
+    else:
+        zones.set("living", "off", specific_states={"hvac_off_reason": "hvac_off_manual"})
+    assert link.zone(living).window_open is (source != "none")
+    if source == "vt_event":
+        zones.vt_event("living", "window_auto", start=False)
+        await hass.async_block_till_done()
+        assert link.zone(living).window_open is False
+    stop()
 
 
 async def test_a_zones_underlying_entities_are_read_from_its_vt_entry(
@@ -576,6 +661,7 @@ async def test_zone_values_come_through_vtherm_api(hass: HomeAssistant, zones: F
     showing it running, the attributes."""
     living = zones.add(
         "living",
+        handed_over=False,
         current_temperature=20.0,
         temperature=20.0,
         hvac_action="idle",
@@ -617,8 +703,10 @@ async def test_a_member_that_fails_or_is_missing_keeps_the_attribute(
     """Negative: a member VT lacks, one whose property fails, or a method where ``vtherm_api``
     declares a property gives nothing — that field keeps the attribute's value, the others
     still come from the thermostat; another VT entity's thermostat is never taken."""
-    living = zones.add("living", current_temperature=20.0, temperature=20.0, hvac_action="idle")
-    bedroom = zones.add("bedroom", current_temperature=18.0, temperature=18.0)
+    living = zones.add(
+        "living", handed_over=False, current_temperature=20.0, temperature=20.0, hvac_action="idle"
+    )
+    bedroom = zones.add("bedroom", handed_over=False, current_temperature=18.0, temperature=18.0)
     thermostat = Runtime(
         "fake_living",
         current_temperature=RuntimeError("VT failed"),

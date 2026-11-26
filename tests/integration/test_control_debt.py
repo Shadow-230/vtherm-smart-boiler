@@ -90,9 +90,7 @@ NO_DEMAND = {"hvac_action": "idle", "valve_open_percent": 0, "on_percent": 0.0}
 def vt_settings_unknown(rig: Rig) -> None:
     """VT has handed no thermostat over: its central boiler's settings are not known (I12) — a
     blocker that passes on its own."""
-    from custom_components.vtherm_smart_boiler.vtherm_link import unregister_thermostat
-
-    unregister_thermostat(rig.hass, rig.zones.stand_in)
+    rig.zones.withdraw()
 
 
 def broken(self: Any, *args: Any) -> None:

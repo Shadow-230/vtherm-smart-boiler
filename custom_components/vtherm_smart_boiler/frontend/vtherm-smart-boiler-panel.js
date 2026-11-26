@@ -1417,11 +1417,7 @@ function ot(e) {
 function st(e) {
 	return z(e, "flame")?.state === "on";
 }
-var ct = /* @__PURE__ */ new Set([
-	"heating",
-	"frost",
-	"fallback"
-]);
+var ct = /* @__PURE__ */ new Set(["heating", "fallback"]);
 function lt(e, t) {
 	if (t) return "burning";
 	let n = B(e, "boiler_called");

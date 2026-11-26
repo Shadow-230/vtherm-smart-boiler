@@ -587,9 +587,8 @@ async def test_a_boiler_ignoring_what_the_gateway_sends_is_not_seen_by_the_read_
 
 async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     """VT's central mode "Stopped" turns its zones off: the plugin sees no demand — heating off,
-    no hand-back, control goes on — and frost protection still watches: a room left to freeze
-    behind a valve VT keeps closed gets no frost heat, which could not reach it, but a repair
-    issue naming it (decision 4)."""
+    no hand-back, control goes on. A room left to freeze behind a valve VT keeps closed gets no
+    heat: "Stopped" in VT means nobody heats, and frost protection is VT's (I12.10)."""
     from homeassistant.helpers import issue_registry as ir
 
     hass = rig.hass
@@ -616,12 +615,8 @@ async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     assert rig.sim.opening(rig.sim.zones[0].zone_id) == 0.0
     assert 0.0 not in rig.setpoints()
     assert rig.entry is not None
-    found = ir.async_get(hass).async_get_issue(DOMAIN, f"frost_zone_closed_{rig.entry.entry_id}")
-    assert found is not None
-    assert (
-        rig.zones.entities[rig.sim.zones[0].zone_id].split(".")[1].replace("_", " ")
-        in (found.translation_placeholders["zones"])
-    )
+    issues = ir.async_get(hass).issues
+    assert not any(issue_id.startswith("frost_zone_closed") for _domain, issue_id in issues)
 
 
 async def test_vt_stopped_leaves_a_zone_outside_the_central_mode_heating(rig: Rig) -> None:
@@ -646,10 +641,10 @@ async def test_vt_stopped_leaves_a_zone_outside_the_central_mode_heating(rig: Ri
     assert 0.0 not in rig.setpoints()
 
 
-async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
-    """Summer and winter come from VT: with its zones off nothing heats, but a room close to
-    freezing whose valve VT holds open — VT's SLEEP shows "off" with the valve at 100 % — still
-    gets heat (decision 4)."""
+async def test_the_plugin_does_not_heat_for_frost_while_vt_is_off(rig: Rig) -> None:
+    """Summer and winter come from VT: with its zones off nothing heats — a room close to
+    freezing whose valve VT holds open included (VT's SLEEP shows "off" with the valve at
+    100 %): frost protection is VT's, by its frost preset or central mode (I12.10)."""
     await start(rig)
     await rig.scenario("set_outdoor", temperature=24)
     rig.vt_mode = "sleep"
@@ -661,8 +656,8 @@ async def test_frost_protection_heats_while_vt_is_off(rig: Rig) -> None:
     rig.sim.advance(rig.now())
     rig.mirror_zones()
     await rig.advance(20)
-    assert rig.state("sensor", "control_state").state == "frost"
-    assert rig.gateway("ch")[-1][2] is True
+    assert rig.state("sensor", "control_state").state == "idle"
+    assert rig.gateway("ch")[-1][2] is False
 
 
 @pytest.mark.parametrize(

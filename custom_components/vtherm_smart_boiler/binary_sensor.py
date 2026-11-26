@@ -122,9 +122,9 @@ class ControlStateSensor(ControlEntity, BinarySensorEntity):
             "blocked_by": list(status.blocked_by),
             "blocked_by_text": self._text("blocked_by", status.blocked_by),
             "hand_back_effect": None if effect is None else effect.value,
-            # Who keeps frost protection now: the plugin while it controls, else whoever the
-            # hand-back leaves the boiler with — after a stand-alone hand-back, the boiler's own,
-            # if it has one (S-57).
+            # Who keeps frost protection now: VT, through the plugin, while it controls (I12.10),
+            # else whoever the hand-back leaves the boiler with — after a stand-alone hand-back,
+            # the boiler's own, if it has one (S-57).
             "frost_protection_by": status.frost_protection_by,
             # How "off" reaches the boiler: a heating switch or a relay really switches heating
             # off; a low setpoint may leave the boiler's CH pump running.
@@ -291,8 +291,8 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
 
 
 class BoilerCalledSensor(ControlEntity, BinarySensorEntity):
-    """On while the plugin calls the boiler for space heating, frost protection included (the
-    user's decisions of 2026-10-14); off while it controls
+    """On while the plugin calls the boiler for space heating — VT's frost protection included,
+    as VT calls for it (the user's decisions of 2026-10-14); off while it controls
     the boiler and does not call it; unknown while it does not control it, or cannot tell yet.
     Why not, and the rooms calling, in its attributes."""
 

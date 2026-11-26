@@ -57,7 +57,7 @@ from .core.curve import (
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
 from .core.installation import Boiler, BoilerClass, CircuitControl, EmitterType, Installation
-from .core.limits import FlowLimits, FrostConfig
+from .core.limits import FlowLimits
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
 from .core.relay import (
     REPEAT_DEFAULT_S,
@@ -91,8 +91,6 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         # control section had none keeps 25 °C, written by the entry migration.
         "hard_min": 20.0,
         "hard_max": 70.0,
-        "frost_limit": 5.0,
-        "frost_release": 7.0,
         "ramp_k_per_min": 1.0,
         "decision_interval_min": 5.0,
         "off_setpoint": DEFAULT_OFF_SETPOINT,
@@ -119,8 +117,6 @@ CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "hard_min": (10.0, 50.0),
         "hard_max": (30.0, 90.0),
         "comfort_correction_max_k": (0.5, 10.0),
-        "frost_limit": (3.0, 10.0),
-        "frost_release": (4.0, 12.0),
         "fallback_setpoint": (25.0, 80.0),
         "ramp_k_per_min": (0.1, 10.0),
         "decision_interval_min": (1.0, 30.0),
@@ -158,6 +154,9 @@ VT_SETTINGS_MOVED = (
 # I12.9 (minor version 23, the user's decision of 2026-11-25): the plugin pauses no zone's
 # learning any more; the setting goes from the control section.
 LEARNING_PAUSES_REMOVED = "learning_pauses"
+# I12.10 (minor version 24, the user's decision of 2026-11-25): the plugin's own frost protection
+# goes — VT's frost preset and central mode do it — and its settings with it.
+FROST_REMOVED = ("frost_limit", "frost_release", "frost_zone")
 
 
 class WritePath(StrEnum):
@@ -418,7 +417,7 @@ MQTT_TOPIC_KEYS = ("mqtt_top", "mqtt_node")
 # told).
 ENTITY_KEYS = (
     "setpoint_entity", "ch_entity", "hand_back_entity", "confirmed_entity", "ch_confirmed_entity",
-    "thermostat_setpoint_entity", "restart_entity", "frost_zone", "relay_entity", VT_HELPER,
+    "thermostat_setpoint_entity", "restart_entity", "relay_entity", VT_HELPER,
 )  # fmt: skip
 # What a hand-back goes through: fixed while one is owed — for a relay, the relay and its rest
 # state.
@@ -757,6 +756,13 @@ def without_learning_pauses(section: Any) -> Any:
     return section
 
 
+def without_frost(section: Any) -> Any:
+    """I12.10 (minor version 24): the frost settings are gone — frost protection is VT's."""
+    if isinstance(section, Mapping) and any(key in section for key in FROST_REMOVED):
+        return {key: value for key, value in section.items() if key not in FROST_REMOVED}
+    return section
+
+
 def vt_settings_set(section: Any) -> dict[str, str]:
     """I12: the demand settings a section held that VT's central boiler must now be given — a
     power or opening threshold, a count above 1, an activation delay above 0 — each as stored,
@@ -879,13 +885,13 @@ def with_boiler_inputs(section: Any, boiler: Any, signals: Any) -> Any:
 
 def section_as_migrated(section: Any) -> Any:
     """A control section as this version's entry migrations leave one (G11 B and D, I8 B6, F2,
-    I12's demand settings and learning pauses gone).
+    I12's demand settings, learning pauses and frost settings gone).
     The entry migration writes each into the options; the options a stored session took the
     boiler with (``taken_with``), which no migration reaches, are read through them, so a
     restart after the update compares like with like. The highest water temperature left the
     section for the circuit's, which the restore's limits apply as they are now (PB-11)."""
     section = without_correction_range(with_room_mode(with_correction_answer(section)))
-    section = without_learning_pauses(without_vt_settings(section))
+    section = without_frost(without_learning_pauses(without_vt_settings(section)))
     if isinstance(section, Mapping) and HARD_MAX_FROM_BEFORE in section:
         return {key: value for key, value in section.items() if key != HARD_MAX_FROM_BEFORE}
     return section
@@ -1048,7 +1054,6 @@ def parse_control(
         else None
     )
     ramp = _checked(value, "ramp_k_per_min")
-    frost_zone = data.get("frost_zone") or None
     control = ControlConfig(
         curve=curve,
         limits=FlowLimits(
@@ -1060,13 +1065,6 @@ def parse_control(
         boiler_max=boiler_max,
         other_automation=other,
         curve_zones=curve_zones,
-        frost=FrostConfig(
-            room_limit=_required(value, "frost_limit"),
-            release=_required(value, "frost_release"),
-            # A zone no longer configured must not leave frost protection watching nothing.
-            zone=frost_zone if frost_zone in {z.zone_id for z in installation.zones} else None,
-            closes_when_off=frozenset(z.zone_id for z in installation.zones if z.closes_when_off),
-        ),
         fallback_setpoint=_checked(data, "fallback_setpoint"),
         ramp_k_per_min=None if on_off else ramp,
         decision_interval_s=_required(value, "decision_interval_min") * MINUTE,
@@ -1436,7 +1434,7 @@ def failed_setup_report(
 class FrostProtection(StrEnum):
     """Who keeps frost protection now (S-57), as the control switch shows it."""
 
-    PLUGIN = "plugin"  # the session controls: the plugin's own frost protection
+    VT = "vt"  # the session controls: VT's frost preset and central mode, through the plugin
     THERMOSTAT = "thermostat"  # handed back to the thermostat
     BOILER = "boiler"  # a hand-back stops heating: the boiler's own, if it has one
     DEVICE = "device"  # the boiler's or the device's own control
@@ -1455,10 +1453,11 @@ _FROST_PROTECTION_AFTER = {
 
 
 def frost_protection_by(control: ControlOptions, controlling: bool) -> FrostProtection | None:
-    """S-57: the plugin while its session controls; otherwise whoever the hand-back's effect
-    leaves the boiler with. ``None`` where the effect is not known (control cannot run)."""
+    """S-57: VT, through the plugin, while its session controls (I12.10: frost protection is
+    VT's); otherwise whoever the hand-back's effect leaves the boiler with. ``None`` where the
+    effect is not known (control cannot run)."""
     if controlling:
-        return FrostProtection.PLUGIN
+        return FrostProtection.VT
     effect = hand_back_effect(control)
     return None if effect is None else _FROST_PROTECTION_AFTER[effect]
 
