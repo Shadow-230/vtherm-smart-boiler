@@ -533,6 +533,15 @@ def _kept_alarms(raw: Any) -> set[ControlAlarm]:
     return kept
 
 
+def _rooms_calling(decision: ControlDecision) -> bool | None:
+    """I13.1: whether any room VT counts calls for heat now, as the step judged them; ``None``
+    where no room is known."""
+    demand = decision.demand
+    if demand is None or demand.fresh_zones == 0:
+        return None
+    return demand.zones_wanting > 0
+
+
 def _memory_moved(before: LoopState, after: LoopState) -> bool:
     """Whether a value stored at once changed: a guard's baseline or its last fall-back without
     a trace; the relay's one rewrite, its restarts answered (answers C, N), the switch-offs
@@ -2040,6 +2049,7 @@ class ControlUnit:
                 hot_water=self._coordinator.dhw_takes_heat(snapshot),
                 writes_stopped=out.blocked,
                 starting=bool(blockers) and set(blockers) <= KEPT_IN_RECOGNITION,
+                rooms_calling=_rooms_calling(out.decision),
             ),
         )
 

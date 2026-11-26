@@ -71,7 +71,8 @@ is, writes that to the boiler and hands the boiler back on every exit.
   as soon as one is handed over, and its fix flow (`repairs.ReloadVtFlow`) checks again. The
   setup's last step says the same where it applies.
 - **"Gives no heat"** (`binary_sensor`, key `no_heat`; `core/boiler_call.py`): one house-wide
-  signal, on while the boiler gives the rooms no heat now, with its reason — VT's central boiler
+  signal, on while a room VT counts calls for heat and the boiler gives none (off while no room
+  calls, I13.1), with its reason — VT's central boiler
   not calling, its activation delay, hot water, a boiler fault, or the plugin unable to vouch for
   heat. Mapped from control's decision at each step; unavailable while control is off. The user
   picks it in SmartPI 1.0's "heating unavailable" setting, or uses it in an automation: the

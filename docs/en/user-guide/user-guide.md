@@ -469,11 +469,13 @@ gives no advice on these settings.
 #### Gives no heat
 
 With control set up, the binary sensor **Gives no heat** (`binary_sensor.boiler_gives_no_heat`
-for an entry named "Boiler") is on while the boiler gives the rooms no heat now, and off while it
-does, as far as the plugin drives it. Its attribute `reason` says why it is on:
+for an entry named "Boiler") is on while a room VT counts calls for heat and the boiler gives
+none, and off while it does, as far as the plugin drives it. While no room calls, it is off: no
+room misses heat, and a zone algorithm can learn from the rest. Its attribute `reason` says why it
+is on:
 
-- **VT's central boiler does not call for heat** (`vt_not_calling`) — control works, but VT's
-  helper is off: no room calls, or VT's thresholds are not reached;
+- **VT's central boiler does not call for heat** (`vt_not_calling`) — a room calls, but VT's
+  helper is off: VT's thresholds are not reached;
 - **VT's activation delay runs** (`activation_delay`);
 - **The boiler heats hot water** (`hot_water`) — only with hot water priority;
 - **The boiler reports a fault** (`boiler_fault`);
@@ -1246,7 +1248,7 @@ disabled by default.
 | Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
-| Gives no heat | on while the boiler gives the rooms no heat, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
+| Gives no heat | on while a room calls for heat and the boiler gives none, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
 | Calling for heat | the rooms calling now, which they are, and the circuits they are on |
 | Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, handed back while a room is near freezing and the others |
 | Reset comfort correction | sets the comfort correction back to 0 |
