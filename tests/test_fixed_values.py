@@ -33,12 +33,10 @@ from custom_components.vtherm_smart_boiler.core import (
     signal_check,
     zone_watch,
 )
-from custom_components.vtherm_smart_boiler.core.learning import LearningConfig
 from custom_components.vtherm_smart_boiler.transport import writers
 
 H = 3600.0
 DAY = 24 * H
-LEARNING = LearningConfig()
 
 ROWS: list[tuple[str, Any, Any]] = [
     ("control step 10 s", const.CONTROL_TICK_SECONDS, 10),
@@ -75,12 +73,6 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("heat available: 1 K hysteresis", heat.HYSTERESIS_K, 1.0),
     ("a zone saturated at 95 %", readings.ZONE_SATURATED, 0.95),
     ("plausible room reading -30 to 45 C", limits.PLAUSIBLE_ROOM, (-30.0, 45.0)),
-    ("learning: a swing of 5 K", LEARNING.swing_k, 5.0),
-    ("learning: the swing within 30 min", LEARNING.swing_window_s, 1800.0),
-    ("learning: a pause of at least 10 min", LEARNING.min_pause_s, 600.0),
-    ("learning: resume within 3 K", LEARNING.resume_margin_k, 3.0),
-    ("learning: longest pause 60 min", LEARNING.max_pause_s, 3600.0),
-    ("learning: read back after 1 min", LEARNING.check_s, 60.0),
     ("low-flow warning after 15 min", alarms.LOW_FLOW_HOLD_S, 900.0),
     ("recognition period at most 10 min", zone_watch.RECOGNITION_S, 600.0),
     ("recognition grace 10 min", zone_watch.GRACE_S, 600.0),
@@ -143,7 +135,6 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("a write's timeout 10 s", writers.WRITE_TIMEOUT_S, 10.0),
     ("a control step counts 60 s at most", controller.MAX_STEP_S, 60.0),
     ("add water accepted within 0.1-2.0 bar", alarms.ADD_WATER_RANGE_BAR, (0.1, 2.0)),
-    ("SmartPI's learning calls time out after 5 s", control.LEARNING_TIMEOUT_S, 5.0),
     ("the oldest VT 10.6.5, whose manifest says 10.6.4", vtherm_link.VT_OLDEST, "10.6.4"),
     ("the oldest VT as the user is told", vtherm_link.VT_OLDEST_SHOWN, "10.6.5"),
     ("the reload-VT issue after 15 min", feature_manager.RELOAD_GRACE_S, 900),

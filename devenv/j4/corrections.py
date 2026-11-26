@@ -3,7 +3,8 @@
 
 The comfort correction with its limit and the warning at its edge (repair issue
 ``curve_too_low_<entry>``, key ``curve_too_low`` or ``room_short_at_limit``, the rooms' entity IDs
-in its ``entities`` placeholder), SmartPI's learning band in "is the room short", the curve's
+in its ``entities`` placeholder), "is the room short" against VT's setpoint (SmartPI's learning
+band went with I12.9), the curve's
 room temperature in Auto (option ``room_mode``, ``room_excluded``; the control state's
 ``curve_room``) and the long-burn rule (binary sensor ``long_burn``, its ``reason``). The guard for
 an open window without a sensor went with #64 (VT's own window detection stops a zone calling), and
@@ -61,16 +62,16 @@ async def curve_issue(r: Run) -> dict[str, Any] | None:
 
 
 async def Q1(r: Run):
-    """a curve too low with the correction on, the bedroom's SmartPI in its learning phase and
-    the rooms just under their setpoints: SmartPI's band (+0.5 K) counts, so the water rises; at
-    the correction's limit for 3 h with a room still short, the warning naming it"""
+    """a curve too low with the correction on and the rooms short of their setpoints — 0.4 K
+    under VT's setpoint, short by its own measure (I12.9: SmartPI's +0.5 K band no longer
+    counts) — so the water rises; at the correction's limit for 3 h with a room still short,
+    the warning naming it"""
     try:
         await r.options(curve=LOW_CURVE | CORRECTION_ON)
         r.ent.update(await r.ha.entities())
         await r.sim("set_outdoor", temperature=0.0)
-        await r.ha.call("vtherm_smartpi", "reset_smartpi_learning", entity_id=SMARTPI_ZONE)
         for zone, value in ZONES:
-            await r.sim("set_room_temperature", zone=zone, temperature=value - 0.2)
+            await r.sim("set_room_temperature", zone=zone, temperature=value - 0.4)
         switched = time.time()
         await r.switch(True)
         await r.ha.wait(300)
@@ -187,8 +188,9 @@ async def Q5(r: Run):
     every room — the correction rises for it, and at its limit for 3 h the warning names that
     room, the radiator and the heat loss first"""
     # "The others hold" needs the bedroom's SmartPI past its bootstrap: learning from scratch it
-    # runs on/off and its room counts as short (G11 C) — two rooms short, the curve warning
-    # rightly instead (J4 of 2026-11-18, an instance set up a minute before).
+    # runs on/off, its valve fully open down to 0.3 K under its setpoint, where its room touches
+    # "short" (J4 of 2026-11-18, an instance set up a minute before: two rooms short, the curve
+    # warning rightly instead). Read from SmartPI by the bench, never by the plugin (I12.9).
     learning = await smartpi_bootstrap(r)
     if learning is not None:
         raise NotRun(

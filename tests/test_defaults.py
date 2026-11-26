@@ -232,10 +232,6 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ),
     ("comfort correction: its limit (parser)", lambda: BARE.loop.control.correction_max_k, 3.0),
     ("comfort correction: its limit (core)", lambda: CORRECTION_MAX_K, 3.0),
-    # Learning pauses | on
-    ("learning pauses", lambda: CONTROL_DEFAULTS["learning_pauses"], True),
-    ("learning pauses (form)", lambda: BEHAVIOUR_FORM["learning_pauses"], True),
-    ("learning pauses (parser)", lambda: BARE.learning_pauses, True),
     # Alarm reaction | information; the hand-backs of decision 7 always
     ("alarm reaction: information (parser)", lambda: dict(BARE.alarm_reactions), {}),
     (

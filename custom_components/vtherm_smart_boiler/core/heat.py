@@ -1,5 +1,5 @@
-"""Heat available: whether the boiler's heat is reaching a zone's emitters right now — the one
-value VT's thermostats are shown (I8, decision C1)."""
+"""Heat available: whether the boiler's heat is reaching a zone's emitters right now (I8,
+decision C1), shown in the diagnostics."""
 
 from __future__ import annotations
 

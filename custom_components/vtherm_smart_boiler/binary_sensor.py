@@ -1,6 +1,6 @@
 """Binary sensors: the signals' connection, the monitor's alarms, a long burn without warming,
-the outdoor sensor's problem, and the alarms of control. An alarm exists only where its feature
-is not inactive (the missing-data rule, Y4)."""
+the outdoor sensor's problem, control's own ("boiler gives no heat" among them) and its alarms.
+An alarm exists only where its feature is not inactive (the missing-data rule, Y4)."""
 
 from __future__ import annotations
 
@@ -69,6 +69,7 @@ async def async_setup_entry(
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))  # control removed: its state goes
         entities.append(BoilerCalledSensor(coordinator))  # whether the boiler is called
+        entities.append(NoHeatSensor(coordinator))  # "boiler gives no heat" (I12.9)
         # Each path's own alarms (R15): the relay's only on the relay path, the boiler link's
         # and the missing confirmation not there; each only where its feature is not inactive.
         kinds = control_alarms_for(coordinator.control.options)
@@ -308,6 +309,31 @@ class BoilerCalledSensor(ControlEntity, BinarySensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
         return {"call_reason": status.call_reason, **demand_attributes(status)}
+
+
+class NoHeatSensor(ControlEntity, BinarySensorEntity):
+    """I12.9 (the user's decision of 2026-11-25): one house-wide "boiler gives no heat" signal —
+    on while the boiler gives the rooms no heat now, off while it does as far as the plugin
+    drives it — with its ``reason``. The user picks it in SmartPI 1.0's "heating unavailable"
+    input, which counts only "on" (``learning_block.py``, ``dev-1.0``), or uses it in an
+    automation. Unavailable while control is switched off, and while it cannot be told yet. No
+    device class: a signal for automations, not a problem."""
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "no_heat")
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.control.status.no_heat.on is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.control.status.no_heat.on
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        reason = self.control.status.no_heat.reason
+        return {"reason": None if reason is None else reason.value}
 
 
 class ControlAlarmSensor(ControlEntity, BinarySensorEntity):

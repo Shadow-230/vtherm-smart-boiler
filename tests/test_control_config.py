@@ -76,7 +76,6 @@ def test_otgw_defaults_are_cautious() -> None:
     assert control.curve.exponent == 1.3
     assert control.boiler_max == 65.0
     assert control.limits.hard_min == 20.0  # the lowest water temperature (decision 2)
-    assert options.learning_pauses
     assert options.reaction("outside_change") is AlarmReaction.HAND_BACK
     assert options.reaction("pressure_low") is AlarmReaction.INFO
     assert config_blockers(options, RADIATORS) == []
@@ -570,6 +569,24 @@ def test_the_demand_settings_moved_are_named_with_their_values() -> None:
     assert without_vt_settings(stored) == OTGW
     assert without_vt_settings(OTGW) is OTGW
     assert without_vt_settings(None) is None
+
+
+def test_the_learning_pauses_setting_goes_and_a_session_compares_as_migrated() -> None:
+    """I12.9 (minor version 23): the learning pauses setting leaves the control section; a
+    section of another shape, or one without it, is left as it is; and the options a stored
+    session took the boiler with are read without it, so a restart after the update compares
+    like with like (no hand-back for a setting that went)."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        section_as_migrated,
+        without_learning_pauses,
+    )
+
+    assert without_learning_pauses(OTGW | {"learning_pauses": True}) == OTGW
+    assert without_learning_pauses(OTGW) is OTGW
+    assert without_learning_pauses(None) is None
+    assert without_learning_pauses(["learning_pauses"]) == ["learning_pauses"]
+    assert section_as_migrated(OTGW | {"learning_pauses": False}) == section_as_migrated(OTGW)
+    assert not hasattr(parse_control(OTGW, RADIATORS, None), "learning_pauses")
 
 
 def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
@@ -1161,7 +1178,6 @@ def test_a_tick_with_a_hand_back_value_that_stops_heating_is_ignored() -> None:
         ({"curve": ["design_flow", 55]}, "curve"),
         ({"curve": CURVE | {"exponent": "inf"}}, "exponent"),
         ({"alarm_reactions": ["write_ignored"]}, "alarm_reactions"),
-        ({"learning_pauses": "no"}, "learning_pauses"),
         ({"hand_back_value": "nan"}, "hand_back_value"),
         ({"off_setpoint": -1}, "off_setpoint"),
     ],
@@ -1355,7 +1371,7 @@ def test_the_curve_defaults_pass_the_cross_field_checks() -> None:
 
 def test_a_passive_fixed_circuit_needs_its_temperature() -> None:
     """Negative: a thermostatic mixing valve without its temperature stays a configuration
-    error — the setting tells the zones what water they get (water-interface.md §4)."""
+    error — the setting tells the zones what water they get."""
     from custom_components.vtherm_smart_boiler.config import ConfigError, EntryConfig
 
     missing = {
@@ -1691,7 +1707,6 @@ def test_relay_settings_have_cautious_defaults() -> None:
     assert control.on_off
     assert control.stale_hand_back_s is None  # the link is the relay (R6)
     assert not control.comfort_correction
-    assert not options.learning.pause_on_water_swing  # R13: no water swing on a relay
     assert not options.return_after_outside_change
 
 

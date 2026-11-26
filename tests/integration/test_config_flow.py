@@ -3610,21 +3610,19 @@ async def test_a_new_relay_asks_the_separate_contact_tick_again(
 async def test_the_relay_path_asks_the_helper(
     hass: HomeAssistant, entities: dict[str, str], level: str
 ) -> None:
-    """I12 on the relay path: its behaviour step asks VT's central boiler's helper at the
-    simple level (alone) and the advanced one (with the learning pauses; frost protection is its
-    own item, I8 decision H4); T-37's check applies to frost protection on this path too."""
+    """I12 on the relay path: its behaviour step asks VT's central boiler's helper alone, at the
+    simple level and the advanced one (I12.9: no learning pauses; frost protection is its own
+    item, I8 decision H4); T-37's check applies to frost protection on this path too."""
     entry_id = await create_entry(hass, entities, level, ("living",), "on_off")
     result = await to_relay_step(hass, entry_id)
     result = await options_step(hass, result, RELAY_ANSWERS)
     assert result["step_id"] == "control_behaviour"
     fields = {str(marker) for marker in result["data_schema"].schema}
+    assert fields == {"vt_boiler_helper"}
     if level == "simple":
-        assert fields == {"vt_boiler_helper"}
         return
-    assert fields == {"vt_boiler_helper", "learning_pauses"}
     answer = {
         "vt_boiler_helper": VT_HELPER,
-        "learning_pauses": True,
         "frost_limit": 7,
         "frost_release": 7,
     }
@@ -3649,7 +3647,7 @@ async def test_the_relay_path_offers_no_return_by_itself(
     result = await options_step(
         hass,
         result,
-        {"vt_boiler_helper": VT_HELPER, "learning_pauses": True},
+        {"vt_boiler_helper": VT_HELPER},
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     options = {
@@ -5060,7 +5058,6 @@ async def test_the_behaviour_step_does_not_check_a_fixed_off(
         {
             "ramp_k_per_min": 1.0,
             "decision_interval_min": 5,
-            "learning_pauses": True,
             "comfort_correction": False,
         },
     )

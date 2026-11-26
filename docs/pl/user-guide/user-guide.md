@@ -67,15 +67,9 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
 SmartPI i Auto-TPI z VT (samouczący się algorytm VT, sterujący proporcjonalnie do czasu) są
 opcjonalne; wtyczka działa z każdym algorytmem stref VT.
 
-**Co pokazują termostaty VT.** Każdy termostat strefy obsługiwanej przez wtyczkę dostaje atrybut
-`smart_boiler` z wartością `heat_available`: czy ciepło z kotła dociera teraz do strefy.
-Jest „tak”, gdy pali się płomień, a zasilanie jest wyraźnie cieplejsze od powrotu (od
-pomieszczenia, gdy powrót nie jest znany), „nie”, gdy płomień zgasł albo ciepło zabiera ciepła
-woda z priorytetem, i puste, gdy nie da się tego ocenić. Obok niej `supply_temperature`: woda
-docierająca do obiegu strefy, zaokrąglona do 1 °C i odświeżana po zmianie o 1 K, pusta, gdy nie
-jest znana. Algorytm strefy może czytać pełne dane ([interfejs danych o wodzie, po
-angielsku](../specification/water-interface.md)); SmartPI 0.4.0 z nich nie korzysta. Nic w VT ani w
-sterowaniu od tego nie zależy.
+**Co pokazują termostaty VT.** Nic od wtyczki. Żeby algorytm strefy nie uczył się, gdy kocioł
+nie daje ciepła, wtyczka ma jeden czujnik, **Nie daje ciepła** (zobacz
+[Obok algorytmów stref VT](#411-obok-algorytmów-stref-vt)).
 
 ## 2. Instalacja
 
@@ -326,8 +320,8 @@ krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 pomieszczenie nie dochodzi do swojej nastawy mimo w
 pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K,
 najwyżej 10 K, ustawianego w **Krzywej grzewczej** obok korekty; nigdy więcej niż 3 K na dobę.
-Dla pomieszczenia, którego SmartPI jest w fazie nauki, „nie dochodzi” znaczy: poniżej nastawy +
-0,5 K, gdzie SmartPI przestaje je grzać. Nie rośnie, gdy kocioł startuje częściej niż wcześniej.
+„Nie dochodzi” znaczy: co najmniej 0,3 K poniżej nastawy VT, bez względu na algorytm strefy. Nie
+rośnie, gdy kocioł startuje częściej niż wcześniej.
 Jedno niedogrzane pomieszczenie liczy się jak każde inne — woda nigdy nie idzie wyżej dla jednego
 pokoju. Po trzech godzinach tak wysoko, jak może — na limicie albo po wzroście o 3 K w ciągu
 doby — gdy pomieszczenie nadal nie dochodzi do nastawy, korekta tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
@@ -405,14 +399,14 @@ z wbudowanym zasobnikiem. Dla każdego kotła, który grzeje ciepłą wodę, ekr
 
 - **Z priorytetem** (domyślnie) — gdy kocioł grzeje ciepłą wodę, pomieszczenia nie dostają
   ciepła. Tak jest zwykle w kotle dwufunkcyjnym i przy zasobniku ładowanym przez zawór
-  trójdrogowy. Wtyczka wstrzymuje wtedy na czas poboru naukę SmartPI w strefach i liczy, że
-  ciepło kotła nie trafia do pomieszczeń.
+  trójdrogowy. **Nie daje ciepła** jest wtedy włączony na czas poboru, z powodem „ciepła woda”.
 - **Bez priorytetu** — ciepła woda i ogrzewanie działają razem (zasobnik ładowany równolegle,
-  bufor, kocioł dwufunkcyjny, który dzieli ciepło). Ciepła woda nie wstrzymuje wtedy nauki i nie
-  liczy się jako ciepło, którego brakuje pomieszczeniom.
+  bufor, kocioł dwufunkcyjny, który dzieli ciepło). Ciepła woda nie liczy się wtedy jako ciepło,
+  którego brakuje pomieszczeniom.
 
-Zła odpowiedź albo niepotrzebnie wstrzymuje naukę, albo pozwala jej uczyć się z poborów, które
-zabrały pomieszczeniom ciepło. Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
+Przy złej odpowiedzi **Nie daje ciepła** myli się podczas ciepłej wody: algorytm strefy, który go
+czyta, wstrzymuje naukę bez potrzeby albo uczy się z poborów, które zabrały pomieszczeniom ciepło.
+Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
 
 ### 4.9 Otwarte okna
 
@@ -445,8 +439,8 @@ pilnowana i nie prosi o ciepło.
 
 ### 4.11 Obok algorytmów stref VT
 
-Wtyczka czyta strefy VT i nigdy nie zmienia ich ustawień ani algorytmów. Co termostat każdej
-strefy pokazuje od wtyczki, czyli atrybut `smart_boiler`, opisują [Wymagania](#1-wymagania).
+Wtyczka czyta strefy VT i nigdy nie zmienia ich ustawień ani algorytmów, ani nie wstrzymuje ich
+nauki.
 
 Krzywa grzewcza już podnosi temperaturę wody, gdy na zewnątrz robi się zimniej. Niektóre algorytmy
 stref też liczą temperaturę zewnętrzną, więc pogoda działa wtedy dwa razy:
@@ -460,9 +454,61 @@ stref też liczą temperaturę zewnętrzną, więc pogoda działa wtedy dwa razy
   którą ustawia wtyczka.
 
 Jak strefa zachowuje się przy obu, zależy od pomieszczenia i algorytmu; wtyczka to opisuje i nie
-doradza tych ustawień. Gdy ciepła woda albo duża zmiana temperatury wody zaburza pomieszczenia,
-wtyczka wstrzymuje uczenie SmartPI (domyślnie włączone), żeby wywołane przez nią wahania nie
-trafiły do modelu SmartPI.
+doradza tych ustawień.
+
+#### Nie daje ciepła
+
+Przy ustawionym sterowaniu czujnik binarny **Nie daje ciepła** (`binary_sensor.boiler_gives_no_heat`
+dla wpisu o nazwie „Boiler”) jest włączony, gdy kocioł nie daje teraz pokojom ciepła, a wyłączony,
+gdy daje — na tyle, na ile wtyczka nim steruje. Jego atrybut `reason` mówi, dlaczego jest
+włączony:
+
+- **Kocioł centralny VT nie wzywa ciepła** (`vt_not_calling`) — sterowanie działa, ale pomocnik
+  VT jest wyłączony: żaden pokój nie woła albo progi VT nie są osiągnięte;
+- **Trwa opóźnienie włączenia VT** (`activation_delay`);
+- **Kocioł grzeje ciepłą wodę** (`hot_water`) — tylko przy priorytecie ciepłej wody;
+- **Kocioł zgłasza usterkę** (`boiler_fault`);
+- **Wtyczka nie może ręczyć za ciepło** (`handed_back`) — oddała kocioł (alarm, utracone
+  połączenie z kotłem), sterowanie jest zablokowane, kocioł ma inny sterownik albo decyzja VT nie
+  jest znana.
+
+Gdy sterowanie jest wyłączone, czujnik jest niedostępny: wtyczka wtedy nie steruje kotłem i nie
+może tego ocenić. Gdy wtyczka czeka na dane (połączenie z kotłem na chwilę nieświeże), zostawia
+ostatnią wartość. Wtyczka sama nie wstrzymuje nauki żadnej strefy; użyj czujnika tak:
+
+- **SmartPI 1.0:** wybierz czujnik w ustawieniu SmartPI dla termostatu **Heating unavailable
+  entity (optional)** („encja braku grzania”), w każdym termostacie ze SmartPI. Nic więcej nie
+  trzeba: gdy jest włączony, SmartPI przestaje się uczyć i trzyma człon całkujący; liczy się tylko
+  „włączony”, więc „niedostępny” pozwala mu się uczyć.
+- **SmartPI 0.6.x** nie ma takiego ustawienia. Automatyzacja może wyłączać jego naukę, gdy czujnik
+  jest włączony, i włączać ją w pozostałych przypadkach, własną akcją SmartPI
+  `vtherm_smartpi.set_smartpi_learning` (pole `learning_enabled`; sprawdzone w SmartPI 0.6.7).
+  Wpisz swoje termostaty ze SmartPI w `entity_id`. `to: null` reaguje na włączenie i wyłączenie,
+  nie na zmianę powodu. Włącza też naukę wyłączoną ręcznie.
+
+  ```yaml
+  automation:
+    - alias: "SmartPI learns only while the boiler gives heat"
+      triggers:
+        - trigger: state
+          entity_id: binary_sensor.boiler_gives_no_heat
+          to: null
+        - trigger: homeassistant
+          event: start
+      actions:
+        - action: vtherm_smartpi.set_smartpi_learning
+          target:
+            entity_id:
+              - climate.your_smartpi_thermostat
+          data:
+            learning_enabled: "{{ not is_state('binary_sensor.boiler_gives_no_heat', 'on') }}"
+  ```
+
+- **Auto-TPI** (VT 10.6.5): VT sam pomija naukę Auto-TPI, gdy jego kocioł centralny jest
+  wyłączony, w termostatach oznaczonych „używany przez kocioł centralny” — więc „VT nie wzywa” i
+  jego opóźnienie włączenia nie wymagają niczego. Dla ciepłej wody, usterki kotła i oddania kotła
+  VT nie ma czystej pauzy: jego akcja `set_auto_tpi_mode` domyślnie kasuje to, czego Auto-TPI się
+  nauczył, i przepisuje ustawienia termostatu, więc to nie jest pauza do automatyzacji.
 
 **Gdy czujnik milczy.** VT przełącza strefę w tryb bezpieczny, gdy przez czas opóźnienia
 bezpieczeństwa, domyślnie 60 minut, nie dostaje nowej wartości z czujnika pokojowego albo
@@ -1071,10 +1117,8 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
-| Wtyczka nie może wstrzymać nauki w części stref | informacja |
-| Wtyczka nie mogła ponownie włączyć nauki w części stref | włącz naukę SmartPI |
-| Termostaty VT nie mogą pokazać wartości strefy z wtyczki | zaktualizuj VT; nic innego od tego nie zależy |
-| Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki | przeładuj VT |
+| Versatile Thermostat jest za stary dla wtyczki | zaktualizuj VT; do tego czasu sterowanie jest zablokowane |
+| Część termostatów VT wymaga przeładowania, żeby trafiły do wtyczki | przeładuj VT |
 
 „3 warianty”: kocioł nie grzeje albo wrócił do swojego termostatu, albo wtyczka tylko
 monitoruje.
@@ -1121,9 +1165,8 @@ Gdy „Sygnały” są wyłączone, ich atrybuty wskazują sygnał, z którym je
 | Nie udało się odczytać pamięci wtyczki o kotle | dla bezpieczeństwa oddała kocioł |
 | Wtyczka nie może zapisać swojej pamięci o kotle | pełny dysk albo pamięć tylko do odczytu |
 | Kocioł może nadal trzymać wartość z Smart Boiler for Versatile Thermostat | oddaj kocioł ręcznie |
-| Nauka SmartPI może być nadal wyłączona w części stref | włącz naukę SmartPI |
 
-Dwa ostatnie pojawiają się, gdy integracja została usunięta, zanim zdążyła po sobie posprzątać.
+Ostatnie pojawia się, gdy integracja została usunięta, zanim zdążyła po sobie posprzątać.
 
 ## 8. Diagram stanów sterowania
 
@@ -1223,6 +1266,7 @@ domyślnie wyłączone.
 | Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
+| Nie daje ciepła | włączone, gdy kocioł nie daje pokojom ciepła, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
 | Wołające o ciepło | pokoje wołające teraz i które to są |
 | Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, nieznana strefa, mróz bez nagrzewania i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
@@ -1274,7 +1318,6 @@ Najważniejsze — opisane, nie doradzane:
 | Ochrona przed mrozem | wł. przy 5 °C, wył. przy 7 °C, każda strefa | grzeje tylko strefy, których grzejniki mogą przyjąć ciepło; strefa trzymana przez VT zamknięta dostaje zgłoszenie w Naprawach |
 | Reakcje na alarmy | informacja — kilka alarmów zawsze oddaje sterowanie | alarm ustawiony na oddanie zatrzymuje sterowanie, dopóki go nie wyłączysz i nie włączysz |
 | Powrót sam po innym sterowniku | wyłączony | włączony: sterowanie wraca 60 minut po ostatniej obcej wartości, choć inny sterownik może wciąż działać |
-| Wstrzymywanie uczenia (SmartPI) | włączone | wyłączone: wahania wywołane przez wtyczkę trafiają do modelu SmartPI |
 
 Każda wartość domyślna i jej powód: tabela wartości domyślnych w [specyfikacji, część 7](../specification/scope.md#7-funkcje-według-etapów).
 Wartości oznaczone jako tymczasowe są przeglądane przed pierwszym wydaniem.
@@ -1375,8 +1418,7 @@ target:
 1. Możesz najpierw wyłączyć sterowanie (**Tryb sterowania**, odznacz **Sterowanie włączone**) i
    sprawdzić, że kocioł wrócił do własnego sterowania.
 2. Usuń wpis: Ustawienia → Urządzenia oraz usługi → Smart Boiler for Versatile Thermostat → Usuń.
-   Wtyczka oddaje kocioł, wznawia wstrzymane przez siebie uczenie SmartPI i usuwa swój zapisany
-   stan, dziennik i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
+   Wtyczka oddaje kocioł i usuwa swój zapisany stan, dziennik i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
    Naprawach: oddaj kocioł ręcznie.
 3. Usuń ją w HACS (albo usuń jej folder) i uruchom ponownie Home Assistant.
 4. Aby kocioł centralny VT znów sterował kotłem, skieruj jego polecenia z powrotem na kocioł w

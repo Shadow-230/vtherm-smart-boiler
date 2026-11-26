@@ -1,14 +1,16 @@
 """Whether the boiler is called for heat now, and why not (the user's decisions of 2026-10-14).
 
 VT's central boiler decides whether the boiler heats (I12); the plugin shows whether it calls the
-boiler now, with the water temperature and its safety rules on top. SmartPI asked for it too
-(``water-interface.md`` §4): a zone may call while the boiler is not fired — VT's central boiler
-not calling, its activation delay running, the boiler's own fault — and a zone algorithm must not
-learn from heat that never came, which a burner pause (``heat_reason`` ``flame_off``) does not
-tell apart.
+boiler now, with the water temperature and its safety rules on top: a zone may call while the
+boiler is not fired — VT's central boiler not calling, its activation delay running, the boiler's
+own fault.
 
 "Called" is what the plugin commands, not proof that the boiler obeys: a write ignored, a relay
 not confirmed, are told by their own alarms. Pure logic from the control state's mode and reasons.
+
+Beside it, the house-wide "boiler gives no heat" signal (I12.9, the user's decision of
+2026-11-25), with its reason: what a zone algorithm's user picks to keep it from learning from
+heat that never came — SmartPI 1.0's "heating unavailable" input, or an automation.
 """
 
 from __future__ import annotations
@@ -68,3 +70,62 @@ def boiler_call(mode: ControlMode, reasons: Collection[Reason], calling: int) ->
     if calling > 0:
         return BoilerCall(False, CallReason.BELOW_THRESHOLD)
     return BoilerCall(False, CallReason.NO_DEMAND)
+
+
+class NoHeatReason(StrEnum):
+    """Why the boiler gives the rooms no heat now (I12.9)."""
+
+    VT_NOT_CALLING = "vt_not_calling"  # control works; VT's central boiler does not ask for heat
+    ACTIVATION_DELAY = "activation_delay"  # VT's central boiler waits its activation delay
+    HOT_WATER = "hot_water"  # the boiler heats domestic hot water, which takes the rooms' heat
+    BOILER_FAULT = "boiler_fault"  # the boiler reports its own fault that stops it
+    HANDED_BACK = "handed_back"  # the plugin cannot vouch for heat: handed back, blocked, unsure
+
+
+@dataclass(frozen=True, slots=True)
+class NoHeat:
+    """The house-wide "boiler gives no heat" signal (I12.9): ``on`` while the boiler gives the
+    rooms no heat now, ``off`` while it does as far as the plugin drives it, ``None`` (shown
+    unavailable) while it cannot be told. ``reason``: only while on."""
+
+    on: bool | None
+    reason: NoHeatReason | None = None
+
+
+NO_HEAT_UNKNOWN = NoHeat(None)
+_HEAT_GIVEN = frozenset({ControlMode.HEATING, ControlMode.FALLBACK, ControlMode.FROST})
+_NOT_VOUCHED = frozenset({ControlMode.NOT_ALLOWED, ControlMode.HANDED_BACK})
+
+
+def no_heat(
+    mode: ControlMode,
+    reasons: Collection[Reason],
+    previous: NoHeat,
+    *,
+    hot_water: bool | None = None,
+    writes_stopped: bool = False,
+) -> NoHeat:
+    """The signal from the control step: its ``mode`` and ``reasons``, the last value
+    (``previous``), hot water taking the rooms' heat now (``hot_water``, only ``True`` counts)
+    and whether another controller has the boiler (``writes_stopped``).
+
+    Control switched off by the user: unknown — the plugin does not drive the boiler, and an
+    "on" would hold a zone algorithm's learning back for as long as control stays off. Waiting
+    for data (a stale link short of a loss, a read-back unknown, the recognition period with
+    nothing held): the last value, nothing being written meanwhile. Handed back, blocked, writes
+    stopped, or VT's decision unknown: on, ``handed_back``. Then the boiler's fault; heating
+    wanted (frost protection and the recognition period's kept "on" included): off, or on for hot
+    water; heating not wanted: on, for VT's activation delay or VT not calling."""
+    if mode is ControlMode.DISABLED:
+        return NO_HEAT_UNKNOWN
+    if mode is ControlMode.WAITING_DATA:
+        return previous
+    if mode in _NOT_VOUCHED or writes_stopped or Reason.ZONES_UNKNOWN in reasons:
+        return NoHeat(True, NoHeatReason.HANDED_BACK)
+    if mode is ControlMode.BOILER_FAULT:
+        return NoHeat(True, NoHeatReason.BOILER_FAULT)
+    if mode in _HEAT_GIVEN:
+        return NoHeat(True, NoHeatReason.HOT_WATER) if hot_water is True else NoHeat(False)
+    if Reason.ACTIVATION_DELAY in reasons:
+        return NoHeat(True, NoHeatReason.ACTIVATION_DELAY)
+    return NoHeat(True, NoHeatReason.VT_NOT_CALLING)

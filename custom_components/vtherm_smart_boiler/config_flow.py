@@ -1405,7 +1405,6 @@ CONTROL_ADVANCED_KEYS = (
     "ramp_k_per_min",
     "decision_interval_min",
     "off_setpoint",
-    "learning_pauses",
     "alarm_reactions",
     "return_after_outside_change",
     "return_after_switch_hand_back",
@@ -1953,10 +1952,10 @@ def apply_control_relay(options: dict[str, Any], user_input: dict[str, Any]) -> 
 
 def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
     """The "Control behaviour" item (I8, decision H3), one form for both modes: the helper VT's
-    central boiler switches at every level (I12); at the advanced level the learning pauses;
-    with full control also the ramp, the decision interval and the "off" setpoint where "off" is
-    written as a low setpoint — not with a heating switch, nor where "off" is the connection's
-    own, as EMS-ESP's 0 (I8, decision H3)."""
+    central boiler switches at every level (I12); at the advanced level with full control also
+    the ramp, the decision interval and the "off" setpoint where "off" is written as a low
+    setpoint — not with a heating switch, nor where "off" is the connection's own, as EMS-ESP's 0
+    (I8, decision H3)."""
     control = options.get(CONTROL, {})
     fields: dict[Any, Any] = {**vt_helper_field(control)}
 
@@ -1972,7 +1971,6 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
             fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
         return vol.Schema(fields)
 
-    fields |= required("learning_pauses", selector.BooleanSelector())
     if _relay_path(options):
         return vol.Schema(fields)
     fields |= {
@@ -3831,7 +3829,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 22
+    MINOR_VERSION = 23
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

@@ -6,8 +6,8 @@ each of its thermostats to the plugin's feature manager, which keeps it here
 (``vtherm_attributes.RUNTIME_MEMBERS``). The rest — and every value of a thermostat VT started
 before the plugin registered, until VT's reload — comes from VT's climate entities (state and
 top-level attributes, see ``vtherm_attributes``) and VT's central mode select. It detects what is
-installed instead of assuming it: VT, its version, ``vtherm_api`` and SmartPI may be missing or
-older.
+installed instead of assuming it: VT, its version and ``vtherm_api`` may be missing or older.
+Nothing of SmartPI is read (I12.9).
 
 VT's central boiler decides whether the boiler heats (I12): its settings reach the plugin in each
 handed-over thermostat's ``entry_infos`` — the thermostat's settings merged over VT's central
@@ -51,7 +51,6 @@ from .vtherm_attributes import (
 
 _LOGGER = logging.getLogger(__name__)
 
-SMARTPI_DOMAIN = "vtherm_smartpi"
 # VT's thermostats as VT handed them to the plugin's feature manager, for this Home Assistant run:
 # kept across the plugin's reloads, as the managers are (``feature_manager``).
 THERMOSTATS_KEY = f"{DOMAIN}_vt_thermostats"
@@ -80,17 +79,8 @@ HELPER_OFF = frozenset({("input_boolean", "turn_off"), ("homeassistant", "turn_o
 VT_OLDEST = "10.6.4"
 VT_OLDEST_SHOWN = "10.6.5"
 VT_TESTED = "10.6.5"  # the VT version the plugin is tested with (10.5.1 until 2026-11-25)
-# The key a zone algorithm writes into VT's ``specific_states`` when it uses the plugin's water
-# data (I9; water-interface.md §3.4 — SmartPI's, Annex A).
-WATER_DATA_KEY = "water_factor"
 OVER_SWITCH = "over_switch"  # VT's ``configuration`` ``type`` of a zone it switches on and off
 HVAC_OFF_REASON = "hvac_off_reason"  # in a thermostat's ``specific_states`` (VT 10.4.0 to 10.6.5)
-# SmartPI 0.4.0 (G11 C): the VT climate's ``specific_states`` names its diagnostic sensor, whose
-# state is the phase — "bootstrap_hysteresis" its learning phase, run on/off (``handler.py``,
-# ``sensor.py``). Any other state, or none, tells nothing: the phase is unknown.
-SMARTPI_DIAGNOSTICS = "regulation_diagnostics"
-SMARTPI_LEARNING_PHASE = "bootstrap_hysteresis"
-SMARTPI_PHASES = frozenset({SMARTPI_LEARNING_PHASE, "stable", "calibration", "inactive"})
 ROOM_SENSOR = "temperature_sensor_entity_id"  # in a thermostat's entry data (VT 10.4.0)
 # The entities a thermostat drives — switches, valves or climates — in its entry's data (VT 10.4.0
 # ``const.py:63``, ``CONF_UNDERLYING_LIST``; migrated there from the older per-slot keys).
@@ -99,13 +89,7 @@ UNDERLYING = "underlying_entity_ids"
 
 @dataclass(frozen=True, slots=True)
 class ZoneAlgorithm:
-    proportional_function: str | None = None  # "tpi" or "smartpi"
-    smartpi_learning: bool | None = None  # SmartPI's learning flag; None: not SmartPI
-    auto_tpi: bool = False  # Auto-TPI learning is on (a session or continuous kext)
     used_by_central_boiler: bool | None = None
-    # I9 (water-interface.md §3.4): the zone's algorithm uses the plugin's water data — the key
-    # it writes into VT's ``specific_states`` is there.
-    uses_water_data: bool = False
     # K4 (2026-11-17): VT's thermostat type ("over_switch", "over_valve", "over_climate", …) and
     # its cycle in minutes (``configuration``, VT 10.5.1 and 10.6.5 ``base_thermostat.py``).
     vtherm_type: str | None = None
@@ -172,7 +156,6 @@ class VtCapabilities:
     vt_loaded: bool
     vt_version: str | None
     vtherm_api_version: str | None
-    smartpi_loaded: bool
 
 
 def room_sensor(hass: HomeAssistant, entity_id: str) -> str | None:
@@ -379,22 +362,6 @@ def vt_supported(version: str | None) -> bool | None:
         return None
 
 
-def smartpi_learning_phase(hass: HomeAssistant, state: State | None) -> bool | None:
-    """Whether a zone's SmartPI runs its learning phase (G11 C), as its diagnostic sensor shows:
-    ``True`` in it, ``False`` in another phase, ``None`` where it cannot be told — not SmartPI,
-    an older one without that sensor, the sensor away, or a state this version does not know."""
-    if state is None:
-        return None
-    specific = state.attributes.get("specific_states")
-    sensor = specific.get(SMARTPI_DIAGNOSTICS) if isinstance(specific, dict) else None
-    if not isinstance(sensor, str) or not sensor:
-        return None
-    diagnostics = hass.states.get(sensor)
-    if diagnostics is None or diagnostics.state not in SMARTPI_PHASES:
-        return None
-    return diagnostics.state == SMARTPI_LEARNING_PHASE
-
-
 def register_thermostat(hass: HomeAssistant, thermostat: Any) -> None:
     """Keep a thermostat VT handed to the plugin's feature manager (``vtherm_api``)."""
     thermostats: list[Any] = hass.data.setdefault(THERMOSTATS_KEY, [])
@@ -427,22 +394,6 @@ def vt_thermostat(hass: HomeAssistant, entity_id: str) -> Any | None:
         if unique_id == entry.unique_id:
             return thermostat
     return None
-
-
-def vt_entity_id(hass: HomeAssistant, thermostat: Any) -> str | None:
-    """The climate entity of a thermostat VT handed over: by the unique ID ``vtherm_api``
-    declares, in VT's registry entries; else the entity ID it carries (assumed, a VT not seen
-    without a registry entry)."""
-    try:
-        unique_id = thermostat.unique_id
-    except Exception:  # VT's property failed, or not there
-        unique_id = None
-    if isinstance(unique_id, str):
-        found = er.async_get(hass).async_get_entity_id("climate", VT_DOMAIN, unique_id)
-        if found is not None:
-            return found
-    entity_id = getattr(thermostat, "entity_id", None)
-    return entity_id if isinstance(entity_id, str) else None
 
 
 def vt_central_boiler(hass: HomeAssistant) -> VtCentralBoiler | None:
@@ -549,8 +500,7 @@ class VThermLink:
         else:
             self._through_api.discard(entity_id)
         lost = zone.safety_on or self._room_sensor_lost(entity_id)
-        learning = smartpi_learning_phase(self._hass, state)
-        return replace(zone, room_sensor_lost=lost, smartpi_learning_phase=learning)
+        return replace(zone, room_sensor_lost=lost)
 
     def _thermostat(self, entity_id: str, state: State | None) -> Any | None:
         """The zone's VT thermostat as VT handed it to the plugin, while VT shows it running: a
@@ -659,11 +609,6 @@ class VThermLink:
             reason = state.attributes.get(HVAC_OFF_REASON)
         return reason if isinstance(reason, str) else None
 
-    def shows_attribute(self, entity_id: str, attribute: str) -> bool | None:
-        """Whether a zone's thermostat carries an attribute now; ``None`` when it is away."""
-        state = self._hass.states.get(entity_id)
-        return None if state is None else attribute in state.attributes
-
     def zone_algorithm(self, entity_id: str) -> ZoneAlgorithm:
         """What runs a zone, from VT's live attributes (not kept by the recorder); its cycle
         through ``vtherm_api`` where VT handed the thermostat over."""
@@ -671,29 +616,19 @@ class VThermLink:
         if state is None:
             return ZoneAlgorithm()
         configuration = state.attributes.get("configuration")
-        specific = state.attributes.get("specific_states")
         known = isinstance(configuration, dict) and state.state not in (
             STATE_UNAVAILABLE,
             STATE_UNKNOWN,
         )
         configuration = configuration if isinstance(configuration, dict) else {}
-        specific = specific if isinstance(specific, dict) else {}
-        smartpi = specific.get("smartpi_learning_enabled")
         used = configuration.get("is_used_by_central_boiler")
-        function = configuration.get("proportional_function")
         kind = configuration.get("type")
         cycle = configuration.get("cycle_min")
         thermostat = self._thermostat(entity_id, state)
         if thermostat is not None:
             cycle = runtime_readings(thermostat, ("cycle_min",)).get("cycle_min", cycle)
         return ZoneAlgorithm(
-            proportional_function=function if isinstance(function, str) else None,
-            smartpi_learning=smartpi if isinstance(smartpi, bool) else None,
-            # VT publishes these keys for every TPI zone; "on" means Auto-TPI is learning.
-            auto_tpi="on"
-            in (specific.get("auto_tpi_state"), specific.get("auto_tpi_continuous_kext")),
             used_by_central_boiler=used if isinstance(used, bool) else None,
-            uses_water_data=WATER_DATA_KEY in specific,
             vtherm_type=kind if isinstance(kind, str) else None,
             cycle_min=(
                 float(cycle)
@@ -723,7 +658,6 @@ class VThermLink:
             vt_loaded,
             vt_version(self._hass) if vt_loaded else None,
             self._api_version,
-            SMARTPI_DOMAIN in components,
         )
 
 

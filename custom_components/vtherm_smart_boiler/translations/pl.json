@@ -26,7 +26,7 @@
         "data_description": {
           "control_mode": "Bez wartości domyślnej: wybierany świadomie. Pokazane są tylko tryby, które umie połączenie.",
           "condensing": "Kocioł kondensacyjny dostaje progi spalin dla kondensacji i jest oceniany po tym, jak często kondensuje. Zła odpowiedź ostrzega za późno albo na darmo i zniekształca werdykt.",
-          "dhw_priority": "Włączone (domyślnie): podczas ciepłej wody pokoje nie dostają ciepła — kocioł dwufunkcyjny albo zasobnik na zaworze trójdrogowym. Wyłączone: jedno i drugie naraz. Zła odpowiedź wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć bez ciepła."
+          "dhw_priority": "Włączone (domyślnie): podczas ciepłej wody pokoje nie dostają ciepła — kocioł dwufunkcyjny albo zasobnik na zaworze trójdrogowym. Wyłączone: jedno i drugie naraz. Zła odpowiedź sprawia, że czujnik „Kocioł nie daje ciepła” myli się podczas ciepłej wody."
         }
       },
       "interface": {
@@ -353,7 +353,7 @@
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
           "fallback_setpoint": "Używana, gdy od trzech godzin nie jest znana temperatura zewnętrzna (czujnik i pogoda utracone albo podejrzane), w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje; zawory chronią pokoje przed przegrzaniem.",
-          "comfort_correction": "Domyślnie wyłączona. Włączona: gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy (przy SmartPI w fazie nauki: do nastawy + 0,5 K), woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i więcej startów. Przy strefach TPI w VT często stoi na limicie: w symulacji około 2 do 6 razy więcej startów za mniej niż 0,15 K komfortu. Gdy pokój zostaje zimny, najpierw podnieś krzywą.",
+          "comfort_correction": "Domyślnie wyłączona. Włączona: gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy, woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i więcej startów. Przy strefach TPI w VT często stoi na limicie: w symulacji około 2 do 6 razy więcej startów za mniej niż 0,15 K komfortu. Gdy pokój zostaje zimny, najpierw podnieś krzywą.",
           "room_mode": "Auto (domyślnie): krzywa przechodzi przez najwyższą nastawę spośród stref, które teraz grzeją — najwyżej 23 °C, za presetami VT. Ręcznie: wartość poniżej. Przy Auto najcieplejszy pokój ustala wodę dla wszystkich; pokój ogrzewany tylko czasem też ją podnosi, chyba że go pominiesz poniżej.",
           "room_excluded": "Strefy, których nastawy Auto nie bierze, np. łazienka trzymana cieplej. Taki pokój może nie dochodzić do nastawy przy łagodnej pogodzie; korekta komfortu podnosi wtedy dla niego wodę.",
           "comfort_correction_max_k": "O ile ponad krzywą korekta może podnieść wodę, w K. Domyślnie 3 K, od 0,5 do 10; rośnie najwyżej 3 K na dobę. To jedyne ograniczenie ponad krzywą. Wyżej: więcej gazu i cieplejsza woda dla pokoi, które jej nie potrzebują; korekta stojąca na limicie znaczy, że krzywa jest za niska."
@@ -361,20 +361,18 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym: pauzy nauki; przy pełnym sterowaniu rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
+        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym przy pełnym sterowaniu: rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
         "data": {
           "vt_boiler_helper": "Pomocnik przełączany przez kocioł centralny VT",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
-          "off_setpoint": "Nastawa „wyłączone”",
-          "learning_pauses": "Wstrzymuj naukę stref"
+          "off_setpoint": "Nastawa „wyłączone”"
         },
         "data_description": {
           "vt_boiler_helper": "Pomocnik wł./wył. (input_boolean), którego kocioł centralny Versatile Thermostat włącza i wyłącza. VT decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia; wtyczka idzie za tym pomocnikiem i ustala temperaturę wody. Utwórz pomocnika, daj kotłowi centralnemu VT polecenia input_boolean.turn_on i input_boolean.turn_off na nim i wybierz go tutaj. Nigdy nie kieruj poleceń VT na sam kocioł: dwa sterowniki by się kłóciły. Brak wartości domyślnej: sterowanie czeka, aż go wybierzesz.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie od razu za kotłem centralnym VT. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
-          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
-          "learning_pauses": "Wstrzymuj naukę SmartPI podczas ciepłej wody, gdy sterowanie trzyma grzanie wyłączone przez usterkę kotła i gdy woda się waha, żeby nie uczył się tego, co zrobił kocioł; najwyżej godzinę każdą. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez utraty nauki: takie strefy są zgłaszane."
+          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana."
         }
       },
       "control_frost": {
@@ -567,7 +565,7 @@
           "control_on": "Włączone: wtyczka steruje kotłem tak, jak ustawiają to pozycje sterowania (eksperymentalne). Wyłączone: od razu oddaje kocioł jego własnemu sterownikowi. Działa po „Zapisz i zakończ”. Gdy coś nie pozwala sterowaniu działać, czeka; stan sterowania mówi dlaczego.",
           "control_mode": "Bez wartości domyślnej: wybierany świadomie. Pokazane są tylko tryby, które umie połączenie.",
           "condensing": "Kocioł kondensacyjny dostaje progi spalin dla kondensacji i jest oceniany po tym, jak często kondensuje. Zła odpowiedź ostrzega za późno albo na darmo i zniekształca werdykt.",
-          "dhw_priority": "Włączone (domyślnie): podczas ciepłej wody pokoje nie dostają ciepła — kocioł dwufunkcyjny albo zasobnik na zaworze trójdrogowym. Wyłączone: jedno i drugie naraz. Zła odpowiedź wstrzymuje naukę stref bez potrzeby albo pozwala im się uczyć bez ciepła."
+          "dhw_priority": "Włączone (domyślnie): podczas ciepłej wody pokoje nie dostają ciepła — kocioł dwufunkcyjny albo zasobnik na zaworze trójdrogowym. Wyłączone: jedno i drugie naraz. Zła odpowiedź sprawia, że czujnik „Kocioł nie daje ciepła” myli się podczas ciepłej wody."
         }
       },
       "interface": {
@@ -884,7 +882,7 @@
           "exponent": "Jak wygina się krzywa. Puste pole bierze go z grzejników: grzejniki 1,3, konwektory 1,4, podłogówka 1,1. Złe wygięcie niedogrzewa w mrozy albo przegrzewa przy łagodnej pogodzie.",
           "offset": "Przesuwa całą krzywą w górę albo w dół, w K. Domyślnie 0. W górę marnuje gaz; w dół zostawia zimne pokoje.",
           "fallback_setpoint": "Używana, gdy od trzech godzin nie jest znana temperatura zewnętrzna (czujnik i pogoda utracone albo podejrzane), w °C. Puste (domyślnie): krzywa w punkcie projektowym, najwięcej ciepła, jakie daje; zawory chronią pokoje przed przegrzaniem.",
-          "comfort_correction": "Domyślnie wyłączona. Włączona: gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy (przy SmartPI w fazie nauki: do nastawy + 0,5 K), woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i więcej startów. Przy strefach TPI w VT często stoi na limicie: w symulacji około 2 do 6 razy więcej startów za mniej niż 0,15 K komfortu. Gdy pokój zostaje zimny, najpierw podnieś krzywą.",
+          "comfort_correction": "Domyślnie wyłączona. Włączona: gdy zawór strefy jest całkiem otwarty, a pokój nie dochodzi do nastawy, woda rośnie ponad krzywą — 1 K na 30 min, najwyżej 3 K na dobę, do limitu — i spada dwa razy szybciej; nie, gdy inna strefa jest za ciepła albo rosną starty. Koszt: więcej gazu i więcej startów. Przy strefach TPI w VT często stoi na limicie: w symulacji około 2 do 6 razy więcej startów za mniej niż 0,15 K komfortu. Gdy pokój zostaje zimny, najpierw podnieś krzywą.",
           "room_mode": "Auto (domyślnie): krzywa przechodzi przez najwyższą nastawę spośród stref, które teraz grzeją — najwyżej 23 °C, za presetami VT. Ręcznie: wartość poniżej. Przy Auto najcieplejszy pokój ustala wodę dla wszystkich; pokój ogrzewany tylko czasem też ją podnosi, chyba że go pominiesz poniżej.",
           "room_excluded": "Strefy, których nastawy Auto nie bierze, np. łazienka trzymana cieplej. Taki pokój może nie dochodzić do nastawy przy łagodnej pogodzie; korekta komfortu podnosi wtedy dla niego wodę.",
           "comfort_correction_max_k": "O ile ponad krzywą korekta może podnieść wodę, w K. Domyślnie 3 K, od 0,5 do 10; rośnie najwyżej 3 K na dobę. To jedyne ograniczenie ponad krzywą. Wyżej: więcej gazu i cieplejsza woda dla pokoi, które jej nie potrzebują; korekta stojąca na limicie znaczy, że krzywa jest za niska."
@@ -892,20 +890,18 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym: pauzy nauki; przy pełnym sterowaniu rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
+        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym przy pełnym sterowaniu: rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
         "data": {
           "vt_boiler_helper": "Pomocnik przełączany przez kocioł centralny VT",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
-          "off_setpoint": "Nastawa „wyłączone”",
-          "learning_pauses": "Wstrzymuj naukę stref"
+          "off_setpoint": "Nastawa „wyłączone”"
         },
         "data_description": {
           "vt_boiler_helper": "Pomocnik wł./wył. (input_boolean), którego kocioł centralny Versatile Thermostat włącza i wyłącza. VT decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia; wtyczka idzie za tym pomocnikiem i ustala temperaturę wody. Utwórz pomocnika, daj kotłowi centralnemu VT polecenia input_boolean.turn_on i input_boolean.turn_off na nim i wybierz go tutaj. Nigdy nie kieruj poleceń VT na sam kocioł: dwa sterowniki by się kłóciły. Brak wartości domyślnej: sterowanie czeka, aż go wybierzesz.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
           "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie od razu za kotłem centralnym VT. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
-          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
-          "learning_pauses": "Wstrzymuj naukę SmartPI podczas ciepłej wody, gdy sterowanie trzyma grzanie wyłączone przez usterkę kotła i gdy woda się waha, żeby nie uczył się tego, co zrobił kocioł; najwyżej godzinę każdą. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez utraty nauki: takie strefy są zgłaszane."
+          "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana."
         }
       },
       "control_frost": {
@@ -1714,9 +1710,6 @@
           "latched_by_text": {
             "name": "Zablokowane przez (tekst)"
           },
-          "learning_not_resumed": {
-            "name": "Nauka niewłączona ponownie"
-          },
           "target": {
             "name": "Ustalona nastawa zasilania (°C)"
           },
@@ -1731,9 +1724,6 @@
           },
           "room_sensor_lost_zones": {
             "name": "Strefy, które straciły czujnik pokojowy"
-          },
-          "learning_paused": {
-            "name": "Nauka wstrzymana w"
           },
           "writes_stopped": {
             "name": "Zapisy zatrzymane (inny sterownik)"
@@ -2370,6 +2360,21 @@
           },
           "activation_at": {
             "name": "Start zaplanowany na"
+          }
+        }
+      },
+      "no_heat": {
+        "name": "Nie daje ciepła",
+        "state_attributes": {
+          "reason": {
+            "name": "Powód",
+            "state": {
+              "vt_not_calling": "Kocioł centralny VT nie wzywa ciepła",
+              "activation_delay": "Trwa opóźnienie włączenia VT",
+              "hot_water": "Kocioł grzeje ciepłą wodę",
+              "boiler_fault": "Kocioł zgłasza usterkę",
+              "handed_back": "Wtyczka nie może ręczyć za ciepło (oddała kocioł, sterowanie zablokowane albo decyzja VT nieznana)"
+            }
           }
         }
       },
@@ -3020,25 +3025,17 @@
       "title": "Kocioł może nadal trzymać wartość z Smart Boiler for Versatile Thermostat",
       "description": "Integrację usunięto, zanim oddanie sterowania dotarło do kotła. Przywróć kotłu własne sterowanie ręcznie — ustaw na nowo encję nastawy albo wyczyść nadpisania bramki — a potem zignoruj to zgłoszenie."
     },
-    "learning_left_off_after_removal": {
-      "title": "Nauka SmartPI może być nadal wyłączona w części stref",
-      "description": "Integrację usunięto, gdy sterowanie miało wstrzymaną naukę SmartPI w tych strefach, i nie widać, by nauka znów się włączyła: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Włącz ją tam, a potem zignoruj to zgłoszenie."
-    },
     "zone_cycle_short": {
       "title": "Krótkie cykle w VT: więcej startów kotła",
       "description": "{zones}: Versatile Thermostat włącza i wyłącza grzanie tych pokoi w cyklach krótszych niż 10 minut. Wtyczka włącza i wyłącza kocioł razem z nimi, więc krótkie cykle oznaczają wiele krótkich paleń, które marnują gaz i zużywają kocioł. Dla pokoi, które wołają kocioł gazowy, ustaw w VT cykl na 10–15 minut: w symulacji zmniejszyło to liczbę startów kotła o jedną trzecią do połowy w łagodną pogodę, przy równie ciepłych pokojach."
-    },
-    "learning_not_paused": {
-      "title": "Wtyczka nie może wstrzymać nauki w części stref",
-      "description": "Sterowanie nie może wstrzymać nauki w tych strefach podczas ciepłej wody i wahań wody: {zones}. Auto-TPI dałoby się wstrzymać tylko kasując jego naukę; SmartPI bez flagi nauki nie da się wstrzymać. Uczą się więc i w tych chwilach, co może zniekształcić ich naukę."
     },
     "vt_feature_manager_unsupported": {
       "title": "Versatile Thermostat jest za stary dla wtyczki",
       "description": "Zainstalowany tu Versatile Thermostat jest starszy niż {version}, najstarsza wersja obsługiwana przez wtyczkę (testowaną z VT 10.6.5), albo nie może załadować menedżera funkcji wtyczki: VT nie może przekazać wtyczce swoich termostatów. Zaktualizuj Versatile Thermostat; dopóki jest starszy niż {version}, sterowanie jest zablokowane."
     },
     "vt_reload_needed": {
-      "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki",
-      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich, czy ciepło dociera do ich stref. Nic innego od tego nie zależy."
+      "title": "Część termostatów VT wymaga przeładowania, żeby trafiły do wtyczki",
+      "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i trafią do niej dopiero po przeładowaniu VT: {zones}. Do tego czasu wtyczka czyta je ze stanu ich encji klimatu. Przeładuj Versatile Thermostat."
     },
     "entity_removed": {
       "title": "Encja używana przez wtyczkę zniknęła",
@@ -3263,10 +3260,6 @@
     "installation_underfloor_without_max_flow": {
       "title": "Ogrzewanie podłogowe bez limitu temperatury wody",
       "description": "Te obiegi zasilają ogrzewanie podłogowe prosto z kotła, bez zaworu mieszającego, i nie mają maksymalnej temperatury zasilania: {circuits}. Zbyt gorąca woda może uszkodzić podłogę. Wpisz maksymalną temperaturę zasilania każdego z nich — limit podłogi od instalatora lub z instrukcji — w opcjach integracji; do tego czasu sterowanie pozostaje zablokowane."
-    },
-    "learning_not_resumed": {
-      "title": "Wtyczka nie mogła ponownie włączyć nauki w części stref",
-      "description": "Sterowanie wstrzymało naukę SmartPI w tych strefach i od doby nie może jej ponownie włączyć, więc już nie próbuje: {zones}. SmartPI trzyma naukę wyłączoną, dopóki się jej nie włączy — w ustawieniach samego SmartPI albo jego usługą „set_smartpi_learning”. Jeśli wyłączyłeś ją sam, nic nie trzeba robić. To powiadomienie zniknie, gdy nauka znów będzie włączona."
     },
     "esphome_no_repeats": {
       "title": "Czujniki ESPHome nie powtarzają niezmienionych wartości",

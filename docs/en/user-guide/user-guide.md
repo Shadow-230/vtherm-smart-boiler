@@ -62,14 +62,9 @@ the [technical documentation](../technical/technical.md).
 SmartPI and VT's Auto-TPI (VT's self-learning time-proportional algorithm) are optional; the
 plugin works with any VT zone algorithm.
 
-**What VT's thermostats show.** Each thermostat of a zone the plugin serves gets the attribute
-`smart_boiler` with `heat_available`: whether the boiler's heat reaches the zone now.
-It is "yes" while the flame burns and the flow is clearly warmer than the return (than the room,
-where no return is known), "no" while the flame is out or hot water with priority takes the
-heat, and empty when it cannot be told. Beside it, `supply_temperature`: the water reaching the
-zone's circuit, rounded to 1 °C and updated after a change of 1 K, empty when it is not known.
-A zone algorithm can read the full data (the [water interface](../specification/water-interface.md)); SmartPI
-0.4.0 does not. Nothing in VT or in control depends on it.
+**What VT's thermostats show.** Nothing from the plugin. To keep a zone algorithm from learning
+while the boiler gives no heat, the plugin has one sensor, **Gives no heat** (see
+[Beside VT's zone algorithms](#411-beside-vts-zone-algorithms)).
 
 ## 2. Installation
 
@@ -307,9 +302,9 @@ outdoor sensor never means zero heat.
 **Comfort correction** — **off by default** (an entry keeps what it stored). Switched on: when a
 room stays short of its setpoint with its valve fully
 open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K, set
-in **Heating curve** beside the correction; never more than 3 K a day. For a room whose SmartPI
-is in its learning phase, "short" means below its setpoint + 0.5 K, where SmartPI stops heating
-it. It does not rise while the boiler starts more often than before. One room short counts like
+in **Heating curve** beside the correction; never more than 3 K a day. "Short" means 0.3 K or
+more below VT's setpoint, whatever the zone's algorithm. It does not rise while the boiler starts
+more often than before. One room short counts like
 any other — the water never goes higher for one room's sake. After three hours as high as it may
 go — at its limit, or once it has risen 3 K within a day — with a room still short, the correction
 holds there, and a repair issue names the room and the
@@ -382,15 +377,14 @@ single-function with a tank, combi (instantaneous hot water) or combi with a bui
 every boiler that heats hot water the panels ask whether **hot water has priority**:
 
 - **With priority** (default) — while the boiler heats hot water, the rooms get no heat. This is
-  usual for a combi and for a tank charged through a three-way valve. The plugin then pauses
-  SmartPI's learning in the zones during the draw, and counts the boiler's heat as not reaching
-  the rooms.
+  usual for a combi and for a tank charged through a three-way valve. **Gives no heat** is then
+  on during the draw, with the reason "hot water".
 - **Without priority** — hot water and heating run together (a tank charged in parallel, a
-  buffer, a combi that shares its heat). Hot water then neither pauses learning nor counts as
-  heat the rooms miss.
+  buffer, a combi that shares its heat). Hot water then does not count as heat the rooms miss.
 
-The wrong answer either pauses learning for nothing or lets it learn from draws that took the
-rooms' heat. How burns are told apart as heating or hot water does not depend on it.
+With the wrong answer, **Gives no heat** is wrong during hot water: a zone algorithm that reads it
+pauses its learning for nothing, or learns from draws that took the rooms' heat. How burns are
+told apart as heating or hot water does not depend on it.
 
 ### 4.9 Open windows
 
@@ -423,9 +417,8 @@ for heat.
 
 ### 4.11 Beside VT's zone algorithms
 
-The plugin reads VT's zones and never changes their settings or algorithms. What each zone's
-thermostat shows from the plugin, the attribute `smart_boiler`, is in
-[Prerequisites](#1-prerequisites).
+The plugin reads VT's zones and never changes their settings or algorithms, nor pauses their
+learning.
 
 The heating curve already raises the water temperature as it gets colder outside. Some zone
 algorithms count the outdoor temperature as well, so the weather then acts twice:
@@ -438,9 +431,59 @@ algorithms count the outdoor temperature as well, so the weather then acts twice
   sends.
 
 How a zone behaves with both depends on its room and its algorithm; the plugin describes this and
-gives no advice on these settings. While hot water or a large change of the water temperature
-disturbs the rooms, the plugin pauses SmartPI's learning (on by default), so the swings it causes
-stay out of SmartPI's model.
+gives no advice on these settings.
+
+#### Gives no heat
+
+With control set up, the binary sensor **Gives no heat** (`binary_sensor.boiler_gives_no_heat`
+for an entry named "Boiler") is on while the boiler gives the rooms no heat now, and off while it
+does, as far as the plugin drives it. Its attribute `reason` says why it is on:
+
+- **VT's central boiler does not call for heat** (`vt_not_calling`) — control works, but VT's
+  helper is off: no room calls, or VT's thresholds are not reached;
+- **VT's activation delay runs** (`activation_delay`);
+- **The boiler heats hot water** (`hot_water`) — only with hot water priority;
+- **The boiler reports a fault** (`boiler_fault`);
+- **The plugin cannot vouch for heat** (`handed_back`) — it handed the boiler back (an alarm, a
+  lost boiler link), control is blocked, another controller has the boiler, or VT's decision is
+  unknown.
+
+It is unavailable while control is off: the plugin then does not drive the boiler and cannot
+tell. While the plugin waits for data (a boiler link stale for a moment), it keeps its last
+value. The plugin pauses no zone's learning itself; use the sensor as follows.
+
+- **SmartPI 1.0:** pick the sensor in SmartPI's per-thermostat setting **Heating unavailable
+  entity (optional)**, for each SmartPI thermostat. Nothing else to do: while it is on, SmartPI
+  stops learning and holds its integral; only "on" counts, so "unavailable" lets it learn.
+- **SmartPI 0.6.x** has no such setting. An automation can switch its learning off while the
+  sensor is on, and back on otherwise, with SmartPI's own action
+  `vtherm_smartpi.set_smartpi_learning` (field `learning_enabled`; checked in SmartPI 0.6.7). Put
+  your SmartPI thermostats in `entity_id`. `to: null` reacts to on and off, not to a change of
+  reason. It also switches learning back on that you switched off yourself.
+
+  ```yaml
+  automation:
+    - alias: "SmartPI learns only while the boiler gives heat"
+      triggers:
+        - trigger: state
+          entity_id: binary_sensor.boiler_gives_no_heat
+          to: null
+        - trigger: homeassistant
+          event: start
+      actions:
+        - action: vtherm_smartpi.set_smartpi_learning
+          target:
+            entity_id:
+              - climate.your_smartpi_thermostat
+          data:
+            learning_enabled: "{{ not is_state('binary_sensor.boiler_gives_no_heat', 'on') }}"
+  ```
+
+- **Auto-TPI** (VT 10.6.5): VT already skips Auto-TPI's learning while its central boiler is off,
+  in thermostats marked "used by the central boiler" — so "VT not calling" and its activation
+  delay need nothing. For hot water, a boiler fault or a hand-back VT offers no clean pause: its
+  action `set_auto_tpi_mode` wipes what Auto-TPI learned by default and rewrites the thermostat's
+  settings, so it is not a pause to automate.
 
 **When a sensor goes quiet.** VT puts a zone into its safety mode when it gets no new value from
 the room or outdoor sensor for its safety delay, 60 minutes by default, while the zone wants at
@@ -1025,10 +1068,8 @@ not confirmed.
 | A heating circuit has no rooms | add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
-| The plugin cannot pause learning in some zones | information |
-| The plugin could not switch learning back on in some zones | switch SmartPI learning on |
-| VT's thermostats cannot show the plugin's zone value | update VT; nothing else depends on it |
-| Some VT thermostats need a reload to show the plugin's value | reload VT |
+| Versatile Thermostat is too old for the plugin | update VT; control is blocked meanwhile |
+| Some VT thermostats need a reload to be handed to the plugin | reload VT |
 
 "3 variants": the boiler is not heating, or it is back on its thermostat, or the plugin only
 monitors.
@@ -1075,9 +1116,8 @@ When "Signals" is off, its attributes name the signal with the problem.
 | The plugin's memory of the boiler could not be read | it handed back to be safe |
 | The plugin cannot save its memory of the boiler | full disk or read-only storage |
 | The boiler may still hold a value from Smart Boiler for Versatile Thermostat | hand back by hand |
-| SmartPI's learning may still be off in some zones | switch SmartPI learning on |
 
-The last two appear after the integration was removed before it could finish its cleanup.
+The last one appears after the integration was removed before it could finish its cleanup.
 
 ## 8. State diagram of control
 
@@ -1176,6 +1216,7 @@ disabled by default.
 | Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
+| Gives no heat | on while the boiler gives the rooms no heat, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
 | Calling for heat | the rooms calling now, and which |
 | Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, a zone unknown, frost not warming and the others |
 | Reset comfort correction | sets the comfort correction back to 0 |
@@ -1227,7 +1268,6 @@ risks. The main ones — described, not advised:
 | Frost protection | 5 °C on, 7 °C off, every zone | heats only zones whose emitters can take heat; a zone VT keeps closed gets a repair issue |
 | Alarm reactions | information — a few alarms always hand back | an alarm set to hand back stops control until you switch it off and on |
 | Return by itself after another controller | off | on, control returns 60 minutes after the last foreign value, while the other controller may still be there |
-| Learning pauses (SmartPI) | on | off, the swings the plugin causes enter SmartPI's model |
 
 Every default and the reason for it: the defaults table in [`docs/en/specification/scope.md`, §7](../specification/scope.md#7-features-by-stage). Values marked
 provisional are reviewed before the first release.
@@ -1327,8 +1367,7 @@ target:
 1. Optionally switch control off first (**Control mode**, untick **Control on**) and check the
    boiler is back under its own control.
 2. Delete the entry: Settings → Devices & services → Smart Boiler for Versatile Thermostat →
-   Delete. The plugin hands the boiler back, resumes SmartPI learning it had paused, and deletes
-   its stored state, its journal and its forecasts. If the hand-back could not be confirmed, a repair issue stays
+   Delete. The plugin hands the boiler back and deletes its stored state, its journal and its forecasts. If the hand-back could not be confirmed, a repair issue stays
    after removal: hand the boiler back by hand.
 3. Remove it in HACS (or delete its folder) and restart Home Assistant.
 4. To let VT's central boiler drive the boiler again, point its commands back at the boiler in VT's

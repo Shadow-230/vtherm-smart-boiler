@@ -138,7 +138,7 @@ class LoopController:
 def zone_state(zone: SimZoneView, t: float) -> ZoneState:
     """A zone as VT publishes it: a thermostatic valve's opening; a switch zone under TPI — VT's
     over_switch — or SmartPI, its duty (``on_percent``) and whether its device is on now, no
-    opening; a SmartPI zone, whether it runs its learning phase."""
+    opening. Nothing of SmartPI's phase (I12.9)."""
     if zone.on_percent is not None:
         on = zone.opening > 0.5
         return ZoneState(
@@ -150,7 +150,6 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
             device_active=on,
             calling=on,
             reported_at=t,
-            smartpi_learning_phase=zone.smartpi_learning,
         )
     return ZoneState(
         zone.zone_id,
@@ -159,7 +158,6 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
         heating_enabled=True,
         valve_open=zone.opening,
         reported_at=t,
-        smartpi_learning_phase=zone.smartpi_learning,
     )
 
 
@@ -221,9 +219,10 @@ def learning_bedroom(zones) -> tuple[SimResult, LoopController]:
 
 
 def test_smartpi_learns_in_the_light_bedroom_with_the_correction_on_and_no_room_too_warm() -> None:
-    """Learning, the bedroom counts as short while it heats towards its band's top (G11 C), so
-    the correction rises for it; SmartPI's ten phases still end within 14 h (about 9.4 h here),
-    and no room is ever ``OVERHEAT_K`` over its setpoint (the bedroom about 0.8 K at most)."""
+    """Learning, the bedroom's valve is fully open down to the bottom of its band, 0.3 K under
+    its setpoint — short against VT's setpoint (I12.9: no learning band of the plugin's) — so the
+    correction rises for it; SmartPI's ten phases still end within 14 h, and no room is ever
+    ``OVERHEAT_K`` over its setpoint."""
     result, controller = learning_bedroom(light_bedroom_zones())
     phases = result.learning_phases["zone_bedroom"]
     assert len(phases) == LEARNING_PHASES, phases

@@ -21,7 +21,6 @@ zapisuje, i sposób testowania. Co integracja robi dla użytkownika, opisuje
 5. [Cykl życia](#5-cykl-życia)
 6. [Stan trwały](#6-stan-trwały)
 7. [Testowanie](#7-testowanie)
-8. [Dane o wodzie dla algorytmów stref](#8-dane-o-wodzie-dla-algorytmów-stref)
 
 ## 1. Przegląd
 
@@ -42,14 +41,21 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   którego VT trzyma ją wyłączoną, i długość cyklu (zasada użytkownika, 2026-11-24). Resztę, i
   wszystkie wartości termostatu uruchomionego przez VT przed rejestracją wtyczki, czyta z encji
   klimatu VT; stamtąd też centralną konfigurację VT i jego centralny kocioł. Wykrywa, co jest
-  zainstalowane (VT i jego wersję, `vtherm_api`, SmartPI), zamiast to zakładać. Żaden inny moduł
-  nie odczytuje stanu strefy po nazwie encji.
+  zainstalowane (VT i jego wersję, `vtherm_api`), zamiast to zakładać; nie czyta niczego ze
+  SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
-  `register_feature_manager` z `vtherm_api`) pokazuje na każdym termostacie VT, czy ciepło z
-  kotła dociera teraz do jego strefy — `heat_available`, z `core/heat.py` (I8, decyzja C1) — a od
-  I9 także wodę docierającą do strefy (`core/water.py`; rozdział 8). Jest rejestrowany dopiero po wczytaniu VT; termostat, który już działa, widzi
-  go dopiero po następnym przeładowaniu VT, którego wtyczka nigdy sama nie wywołuje. Nic w
-  sterowaniu od niego nie zależy.
+  `register_feature_manager` z `vtherm_api`) to kanał, którym VT przekazuje każdy termostat. Nie
+  publikuje niczego na termostatach VT: dane o wodzie, które pokazywał do I12.9, usunięto, bo
+  nikt ich nie czytał (decyzja użytkownika z 2026-11-25). Jest rejestrowany dopiero po wczytaniu
+  VT; termostat, który już działa, trafia do niego dopiero po następnym przeładowaniu VT, którego
+  wtyczka nigdy sama nie wywołuje — takie strefy wymienia zgłoszenie w Naprawach.
+- **„Nie daje ciepła”** (`binary_sensor`, klucz `no_heat`; `core/boiler_call.py`): jeden sygnał
+  dla całego domu, włączony, gdy kocioł nie daje teraz pokojom ciepła, z powodem — kocioł
+  centralny VT nie wzywa ciepła, trwa jego opóźnienie włączenia, ciepła woda, usterka kotła albo
+  wtyczka nie może ręczyć za ciepło. Wyliczany z decyzji sterowania w każdym kroku; niedostępny,
+  gdy sterowanie jest wyłączone. Użytkownik wybiera go w ustawieniu „heating unavailable” w
+  SmartPI 1.0 albo używa w automatyzacji: wtyczka sama nie wstrzymuje nauki żadnej strefy
+  (I12.9).
 
 Szczegóły: [`docs/pl/specification/scope.md`, §2](../specification/scope.md#2-dlaczego-wtyczka) i
 [§5](../specification/scope.md#5-sprzęt-obiegi-i-algorytmy-stref).
@@ -155,8 +161,8 @@ cykli pracy palnika, metryk, ostrzeżeń o trendach, raportu i werdyktu sterowan
 powodami. `core/alarms.py` zawiera alarmy monitora, z histerezą, żeby nie migotały.
 
 **Jednostka sterowania (`control.py`, `ControlUnit`).** Strona HA sterowania: krok sterowania co
-kilka sekund, jego zapisy przez moduł zapisu, oddanie kotła przy każdym wyjściu, wstrzymywanie
-nauki algorytmów stref i stan pokazywany przez encje. Zamienia zdarzenia zabezpieczeń i awarie
+kilka sekund, jego zapisy przez moduł zapisu, oddanie kotła przy każdym wyjściu i stan
+pokazywany przez encje — w tym „Nie daje ciepła”. Zamienia zdarzenia zabezpieczeń i awarie
 na alarmy. Moduł zapisu istnieje tylko wtedy, gdy sterowanie jest włączone. Błąd wewnętrzny
 oddaje kocioł i blokuje sterowanie zatrzaskiem.
 
@@ -243,7 +249,7 @@ flowchart TD
     S --> H
     G -->|"dozwolone"| W["Moduł zapisu zapisuje nastawę i włączenie lub wyłączenie grzania"]
     G -->|"nic do zrobienia"| K["Wstrzymanie: nic nie jest zapisywane"]
-    W --> F2["Dalej: zaległe oddanie, przekaźnik, magazyn, wstrzymanie nauki, stan"]
+    W --> F2["Dalej: zaległe oddanie, przekaźnik, magazyn, stan i „nie daje ciepła”"]
     K --> F2
     H --> F2
 ```
@@ -309,8 +315,7 @@ Sterowanie ma własny magazyn (`ControlStore` w `coordinator.py`), oddzielny od 
 wpisu, który trzyma historię monitora i podsumowania dni.
 
 - **Co trzyma:** czy sterowanie jest włączone, ostatnie polecenie i to, czy wtyczka steruje,
-  zatrzaski i ich przyczyny, zaległe oddanie kotła i dowody zwolnienia, wstrzymania nauki,
-  wartości bazowe, z którymi porównują zabezpieczenia, obserwacje przekaźnika i aktywne alarmy
+  zatrzaski i ich przyczyny, zaległe oddanie kotła i dowody zwolnienia, wartości bazowe, z którymi porównują zabezpieczenia, obserwacje przekaźnika i aktywne alarmy
   sterowania.
 - **Zapisywane od razu:** każda zmiana, której awaria nie może zgubić — znacznik sterowania,
   zatrzask, zaległe oddanie kotła — jest zapisywana natychmiast i atomowo. Wynik każdego zapisu
@@ -345,8 +350,9 @@ Trzy warstwy ([`docs/pl/development/plan.md`, „Test environment”](../develop
 
 1. **Testy rdzenia** (`tests/core/`) — zwykły pytest, bez HA, bez sieci.
 2. **Testy integracyjne** — `pytest-homeassistant-custom-component`: HA działa wewnątrz procesu
-   testów; bez instancji, bez sieci. Ciągła integracja (CI) pobiera też VT 10.6.5 i SmartPI
-   0.4.0 z ich tagów, więc testy z prawdziwym VT działają przy każdej zmianie.
+   testów; bez instancji, bez sieci. Ciągła integracja (CI) pobiera też VT 10.6.5 z jego tagu,
+   więc testy z prawdziwym VT działają przy każdej zmianie. Pobiera też SmartPI 0.4.0, tylko do
+   wdrożenia na testowy HA: wtyczka nie czyta niczego ze SmartPI.
 3. **Testowy HA** — osobny kontener (`devenv/`) z wtyczką, VT, SmartPI i symulatorem, w którym
    scenariusze odbiorcze są uruchamiane, zanim cokolwiek trafi do prawdziwego kotła.
 
@@ -374,46 +380,4 @@ Strona „Kocioł”, w `frontend/`: `../scripts/env.sh npm test` i `../scripts/
 administrator i zwykły użytkownik — do `.tmp/screenshots/` i zgłasza błąd przy każdym błędzie na
 stronie; `scripts/bootstrap_browser.sh` umieszcza to Chromium i potrzebne mu biblioteki systemowe
 w `.tools/`.
-
-## 8. Dane o wodzie dla algorytmów stref
-
-**Zbudowane w I9** (decyzje użytkownika z 2026-10-12;
-[`docs/en/development/plans/plan-0.2-i9.md`](../../en/development/plans/plan-0.2-i9.md)).
-Opcjonalny interfejs daje algorytmowi strefy — najpierw SmartPI — temperaturę wody, która dociera
-do obiegu każdej strefy, żeby jego model pomieszczenia uwzględniał krzywą grzewczą, mieszacz,
-taktowanie palnika i ciepłą wodę z priorytetem. Dane płyną w jedną stronę: od wtyczki do
-algorytmu strefy; algorytm nigdy nie zadaje temperatury wody.
-
-Co wtyczka wystawia dla każdego termostatu VT, który jest jej strefą:
-
-- **temperaturę wody** (`supply_temperature`, °C, jak mierzy czujnik, −20 do 110 °C) albo brak, z
-  powodem (`supply_reason`): trwałym — brak czujnika (`not_mapped`), obieg z mieszaczem bez
-  własnego czujnika (`circuit_not_measured`), termostat w kilku obiegach o różnej wodzie
-  (`several_circuits`) — albo chwilowym: odczyt niedostępny (`flow_unknown`) lub nieświeży
-  (`flow_stale`);
-- **czas pomiaru** (`supply_measured_at`, UTC) — tylko informacyjnie;
-- **czy ciepło dociera** (`heat_available`) i dlaczego nie (`heat_reason`) — zmienia się z każdym
-  cyklem palnika;
-- **czy kocioł jest wezwany do grzania** (`boiler_called`) i dlaczego nie (`call_reason`:
-  `below_threshold` — strefy wołają, ale poniżej progów zapotrzebowania, `no_demand`,
-  `activation_delay`, `boiler_fault`, `not_controlling`, `waiting_data`) — dodane 2026-10-14 na
-  prośbę SmartPI (do 2026-11-24 także z zapotrzebowaniem wobec progów: nikt go nie czytał, a
-  pokazują je własne encje wtyczki), żeby algorytm strefy nie uczył się na
-  cieple, które nie przyszło, czego przerwa palnika nie odróżnia. Wartości całej instalacji, te
-  same dla każdej strefy, czytane na bieżąco ze sterowania (`core/boiler_call.py`).
-
-Gdzie: jako właściwości modułu funkcji (feature manager) na termostacie VT (gdy VT ma
-`get_feature_manager`, od 10.5.0.beta1); i w atrybucie
-`smart_boiler` termostatu, z temperaturą zaokrągloną do 1 °C i publikowaną przy zmianie o co
-najmniej 1 K. Funkcja `zone_water(entity_id)` w `hass.data` działała do 2026-11-24 i została
-usunięta: dane wychodzą tylko przez `vtherm_api`. Wtyczka czyta jeden klucz, który algorytm wpisuje do `specific_states` termostatu
-(dla SmartPI proponowany `water_factor`), i nadal sama wstrzymuje uczenie SmartPI na swoich
-warunkach: ciepła woda z priorytetem i awaria kotła — w strefach wołających ciepła; duże
-wahania wody — tylko gdy algorytm nie korzysta z danych o wodzie. Bez numeru wersji: strony
-wykrywają, co istnieje, zmiany tylko dodają, a test kontraktu (`tests/test_water_interface.py`)
-pilnuje nazw i wartości.
-
-Pełna specyfikacja — nazwy, typy, wartości, zakresy, co się dzieje, gdy wartości brak (kocioł
-wł./wył. na przekaźniku, integracja producenta, tryb samego monitorowania i inne):
-[`docs/pl/specification/water-interface.md`](../specification/water-interface.md).
 

@@ -1,6 +1,6 @@
 """The code convention "zone data only through vtherm_link.py" (TB-16).
 
-VT's attribute names, its entry keys and SmartPI's domain are written as string constants only in
+VT's attribute names and its entry keys are written as string constants only in
 ``vtherm_link.py`` and ``vtherm_attributes.py``; any other module reads a zone through them.
 """
 
@@ -12,12 +12,10 @@ from pathlib import Path
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components/vtherm_smart_boiler"
 ALLOWED = {"vtherm_link.py", "vtherm_attributes.py"}
 
-# VT 10.4.0's climate attributes and central-configuration entry keys the plugin reads, and
-# SmartPI's domain; generic Home Assistant words ("heat", "temperature", "on") are not VT's.
+# VT 10.4.0's climate attributes and central-configuration entry keys the plugin reads (nothing of
+# SmartPI's since I12.9); generic Home Assistant words ("heat", "temperature", "on") are not VT's.
 VT_NAMES = frozenset(
     {
-        "auto_tpi_continuous_kext",
-        "auto_tpi_state",
         "central_boiler_activation_service",
         "central_boiler_deactivation_service",
         "configuration",
@@ -35,17 +33,14 @@ VT_NAMES = frozenset(
         "overpowering_state",
         "power_manager",
         "power_unit",
-        "proportional_function",
         "safety_manager",
         "safety_state",
-        "smartpi_learning_enabled",
         "specific_states",
         "temperature_sensor_entity_id",
         "underlying_entity_ids",
         "use_central_boiler_feature",
         "valve_open_percent",
         "versatile_thermostat_central_boiler_event",
-        "vtherm_smartpi",
     }
 )
 

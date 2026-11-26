@@ -1,8 +1,10 @@
 # The test environment every test job starts from: Python 3.14, uv with its cache, the pinned test
 # environment under Home Assistant's own constraints (docs/en/development/plans/plan-0.1.md, A3),
 # and — unless a job brings its own — VT 10.6.5 and SmartPI 0.4.0 by the full commits their
-# release tags pointed at (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86). uv
-# installs the same pins pip did, in seconds instead of a minute (2026-11-18).
+# release tags pointed at (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86). The
+# plugin reads nothing of SmartPI (I12.9): it is here for the test bench's deploy, whose zones run
+# it (scripts/deploy_test.sh, tests/test_deploy.py). uv installs the same pins pip did, in seconds
+# instead of a minute (2026-11-18).
 name: Test environment
 description: Python, uv, the pinned test environment and the vendored VT and SmartPI
 inputs:

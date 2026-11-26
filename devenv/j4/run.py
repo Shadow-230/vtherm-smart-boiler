@@ -577,10 +577,11 @@ async def D7(r: Run):
 
 
 async def D8(r: Run):
-    """a hot-water draw under control: no outside change, SmartPI paused and resumed, DHW bit untouched"""
+    """a hot-water draw under control: no outside change, "boiler gives no heat" on for hot water
+    and off after it, nothing of SmartPI called, DHW bit untouched"""
     await r.switch(True)
     await r.ha.wait(900)
-    # The SmartPI zone must call — its valve open — for a draw to pause its learning (S-41).
+    # A room calls — its valve open — so heating is wanted when the draw starts (I12.9).
     await r.sim("set_room_temperature", zone="zone_bedroom", temperature=17.0)
     await r.ha.wait(60)
     r.note(f"bedroom valve before the draw: {await r.s('switch.boiler_sim_zone_bedroom_valve')}")
@@ -588,19 +589,15 @@ async def D8(r: Run):
     await r.sim("start_dhw", minutes=10)
     await r.ha.wait(60)
     r.check(await r.s("binary_sensor.boiler_sim_dhw_active") == "on", "the draw runs")
-    learn = [
-        (c[3].get("entity_id"), c[3].get("learning_enabled"))
-        for c in r.ha.calls
-        if c[0] >= t and c[2] == "set_smartpi_learning"
-    ]
-    r.check(learn and learn[0][1] is False, f"SmartPI learning paused: {learn}")
+    shown = await r.st("no_heat")
+    r.check(
+        shown["state"] == "on" and shown["attributes"].get("reason") == "hot_water",
+        f"gives no heat for hot water: {shown['state']} {shown['attributes'].get('reason')}",
+    )
     await r.ha.wait(540 + 1800)
-    learn = [
-        (c[3].get("entity_id"), c[3].get("learning_enabled"))
-        for c in r.ha.calls
-        if c[0] >= t and c[2] == "set_smartpi_learning"
-    ]
-    r.check(learn and learn[-1][1] is True, f"resumed: {learn}")
+    r.check(await r.s("no_heat") == "off", f"heat again: {await r.s('no_heat')}")
+    smartpi = [c for c in r.ha.calls if c[0] >= t and c[1] == "vtherm_smartpi"]
+    r.check(smartpi == [], f"nothing of SmartPI called: {smartpi}")
     r.check(
         [
             a
@@ -1205,6 +1202,8 @@ class NotRun(Exception):
 # I12.8: the plugin's own activation delay is gone — VT's central boiler waits its own, set in
 # VT; the scenarios that set the plugin's are to be redone at I12.15.
 _NO_PLUGIN_DELAY = "the plugin has no activation delay of its own since I12.8: VT's is set in VT"
+# I12.9: the water interface is gone — nothing of the plugin's is shown on VT's thermostats.
+_NO_WATER_INTERFACE = "the plugin shows no water data on VT's thermostats since I12.9"
 
 
 async def main(ids: list[str]) -> None:
@@ -1931,146 +1930,15 @@ async def E7(r: Run):
         await _circuit_options(r, REMOVE_CIRCUIT, "circuit_2")  # raises where it is not saved
 
 
-# VT publishes a thermostat's attributes at its own cycle (5 min by default) or on a change of
-# its own: the water data shown is that old at most, plus the plugin's 30-s refresh.
-VT_CYCLE_WAIT = 360
 # E7: from the idle setpoint to the circuit's need at the ramp's 1 K/min, with room to spare.
 RAMP_WAIT = 25 * 60
 
 
-async def _water_shown(r: Run) -> dict[str, dict | None]:
-    """Each VT zone's attribute ``smart_boiler`` (water-interface.md §3.3)."""
-    return {zone: await r.attr(f"climate.{zone}", "smart_boiler") for zone, _target in ZONES}
-
-
-def _moment(raw: object) -> float | None:
-    """An ISO time of Home Assistant's REST API, in epoch seconds; ``None`` where unreadable."""
-    try:
-        return dt.datetime.fromisoformat(str(raw)).timestamp()
-    except ValueError:
-        return None
-
-
-# The plugin follows a signal's change at once; a VT write this soon after a flame change may
-# still show the value from before it.
-FLAME_SETTLE_S = 30.0
-
-
-async def _heat_expected_at_write(
-    r: Run, zone: str, flame: dict, flame_after: dict
-) -> tuple[bool | None, ...]:
-    """With the flow failed, the heat a zone's attribute may show: as of VT's last write of the
-    zone — unknown while the flame burned then, "no" while it was out; either where the flame
-    changed since that write, around the reading, or just before the write."""
-    written = _moment((await r.st(f"climate.{zone}")).get("last_updated"))
-    changed = _moment(flame.get("last_changed"))
-    if (
-        flame.get("state") != flame_after.get("state")
-        or written is None
-        or changed is None
-        or changed > written - FLAME_SETTLE_S
-    ):
-        return (None, False)
-    return (None,) if flame.get("state") == "on" else (False,)
-
-
-async def _heat_while_burning(r: Run, within: float = 900.0) -> dict[str, object]:
-    """Waits for a moment the flame has burned since before VT's last write of a zone, and
-    checks that zone shows heat available: the zones judged, each with what it showed; empty
-    where the flame never burned long enough within ``within`` seconds."""
-    judged: dict[str, object] = {}
-    start = time.time()
-    while time.time() - start < within and not judged:
-        flame = await r.st("binary_sensor.boiler_sim_flame")
-        changed = _moment(flame.get("last_changed"))
-        if flame.get("state") == "on" and changed is not None:
-            for zone, _target in ZONES:
-                written = _moment((await r.st(f"climate.{zone}")).get("last_updated"))
-                # A minute of flame before the write: the water above the return by then.
-                if written is None or written < changed + 2 * FLAME_SETTLE_S:
-                    continue
-                value = await r.attr(f"climate.{zone}", "smart_boiler")
-                heat = value.get("heat_available") if isinstance(value, dict) else "missing"
-                r.check(heat is True, f"{zone}: heat available while the flame burns ({value})")
-                judged[zone] = heat
-        if not judged:
-            await r.ha.wait(15)
-    return judged
-
-
-async def _flow_now(r: Run) -> float | None:
-    try:
-        return float(await r.s("sensor.boiler_sim_flow"))
-    except TypeError, ValueError:
-        return None
-
-
 async def V1(r: Run):
-    """I9: every VT zone shows the plugin's water data (attribute smart_boiler) — the boiler's
-    flow rounded to 1 °C and whether heat reaches it; no heat during a hot-water draw; the water
-    unknown once the flow sensor fails (the heat unknown, or "no" with the flame out), and back
-    once it works"""
-    await r.switch(True)
-    await r.ha.wait(600)  # heating under control
-    before = await _flow_now(r)
-    shown = await _water_shown(r)
-    after = await _flow_now(r)
-    r.note(f"flow {before}–{after} °C; shown {shown}")
-    for zone, value in shown.items():
-        r.check(
-            isinstance(value, dict) and set(value) == {"heat_available", "supply_temperature"},
-            f"{zone}: the attribute with its two keys",
-        )
-    flows = [f for f in (before, after) if f is not None]
-    if flows:
-        # Rounded to 1 °C (a whole number), published again on a change of 1 K, up to a VT cycle
-        # old: within 2 K of the flow seen around it (more only if the flow moved fast).
-        low, high = min(flows) - 2.0, max(flows) + 2.0
-        for zone, value in shown.items():
-            water = value.get("supply_temperature") if isinstance(value, dict) else None
-            r.check(
-                isinstance(water, int) and not isinstance(water, bool) and low <= water <= high,
-                f"{zone}: water {water}, rounded to 1 °C, within {low:.1f}–{high:.1f}",
-            )
-    # The positive case (L8): with the flame burning since before VT's last write of a zone, and
-    # the water warm, the zone shows heat available. The rooms call first, 3 K below their
-    # setpoints, as F1 does: at their targets TPI gave a minute in five and the flame never
-    # burned long enough to be judged (J4 of 2026-11-18, twice).
-    for zone, target in ZONES:
-        await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
-    judged = await _heat_while_burning(r)
-    r.check(bool(judged), f"heat available while the flame burns: {judged or 'never judged'}")
-    await r.sim("start_dhw", minutes=10)
-    await r.ha.wait(VT_CYCLE_WAIT)
-    r.check(await r.s("binary_sensor.boiler_sim_dhw_active") == "on", "the draw runs")
-    shown = await _water_shown(r)
-    for zone, value in shown.items():
-        heat = value.get("heat_available") if isinstance(value, dict) else "missing"
-        r.check(heat is False, f"{zone}: no heat during the draw ({heat})")
-    await r.ha.wait(600 - VT_CYCLE_WAIT + 60)  # the draw over
-    await r.sim("fail_signal", signal="flow")
-    await r.ha.wait(VT_CYCLE_WAIT)
-    # The water unknown; the heat unknown while the flame burns, and "no" while it is out — the
-    # flame decides first (heat.py). The attribute is as old as VT's last write of the zone (the
-    # plugin asks VT for none): the flame is judged as it was then — either where it changed
-    # since, or just before (L8, J4 of 2026-10-14).
-    flame = await r.st("binary_sensor.boiler_sim_flame")
-    shown = await _water_shown(r)
-    flame_after = await r.st("binary_sensor.boiler_sim_flame")
-    for zone, value in shown.items():
-        heats = await _heat_expected_at_write(r, zone, flame, flame_after)
-        water = value.get("supply_temperature", "missing") if isinstance(value, dict) else "missing"
-        heat = value.get("heat_available", "missing") if isinstance(value, dict) else "missing"
-        r.check(
-            water is None and heat in heats,
-            f"{zone}: the water unknown with the flow failed, the heat {heats} ({value})",
-        )
-    await r.sim("fail_signal", signal="flow", failed=False)
-    await r.ha.wait(VT_CYCLE_WAIT)
-    shown = await _water_shown(r)
-    for zone, value in shown.items():
-        water = value.get("supply_temperature") if isinstance(value, dict) else None
-        r.check(water is not None, f"{zone}: the water known again ({value})")
+    """I9: every VT zone showed the plugin's water data (attribute smart_boiler) — gone with
+    I12.9: the plugin publishes nothing on VT's thermostats; its "gives no heat" sensor is
+    checked in D8"""
+    raise NotRun(_NO_WATER_INTERFACE)
 
 
 # --- I11: control switched in the settings and by automations (plan-0.2-i11.md) -----------
