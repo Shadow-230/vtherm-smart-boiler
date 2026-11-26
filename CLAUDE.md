@@ -96,10 +96,9 @@ Each topic lives only in its file; do not copy it here.
   for the page's screenshots, `playwright` likewise, its Chromium into `.tools/ms-playwright/`,
   and the system libraries Chromium needs as Debian packages fetched with `apt-get download`
   (no root) and unpacked into `.tools/chromium-libs/` (`scripts/bootstrap_browser.sh`); any
-  other package needs the user's consent first. Consented 2026-11-26: literature with a licence
-  that allows sharing it (CC BY, Open Government Licence) in the repository's `literature/`, each
-  file listed with its source and licence in `literature/README.md`; useful literature that may
-  not be shared only in the git-ignored `research/literature/`, listed in its `INDEX.md`; the
+  other package needs the user's consent first. Consented 2026-11-26: useful literature is kept
+  only in the git-ignored `research/literature/`, each file listed with its source and licence in
+  its `INDEX.md` — never in the repository, whatever its licence (the user, 2026-11-26); the
   SmartPI project's documents at `/home/ai/projects/vtherm_smartpi/` may be read. Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date

@@ -16,7 +16,6 @@ the same place under `docs/pl/`.
 | [`development/`](development/plan.md) | the development plan; the plans of each release and the reviews | developers |
 | [`testing/`](testing/test-environment.md) | the test Home Assistant and the test reports | testers |
 | `../images/` | pictures shared by every language | — |
-| [`../../literature/`](../../literature/README.md) | open-licence sources behind the plugin's rules, with their licences ([Polish](../../literature/README.pl.md)) | developers, reviewers |
 
 ## The documents
 

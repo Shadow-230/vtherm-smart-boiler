@@ -16,7 +16,6 @@ samym miejscu pod `docs/pl/`.
 | [`development/`](development/plan.md) | plan rozwoju; plany każdego wydania i przeglądy (tylko po angielsku) | programiści |
 | [`testing/`](testing/test-environment.md) | testowy Home Assistant i raporty z testów | testerzy |
 | `../images/` | obrazy wspólne dla wszystkich języków | — |
-| [`../../literature/`](../../literature/README.pl.md) | źródła na wolnych licencjach, na których opierają się reguły wtyczki, z ich licencjami | programiści, recenzenci |
 
 ## Dokumenty
 
