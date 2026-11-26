@@ -95,6 +95,8 @@ class ZoneState:
     runs it in safety mode, its thermometer is unavailable, or VT has not measured it since the
     plugin started — so it judges nothing of the curve. ``window_open``: VT holds the zone off
     for a window, its automatic window detection says open, or the window sensor VT reads is on.
+    ``cycle_s``: the zone's cycle in seconds, VT's ``cycle_min`` in its ``entry_infos``; ``None``
+    where not known — the comfort correction's pace then takes a cautious default (I13.3).
     """
 
     zone_id: str
@@ -111,6 +113,7 @@ class ZoneState:
     temperature_at: float | None = None
     room_sensor_lost: bool = False
     window_open: bool = False
+    cycle_s: float | None = None
 
     @property
     def deficit(self) -> float | None:

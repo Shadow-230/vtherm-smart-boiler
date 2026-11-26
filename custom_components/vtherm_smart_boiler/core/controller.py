@@ -56,26 +56,36 @@ while trusted (I12, decision 8; ``core.zones.room_trusted``): not in VT's safety
 thermometer available, and measured since the plugin started. The comfort correction follows the
 rules of bounded learning (principle 13), each mapped:
 
-1. Band: 0 to +3 K.
-2. Rate: +1 K per 30 min of heat flow, so at most 2 K an hour; at most +3 K of rise within 24 h
-   (provisional, K4).
-3. Other criteria: the rise only for a saturated zone short of its setpoint (comfort); none while
-   another zone taking heat — an opening above 5 % or its device on — is more than 1 K too warm
-   (S-08); cycling not rising: the rise only while the boiler's heating starts since it began
-   are no more than in the same hours before it began, stepping back (the fall) while they are
-   more, no rise with the starts unknown (``core.comfort_rules``, decision 11 of 0.2.3); every
-   limit kept: no rise while an upper cap (the hard maximum, the circuit's, the boiler's) or a
-   clip holds the setpoint, the "at limit" timer paused meanwhile (S-25,
-   T-48); stepping back: the fall.
-4. Good enough: the rise stops once no zone is 0.3 K short.
-5. Freezes: hot water — neither rise nor fall; data gaps — held while the link is stale or no
-   zone is known; hand-back — reset; extreme weather — the outdoor reading below the design
-   outdoor temperature or changing faster than 2 K per hour, or unknown (``core.comfort_rules``,
+1. Band: −3 to +3 K — the rise up to the user's limit, the trim below the curve (I13.3) to 3 K and
+   never more than that limit.
+2. Rate: the rise 1 K per ``RISE_CYCLES`` cycles of the slowest room judged, of heat flow, never
+   faster than 1 K per 30 min, and at most 3 K within 24 h; the trim at most half the rise's rate
+   — 1 K per 2 h of heat flow at the fastest — and at most 3 K within 24 h (I13.3,
+   ``core.comfort_rules``; provisional, K4).
+3. Other criteria: the rise only for a room that has been fully open and short of its setpoint
+   for two of its cycles and an hour without a break (comfort, I13.3), and none while a room warms
+   back after its setpoint was raised (the window rule's test); none while another zone taking
+   heat — an opening above 5 % or its device on — is more than 1 K too warm (S-08); the trim only
+   while every room judged — each trusted, each with its opening known — is under 70 % open and
+   none is short, and back towards 0 at the fall's rate as soon as one is short or 70 % open;
+   cycling not rising: the correction moves away from 0 only while the boiler's heating starts
+   since it left 0 are no more than in the same hours before, stepping back towards 0 while they
+   are more, no move with the starts unknown (``core.comfort_rules``, decision 11 of 0.2.3);
+   every limit kept: no rise while an upper cap (the hard maximum, the circuit's, the boiler's)
+   or a clip holds the setpoint, the "at limit" timer paused meanwhile (S-25, T-48), no deeper
+   trim while a cap holds it or a lower limit (the lowest water temperature, a circuit's need)
+   already does — those limits apply to every setpoint; stepping back: the fall, and the trim's
+   return.
+4. Good enough: the rise stops once no zone is 0.3 K short; the trim stops at a room 70 % open.
+5. Freezes: hot water — no move either way; data gaps — held while the link is stale or no zone
+   is known, and no deeper trim while a room's temperature or opening is not known; hand-back —
+   reset; extreme weather — the outdoor reading below the design outdoor temperature or changing
+   faster than 2 K per hour, or unknown: no rise and no deeper trim (``core.comfort_rules``,
    decision 11 of 0.2.3).
-6. At the edge: "at limit" after 3 h at 3 K.
-7. Visible and resettable: published with each decision (the control state, diagnostics); reset
-   at hand-back, at a session's end and by the user (``reset_correction``, the "Reset comfort
-   correction" button, answer J).
+6. At the edge: "at limit" after 3 h at its limit (the rise only).
+7. Visible and resettable: published with each decision, with its sign (the control state,
+   diagnostics); reset at hand-back, at a session's end and by the user (``reset_correction``,
+   the "Reset comfort correction" button, answer J).
 
 On/off control through a relay (class 3, X8; ``ControlConfig.on_off``) decides heating on or off
 by the same rules — VT's decision, the recognition and grace periods and decision 3 — without a
@@ -86,9 +96,10 @@ relay rule (``core.relay``) judges its reach.
 
 "Heat flows" (S-24) is the flame burning without hot water; with the flame unknown, heating
 commanded without hot water. The rise and the fall count the steps' time, each step a minute at
-most and never a negative one (P-46): a clock set back moves nothing. The fall is twice as fast
-as the rise, once the zones with an opening are clearly satisfied or a zone taking heat is too
-warm; a zone without an opening never blocks the fall. A clip is never learned as a limit.
+most and never a negative one (P-46): a clock set back moves nothing. The fall is 1 K per 15 min,
+once the zones with an opening are clearly satisfied or a zone taking heat is too warm; a zone
+without an opening never blocks the fall, but it holds the trim. The trim's return towards 0 goes
+at the fall's rate. A clip is never learned as a limit.
 """
 
 from __future__ import annotations
@@ -100,13 +111,21 @@ from enum import StrEnum
 
 from .circuit_requests import CircuitsAsking, OtherAutomation, circuits_asking
 from .comfort_rules import (
+    TRIM_DAY_K,
+    TRIM_MAX_K,
     Readings,
+    RoomPace,
     StartsBaseline,
+    counted_for,
     extreme_weather,
     follow_baseline,
     follow_outdoor,
+    follow_room,
+    held_short,
     may_rise,
+    rise_seconds,
     starts_rose,
+    trim_seconds,
 )
 from .curve import (
     DEFAULT_HOLD_S,
@@ -125,7 +144,9 @@ from .zone_watch import ZoneWatch, follow_zones, graced, in_recognition, unjudge
 HOUR = 3600.0
 DAY = 24 * HOUR
 CORRECTION_MAX_K = 3.0  # the correction's limit by default; the user's, 0.5 to 10 K (G11)
-CORRECTION_RISE_S = 30 * 60.0  # seconds of heat flow per kelvin of rise; the fall is twice as fast
+# The fastest rise: seconds of heat flow per kelvin (I13.3: slower with slow rooms,
+# ``comfort_rules.rise_seconds``); the fall, and the trim's return, twice as fast as this.
+CORRECTION_RISE_S = 30 * 60.0
 CORRECTION_LIMIT_S = 3 * HOUR  # at the band's edge this long: tell the user
 CORRECTION_DAY_K = 3.0  # at most this much rise within 24 h (principle 13 (2); provisional, K4)
 # The most time a single step counts — heat flow, the correction's fall — so a clock jumping
@@ -337,7 +358,9 @@ class ControlState:
     reasons: tuple[Reason, ...] = ()
     water_reasons: tuple[Reason, ...] = ()  # why the water temperature is what it is
     decided_at: float | None = None  # when the water temperature was last decided
-    correction: float = 0.0  # K added to the curve for a zone that cannot reach its setpoint
+    # K added to the curve: above 0 for a room that cannot reach its setpoint, below 0 — the trim
+    # (I13.3) — while every room is clearly satisfied.
+    correction: float = 0.0
     curve_room: float | None = None  # the curve's room temperature at the last water decision
     heat_s: float = 0.0  # seconds heat has flowed since the last water decision
     water_s: float = 0.0  # seconds counted since the last water decision (P-46)
@@ -351,9 +374,16 @@ class ControlState:
     # The correction's rises within the last day, (time, K): at most ``CORRECTION_DAY_K``. Kept
     # through a hand-back (the day's rate is not reset by one); a new session starts afresh.
     rises: tuple[tuple[float, float], ...] = ()
-    # Rule 3 (decision 11 of 0.2.3): when the correction began and the starts before it; kept
+    # The trim's moves within the last day, (time, K): at most ``TRIM_DAY_K`` (I13.3); kept as
+    # the rises are.
+    trims: tuple[tuple[float, float], ...] = ()
+    # Rule 3 (decision 11 of 0.2.3): when the correction left 0 and the starts before it; kept
     # through a hand-back, a reset and a new session until it has stayed at 0 for the window.
     starts_baseline: StartsBaseline | None = None
+    # I13.3: each room's pace — how long it has been fully open and short, whether it warms back
+    # after a raised setpoint, its recent readings —, followed at every step. A fact about the
+    # rooms, kept through a hand-back but for the run of short, which begins again with control.
+    rooms: Mapping[str, RoomPace] = field(default_factory=dict)
     # Rule 5: the outdoor readings of the last hour, at every step — a fact about the weather,
     # kept through a hand-back and a new session; empty after a restart.
     outdoor_seen: Readings = ()
@@ -389,7 +419,7 @@ class ControlDecision:
     # period.
     zones_unknown: bool = False
     vt_unknown: bool = False
-    correction: float = 0.0  # the comfort correction
+    correction: float = 0.0  # the comfort correction, with its sign (I13.3)
     # Decision 2 of 0.2.3 (SB-01): VT asks for heat — at every step; "no sign the boiler heats"
     # counts only then.
     calling: bool = False
@@ -476,8 +506,9 @@ def _release(
     state: ControlState, mode: ControlMode, reason: Reason
 ) -> tuple[ControlState, ControlDecision]:
     """No command; hand back once if we were controlling. A latch stays as it is; what the
-    session learned (the comfort correction) goes. The day's rises stay: a hand-back does not
-    reset the correction's daily rate."""
+    session learned (the comfort correction) goes, and so does each room's run of short (I13.3):
+    a room short under another controller's water says nothing of the curve. The day's rises and
+    trims stay: a hand-back does not reset the correction's daily rate."""
     new_state = replace(
         state,
         mode=mode,
@@ -491,6 +522,7 @@ def _release(
         last_step_at=None,
         correction_limit_s=0.0,
         correction_at_top=False,
+        rooms={zone_id: replace(pace, short_since=None) for zone_id, pace in state.rooms.items()},
     )
     return new_state, ControlDecision(mode, None, hand_back=state.controlling, reasons=(reason,))
 
@@ -550,6 +582,7 @@ def decide(
     )
     seen = follow_outdoor(state.outdoor_seen, _outdoor_reading(inputs), now)
     link = follow_link(state, inputs, config)
+    rooms = _follow_rooms(state, inputs, config)
     watch = follow_zones(
         state.zones,
         inputs.zones,
@@ -564,6 +597,7 @@ def decide(
         link=link,
         link_unreported=inputs.link_unreported,
         zones=watch,
+        rooms=rooms,
     )
     recognition = in_recognition(watch)
     demand = boiler_demand(
@@ -818,7 +852,13 @@ def _heating_decision(
         # An upper cap — the hard maximum, the circuit's, the boiler's — or a clip holds the
         # setpoint: a rise could not show, so it is not learned (S-25).
         held = inputs.clipped or curve_value + state.correction >= upper - _EPSILON
-        correction, rises, baseline = _correction(state, inputs, config, held)
+        # I13.3: a lower limit — the lowest water temperature, a circuit's need — already holds
+        # the setpoint: a deeper trim could not show either.
+        lower = config.limits.hard_min
+        if asks.floor is not None:
+            lower = max(lower, asks.floor)
+        floored = curve_value + state.correction <= lower + _EPSILON
+        correction, rises, trims, baseline = _correction(state, inputs, config, held, floored)
         top = correction >= config.correction_max_k or (
             config.comfort_correction and _day_spent(rises) and bool(_short_zones(inputs, config))
         )
@@ -827,11 +867,12 @@ def _heating_decision(
             heat_s=0.0,
             water_s=0.0,
             rises=rises,
+            trims=trims,
             starts_baseline=baseline,
             correction_limit_s=_limit_time(state, top, held),
             correction_at_top=top,
         )
-        if correction > 0:
+        if correction != 0.0:
             water.append(Reason.COMFORT_CORRECTION)
         limited = limit_flow(
             curve_value + correction, config.limits, config.circuit_max, config.boiler_max,
@@ -1047,63 +1088,186 @@ def _outdoor_reading(inputs: ControlInputs) -> float | None:
     return inputs.outdoor_sensor if inputs.outdoor_sensor is not None else inputs.outdoor_weather
 
 
+type Moves = tuple[tuple[float, float], ...]  # the correction's rises or trims: (time, K)
+
+
+def trim_limit(correction_max_k: float) -> float:
+    """How far below the curve the correction may trim (I13.3): ``TRIM_MAX_K``, and never more
+    than the user's limit above it."""
+    return min(TRIM_MAX_K, correction_max_k)
+
+
+def _within_day(moves: Moves, now: float) -> Moves:
+    """The moves within the last day — a clock set back keeps those a day ahead at most."""
+    return tuple((t, k) for t, k in moves if abs(now - t) < DAY)
+
+
+def _follow_rooms(
+    state: ControlState, inputs: ControlInputs, config: ControlConfig
+) -> dict[str, RoomPace]:
+    """Each room's pace after this step (I13.3): short now — a room the correction judges, its
+    temperature trusted, fully open and short — or not; its readings and setpoint."""
+    judged = {z.zone_id for z in _judged(inputs, config)}
+    return {
+        z.zone_id: follow_room(
+            state.rooms.get(z.zone_id, RoomPace()),
+            inputs.now,
+            z.zone_id in judged and is_short(z),
+            z.temperature,
+            z.target,
+        )
+        for z in inputs.zones
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class _Found:
+    """What a water decision finds for the comfort correction."""
+
+    known: list[ZoneState]  # the rooms it judges: heating enabled, known, of the curve's circuit
+    judged: list[ZoneState]  # those whose temperature is trusted
+    short: bool  # a room fully open and short now
+    rose: bool  # rule 3: the starts rose since the correction left 0
+    may_move: bool  # rules 3 and 5 let it move away from 0
+    rise_s: float  # heat flow per kelvin of rise (I13.3)
+
+
 def _correction(
-    state: ControlState, inputs: ControlInputs, config: ControlConfig, held: bool
-) -> tuple[float, tuple[tuple[float, float], ...], StartsBaseline | None]:
+    state: ControlState, inputs: ControlInputs, config: ControlConfig, held: bool, floored: bool
+) -> tuple[float, Moves, Moves, StartsBaseline | None]:
     """The comfort correction for this water decision, within its firm band (bounded learning),
-    the rises within the last day and rule 3's baseline. ``held``: a cap or a clip holds the
-    setpoint — no rise. Frozen — neither rise nor fall — while hot water runs; no rise while the
-    weather is extreme or unknown (rule 5), while every fall — rooms satisfied or too warm, rule
-    3's step back — passes, the cautious side (M1 of the part-2 check); rising only while the
-    starts are known and do not rise, stepping back while they do (rule 3)."""
+    the rises and the trims within the last day, and rule 3's baseline. ``held``: a cap or a
+    clip holds the setpoint — no rise and no deeper trim; ``floored``: a lower limit does — no
+    deeper trim. Frozen — no move either way — while hot water runs; no move away from 0 while the
+    weather is extreme or unknown (rule 5), while every step back towards 0 passes — the rooms
+    satisfied or too warm, a room short or 70 % open below the curve, rule 3's step back —, the
+    cautious side (M1 of the part-2 check); moving away from 0 only while the starts are known
+    and do not rise, stepping back while they do (rule 3). From 0 the rise comes first; with no
+    rise, the trim (I13.3)."""
     now = inputs.now
-    rises = tuple((t, k) for t, k in state.rises if abs(now - t) < DAY)
+    rises, trims = _within_day(state.rises, now), _within_day(state.trims, now)
     if not config.comfort_correction:
-        return 0.0, rises, None
+        return 0.0, rises, trims, None
     baseline = state.starts_baseline
     if inputs.dhw is True:
-        return state.correction, rises, baseline
+        return state.correction, rises, trims, baseline
     extreme = extreme_weather(
         state.outdoor_seen, _outdoor_reading(inputs), now, config.curve.design_outdoor
     )
     baseline = follow_baseline(baseline, state.correction, now)
     starts = inputs.starts
-    rose = starts is not None and baseline is not None and starts_rose(baseline, starts, now)
     known = _counted(inputs, config)
     judged = _judged(inputs, config)  # a room's temperature only where it is trusted
-    too_warm = any(
-        _taking_heat(z) and z.deficit is not None and z.deficit < -OVERHEAT_K for z in judged
+    found = _Found(
+        known,
+        judged,
+        short=any(is_short(z) for z in judged),
+        rose=starts is not None and baseline is not None and starts_rose(baseline, starts, now),
+        may_move=not extreme and starts is not None and may_rise(baseline, starts, now),
+        rise_s=rise_seconds((z.cycle_s for z in known), CORRECTION_RISE_S),
     )
-    short = any(is_short(z) for z in judged)
-    opened = [z for z in known if z.demand is not None]  # no opening: never blocks the fall
-    satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
+    began = state.correction
+    correction = began
+    if began >= 0.0:
+        correction, rises, baseline = _above(state, inputs, config, found, held, rises, baseline)
+    if began < 0.0 or (began == 0.0 and correction == 0.0):
+        correction, trims, baseline = _below(
+            state, inputs, config, found, held or floored, trims, baseline
+        )
+    return correction, rises, trims, baseline
+
+
+def _first_move(baseline: StartsBaseline | None, inputs: ControlInputs) -> StartsBaseline:
+    """Rule 3's baseline: the correction's first move from 0 keeps the starts before it (a move
+    needs the starts known)."""
+    if baseline is not None:
+        return baseline
+    now = inputs.now
+    return StartsBaseline(now, tuple(t for t in inputs.starts or () if t < now))
+
+
+def _above(
+    state: ControlState,
+    inputs: ControlInputs,
+    config: ControlConfig,
+    found: _Found,
+    held: bool,
+    rises: Moves,
+    baseline: StartsBaseline | None,
+) -> tuple[float, Moves, StartsBaseline | None]:
+    """The correction at or above 0: the fall, or the rise — for a room held short (I13.3), while
+    no room warms back after a raised setpoint, at the pace of the slowest room, never past the
+    user's limit nor ``CORRECTION_DAY_K`` a day. Never below 0."""
+    now = inputs.now
     correction = state.correction
-    if too_warm or (satisfied and not short) or rose:
-        correction -= 2.0 * state.water_s / CORRECTION_RISE_S
-    elif (
-        short
-        and not held
-        and not extreme
-        and starts is not None
-        and may_rise(baseline, starts, now)
-    ):
-        # Only while heat flows; never while a cap or the boiler holds the water; at most
-        # ``CORRECTION_DAY_K`` within a day; the first rise keeps the starts before it.
-        spent = sum(k for _t, k in rises)
+    too_warm = any(
+        _taking_heat(z) and z.deficit is not None and z.deficit < -OVERHEAT_K for z in found.judged
+    )
+    opened = [z for z in found.known if z.demand is not None]  # no opening: never blocks the fall
+    satisfied = bool(opened) and all(z.demand is not None and z.demand < SATISFIED for z in opened)
+    if too_warm or (satisfied and not found.short) or found.rose:
+        return max(0.0, correction - 2.0 * state.water_s / CORRECTION_RISE_S), rises, baseline
+    paces = [(z, state.rooms.get(z.zone_id, RoomPace())) for z in found.judged]
+    counted = any(held_short(pace, now, z.cycle_s) for z, pace in paces)
+    warming_back = any(pace.raised_at is not None for _z, pace in paces)
+    if counted and not warming_back and not held and found.may_move:
+        # Only while heat flows — since a room counted as short; never while a cap or the
+        # boiler holds the water; at most ``CORRECTION_DAY_K`` within a day; the first rise
+        # keeps the starts before it.
+        heat_s = min(state.heat_s, max(counted_for(pace, now, z.cycle_s) for z, pace in paces))
         rise = min(
-            state.heat_s / CORRECTION_RISE_S,
-            CORRECTION_DAY_K - spent,
+            heat_s / found.rise_s,
+            CORRECTION_DAY_K - sum(k for _t, k in rises),
             config.correction_max_k - correction,
         )
         if rise > _EPSILON:
-            if baseline is None:
-                baseline = StartsBaseline(now, tuple(t for t in starts if t < now))
+            baseline = _first_move(baseline, inputs)
             correction += rise
             rises = (*rises, (now, rise))
     limit = config.correction_max_k
     if correction > limit - _EPSILON:
         correction = limit  # the band's edge, not a rounding error below it
-    return max(0.0, correction), rises, baseline
+    return correction, rises, baseline
+
+
+def _below(
+    state: ControlState,
+    inputs: ControlInputs,
+    config: ControlConfig,
+    found: _Found,
+    held: bool,
+    trims: Moves,
+    baseline: StartsBaseline | None,
+) -> tuple[float, Moves, StartsBaseline | None]:
+    """The correction at or below 0 (I13.3): back towards 0 at the fall's rate as soon as a room
+    is short or ``SATISFIED`` open, or the starts rose (rule 3); deeper — the trim — only while
+    every room judged is trusted, with its opening known and under ``SATISFIED``, never while a
+    limit holds the setpoint (``held``), at half the rise's rate at most, never past
+    ``trim_limit`` nor ``TRIM_DAY_K`` a day. Never above 0."""
+    now = inputs.now
+    correction = state.correction
+    opened = any(z.demand is not None and z.demand >= SATISFIED for z in found.known)
+    if found.short or opened or found.rose:
+        return min(0.0, correction + 2.0 * state.water_s / CORRECTION_RISE_S), trims, baseline
+    limit = trim_limit(config.correction_max_k)
+    clear = (
+        bool(found.known)
+        and len(found.judged) == len(found.known)
+        and all(z.demand is not None for z in found.known)
+    )
+    if clear and not held and found.may_move:
+        depth = min(
+            state.heat_s / trim_seconds(found.rise_s),
+            TRIM_DAY_K - sum(k for _t, k in trims),
+            limit + correction,
+        )
+        if depth > _EPSILON:
+            baseline = _first_move(baseline, inputs)
+            correction -= depth
+            trims = (*trims, (now, depth))
+    if correction < _EPSILON - limit:
+        correction = -limit  # the band's edge, not a rounding error above it
+    return correction, trims, baseline
 
 
 def _day_spent(rises: tuple[tuple[float, float], ...]) -> bool:

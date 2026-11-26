@@ -44,6 +44,7 @@ from .controller import (
     ControlState,
     Reason,
     decide,
+    trim_limit,
 )
 from .guards import (
     NO_CONTEXT,
@@ -228,17 +229,17 @@ def at_bound(decision: ControlDecision, correction_max_k: float | None = None) -
     """The setpoint is a bound the water is held at, the ramp having reached it (F14) — the
     comfort correction at its limit too, ``correction_max_k``: it climbs in steps under the
     read-back's tolerance, and its last one stayed inside the deadband (the boiler got the curve
-    + 2.53 K for + 3 K: J4's L12, the user's decision of 2026-11-22)."""
+    + 2.53 K for + 3 K: J4's L12, the user's decision of 2026-11-22); and at the trim's limit
+    below the curve, which it reaches in steps as small (I13.3)."""
     reasons = decision.reasons
     if Reason.RAMP in reasons:
         return False
     if not _BOUNDS.isdisjoint(reasons):
         return True
-    return (
-        correction_max_k is not None
-        and Reason.COMFORT_CORRECTION in reasons
-        and decision.correction >= correction_max_k
-    )
+    if correction_max_k is None or Reason.COMFORT_CORRECTION not in reasons:
+        return False
+    correction = decision.correction
+    return correction >= correction_max_k or correction <= -trim_limit(correction_max_k)
 
 
 def loop_step(

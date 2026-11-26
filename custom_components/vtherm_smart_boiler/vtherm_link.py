@@ -507,6 +507,15 @@ def vt_thermostat(hass: HomeAssistant, entity_id: str) -> Any | None:
     return None if kept is None else kept.thermostat
 
 
+def _cycle_min(infos: Mapping[str, Any]) -> float | None:
+    """A thermostat's cycle in minutes from its ``entry_infos``; ``None`` where missing, not a
+    number or not above 0."""
+    cycle = infos.get(CYCLE_MIN)
+    if isinstance(cycle, int | float) and not isinstance(cycle, bool) and cycle > 0:
+        return float(cycle)
+    return None
+
+
 def _entry_infos(thermostat: Any) -> Mapping[str, Any]:
     """A thermostat's ``entry_infos``; empty where it is missing, fails or is not a mapping."""
     infos = runtime_readings(thermostat, ("entry_infos",)).get("entry_infos")
@@ -696,6 +705,7 @@ class VThermLink:
             or self._held(self._window_auto, entity_id, thermostat)
             or self._device_state(infos.get(WINDOW_SENSOR)) == "on"
         )
+        cycle = _cycle_min(infos)
         return ZoneState(
             entity_id,
             **values,
@@ -705,6 +715,8 @@ class VThermLink:
             started=kept.started,
             room_sensor_lost=not trusted,
             window_open=window,
+            # I13.3: the comfort correction's pace follows the rooms' own cycles.
+            cycle_s=None if cycle is None else cycle * 60.0,
         )
 
     def _device_state(self, entity_id: object) -> str | None:
@@ -781,15 +793,10 @@ class VThermLink:
         infos = _entry_infos(thermostat)
         used = infos.get(USED_BY_CENTRAL_BOILER)
         kind = infos.get(THERMOSTAT_TYPE)
-        cycle = infos.get(CYCLE_MIN)
         return ZoneAlgorithm(
             used_by_central_boiler=used if isinstance(used, bool) else None,
             vtherm_type=kind if isinstance(kind, str) else None,
-            cycle_min=(
-                float(cycle)
-                if isinstance(cycle, int | float) and not isinstance(cycle, bool) and cycle > 0
-                else None
-            ),
+            cycle_min=_cycle_min(infos),
             known=bool(infos),
         )
 

@@ -17,6 +17,13 @@ from custom_components.vtherm_smart_boiler.core.alarms import (
     follow_fault,
 )
 from custom_components.vtherm_smart_boiler.core.circuit_requests import OtherAutomation
+from custom_components.vtherm_smart_boiler.core.comfort_rules import (
+    HELD_S,
+    TRIM_DAY_K,
+    TRIM_MAX_K,
+    RoomPace,
+    StartsBaseline,
+)
 from custom_components.vtherm_smart_boiler.core.controller import (
     _LIMIT_REASON,
     CORRECTION_DAY_K,
@@ -523,17 +530,32 @@ def test_invalid_config(kwargs: dict) -> None:
 
 # The comfort correction's own tests switch it on: off by default since K4.1 (2026-10-03).
 WATER = replace(CONFIG, decision_interval_s=60.0, comfort_correction=True)
+# VT's default cycle, 5 min: four of them are less than 30 min, so the rise keeps its fastest
+# pace, 1 K per 30 min of heat flow (I13.3).
+VT_CYCLE_S = 300.0
 
 
 def short(t: float, zone_id: str = "z", **kw: float) -> ZoneState:
     """A zone whose valve is fully open and whose room is still a kelvin short."""
     kw.setdefault("valve_open", 1.0)
+    kw.setdefault("cycle_s", VT_CYCLE_S)
     return ZoneState(zone_id, 20.0, 21.0, True, reported_at=t, **kw)
 
 
 def satisfied(t: float, zone_id: str = "z", **kw: float) -> ZoneState:
     kw.setdefault("valve_open", 0.3)
+    kw.setdefault("cycle_s", VT_CYCLE_S)
     return ZoneState(zone_id, 21.0, 21.0, True, reported_at=t, **kw)
+
+
+def held(*zone_ids: str, at: float = 0.0, state: ControlState | None = None) -> ControlState:
+    """A state whose rooms ``zone_ids`` ("z" by default) have been fully open and short for an
+    hour at ``at`` already: I13.3's wait met, so the rise starts at the first decision."""
+    state = state or ControlState()
+    rooms = dict(state.rooms)
+    for zone_id in zone_ids or ("z",):
+        rooms[zone_id] = RoomPace(short_since=at - HELD_S)
+    return replace(state, rooms=rooms)
 
 
 def minutes(start: float, count: int, zones, **kw):
@@ -543,7 +565,9 @@ def minutes(start: float, count: int, zones, **kw):
 
 
 def test_comfort_correction_rises_1k_per_30_min_while_heat_flows_up_to_3k() -> None:
-    state, decisions = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    """With VT's 5-min cycle, once the room has been short for an hour (I13.3): 1 K per 30 min
+    of heat flow, up to its limit."""
+    state, decisions = run(minutes(0.0, 31, lambda t: (short(t),)), WATER, held())
     assert state.correction == pytest.approx(1.0)
     assert decisions[-1].command.setpoint == pytest.approx(CURVE.flow(5.0) + 1.0)
     assert Reason.COMFORT_CORRECTION in decisions[-1].reasons
@@ -556,12 +580,13 @@ def test_a_room_whose_temperature_is_not_trusted_judges_nothing_of_the_curve() -
     measured since the start (``room_sensor_lost``) neither makes the correction rise nor is
     named short; a too-warm one does not hold the fall. It still calls: the boiler heats."""
     blind = lambda t: (short(t, room_sensor_lost=True),)  # noqa: E731
-    state, decisions = run(minutes(0.0, 31, blind), WATER)
+    state, decisions = run(minutes(0.0, 31, blind), WATER, held())
     assert state.correction == 0.0
+    assert state.rooms["z"].short_since is None  # not short while not trusted (I13.3)
     assert decisions[-1].short_zones == ()
     assert not decisions[-1].most_short
     assert decisions[-1].command.ch_enable  # it still calls
-    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER, held())
     assert state.correction == pytest.approx(1.0)
     hot = ZoneState("hot", 22.5, 21.0, True, reported_at=0.0, valve_open=0.9)
     rooms = lambda t: (short(t), replace(hot, reported_at=t, room_sensor_lost=True))  # noqa: E731
@@ -575,14 +600,14 @@ def test_comfort_correction_does_not_grow_while_no_heat_flows() -> None:
 
 
 def test_comfort_correction_falls_twice_as_fast() -> None:
-    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER, held())
     assert state.correction == pytest.approx(3.0)
     state, _ = run(minutes(5460.0, 30, lambda t: (satisfied(t),)), WATER, state)
     assert state.correction == pytest.approx(1.0)  # 2 K in 30 minutes
 
 
 def test_a_zone_without_opening_data_does_not_block_the_fall() -> None:
-    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER, held())
 
     def zones(t: float) -> tuple[ZoneState, ...]:
         # an over_climate zone without valve regulation: no opening at all
@@ -598,19 +623,19 @@ def test_no_rise_while_another_zone_is_too_warm() -> None:
     def zones(t: float) -> tuple[ZoneState, ...]:
         return (short(t), ZoneState("b", 22.5, 21.0, True, reported_at=t, valve_open=0.3))
 
-    state, _ = run(minutes(0.0, 31, zones), WATER)
+    state, _ = run(minutes(0.0, 31, zones), WATER, held("z", "a", "b"))
     assert state.correction == 0.0
 
 
 def test_comfort_correction_resets_at_hand_back() -> None:
-    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER, held())
     assert state.correction > 0.0
     state, _ = run([inputs(1900.0, enabled=False)], WATER, state)
     assert state.correction == 0.0
 
 
 def test_comfort_correction_at_its_limit_for_hours_is_reported() -> None:
-    state, decisions = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    state, decisions = run(minutes(0.0, 91, lambda t: (short(t),)), WATER, held())
     assert not decisions[-1].correction_at_limit
     _state, decisions = run(minutes(5460.0, 181, lambda t: (short(t),)), WATER, state)
     assert decisions[-1].correction_at_limit  # 3 K for three hours: the curve is probably low
@@ -629,7 +654,7 @@ def test_the_correction_rises_up_to_the_users_limit_and_says_so_there(limit: flo
     """G11 B: the limit is the user's — the correction stops at it, and three hours there are
     "at its limit", whatever the default."""
     config = replace(WATER, correction_max_k=limit)
-    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config, held())
     assert state.correction == pytest.approx(limit)
     _state, decisions = run(minutes(7260.0, 181, lambda t: (short(t),)), config, state)
     assert decisions[-1].correction_at_limit
@@ -639,7 +664,7 @@ def test_a_limit_above_3_k_is_reached_at_3_k_a_day() -> None:
     """G11 B: a limit of 5 K — the rise stays at most 3 K a day, so 3 K the first day, and the
     rest only once a day has passed since the first rises."""
     config = replace(WATER, correction_max_k=5.0)
-    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config, held())
     assert state.correction == pytest.approx(3.0)
     start = 24 * 3600.0 + 7300.0
     state, _ = run(minutes(start, 121, lambda t: (short(t),)), config, state)
@@ -673,9 +698,13 @@ def test_short_is_judged_against_vts_setpoint(temperature: float, after: float) 
     algorithm — 0.4 K under it raises the correction; 0.1 K over it counts as warm enough."""
 
     def zones(t: float) -> tuple[ZoneState, ...]:
-        return (ZoneState("z", temperature, 21.0, True, reported_at=t, valve_open=1.0),)
+        return (
+            ZoneState(
+                "z", temperature, 21.0, True, reported_at=t, valve_open=1.0, cycle_s=VT_CYCLE_S
+            ),
+        )
 
-    state, decisions = run(minutes(0.0, 31, zones), WATER)
+    state, decisions = run(minutes(0.0, 31, zones), WATER, held("z", "a", "b"))
     assert state.correction == pytest.approx(after)
     assert decisions[-1].short_zones == (("z",) if after else ())
 
@@ -1948,7 +1977,7 @@ def test_heat_flows_by_the_flame_when_known() -> None:
         ({"flame": True, "dhw": True}, False),
         ({"flame": True, "dhw": None}, True),
     ):
-        state, _ = run(minutes(0.0, 31, lambda t: (short(t),), **kw), WATER)
+        state, _ = run(minutes(0.0, 31, lambda t: (short(t),), **kw), WATER, held())
         assert (state.correction == pytest.approx(1.0)) is rises, kw
         assert (state.correction == 0.0) is not rises, kw
 
@@ -1966,7 +1995,7 @@ def test_only_zones_taking_heat_stop_the_rise() -> None:
         def zones(t: float, other: dict = other) -> tuple[ZoneState, ...]:
             return (short(t), ZoneState("b", 23.0, 21.0, True, reported_at=t, **other))
 
-        state, _ = run(minutes(0.0, 31, zones), WATER)
+        state, _ = run(minutes(0.0, 31, zones), WATER, held("z", "a", "b"))
         assert (state.correction > 0.0) is rises, other
 
 
@@ -2011,9 +2040,9 @@ def test_the_correction_rises_at_most_3_k_a_day() -> None:
     """Principle 13's daily rate (provisional, K4): 3 K up, back down, and no more rise within
     24 h of the first; a day later it rises again."""
     assert CORRECTION_DAY_K == 3.0
-    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER, held())
     assert state.correction == pytest.approx(3.0)
-    state, _ = run(minutes(5460.0, 46, lambda t: (satisfied(t),)), WATER, state)
+    state, _ = run(minutes(5460.0, 45, lambda t: (satisfied(t),)), WATER, state)
     assert state.correction == pytest.approx(0.0)
     state, _ = run(minutes(8220.0, 60, lambda t: (short(t),)), WATER, state)
     assert state.correction == 0.0  # the day's rise is spent
@@ -2050,7 +2079,7 @@ def test_reset_correction_clears_the_value_and_its_timers() -> None:
     """Answer J: the pure reset — correction 0, the "at limit" timer and the heat counted
     cleared, the water decided anew at the next step; the rise may start again under its
     rules (the day's 3 K counts what rose before)."""
-    state, _ = run(minutes(0.0, 61, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 61, lambda t: (short(t),)), WATER, held())
     assert state.correction == pytest.approx(2.0)
     reset = reset_correction(replace(state, correction_limit_s=100.0, heat_s=50.0))
     assert reset.correction == 0.0
@@ -2067,7 +2096,7 @@ def test_reset_correction_clears_the_value_and_its_timers() -> None:
 def test_the_decision_carries_the_correction() -> None:
     """P-38: the correction is published — each decision carries its value; a hand-back
     resets it."""
-    state, decisions = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    state, decisions = run(minutes(0.0, 31, lambda t: (short(t),)), WATER, held())
     assert decisions[-1].correction == pytest.approx(1.0) == state.correction
     _state, [off] = run([inputs(1900.0, enabled=False)], WATER, state)
     assert off.correction == 0.0
@@ -2087,7 +2116,7 @@ def short_with_starts(start: float, count: int, starts: tuple[float, ...]) -> li
 def test_rule_3_the_correction_rises_while_the_starts_do_not_rise() -> None:
     """As many starts since it began as in the same hours before it — equal spans, each
     start counted once its span reaches it: it rises."""
-    state, _ = run(short_with_starts(0.0, 31, (-1200.0, 1400.0)), WATER)
+    state, _ = run(short_with_starts(0.0, 31, (-1200.0, 1400.0)), WATER, held())
     assert state.correction == pytest.approx(1.0)
     assert state.starts_baseline is not None
     assert state.starts_baseline.before == (-1200.0,)  # the starts before it began
@@ -2097,7 +2126,7 @@ def test_rule_3_the_correction_steps_back_while_the_starts_rise() -> None:
     """A start after it began, none in the same hours before: it falls at its fall rate, and a
     rise after it reached 0 is judged against the same hours — no rise while they still show
     more starts."""
-    state, _ = run(short_with_starts(0.0, 31, ()), WATER)
+    state, _ = run(short_with_starts(0.0, 31, ()), WATER, held())
     assert state.correction == pytest.approx(1.0)
     began = state.starts_baseline
     assert began is not None
@@ -2116,7 +2145,7 @@ def test_one_step_back_after_the_limit_with_the_days_rise_spent_still_warns() ->
     rise again until a day has passed, the room still short. That time counts as at its limit,
     so the warning comes after three hours, not a day later."""
     before = -92 * 60.0  # once the span since it began reaches back to it, the starts are even
-    state, _ = run(short_with_starts(0.0, 91, (before,)), WATER)
+    state, _ = run(short_with_starts(0.0, 91, (before,)), WATER, held())
     assert state.correction == 3.0
     state, _ = run(short_with_starts(91 * 60.0, 3, (before, 91 * 60.0)), WATER, state)
     assert state.correction < 3.0  # stepped back
@@ -2128,7 +2157,7 @@ def test_one_step_back_after_the_limit_with_the_days_rise_spent_still_warns() ->
 def test_the_days_rise_spent_without_a_room_short_is_no_warning() -> None:
     """Negative: the day's rise spent, the rooms then satisfied — the correction falls and
     nothing is at its limit."""
-    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 91, lambda t: (short(t),)), WATER, held())
     assert state.correction == 3.0
     state, decisions = run(minutes(5460.0, 240, lambda t: (satisfied(t),)), WATER, state)
     assert state.correction < 3.0
@@ -2171,7 +2200,7 @@ def falls_from_2k(seen: tuple[tuple[float, float], ...], **kw: float | None) -> 
 def rises_from_1k(seen: tuple[tuple[float, float], ...], **kw: float | None) -> float:
     """The correction after ten minutes with a zone short, from 1 K (a third of a kelvin when
     it rises)."""
-    start = ControlState(correction=1.0, outdoor_seen=seen)
+    start = held(state=ControlState(correction=1.0, outdoor_seen=seen))
     state, _ = run(minutes(0.0, 11, lambda t: (short(t),), **kw), WATER, start)
     return state.correction
 
@@ -2206,7 +2235,7 @@ def test_rule_5_extreme_weather_freezes_only_the_rise() -> None:
 def test_rule_5_rule_3s_step_back_passes_the_freeze() -> None:
     """Rule 3's step back — more starts since it began — is a fall: extreme weather does not
     stop it."""
-    state, _ = run(short_with_starts(0.0, 31, ()), WATER)
+    state, _ = run(short_with_starts(0.0, 31, ()), WATER, held())
     assert state.correction == pytest.approx(1.0)
     steps = [
         replace(step, outdoor_sensor=-16.0)  # below the design outdoor temperature
@@ -2752,11 +2781,13 @@ def test_the_correction_rises_only_for_a_zone_short_by_short_k(room: float, afte
     """TB-19: the correction at 1 K, the one zone fully open (none below 70 %) and its room
     0.25 K short of 21 °C — under ``SHORT_K``: neither short nor satisfied, 30 min of heat flow
     leave the correction at 1 K; 0.3 K short, it rises to 2 K."""
-    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER, held())
     assert state.correction == pytest.approx(1.0)
 
     def near(t: float) -> tuple[ZoneState, ...]:
-        return (ZoneState("z", room, 21.0, True, reported_at=t, valve_open=1.0),)
+        return (
+            ZoneState("z", room, 21.0, True, reported_at=t, valve_open=1.0, cycle_s=VT_CYCLE_S),
+        )
 
     state, _ = run(minutes(1860.0, 30, near), WATER, state)
     assert state.correction == pytest.approx(after)
@@ -3069,7 +3100,7 @@ def test_hot_water_between_two_decisions_is_no_heat_flow() -> None:
     the rise — 1/30 K."""
     config = replace(WATER, decision_interval_s=300.0)
     steps = [replace(s, dhw=0.0 < s.now < 300.0) for s in minutes(0.0, 6, lambda t: (short(t),))]
-    _state, decisions = run(steps, config)
+    _state, decisions = run(steps, config, held())
     assert decisions[-1].correction == pytest.approx(1.0 / 30.0)
 
 
@@ -3084,8 +3115,8 @@ def test_the_correction_stays_while_the_boilers_maximum_holds_the_setpoint() -> 
 @pytest.mark.parametrize(
     "other",
     [
-        ZoneState("b", 22.0, 21.0, True, valve_open=0.3),
-        ZoneState("b", 22.5, 21.0, True, valve_open=0.05),
+        ZoneState("b", 22.0, 21.0, True, valve_open=0.3, cycle_s=VT_CYCLE_S),
+        ZoneState("b", 22.5, 21.0, True, valve_open=0.05, cycle_s=VT_CYCLE_S),
     ],
     ids=["one_kelvin_over", "open_five_percent"],
 )
@@ -3097,7 +3128,7 @@ def test_a_zone_at_the_edge_of_too_warm_does_not_stop_the_rise(other: ZoneState)
     def zones(t: float) -> tuple[ZoneState, ...]:
         return (short(t), replace(other, reported_at=t))
 
-    state, _ = run(minutes(0.0, 31, zones), WATER)
+    state, _ = run(minutes(0.0, 31, zones), WATER, held("z", "a", "b"))
     assert state.correction == pytest.approx(1.0)
 
 
@@ -3123,11 +3154,13 @@ def test_the_days_rise_counts_on_a_wall_clock_of_today() -> None:
     """Principle 13's daily rate at a real clock's time (seconds since 1970): 3 K up, back
     down, and no more rise within the day."""
     t0 = 1_760_000_000.0
-    state, _ = run(minutes(t0, 91, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(t0, 91, lambda t: (short(t),)), WATER, held(at=t0))
     assert state.correction == pytest.approx(3.0)
-    state, _ = run(minutes(t0 + 5460.0, 46, lambda t: (satisfied(t),)), WATER, state)
+    state, _ = run(minutes(t0 + 5460.0, 45, lambda t: (satisfied(t),)), WATER, state)
     assert state.correction == pytest.approx(0.0)
-    state, _ = run(minutes(t0 + 8220.0, 60, lambda t: (short(t),)), WATER, state)
+    state, _ = run(
+        minutes(t0 + 8220.0, 60, lambda t: (short(t),)), WATER, held(at=t0 + 8220.0, state=state)
+    )
     assert state.correction == 0.0
 
 
@@ -3135,7 +3168,7 @@ def test_a_rise_a_day_old_no_longer_counts() -> None:
     """Principle 13's daily rate: 3 K risen at 0 s still count a minute before a day has
     passed — no rise — and no longer at exactly a day: the correction rises again."""
     day = 24 * HOUR
-    spent = replace(ControlState(), rises=((0.0, CORRECTION_DAY_K),))
+    spent = held(at=day - 120.0, state=replace(ControlState(), rises=((0.0, CORRECTION_DAY_K),)))
     _state, decisions = run(minutes(day - 120.0, 3, lambda t: (short(t),)), WATER, spent)
     assert decisions[1].correction == 0.0
     assert decisions[2].correction > 0.0
@@ -3145,7 +3178,7 @@ def test_the_correction_does_not_rise_on_a_clock_set_back_before_it_began() -> N
     """Rule 3 (decision 11 of 0.2.3): the rise needs the clock not before the correction's
     beginning. Negative: set back past it, the heat counted before is not risen on."""
     config = replace(WATER, decision_interval_s=300.0)
-    state, _ = run(minutes(10000.0, 7, lambda t: (short(t),)), config)
+    state, _ = run(minutes(10000.0, 7, lambda t: (short(t),)), config, held(at=10000.0))
     began = state.correction
     assert began > 0.0
     step = inputs(10200.0, zones=(short(10200.0),), flame=True)
@@ -3156,21 +3189,23 @@ def test_the_correction_does_not_rise_on_a_clock_set_back_before_it_began() -> N
 def test_the_days_rise_counts_only_what_the_correction_rose() -> None:
     """Principle 13: the day's 3 K counts what the band let through — a 0.5 K band reached,
     the hours of heat after it spend nothing: having fallen back, the correction rises again
-    the same day."""
+    the same day — once the room has been short for an hour again (I13.3)."""
     config = replace(WATER, correction_max_k=0.5)
-    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config)
+    state, _ = run(minutes(0.0, 121, lambda t: (short(t),)), config, held())
     assert state.correction == pytest.approx(0.5)
     assert sum(k for _t, k in state.rises) == pytest.approx(0.5)
-    state, _ = run(minutes(7260.0, 16, lambda t: (satisfied(t),)), config, state)
+    state, _ = run(minutes(7260.0, 8, lambda t: (satisfied(t),)), config, state)
     assert state.correction == 0.0
-    state, _ = run(minutes(8220.0, 31, lambda t: (short(t),)), config, state)
+    state, _ = run(minutes(7740.0, 60, lambda t: (short(t),)), config, state)
+    assert state.correction == 0.0  # short again, not for an hour yet
+    state, _ = run(minutes(11340.0, 31, lambda t: (short(t),)), config, state)
     assert state.correction == pytest.approx(0.5)
 
 
 def test_the_at_limit_timer_starts_at_the_edge_and_reports_at_three_hours() -> None:
     """Principle 13 (6): below the band's edge the "at limit" timer stays at 0; at the edge it
     counts the decisions' time and reports at three hours exactly — not a minute before."""
-    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER)
+    state, _ = run(minutes(0.0, 31, lambda t: (short(t),)), WATER, held())
     assert 0.0 < state.correction < CORRECTION_MAX_K
     assert state.correction_limit_s == 0.0
     edge = replace(ControlState(), correction=CORRECTION_MAX_K)
@@ -3185,3 +3220,226 @@ def test_a_setpoint_exactly_at_the_cap_follows_a_lower_target_at_the_ramps_rate(
     from custom_components.vtherm_smart_boiler.core.controller import _ramp
 
     assert _ramp(60.0, 30.0, 60.0, 30.0, 1.0) == (59.5, True)
+
+
+# --- I13.3: the correction's pace and its trim ------------------------------------------------
+
+
+def neither(t: float, zone_id: str = "z", **kw: float) -> ZoneState:
+    """A room at its setpoint, 80 % open: neither short nor clearly satisfied."""
+    kw.setdefault("temperature", 21.0)
+    kw.setdefault("target", 21.0)
+    kw.setdefault("valve_open", 0.8)
+    kw.setdefault("cycle_s", VT_CYCLE_S)
+    return ZoneState(zone_id, heating_enabled=True, reported_at=t, **kw)
+
+
+def test_a_room_counts_as_short_only_after_an_hour_without_a_break() -> None:
+    """I13.3: fully open and short from 0 s, VT's 5-min cycle: nothing for the first hour, then
+    1 K per 30 min of heat flow. One look not short breaks the run: the hour starts again."""
+    state, _ = run(minutes(0.0, 60, lambda t: (short(t),)), WATER)
+    assert state.correction == 0.0
+    assert state.rooms["z"].short_since == 0.0
+    state, _ = run(minutes(3600.0, 31, lambda t: (short(t),)), WATER, state)
+    assert state.correction == pytest.approx(1.0)
+    steps = [
+        *minutes(0.0, 50, lambda t: (short(t),)),
+        *minutes(3000.0, 1, lambda t: (neither(t),)),
+        *minutes(3060.0, 60, lambda t: (short(t),)),
+    ]
+    state, _ = run(steps, WATER)
+    assert state.correction == 0.0  # short again since 3060 s: not an hour yet
+    state, _ = run(minutes(6660.0, 31, lambda t: (short(t),)), WATER, state)
+    assert state.correction == pytest.approx(1.0)
+
+
+def test_a_slow_room_waits_two_of_its_cycles_and_rises_a_kelvin_in_four() -> None:
+    """I13.3: a 45-min cycle — the wait is two of them, 90 min; the rise one kelvin per four,
+    3 h of heat flow."""
+    slow = lambda t: (short(t, cycle_s=2700.0),)  # noqa: E731
+    state, _ = run(minutes(0.0, 90, slow), WATER)
+    assert state.correction == 0.0
+    state, _ = run(minutes(5400.0, 91, slow), WATER, state)
+    assert state.correction == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    ("other", "expected"),
+    [
+        (None, 0.5),  # the short room's own cycle not known: 15 min, 1 K an hour
+        (1800.0, 0.25),  # a room of 30-min cycles beside it: 1 K in 2 h
+    ],
+    ids=["cycle_unknown", "slowest_room"],
+)
+def test_the_slowest_room_judged_sets_the_pace(other: float | None, expected: float) -> None:
+    """I13.3: the rise takes four cycles of the slowest room the correction judges per kelvin —
+    a room whose cycle is not known counts as 15 min."""
+
+    def rooms(t: float) -> tuple[ZoneState, ...]:
+        if other is None:
+            return (short(t, cycle_s=None),)
+        return (short(t), neither(t, "b", cycle_s=other))
+
+    state, _ = run(minutes(0.0, 31, rooms), WATER, held("z"))
+    assert state.correction == pytest.approx(expected)
+
+
+def recovery(t: float, raised: bool = True, stall_at: float = math.inf) -> ZoneState:
+    """A room kept at 19 °C, its setpoint raised to 21 °C at 0 s (a morning setback's end):
+    from then fully open and warming 0.02 K a minute, up to ``stall_at``. ``raised`` false: its
+    setpoint was 21 °C all along — the same room, no raise."""
+    if t < 0.0:
+        return neither(t, temperature=19.0, target=19.0 if raised else 21.0)
+    warmed = 19.0 + 0.02 * min(t, stall_at) / 60.0
+    return ZoneState("z", warmed, 21.0, True, reported_at=t, valve_open=1.0, cycle_s=VT_CYCLE_S)
+
+
+def test_no_rise_while_a_room_warms_back_after_its_setpoint_was_raised() -> None:
+    """I13.3: a morning recovery — short from the raise on, an hour and more, but warming 0.6 K
+    every half hour until it is within 0.3 K: the correction does not rise. Negative: the same
+    room with no raise — its setpoint 21 °C all along — makes it rise after the hour."""
+    steps = minutes(-600.0, 100, lambda t: (recovery(t),))
+    _state, decisions = run(steps, WATER)
+    assert max(d.correction for d in decisions) == 0.0
+    plain = minutes(-600.0, 100, lambda t: (recovery(t, raised=False),))
+    _state, decisions = run(plain, WATER)
+    assert max(d.correction for d in decisions) > 0.5
+
+
+def test_the_hold_after_a_raise_ends_once_the_room_stops_warming() -> None:
+    """I13.3: the room stalls at 20.0 °C, 50 min after the raise: once it has risen less than
+    0.2 K over half an hour (at about 70 min), the correction rises for it — short since the
+    raise, so at once."""
+    steps = minutes(-600.0, 100, lambda t: (recovery(t, stall_at=3000.0),))
+    _state, decisions = run(steps, WATER)
+    early = [d.correction for s, d in zip(steps, decisions, strict=True) if s.now <= 4140.0]
+    assert max(early) == 0.0
+    assert decisions[-1].correction > 0.4
+
+
+def test_a_hand_back_starts_the_hour_again() -> None:
+    """I13.3: a room short under another controller's water says nothing of the curve — after a
+    hand-back its hour starts again with control."""
+    state, _ = run([inputs(0.0, zones=(short(0.0),), enabled=False)], WATER, held())
+    assert state.rooms["z"].short_since is None
+    state, _ = run(minutes(60.0, 60, lambda t: (short(t),)), WATER, state)
+    assert state.correction == 0.0
+    state, _ = run(minutes(3660.0, 31, lambda t: (short(t),)), WATER, state)
+    assert state.correction == pytest.approx(1.0)
+
+
+def test_the_trim_lowers_the_water_while_every_room_is_clearly_satisfied() -> None:
+    """I13.3: every room under 70 % open while heat flows — the water trims below the curve,
+    1 K per 2 h of heat flow, shown with its sign; never past 3 K, nor more than 3 K a day."""
+    assert (TRIM_MAX_K, TRIM_DAY_K) == (3.0, 3.0)
+    calm = lambda t: (satisfied(t, "a"), satisfied(t, "b"))  # noqa: E731
+    state, decisions = run(minutes(0.0, 121, calm), WATER)
+    assert state.correction == pytest.approx(-1.0)
+    assert decisions[-1].correction == pytest.approx(-1.0)
+    assert decisions[-1].command.setpoint == pytest.approx(CURVE.flow(5.0) - 1.0)
+    assert Reason.COMFORT_CORRECTION in decisions[-1].reasons
+    state, _ = run(minutes(7260.0, 300, lambda t: (satisfied(t),)), WATER, state)
+    assert state.correction == -TRIM_MAX_K
+    assert sum(k for _t, k in state.trims) == pytest.approx(TRIM_DAY_K)
+    state, _ = run(minutes(25260.0, 45, lambda t: (neither(t, valve_open=0.7),)), WATER, state)
+    assert state.correction == pytest.approx(0.0)  # back at 1 K per 15 min
+    state, _ = run(minutes(27960.0, 60, lambda t: (satisfied(t),)), WATER, state)
+    assert state.correction == pytest.approx(0.0)  # the day's trim is spent
+    assert state.rises == ()  # the way back is no rise
+
+
+def test_the_trim_goes_back_as_soon_as_a_room_is_short_or_70_percent_open() -> None:
+    """I13.3: from −2 K, 15 min with a room short — however briefly — or open 70 %: back 1 K,
+    the fall's rate; with the starts risen since it began (rule 3), likewise."""
+    start = replace(ControlState(), correction=-2.0)
+    for room in (short, lambda t: neither(t, valve_open=0.7)):
+        state, _ = run(minutes(0.0, 16, lambda t, room=room: (room(t),)), WATER, start)
+        assert state.correction == pytest.approx(-1.0)
+    rule_3 = replace(start, starts_baseline=StartsBaseline(-600.0, ()))
+    state, _ = run(minutes(0.0, 16, lambda t: (satisfied(t),), starts=(-300.0,)), WATER, rule_3)
+    assert state.correction == pytest.approx(-1.0)
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        lambda t: ZoneState("b", 21.0, 21.0, True, reported_at=t),  # no opening known
+        lambda t: satisfied(t, "b", room_sensor_lost=True),  # its temperature not trusted
+    ],
+    ids=["no_opening", "not_trusted"],
+)
+def test_a_room_that_cannot_be_judged_holds_the_trim(other: Callable[[float], ZoneState]) -> None:
+    """I13.3: a room the plugin cannot see satisfied holds the trim — no deeper, no way back:
+    the cautious side."""
+    for correction in (0.0, -1.0):
+        start = replace(ControlState(), correction=correction)
+        rooms = lambda t: (satisfied(t), other(t))  # noqa: E731
+        state, _ = run(minutes(0.0, 61, rooms), WATER, start)
+        assert state.correction == correction
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        replace(WATER, limits=FlowLimits(hard_min=CURVE.flow(5.0))),  # the lowest water
+        replace(WATER, circuit_max=CURVE.flow(5.0) - 1.0),  # a cap below the curve
+    ],
+    ids=["lowest_water", "cap"],
+)
+def test_no_deeper_trim_while_a_limit_holds_the_setpoint(config: ControlConfig) -> None:
+    """I13.3: the lowest water temperature or a cap already holds the setpoint — a deeper trim
+    could not show: none."""
+    state, decisions = run(minutes(0.0, 61, lambda t: (satisfied(t),)), config)
+    assert state.correction == 0.0
+    assert Reason.COMFORT_CORRECTION not in decisions[-1].reasons
+
+
+def test_the_lowest_water_temperature_holds_under_the_trim() -> None:
+    """I13.3: a trim deeper than the room between the curve and the lowest water temperature —
+    the setpoint stays at the lowest, and says so."""
+    config = replace(WATER, limits=FlowLimits(hard_min=CURVE.flow(5.0) - 1.0))
+    start = replace(ControlState(), correction=-2.0)
+    _state, decisions = run(minutes(0.0, 1, lambda t: (neither(t),)), config, start)
+    assert decisions[-1].command.setpoint == pytest.approx(CURVE.flow(5.0) - 1.0)
+    assert Reason.LIMIT_HARD_MIN in decisions[-1].reasons
+
+
+def test_no_deeper_trim_in_extreme_weather_without_the_starts_or_during_hot_water() -> None:
+    """I13.3, rules 5 and 3 and principle 13 (5): below the design outdoor temperature, the
+    starts not known, or hot water running — the trim holds where it is."""
+    start = replace(ControlState(), correction=-1.0)
+    cold = hour_read(lambda _t: -16.0)
+    for kw, seen in (
+        ({"outdoor_sensor": -16.0}, cold),
+        ({"starts": None}, ()),
+        ({"dhw": True}, ()),
+    ):
+        steps = minutes(0.0, 61, lambda t: (satisfied(t),), **kw)
+        state, _ = run(steps, WATER, replace(start, outdoor_seen=seen))
+        assert state.correction == -1.0, kw
+    state, _ = run(minutes(0.0, 15, lambda t: (short(t),), dhw=True), WATER, start)
+    assert state.correction == -1.0  # hot water: no way back either
+
+
+def test_the_trim_is_no_deeper_than_the_users_limit() -> None:
+    """I13.3: the user's limit of 1 K above the curve bounds the trim below it too."""
+    config = replace(WATER, correction_max_k=1.0)
+    state, _ = run(minutes(0.0, 241, lambda t: (satisfied(t),)), config)
+    assert state.correction == -1.0
+
+
+def test_a_fall_to_0_and_the_trim_are_two_decisions() -> None:
+    """I13.3: the correction falling from above the curve stops at 0 at that decision; the trim
+    begins at the next one."""
+    start = replace(ControlState(), correction=0.03)
+    _state, decisions = run(minutes(0.0, 3, lambda t: (satisfied(t),)), WATER, start)
+    assert decisions[1].correction == 0.0
+    assert decisions[2].correction < 0.0
+
+
+def test_a_hand_back_resets_the_trim() -> None:
+    state, _ = run(minutes(0.0, 61, lambda t: (satisfied(t),)), WATER)
+    assert state.correction < 0.0
+    state, [off] = run([inputs(3660.0, enabled=False)], WATER, state)
+    assert state.correction == 0.0 == off.correction
+    assert state.trims  # the day's trims stay

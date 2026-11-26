@@ -337,14 +337,32 @@ outdoor sensor never means zero heat.
 room stays short of its setpoint with its valve fully
 open, the water rises slowly above the curve, up to its limit: 3 K by default, up to 10 K, set
 in **Heating curve** beside the correction; never more than 3 K a day. "Short" means 0.3 K or
-more below VT's setpoint, whatever the zone's algorithm. It does not rise while the boiler starts
-more often than before. One room short counts like
+more below VT's setpoint, whatever the zone's algorithm. It waits until a room has been short
+for an hour without a break — and for two of the room's VT cycles, where they are longer than half
+an hour. Then it rises by 1 K per four cycles of the slowest room (VT's cycle setting; 15 minutes
+where it is not known), never faster than 1 K per 30 minutes. This keeps it much slower than the
+rooms' own control, so the two do not fight. It does not rise while a room still warms up after
+its setpoint was raised — after a night setback, say — until the room is within 0.3 K of its new
+setpoint or has warmed less than 0.2 K in half an hour: the same test as after an open window. It
+does not rise while the boiler starts more often than before. One room short counts like
 any other — the water never goes higher for one room's sake. After three hours as high as it may
 go — at its limit, or once it has risen 3 K within a day — with a room still short, the correction
 holds there, and a repair issue names the room and the
-possible causes: the curve too low, the room's radiator too small, or the room losing heat. What
-it costs: more gas, and more burner starts — with VT's TPI zones it often sits at its limit and
-raises the starts several times over for almost no warmth. That is why it is off: where a room
+possible causes: the curve too low, the room's radiator too small, or the room losing heat.
+
+**Below the curve.** While heat flows and every room the correction reads is open less than 70 %,
+none short, the correction lowers the water below the curve: 1 K per 2 hours of heat at most (and
+always at half its rising speed or slower), by 3 K at most (never more than its limit) and by 3 K
+a day at most. It comes back towards the curve, 1 K per 15 minutes, as soon as a room is short or
+70 % open, or the boiler starts more often than before. It goes no lower while a room's opening
+or temperature is not known, in extreme weather, while hot water runs, or while the lowest water
+temperature or a cap already holds the water. The lowest water temperature always holds. The
+control state shows the correction with its sign: `comfort_correction` below 0 means below the
+curve.
+
+What it costs: more gas, and more burner starts — with VT's TPI zones it can sit at its limit:
+in the simulation up to about 3.5 times the starts in steady frost, for almost no warmth. Below the
+curve, a room may warm up more slowly. That is why it is off: where a room
 stays cold, raise the curve first. A "Reset comfort correction" button sets it back to zero.
 
 **Which rooms judge the curve.** A room's temperature counts for the comfort correction, its
@@ -1306,7 +1324,7 @@ risks. The main ones — described, not advised:
 | Lowest water temperature | 20 °C (provisional) | too low: in mild weather the boiler stops by itself again and again, and a non-condensing boiler condenses in its flue (its manual gives the value) |
 | A circuit's highest water temperature | 70 °C where empty | caps every setpoint on circuits fed straight from the boiler; the boiler may overshoot it by its own hysteresis |
 | Its too-hot alarm | the maximum + 5 K, for 10 min | information only; too high lets a real overshoot pass unreported |
-| Comfort correction | off; switched on, up to 3 K (at most 10 K), rising at most 3 K a day | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts |
+| Comfort correction | off; switched on, up to 3 K (at most 10 K), rising at most 3 K a day, after a room has been short for an hour; down to 3 K below the curve while every room is well satisfied | raises the water for a room that stays short of its target; with TPI zones it can hold the water higher and multiply the burner's starts; below the curve a room may warm up more slowly |
 | Helper switched by VT's central boiler | none — you pick it | VT's central boiler decides through it; pointed at the boiler instead, two controllers would fight |
 | Write type of a picked target | unknown — not written | expiring or held must be declared; a wrong declaration wears the boiler's memory or lets a value lapse |
 | Hand-back value | none — entered with its effect | the same number means "own control" on one device and "no heat" on another |
@@ -1404,7 +1422,7 @@ automation:
   lockout, the maker's app, another controller's modulation limit, the hot-water enable, a boiler
   that clamps the setpoint behind a gateway — the gateway still shows the plugin's value. They
   show only through their effects: no sign the boiler heats while VT calls (after 30 minutes),
-  or the comfort correction at its limit (after about 4.5 h).
+  or the comfort correction at its limit (after about 5.5 h, longer with slower VT cycles).
 - **A boiler that clips a steady setpoint** looks like another controller: a lower value is
   recognised as the boiler's own limit only once the plugin has sent values at least 1 K apart.
   With one steady value it is written back once, and a second change within 24 h makes the plugin

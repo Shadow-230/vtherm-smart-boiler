@@ -11,6 +11,8 @@ zone, nor saturated, while its window is open, nor after it closes while it warm
 hold-off ends at the first of: the room back within ``BACK_K`` of its target, or no longer
 warming — risen less than ``WARMING_K`` over the last ``WARMING_S``, from its own readings the
 plugin keeps. Until it has been closed that long, warming cannot be told and the hold-off stays.
+The same "still warming" test (``still_warming``) holds the comfort correction's rise while a room
+warms back after its setpoint was raised (I13.3, ``core.comfort_rules``).
 """
 
 from __future__ import annotations
@@ -67,6 +69,26 @@ def rise(readings: RoomReadings, now: float, temperature: float | None) -> float
     return temperature - before[-1]
 
 
+def still_warming(
+    since: float,
+    now: float,
+    readings: RoomReadings,
+    temperature: float | None,
+    target: float | None,
+) -> bool:
+    """A room warming back since ``since`` — its window closed, its setpoint raised — still is:
+    not yet within ``BACK_K`` of its ``target``, and not seen to stop warming (``rise`` below
+    ``WARMING_K``). Warming is told only ``WARMING_S`` after ``since`` with a reading that old;
+    until then, or while the room's temperature is not known, it still is."""
+    if temperature is not None and target is not None and target - temperature <= BACK_K:
+        return False
+    if now - since >= WARMING_S:
+        risen = rise(readings, now, temperature)
+        if risen is not None and risen < WARMING_K:
+            return False
+    return True
+
+
 def follow_window(
     previous: WindowHold,
     open_now: bool,
@@ -75,22 +97,16 @@ def follow_window(
     temperature: float | None,
     target: float | None,
 ) -> WindowHold:
-    """The window rule at a look: held while the window is open; once it closes, until the room
-    is within ``BACK_K`` of its ``target`` or no longer warming (``rise`` below ``WARMING_K``).
-    Warming is told only once it has been closed for ``WARMING_S`` with a reading that old;
-    until then, or while the room's temperature is not known, it stays held."""
+    """The window rule at a look: held while the window is open; once it closes, while the room
+    is still warming back (``still_warming``)."""
     if open_now:
         return WindowHold(open=True)
     closed_at = now if previous.open else previous.closed_at
     if closed_at is None:
         return WindowHold()
     closed_at = min(closed_at, now)  # a clock set back counts from now (C9)
-    if temperature is not None and target is not None and target - temperature <= BACK_K:
+    if not still_warming(closed_at, now, readings, temperature, target):
         return WindowHold()
-    if now - closed_at >= WARMING_S:
-        risen = rise(readings, now, temperature)
-        if risen is not None and risen < WARMING_K:
-            return WindowHold()
     return WindowHold(closed_at=closed_at)
 
 

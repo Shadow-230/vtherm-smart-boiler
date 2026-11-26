@@ -39,7 +39,7 @@ control takes the boiler again (provisional 10 min, K4). The link's freshness es
 the source's reporting gaps (the largest recent one), so a slow but steady source is not judged
 stale.
 
-### I13.3 The comfort correction's pace
+### I13.3 The comfort correction's pace ✅
 
 The correction rises 1 K per 30 min of heat from the first moment one room is short. Mid-ranging
 and valve-position reset (Skogestad 2023; Hägglund 2021) want the slow loop 4 to 10 times slower
@@ -53,6 +53,7 @@ than the rooms' loops, and a held deficit before acting. So:
   room is under 70 % open and none is short (valve-driven reset: Boegli et al. 2022; ASHRAE
   Guideline 36's trim and respond).
 The correction stays off by default.
+Built: the wait, the pace, the raise hold and the trim (1 K per 2 h, 3 K) in `core/comfort_rules`.
 
 ### I13.4 The building's heat loss and the verdict
 

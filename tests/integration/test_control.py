@@ -3908,6 +3908,8 @@ async def test_a_room_in_vts_safety_mode_does_not_raise_the_correction(rig: Rig)
     assert correction(rig) == 0.0
     rig.zones.vt_event("living", "safety", start=False)
     await rig.advance(40 * 60, step=60)
+    assert correction(rig) == 0.0  # trusted again, short for less than an hour (I13.3)
+    await rig.advance(30 * 60, step=60)
     assert correction(rig) > 0.0
 
 
@@ -10371,8 +10373,10 @@ def heating(rig: Rig) -> bool:
 
 
 def short_room(rig: Rig) -> None:
-    """A room short of its setpoint with its valve fully open, the burner on: the comfort
-    correction rises 1 K per 30 minutes of heat flow."""
+    """A room short of its setpoint with its valve fully open, the burner on, VT's default 5-min
+    cycle: once it has been short for an hour, the comfort correction rises 1 K per 30 minutes of
+    heat flow (I13.3)."""
+    rig.zones.configure("living", cycle_min=5)
     rig.zones.set(
         "living",
         current_temperature=19.0,
@@ -10401,6 +10405,8 @@ async def test_the_comfort_correction_is_published(rig: Rig) -> None:
     await rig.switch(True)
     assert correction(rig) == 0.0
     await rig.advance(3600, step=60)
+    assert correction(rig) == 0.0  # short for an hour first (I13.3)
+    await rig.advance(3600, step=60)
     shown = correction(rig)
     assert 1.5 <= shown <= 2.0
     assert rig.entry is not None
@@ -10427,7 +10433,7 @@ async def test_the_reset_button_resets_the_comfort_correction(rig: Rig) -> None:
     await start(rig, comfort_correction=True)  # off by default since K4.1
     await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
     await rig.switch(True)
-    await rig.advance(3600, step=60)
+    await rig.advance(2 * 3600, step=60)  # short for an hour first (I13.3), then rising
     assert correction(rig) >= 1.5
     assert rig.entry is not None
     entry = rig.entry
@@ -10456,11 +10462,13 @@ async def test_one_room_short_at_the_limit_is_named_with_its_radiator_and_heat_l
     radiator and the heat loss first among the causes, then the curve."""
     rig.zones.add("bedroom")
     short_room(rig)
+    rig.zones.configure("bedroom", cycle_min=5)
     rig.zones.set("bedroom", current_temperature=21.0, temperature=21.0, valve_open_percent=30)
     await start(rig, comfort_correction=True, comfort_correction_max_k=1.0)
     await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
     await rig.switch(True)
-    await rig.advance(1800 + 3 * 3600 + 300, step=60)
+    # Short for an hour first (I13.3), 30 min to its limit, three hours there.
+    await rig.advance(3600 + 1800 + 3 * 3600 + 300, step=60)
     assert correction(rig) == pytest.approx(1.0)  # risen for one room, held at the limit
     found = issue(rig, "curve_too_low")
     assert found is not None
@@ -10478,7 +10486,8 @@ async def test_a_curve_too_low_for_a_room_is_named_at_the_correction_limit(rig: 
     await start(rig, comfort_correction=True, comfort_correction_max_k=1.0)
     await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
     await rig.switch(True)
-    await rig.advance(1800 + 3 * 3600 - 300, step=60)
+    # Short for an hour first (I13.3), 30 min to its limit, not three hours there yet.
+    await rig.advance(3600 + 1800 + 3 * 3600 - 300, step=60)
     assert correction(rig) == pytest.approx(1.0)  # the user's limit
     assert issue(rig, "curve_too_low") is None  # not three hours at it yet
     await rig.advance(600, step=60)
@@ -10811,7 +10820,7 @@ async def test_a_reset_once_the_unit_stops_does_nothing(rig: Rig) -> None:
     await start(rig, comfort_correction=True)  # off by default since K4.1
     await rig.advance(3600, step=60)  # an hour of outdoor readings first (rule 5)
     await rig.switch(True)
-    await rig.advance(1860, step=60)
+    await rig.advance(3600 + 1860, step=60)  # short for an hour first (I13.3), then rising
     assert rig.entry is not None
     unit = rig.entry.runtime_data.control
     before = unit.status.correction

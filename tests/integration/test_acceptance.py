@@ -1115,6 +1115,8 @@ async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
     3 K at most, and the user is told once it has sat at that edge — switched on: off by
     default since the user's decision of 2026-10-03 (K4.1)."""
     await start(rig, comfort_correction=True)
+    for zone in rig.sim.zones:
+        rig.zones.configure(zone.zone_id, cycle_min=5)  # VT's default cycle (I13.3's pace)
     await rig.switch(True)
     await rig.advance(900, step=30.0)
     attributes = rig.state("sensor", "control_state").attributes
@@ -1122,10 +1124,14 @@ async def test_the_comfort_correction_stays_within_3_k(rig: Rig) -> None:
     base = attributes["target"]
     rig.sim.plant.targets[0] = 30.0  # out of reach: its valve stays fully open
     targets = []
-    # Six hours: the first reads the weather (rule 5 judges its rate by an hour of readings).
-    for _ in range(72):
+    # At most twelve hours: the first reads the weather (rule 5 judges its rate by an hour of
+    # readings); the room warms back after its raised setpoint, then counts as short after an
+    # hour (I13.3); then 3 K at 1 K per 30 min, and three hours at the edge.
+    for _ in range(144):
         await rig.advance(300, step=30.0)
         targets.append(rig.state("sensor", "control_state").attributes["target"])
+        if rig.state("binary_sensor", "alarm_correction_at_limit").state == "on":
+            break
     assert max(targets) > base + 1.0  # the correction worked
     assert max(targets) <= base + 3.0 + 0.1  # and stayed within its band
     assert max(rig.setpoints()) <= base + 3.0 + 0.1

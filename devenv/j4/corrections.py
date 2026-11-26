@@ -76,7 +76,9 @@ async def Q1(r: Run):
         await r.switch(True)
         await r.ha.wait(300)
         start = await target(r)
-        rose = await r.ha.until(lambda: correction_on(r), 7200, 60)
+        # I13.3: the rise waits while a room still warms after its setpoint was raised, then for
+        # an hour and two of its cycles fully open and short: four hours at most.
+        rose = await r.ha.until(lambda: correction_on(r), 4 * 3600, 60)
         r.check(rose is not None, f"the correction started ({rose and round(rose / 60)} min)")
         issue = None
         t = time.time()
@@ -201,7 +203,9 @@ async def Q5(r: Run):
         await r.options(curve=CORRECTION_ON)
         await set_targets(r, {"zone_living": 28.0})
         await r.switch(True)
-        rose = await r.ha.until(lambda: correction_on(r), 7200, 60)
+        # I13.3: the rise waits while a room still warms after its setpoint was raised, then for
+        # an hour and two of its cycles fully open and short: four hours at most.
+        rose = await r.ha.until(lambda: correction_on(r), 4 * 3600, 60)
         r.check(
             rose is not None, f"the correction rises for one room ({rose and round(rose / 60)} min)"
         )

@@ -84,6 +84,9 @@ class LoopController:
     flame_seen: bool | None = None
     started: list[float] = field(default_factory=list)
     corrections: list[tuple[float, float]] = field(default_factory=list)  # the comfort correction
+    # The zones' cycle as VT's ``entry_infos`` gives it (I13.3: the correction's pace); ``None``:
+    # not known, as for thermostatic heads.
+    cycle_s: float | None = None
 
     def writes(self, start: float, end: float) -> list[tuple[float, object]]:
         """Every setpoint and heating write ``loop_step`` asked for in ``[start, end)``."""
@@ -101,7 +104,7 @@ class LoopController:
 
     def __call__(self, t: float, view: SimView) -> SimCommand | None:
         link = self.link(t)
-        zones = tuple(zone_state(z, t) for z in view.zones)
+        zones = tuple(zone_state(z, t, self.cycle_s) for z in view.zones)
         inputs = ControlInputs(
             now=t,
             enabled=self.enabled(t),
@@ -136,10 +139,10 @@ class LoopController:
         )
 
 
-def zone_state(zone: SimZoneView, t: float) -> ZoneState:
+def zone_state(zone: SimZoneView, t: float, cycle_s: float | None = None) -> ZoneState:
     """A zone as VT publishes it: a thermostatic valve's opening; a switch zone under TPI — VT's
     over_switch — or SmartPI, its duty (``on_percent``) and whether its device is on now, no
-    opening. Nothing of SmartPI's phase (I12.9)."""
+    opening. Nothing of SmartPI's phase (I12.9). ``cycle_s``: its cycle in VT's settings."""
     if zone.on_percent is not None:
         on = zone.opening > 0.5
         return ZoneState(
@@ -151,6 +154,7 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
             device_active=on,
             calling=on,
             reported_at=t,
+            cycle_s=cycle_s,
         )
     return ZoneState(
         zone.zone_id,
@@ -159,6 +163,7 @@ def zone_state(zone: SimZoneView, t: float) -> ZoneState:
         heating_enabled=True,
         valve_open=zone.opening,
         reported_at=t,
+        cycle_s=cycle_s,
     )
 
 
@@ -234,23 +239,19 @@ def test_smartpi_learns_in_the_light_bedroom_with_the_correction_on_and_no_room_
         assert max(temps) < targets[zid] + OVERHEAT_K, zid
 
 
-def test_the_correction_raised_for_the_learning_bedroom_falls_back_once_smartpi_has_learned() -> (
-    None
-):
-    """With the other rooms at the curve's room temperature only the learning bedroom is short:
-    the correction it raised is back at 0 within 3 h of SmartPI's last phase (about 2 h here)
-    and stays there for the rest of the day — no lasting rise of the water for a room that has
-    learned."""
+def test_the_correction_does_not_rise_for_the_learning_bedroom() -> None:
+    """With the other rooms at the curve's room temperature only the learning bedroom is short —
+    and never for an hour without a break: its on/off phases swing it from 0.3 K under its
+    setpoint to 0.5 K over (I13.3). The correction never rises for it, while it learns or after
+    (before I13.3 it rose over 1 K and fell back within 3 h of SmartPI's last phase)."""
     zones = tuple(
         z if z.zone_id == "zone_bedroom" else replace(z, target=CURVE.room)
         for z in light_bedroom_zones()
     )
     result, controller = learning_bedroom(zones)
-    learned = result.learning_phases["zone_bedroom"][-1][1]
-    assert max(k for t, k in controller.corrections if t < learned) > 1.0
-    after = [k for t, k in controller.corrections if learned + 3 * HOUR <= t < DAY]
-    assert after
-    assert max(after) == 0.0
+    assert len(result.learning_phases["zone_bedroom"]) == LEARNING_PHASES
+    assert controller.corrections
+    assert max(k for _t, k in controller.corrections) <= 0.0
 
 
 def test_setpoints_stay_within_the_limits_even_in_deep_frost() -> None:
@@ -471,7 +472,9 @@ def _starts_both_ways(
     controlled = simulate(
         replace(
             base,
-            controller=LoopController(own_curve_loop(boiler, comfort_correction, flow_shift)),
+            controller=LoopController(
+                own_curve_loop(boiler, comfort_correction, flow_shift), cycle_s=cycle_s
+            ),
         )
     )
     return own, controlled
@@ -590,10 +593,10 @@ CORRECTION_ON_FAILS = pytest.mark.xfail(
     reason=(
         "K4.1 (S-15): the comfort correction, when switched on, rises to +3 K while a TPI zone "
         "sits at full duty short of its target, and every zone's cycle then stops the burner: "
-        "x5.2 at -5 °C (x5 in the heavier house before L16; research/2026-10-02-z3-starts-"
-        "ratio.md) — why it is off by default. Rule 3 (decision 11 of 0.2.3) leaves it so: the "
-        "hours before the correction began, the house warming up, show as many starts as after "
-        "(research/2026-10-06-p2-4-report.md)"
+        "x3.6 at a steady -5 °C since I13.3's slower pace (x5.2 before; x5 in the heavier house "
+        "before L16; research/2026-10-02-z3-starts-ratio.md) — why it is off by default. Rule 3 "
+        "(decision 11 of 0.2.3) leaves it so: the hours before the correction began, the house "
+        "warming up, show as many starts as after (research/2026-10-06-p2-4-report.md)"
     ),
 )
 
@@ -604,8 +607,8 @@ CORRECTION_ON_FAILS = pytest.mark.xfail(
 def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) -> None:
     """The cost the option's text names: with the comfort correction switched on, the same
     house fails J4's criterion at −5 °C. At a steady +8 °C it passes in the house of 22 h
-    (L16): the correction rises to about +1.2 K, the starts rise and rule 3 brings it back
-    (x1.00); in the heavier house before, the warm-up's starts hid the rise (x1.75)."""
+    (L16): since I13.3 the correction rises to about +0.8 K, and rule 3 brings it back (x0.99);
+    in the heavier house before, the warm-up's starts hid the rise (x1.75)."""
     own, controlled = starts_both_ways(mean, comfort_correction=True)
     assert meets_starts_criterion(own, controlled)
 
@@ -613,8 +616,9 @@ def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) ->
 @pytest.mark.parametrize("mean", [8.0, -5.0])
 def test_the_correction_buys_no_more_comfort_than_its_text_names(mean: float) -> None:
     """The option's text: "for under 0.15 K of comfort". With the daily swing, every room's mean
-    over the compared day is that close to its mean with the correction off (at most 0.12 K,
-    the bathroom at +8 °C), for the starts the next test pins."""
+    over the compared day is that close to its mean with the correction off (at most 0.02 K
+    since I13.3's slower pace; 0.12 K before, the bathroom at +8 °C), for the starts the next
+    test pins."""
     _own, off = starts_both_ways(mean, comfort_correction=False, swing=SWING_K)
     _own, on = starts_both_ways(mean, comfort_correction=True, swing=SWING_K)
     assert all(warmer < 0.15 for warmer in comfort_shortfall(on, off).values())
@@ -626,12 +630,14 @@ def test_the_correction_buys_no_more_comfort_than_its_text_names(mean: float) ->
         (8.0, False, SWING_K, 1.07, 1.17),
         (-5.0, False, SWING_K, 1.95, 2.15),
         (8.0, True, 0.0, 0.95, 1.05),
-        (-5.0, True, 0.0, 4.9, 5.4),
-        # The correction on — with the daily swing, x1.93 and x5.96 (the "about 2 to 6 times"
-        # the option's text names; x1.39 and x6.28 in the heavier house before L16): why it is
-        # off by default since K4 (2026-11-17).
-        (8.0, True, SWING_K, 1.8, 2.05),
-        (-5.0, True, SWING_K, 5.7, 6.2),
+        # I13.3's slower pace: x3.56 at a steady -5 °C (x5.2 before) — the "up to about 3.5
+        # times" the option's text names.
+        (-5.0, True, 0.0, 3.4, 3.75),
+        # The correction on — with the daily swing, x1.31 and x2.19 since I13.3 (x1.93 and x5.96
+        # before; x1.39 and x6.28 in the heavier house before L16), against x1.12 and x2.04 with
+        # it off.
+        (8.0, True, SWING_K, 1.25, 1.4),
+        (-5.0, True, SWING_K, 2.1, 2.3),
     ],
     ids=[
         "swing_plus_8",
@@ -647,10 +653,9 @@ def test_the_documented_starts_ratios_hold(
 ) -> None:
     """PB-94: the two strict xfails above fail on the starts criterion alone; this pins the
     ratios their reasons document (x1.12 and x2.04 with the daily swing and the correction off,
-    x1.00 and x5.2 with the correction on; the house of 22 h, L16), and those of the defaults
-    since G11 — the correction on with the daily swing — so a far worse ratio, or a crash,
-    shows here instead of passing as the expected failure. Comfort parity holds in each (within
-    0.05 K)."""
+    x0.99 and x3.56 with the correction on since I13.3; the house of 22 h, L16), and the
+    correction on with the daily swing — so a far worse ratio, or a crash, shows here instead of
+    passing as the expected failure. Comfort parity holds in each (within 0.05 K)."""
     own, controlled = starts_both_ways(mean, comfort_correction=correction, swing=swing)
     ratio = starts(controlled, DAY, 2 * DAY) / starts(own, DAY, 2 * DAY)
     assert low <= ratio <= high, ratio
