@@ -329,7 +329,8 @@ async def test_an_entered_design_load_always_wins(
     assert state.attributes["source"] == "entered"
     assert (state.attributes["entered"], state.attributes["measured"]) == (0.2, 0.35)
     assert state.attributes["mismatch"] is True
-    assert state.attributes["measured_range"] == [0.28, 0.42]  # ±20 % (K4)
+    # I13.4: the range from the fit — days on a clean line: the ±15 % floor.
+    assert state.attributes["measured_range"] == pytest.approx([0.2975, 0.4025], abs=1e-3)
     for source in (SOURCE_EN, SOURCE_PL):
         for flow in ("config", "options"):
             texts = source[flow]["step"]["building"]
@@ -455,3 +456,41 @@ async def test_without_a_flame_signal_the_verdict_names_it(rig: Rig) -> None:
     assert verdict.state == "not_enough_data"
     assert [r["code"] for r in verdict.attributes["reasons"]] == ["no_burner_signal"]
     assert rig.state("binary_sensor", "control").attributes["verdict"] == "not_enough_data"
+
+
+async def test_a_loss_kept_before_ranges_gets_its_range_at_the_next_analysis(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer
+) -> None:
+    """I13.4: a measured loss stored before its range was kept shows none — never a range made
+    up — until the next analysis fits one from the days; the range is then saved with it. The
+    verdict shows the house's design load from that loss."""
+    freezer.move_to(NOW)
+    now = NOW.timestamp()
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
+    entry = entry_for(boiler)
+    key = f"{DOMAIN}.{entry.entry_id}"
+    hass_storage[key] = stored(entry, measured={"loss_coefficient": measured(0.3, 0.6, now - DAY)})
+    await setup(hass, entry)
+    sensor = entity_id(hass, entry, "sensor", "loss_coefficient")
+    state = hass.states.get(sensor)
+    assert state is not None
+    assert state.attributes["measured"] == 0.3
+    assert state.attributes["measured_range"] is None
+    coordinator = entry.runtime_data
+    coordinator.daily = house_days(now - 25 * DAY, 0.35, 16.0, coordinator.settings_key, count=21)
+    await analyse_now(coordinator)
+    state = hass.states.get(sensor)
+    assert state is not None
+    assert state.attributes["measured_range"] == pytest.approx([0.2975, 0.4025], abs=1e-3)
+    verdict = hass.states.get(entity_id(hass, entry, "sensor", "verdict"))
+    assert verdict is not None
+    sizing = verdict.attributes["sizing"]
+    # The loss in use when the analysis ran, the one kept (trusted at 0.6), over 20 − (−15) K:
+    # 0.3 · 35 = 10.5 kW at −15 °C; the next analysis takes the one just fitted.
+    assert sizing["design_load_kw"] == 10.5
+    assert sizing["design_outdoor"] == -15.0
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    saved = hass_storage[key]["data"]["measured"]["loss_coefficient"]
+    assert saved["range_share"] == pytest.approx(0.15)

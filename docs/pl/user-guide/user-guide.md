@@ -201,13 +201,21 @@ bez werdyktu.
 
 Co znaczą werdykt i wartości budynku:
 
-- **Krótkie palenia** najczęściej biorą się z kotła za dużego dla domu: jego najmniejsza moc jest
-  większa, niż dom potrzebuje, więc kocioł startuje i gaśnie. Werdykt mówi to, gdy obciążenie
-  budynku często jest poniżej mocy minimalnej kotła.
+- **Krótkie palenia** werdykt wymienia, gdy są częste. Kocioł, którego najmniejsza moc jest
+  większa, niż dom potrzebuje, startuje i gaśnie: to częsta przyczyna, a werdykt mówi o niej, gdy
+  obciążenie budynku często jest poniżej najniższej mocy kotła. Nie jedyna: w domu, w którym VT
+  przełącza pokoje, liczy się też długość cykli VT. Obok powodów werdykt pokazuje najniższą
+  i najwyższą moc kotła oraz to, czego dom potrzebuje w najzimniejszy dzień, na który go
+  zaprojektowano (straty ciepła przy projektowej temperaturze zewnętrznej) — każdą, jeśli jest
+  znana — żebyś mógł je sam porównać.
 - **Straty ciepła budynku**, mierzone ze zużycia kotła i pogody, liczą się dopiero po około
   **3 tygodniach grzania** (21 dni grzewczych); wcześniej są pokazywane, ale nieużywane. Są
-  pokazywane z prawdopodobnym zakresem około ±20 % — tyle osiągają opublikowane metody. Zmierzone
-  straty mniejsze od projektowych są częste: oznaczają przewymiarowany kocioł, a nie błąd pomiaru.
+  pokazywane z prawdopodobnym zakresem, wziętym z tego, jak blisko linii leżą dni. Dni po sobie
+  są do siebie podobne (fala mrozu, masa budynku), więc liczą się mniej, a zakres jest szerszy.
+  Nigdy nie jest węższy niż ±15 % — tyle osiągają najlepsze opublikowane metody. Straty z zakresem
+  szerszym niż ±50 % są pokazywane, ale nieużywane. Gdy po obu stronach progu grzania leży co
+  najmniej tydzień dni, próg wyznaczają same dni. Zmierzone straty mniejsze od projektowych są
+  częste: oznaczają przewymiarowany kocioł, a nie błąd pomiaru.
 - **Zużycie wobec wczoraj** porównuje dwa dni; zużycie z dnia na dzień zmienia się samo sporo
   (budynek jeszcze ciepły albo zimny po wczoraj, słońce, ludzie). Gdy część, której żadna
   przyczyna nie wyjaśnia, mieści się w 15 % zużycia z dnia poprzedniego, jest oznaczona jako
@@ -600,9 +608,9 @@ potwierdzenie.
 | Przegląd | Stan z przyczynami i to, czy **Sterowanie** jest włączone — administrator dostaje **Zmień w ustawieniach**, co otwiera stronę wtyczki w ustawieniach Home Assistanta, gdzie przełącza się sterowanie; jego płomień jest wypełniony, gdy palnik pali, a obrysowany w kolorze grzania, gdy kocioł jest wezwany do grzania między paleniami. Kafelki z wodą, o którą prosi wtyczka, zasilaniem, powrotem, temperaturą zewnętrzną, płomieniem i liczbą wołających pokoi, tak jak liczy je wtyczka; administrator dostaje też odnośnik do strony Versatile Thermostat, gdzie są pokoje. Instalację narysowaną z ustawień, z obiegami, które teraz biorą wodę: tymi z wołającym pokojem, gdy wtyczka wzywa kocioł albo palnik pali na grzanie. W wąskiej karcie obiegi są wymienione z nazwy pod rysunkiem. Krzywą grzewczą z „gdzie jesteśmy”, decyzjami z ostatnich 7 dni i podglądem zmian, rysowaną jak w instrukcjach kotłów: cieplej po lewej, zimniej po prawej. Ostatnie 24 h z recordera: wybierz albo odtwórz dowolną chwilę, a kafelki, schemat i krzywa ją pokażą |
 | Palnik | Metryki palnika; palenia z ostatnich 24 h tak, jak widzi je monitor (ogrzewanie, ciepła woda, nieznane); jak długo trwały palenia ogrzewania, z wyróżnionymi krótkimi |
 | Zużycie | Gaz na stopniodzień i stopniodni; gaz na stopniodzień z ostatnich 12 tygodni; zmianę wobec przedwczoraj według przyczyn. Przy nieznanej wartości mówi, dlaczego |
-| Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze. Starty grzania palnika według godzin z ostatnich 4 tygodni |
+| Analizy | Sygnaturę energetyczną: gaz na grzanie każdego dnia wobec średniej temperatury zewnętrznej, osobno dni tylko obserwowane i dni pod sterowaniem, każde z dopasowaną linią, i obie porównane przy tej samej temperaturze, każda z prawdopodobnym zakresem; gdy oba zakresy na siebie zachodzą, mówi, że różnicy nie widać. Starty grzania palnika według godzin z ostatnich 4 tygodni |
 | Dziennik | Co wtyczka zdecydowała i dlaczego w ostatnich 14 dniach. Pokazuje jej starty i zatrzymania, przejęcie kotła przez sterowanie i jego oddanie, wezwanie ciepła, zapisaną nastawę wody (zmiany o 1 K i więcej), potrzebę obiegu, alarmy i zapisane ustawienia. Widać to jako pasy, które przybliża się przeciągnięciem, i jako listę z filtrami |
-| Stan i alarmy | Werdykt sterowania z powodami; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
+| Stan i alarmy | Werdykt sterowania z powodami oraz moce kotła wobec tego, czego potrzebuje dom; wszystkie alarmy, najpierw aktywne, każdy otwiera swoją historię; stan sygnałów; wartości budynku z ich źródłem; proponowaną najniższą temperaturę wody z uzasadnieniem |
 
 **Zmiany ze strony.** Administrator, po potwierdzeniu:
 

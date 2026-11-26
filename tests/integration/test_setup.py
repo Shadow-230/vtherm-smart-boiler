@@ -2704,7 +2704,14 @@ async def test_everything_stored_survives_a_restart(
     stored = {
         "monitoring_since": created,
         "factors": {living: {"value": 0.8, "at": now - 600, "output_w": None}},
-        "measured": {"loss_coefficient": {"value": 0.25, "confidence": 0.6, "at": now - DAY}},
+        "measured": {
+            "loss_coefficient": {
+                "value": 0.25,
+                "confidence": 0.6,
+                "at": now - DAY,
+                "range_share": 0.18,  # I13.4: kept with its range
+            }
+        },
         "daily": {str(int(start)): day.to_dict()},
     }
     key = f"{DOMAIN}.{entry.entry_id}"
@@ -2715,7 +2722,7 @@ async def test_everything_stored_survives_a_restart(
     assert coordinator.daily == {start: day}
     loss = coordinator.parameters.get(ParameterKey.LOSS_COEFFICIENT).estimate(Source.MEASURED)
     assert loss is not None
-    assert (loss.value, loss.confidence) == (0.25, 0.6)
+    assert (loss.value, loss.confidence, loss.range_share) == (0.25, 0.6, 0.18)
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     saved = hass_storage[key]["data"]

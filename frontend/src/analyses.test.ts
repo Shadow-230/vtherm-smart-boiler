@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { axisTicks, hourMeans, hourRows, levelOf, niceAxis, signatureRanges, type Signature } from "./analyses";
+import {
+  axisTicks,
+  changeRange,
+  hourMeans,
+  hourRows,
+  levelOf,
+  niceAxis,
+  signatureRanges,
+  type Comparison,
+  type Signature,
+} from "./analyses";
 
 describe("the axes", () => {
   it("round out to a nice step", () => {
@@ -59,5 +69,34 @@ describe("the starts by hour", () => {
   it("put a count on a five-step scale", () => {
     expect([0, 1, 2, 5, 9, 10].map((n) => levelOf(n, 10))).toEqual([0, 1, 1, 3, 5, 5]);
     expect(levelOf(3, 0)).toBe(0);
+  });
+});
+
+describe("the comparison's range (I13.4)", () => {
+  const compared = (change: number, low: number | null, high: number | null, shown: boolean): Comparison => ({
+    outdoor: 1,
+    observing: 10,
+    control: 10 * (1 + change),
+    change,
+    observing_low: 9,
+    observing_high: 11,
+    control_low: 8,
+    control_high: 9,
+    change_low: low,
+    change_high: high,
+    shown,
+  });
+
+  it("reads less as two shares less, smaller first", () => {
+    expect(changeRange(compared(-0.15, -0.27, -0.03, true))).toEqual([0.03, 0.27]);
+  });
+
+  it("reads more as it stands", () => {
+    expect(changeRange(compared(0.2, 0.05, 0.4, true))).toEqual([0.05, 0.4]);
+  });
+
+  it("gives none where no difference is shown or the change is unbounded", () => {
+    expect(changeRange(compared(-0.03, -0.2, 0.15, false))).toBeNull();
+    expect(changeRange(compared(-0.5, null, null, true))).toBeNull();
   });
 });

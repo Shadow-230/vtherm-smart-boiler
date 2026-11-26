@@ -8,7 +8,7 @@ import itertools
 import pytest
 from custom_components.boiler_sim.profiles import BOILERS, HOUSES, radiator_zones
 
-from custom_components.vtherm_smart_boiler.core.building import fit_daily_load
+from custom_components.vtherm_smart_boiler.core.building import fit_daily_load, measured_range
 from custom_components.vtherm_smart_boiler.core.cycles import BurnKind
 from custom_components.vtherm_smart_boiler.core.daily import fit_points, summarize_day
 from custom_components.vtherm_smart_boiler.core.monitor import summarize, verdict
@@ -145,6 +145,9 @@ def test_building_fit_recovers_the_simulated_house() -> None:
     assert fit is not None
     assert fit.loss is not None
     assert fit.loss.value == pytest.approx(house.loss_kw_per_k, rel=0.25)
+    found = measured_range(fit.loss)  # I13.4: the range from the fit holds the house's loss
+    assert found is not None
+    assert found[0] <= house.loss_kw_per_k <= found[1]
     assert fit.threshold is not None
     expected_threshold = 20.5 - house.gains_kw / house.loss_kw_per_k
     assert fit.threshold.value == pytest.approx(expected_threshold, abs=2.0)

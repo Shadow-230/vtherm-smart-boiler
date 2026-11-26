@@ -157,11 +157,21 @@ def _reason(reason: Reason) -> dict[str, Any]:
 def _verdict_attributes(data: MonitorData) -> dict[str, Any]:
     verdict = None if data.analysis is None else data.analysis.verdict
     reasons = [] if verdict is None else verdict.reasons
+    sizing = None if verdict is None else verdict.sizing
     return {
         "reasons": [_reason(r) for r in reasons],
         "monitoring_since": _time(data.monitoring_since),
         # P-96: days left out because the plugin controlled the boiler in them.
         "days_left_out": None if verdict is None else verdict.days_left_out,
+        # I13.4: the boiler's lowest and highest output against the house's design load.
+        "sizing": None
+        if sizing is None
+        else {
+            "min_power_kw": _round(sizing.min_power_kw, 1),
+            "max_power_kw": _round(sizing.max_power_kw, 1),
+            "design_load_kw": _round(sizing.design_load_kw, 1),
+            "design_outdoor": _round(sizing.design_outdoor, 1),
+        },
     }
 
 
@@ -233,10 +243,10 @@ def _parameter_attributes(
             "measured_confidence": None if measured is None else round(measured.confidence, 2),
             "mismatch": parameter.mismatch() is not None,
         }
-        if key is ParameterKey.LOSS_COEFFICIENT:  # K4: a measured loss with its likely range
-            low, high = (None, None) if measured is None else measured_range(measured.value)
+        if key is ParameterKey.LOSS_COEFFICIENT:  # I13.4: a measured loss with its likely range
+            found = None if measured is None else measured_range(measured)
             result["measured_range"] = (
-                None if low is None or high is None else [round(low, digits), round(high, digits)]
+                None if found is None else [round(found[0], digits), round(found[1], digits)]
             )
         return result
 
@@ -430,6 +440,7 @@ class BoilerSensor(SmartBoilerEntity, SensorEntity):
         {
             "reasons",
             "reasons_text",
+            "sizing",
             "signals",
             "temperature",
             "setpoint",

@@ -156,7 +156,9 @@ docs/                                     the documentation, one folder per lang
   group's line through its heating days (colder than the heating threshold in use, with heating
   gas) by the building fit's rules (`core/building.py`: days, outdoor spread, more gas on colder
   days, R²), or why there is none, and the two compared in the middle of the temperatures both
-  cover — and the gas meter's unit (none without a meter: the gas is then estimated in the unit
+  cover, each with its 95 % range widened for correlated days (`core/regression.py`), the change
+  with its range and whether the ranges part (`shown`; where they overlap the page says no
+  difference is shown) — and the gas meter's unit (none without a meter: the gas is then estimated in the unit
   of the boiler's gas figures); each day kept since I10.7 holds its heating starts hour by hour
   from its start (`hourly_starts`, 23 or 25 hours at a clock change), which the page places at
   their clock hours; days kept before have none and still read;
@@ -206,7 +208,16 @@ from the installation.
 
 **Monitor and analysis (`core/monitor.py`, `core/analysis.py`, `core/verdict.py`).** From the
 history to burns, metrics, trend warnings, a report and the control verdict, always with its
-reasons. `core/alarms.py` holds the monitor's alarms, with hysteresis so they do not flap.
+reasons; beside them, the boiler's lowest and highest output against the house's design load
+(`Sizing`, the verdict sensor's `sizing`). `core/alarms.py` holds the monitor's alarms, with
+hysteresis so they do not flap. `core/building.py` fits the house's heat loss to the kept days:
+the heating days are those below the change point the days show once a week of them lies on
+each side of the threshold in use, else below that threshold; the loss carries its 95 % range
+(`range_share`, kept with the measured value in the main store), from the fit's slope error
+widened by the lag-1 autocorrelation of the residuals in time order (`core/regression.py`:
+effective sample size, Student's t), held within ±15 % and ±100 %; above ±50 % the loss is
+shown, never used. The fit is checked on `sim/house_days.py`, a house by the day with a known
+loss and correlated errors (`tests/sim/test_building_range.py`).
 
 **Control unit (`control.py`, `ControlUnit`).** The HA side of control: a control step every
 few seconds, its writes through the writer, the hand-back on every exit, and the status the

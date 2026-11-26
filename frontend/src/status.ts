@@ -77,6 +77,28 @@ export function verdictReasons(entity: HassEntity | undefined): ReasonInfo[] {
   return KIND_ORDER.flatMap((kind) => read.filter((r) => r.kind === kind));
 }
 
+/** I13.4: the boiler's lowest and highest output against the house's design load, as the
+ * verdict's sensor gives them; `null` where it gives none. */
+export interface Sizing {
+  minPower: number | null;
+  maxPower: number | null;
+  designLoad: number | null;
+  designOutdoor: number | null;
+}
+
+export function verdictSizing(entity: HassEntity | undefined): Sizing | null {
+  const sizing = entity?.attributes.sizing;
+  if (typeof sizing !== "object" || sizing === null) return null;
+  const s = sizing as Record<string, unknown>;
+  const found: Sizing = {
+    minPower: numberAttribute(s.min_power_kw),
+    maxPower: numberAttribute(s.max_power_kw),
+    designLoad: numberAttribute(s.design_load_kw),
+    designOutdoor: numberAttribute(s.design_outdoor),
+  };
+  return found.minPower == null && found.maxPower == null && found.designLoad == null ? null : found;
+}
+
 // ----------------------------------------------------------------------------------- the alarms
 
 /** The entities that report a problem besides the `alarm_*` ones; "Signals" is on while the

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alarmList, buildingValue, entityText, signalList, verdictReasons } from "./status";
+import { alarmList, buildingValue, entityText, signalList, verdictReasons, verdictSizing } from "./status";
 import type { HassEntity } from "./types";
 
 const entity = (entity_id: string, state: string, attributes: Record<string, unknown> = {}): HassEntity => ({
@@ -43,6 +43,23 @@ describe("the verdict's reasons", () => {
   it("has none without the sensor or its reasons", () => {
     expect(verdictReasons(undefined)).toEqual([]);
     expect(verdictReasons(entity("sensor.verdict", "unknown"))).toEqual([]);
+  });
+});
+
+describe("the boiler against the house (I13.4)", () => {
+  it("reads the outputs and the design load where known", () => {
+    const verdict = entity("sensor.verdict", "not_worth_it", {
+      sizing: { min_power_kw: 4, max_power_kw: 25, design_load_kw: 8.8, design_outdoor: -15 },
+    });
+    expect(verdictSizing(verdict)).toEqual({ minPower: 4, maxPower: 25, designLoad: 8.8, designOutdoor: -15 });
+    const partial = entity("sensor.verdict", "not_worth_it", { sizing: { min_power_kw: 4, max_power_kw: "x" } });
+    expect(verdictSizing(partial)).toEqual({ minPower: 4, maxPower: null, designLoad: null, designOutdoor: null });
+  });
+
+  it("has none without any of them", () => {
+    expect(verdictSizing(undefined)).toBeNull();
+    expect(verdictSizing(entity("sensor.verdict", "unknown", { sizing: null }))).toBeNull();
+    expect(verdictSizing(entity("sensor.verdict", "unknown", { sizing: { design_outdoor: -15 } }))).toBeNull();
   });
 });
 

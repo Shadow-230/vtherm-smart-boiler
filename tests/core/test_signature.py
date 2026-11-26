@@ -166,3 +166,118 @@ def test_without_a_threshold_every_day_with_heating_gas_counts() -> None:
     fit = energy_signature(days, threshold=None).observing
     assert fit.line is not None
     assert fit.line.days == 9
+
+
+# --- I13.4: the comparison's ranges ------------------------------------------------------------
+
+TEN = [-6.0, -4.5, -3.0, -1.5, 0.0, 1.5, 3.0, 4.5, 6.0, 7.5]
+
+
+def wavy(
+    first: int,
+    slope: float,
+    intercept: float,
+    error: float,
+    *,
+    warmer: float = 0.0,
+    controlled: bool = False,
+) -> list[DaySummary]:
+    """Ten days on a line, ``warmer`` than ``TEN``, each off by ``error`` in runs of two."""
+    return [
+        day(
+            first + k,
+            t + warmer,
+            intercept + slope * (t + warmer) + error * (1 if k % 4 < 2 else -1),
+            controlled=controlled,
+        )
+        for k, t in enumerate(TEN)
+    ]
+
+
+def test_clean_lines_show_their_difference_with_no_range() -> None:
+    """Days exactly on two lines: no error, each range is its value; the difference is
+    shown."""
+    signature = energy_signature(
+        [*line_days(0, -0.8, 12.0, COLD), *line_days(20, -0.7, 10.5, COLD, controlled=True)],
+        threshold=15.0,
+    )
+    compared = signature.comparison
+    assert compared is not None
+    assert (compared.observing_low, compared.observing_high) == (
+        pytest.approx(11.2),
+        pytest.approx(11.2),
+    )
+    assert (compared.control_low, compared.control_high) == (
+        pytest.approx(9.8),
+        pytest.approx(9.8),
+    )
+    assert compared.change_low == pytest.approx(compared.change)
+    assert compared.change_high == pytest.approx(compared.change)
+    assert compared.shown
+
+
+def test_scattered_days_show_no_difference_where_the_ranges_overlap() -> None:
+    """Days off by ±1.5 a day around lines 3 % apart: the ranges overlap — no difference
+    shown, the change's range holding zero."""
+    signature = energy_signature(
+        [*wavy(0, -0.8, 12.0, 1.5), *wavy(20, -0.8, 11.64, 1.5, controlled=True)],
+        threshold=15.0,
+    )
+    compared = signature.comparison
+    assert compared is not None
+    assert compared.change == pytest.approx(-0.03, abs=0.01)
+    assert compared.observing_low < compared.observing < compared.observing_high
+    assert compared.control_high > compared.observing_low
+    assert not compared.shown
+    assert compared.change_low is not None
+    assert compared.change_high is not None
+    assert compared.change_low < 0 < compared.change_high
+
+
+def test_a_large_difference_is_shown_beyond_the_scatter() -> None:
+    """The same scatter around lines 40 % apart: the ranges part — the difference is shown."""
+    signature = energy_signature(
+        [*wavy(0, -0.8, 12.0, 0.3), *wavy(20, -0.48, 7.2, 0.3, controlled=True)],
+        threshold=15.0,
+    )
+    compared = signature.comparison
+    assert compared is not None
+    assert compared.change == pytest.approx(-0.4, abs=0.02)
+    assert compared.shown
+    assert compared.change_high is not None
+    assert compared.change_high < 0
+
+
+def test_a_watched_range_down_to_zero_leaves_the_change_unbounded() -> None:
+    """Where the watched range reaches zero — compared at the warm end of a scattered watched
+    line — the change could be anything: no range for it, and no difference shown."""
+    signature = energy_signature(
+        [*wavy(0, -0.8, 7.0, 2.5), *wavy(20, -0.2, 4.0, 0.3, warmer=10.0, controlled=True)],
+        threshold=None,
+    )
+    compared = signature.comparison
+    assert compared is not None
+    assert compared.observing > 0
+    assert compared.observing_low <= 0
+    assert (compared.change_low, compared.change_high) == (None, None)
+    assert not compared.shown
+
+
+def test_days_apart_are_not_taken_as_correlated() -> None:
+    """The same days a week apart do not follow each other: no allowance — a narrower range
+    than day after day."""
+    near = energy_signature(
+        [*wavy(0, -0.8, 12.0, 1.0), *wavy(20, -0.7, 10.5, 1.0, controlled=True)], threshold=15.0
+    )
+    far = energy_signature(
+        [
+            *(replace(d, start=d.start * 7, end=d.start * 7 + DAY) for d in wavy(0, -0.8, 12, 1)),
+            *wavy(200, -0.7, 10.5, 1.0, controlled=True),
+        ],
+        threshold=15.0,
+    )
+    assert near.comparison is not None
+    assert far.comparison is not None
+    near_width = near.comparison.observing_high - near.comparison.observing_low
+    far_width = far.comparison.observing_high - far.comparison.observing_low
+    assert far_width < near_width

@@ -90,6 +90,14 @@ pliki nie są trzymane w repozytorium. Przy każdej pozycji: co wtyczka z niej b
   [GOV.UK](https://www.gov.uk/government/publications/smart-meter-enabled-thermal-efficiency-ratings-smeter-strategic-guide).
 - Hanmer, C. i inni (2026). *Buildings & Cities* 7(1), 176–195.
   [doi:10.5334/bc.670](https://doi.org/10.5334/bc.670).
+- IEA EBC Annex 71 (2021). *Building energy performance assessment based on in-situ
+  measurements*. Najwyżej około ±15 % dla zmierzonych strat ciepła: dolna granica zakresu.
+- Meng, Q., Mourshed, M., Wei, S. (2018). Regresja z punktem zmiany dla temperatury bazowej
+  ogrzewania budynku (temat, nie tytuł). *IEEE Access*. Próg grzania wyznaczany z dni.
+- Gondian, Thiery (2026). Niepewność dziennych sygnatur energetycznych przy błędach powiązanych
+  w czasie (temat, nie tytuł). arXiv:2607.25382, preprint. Zakresy porównania.
+- Lomas, K. J. i inni (2018). *Renewable and Sustainable Energy Reviews*. Niezależne dowody
+  oszczędności z regulacji ogrzewania są słabe: różnicy nie widać, gdy zakresy zachodzą na siebie.
 
 ## Bezpieczeństwo i jakość danych
 

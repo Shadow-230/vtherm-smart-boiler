@@ -157,7 +157,9 @@ docs/                                     dokumentacja, osobny katalog na każdy
   każdej grupy przez jej dni grzania (zimniejsze niż próg grzania w użyciu, z gazem na grzanie)
   według zasad dopasowania budynku (`core/building.py`: liczba dni, rozrzut temperatur, więcej
   gazu w zimniejsze dni, R²) albo powód jej braku, i obie porównane w środku temperatur, które
-  obie obejmują — oraz z jednostką licznika gazu (bez licznika żadną: gaz jest wtedy szacowany w
+  obie obejmują, każda z zakresem 95 % poszerzonym na dni ze sobą powiązane
+  (`core/regression.py`), zmiana z jej zakresem i to, czy zakresy się rozchodzą (`shown`; gdy
+  zachodzą na siebie, strona mówi, że różnicy nie widać) — oraz z jednostką licznika gazu (bez licznika żadną: gaz jest wtedy szacowany w
   jednostce danych gazu kotła); każdy dzień zapisany od I10.7 trzyma swoje starty grzania
   godzina po godzinie od swojego początku (`hourly_starts`, 23 albo 25 godzin przy zmianie
   czasu), które strona umieszcza na ich godzinach zegarowych; dni zapisane wcześniej ich nie mają
@@ -207,7 +209,17 @@ zaworów w tych dowodach — pochodzą tylko z magazynu pokoi, więc zaczynają 
 
 **Monitor i analiza (`core/monitor.py`, `core/analysis.py`, `core/verdict.py`).** Od historii do
 cykli pracy palnika, metryk, ostrzeżeń o trendach, raportu i werdyktu sterowania, zawsze z
-powodami. `core/alarms.py` zawiera alarmy monitora, z histerezą, żeby nie migotały.
+powodami; obok nich najniższa i najwyższa moc kotła wobec obciążenia projektowego domu
+(`Sizing`, atrybut `sizing` czujnika werdyktu). `core/alarms.py` zawiera alarmy monitora,
+z histerezą, żeby nie migotały. `core/building.py` dopasowuje straty ciepła domu do
+zapisanych dni: dniami grzania są dni poniżej punktu zmiany, który pokazują same dni, gdy po
+obu stronach progu w użyciu leży co najmniej tydzień dni, a inaczej dni poniżej tego progu;
+straty niosą swój zakres 95 % (`range_share`, zapisywany ze zmierzoną wartością w głównym
+magazynie), z błędu nachylenia poszerzonego o autokorelację reszt z dnia na dzień
+(`core/regression.py`: efektywna liczba dni, rozkład t Studenta), trzymany między ±15 % a
+±100 %; powyżej ±50 % straty są pokazywane, ale nieużywane. Dopasowanie jest sprawdzane na
+`sim/house_days.py`, domu liczonym dzień po dniu ze znanymi stratami i powiązanymi błędami
+(`tests/sim/test_building_range.py`).
 
 **Jednostka sterowania (`control.py`, `ControlUnit`).** Strona HA sterowania: krok sterowania co
 kilka sekund, jego zapisy przez moduł zapisu, oddanie kotła przy każdym wyjściu i stan

@@ -1262,6 +1262,9 @@
           "days_left_out": {
             "name": "Days left out (under control)"
           },
+          "sizing": {
+            "name": "Boiler output against the house's design load"
+          },
           "reasons": {
             "name": "Reasons",
             "state": {
@@ -1269,12 +1272,12 @@
               "heating_burns": "Heating burns counted",
               "frequent_starts": "Frequent starts",
               "few_starts": "Few starts",
-              "short_burns": "Mostly short burns — most often a boiler too big for the house",
+              "short_burns": "Short burns are frequent",
               "long_burns": "Burns long enough",
               "low_condensing": "Little condensing",
               "good_condensing": "Good condensing",
               "condensing_unknown": "Condensing not known: no return temperature or too little of it",
-              "load_often_below_min_power": "The building's load often below the boiler's minimum power: the boiler is oversized — the main cause of short burns",
+              "load_often_below_min_power": "The building's load is often below the boiler's lowest output — a common cause of short burns",
               "load_rarely_below_min_power": "The building's load rarely below the boiler's minimum power",
               "load_unknown": "The building's load not known",
               "criteria_judged": "Too few criteria could be judged to say control is not worth enabling",
