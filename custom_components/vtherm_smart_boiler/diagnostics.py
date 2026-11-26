@@ -38,10 +38,12 @@ class _Redactor:
         self._names: dict[str, str] = {}
 
     def _is_entity(self, value: str) -> bool:
+        """Home Assistant's registry first: a VT room is found there, its state never looked at
+        (I12.11); an entity outside the registry by its state."""
         return bool(ENTITY_ID.match(value)) and (
             value in self._entities
-            or self._hass.states.get(value) is not None
             or self._registry.async_get(value) is not None
+            or self._hass.states.get(value) is not None
         )
 
     def __call__(self, value: Any) -> Any:
@@ -141,10 +143,10 @@ async def async_get_config_entry_diagnostics(
             "options": dict(entry.options),
             "capabilities": asdict(data.capabilities),
             "vt_feature_manager": _feature_manager(hass),
-            # The zones whose thermostat VT had handed over at their last read; the others are
-            # not known (I12.7: a thermostat VT started before the plugin registered).
-            "zones_through_vtherm_api": coordinator.link.zones_through_api(),
-            "central_mode": None if data.central_mode is None else data.central_mode.value,
+            # I12.11: the rooms — the thermostats VT hands over and its central boiler counts —
+            # and those it hands over and does not count.
+            "rooms": coordinator.link.rooms(),
+            "thermostats_not_counted": coordinator.link.not_counted(),
             "monitoring_since": data.monitoring_since,
             # P-95: when the plugin was not running, unknown in what is read back.
             "downtimes": [[since, until] for since, until in coordinator.down],

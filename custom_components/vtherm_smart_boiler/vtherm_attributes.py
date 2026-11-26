@@ -7,11 +7,7 @@ from the same field as the climate attribute the plugin used to read (``base_the
 (``vtherm_hvac_mode.py``).
 
 The rooms' history is what the plugin read this way, kept in its own store (I12.7b): nothing of
-VT's climate entities goes into it.
-
-I12.11: the reload repair still reads whether VT's climate shows the thermostat running
-(``shows_running``: its state is the HVAC mode, "sleep" reported as "off"), and VT's central mode
-select (``central_mode``), until the rooms come from VT.
+VT's climate entities goes into it, and nothing of them is read (I12.11).
 
 No Home Assistant imports.
 """
@@ -20,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
 from .units import parse_number, temperature_to_celsius
@@ -83,12 +78,6 @@ def live_zone(raw: Mapping[str, object], temperature_unit: object = "°C") -> di
     return found
 
 
-def shows_running(state: str, attributes: Mapping[str, Any]) -> bool:
-    """I12.11: VT's climate shows the thermostat started — ``is_ready`` true — in a mode the
-    plugin reads. For the reload repair only, until the rooms come from VT."""
-    return attributes.get("is_ready") is True and _heating_enabled(state) is not None
-
-
 def _heating_enabled(state: str) -> bool | None:
     if state in HEATING_MODES or state in AUTO_MODES:
         return True
@@ -105,22 +94,3 @@ def _calling(action: object) -> bool | None:
     if action in INACTIVE_ACTIONS:
         return False
     return None
-
-
-class CentralMode(StrEnum):
-    """VT's central mode (select option strings, VT 10.4.0 const.py)."""
-
-    AUTO = "Auto"
-    STOPPED = "Stopped"
-    HEAT_ONLY = "Heat only"
-    COOL_ONLY = "Cool only"
-    FROST_PROTECTION = "Frost protection"
-
-
-def central_mode(state: object) -> CentralMode | None:
-    if not isinstance(state, str):
-        return None
-    try:
-        return CentralMode(state)
-    except ValueError:
-        return None

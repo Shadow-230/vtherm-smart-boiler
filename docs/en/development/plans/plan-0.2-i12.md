@@ -229,10 +229,14 @@ Done 2026-11-26, with a one-time warning at migration 24 where control was set u
 protection is VT's alone now. The zones form's "valves close when off" answer, used only by the
 frost protection, goes with I12.11.
 
-#### I12.11 Rooms from VT
+#### I12.11 Rooms from VT ✅
 
 Decision 5: no zone picker, the rooms VT marks; the first installation's "reload VT once" repair;
 VT's version and "loaded" marked as Home Assistant's information; no VT central mode.
+Done 2026-11-26: with one circuit every room is in it; with several, each keeps its rooms (the
+mapping, dealt with apart); a warning names the thermostats VT hands over unmarked. The link
+remembers the rooms it knew while VT holds none of them (a reload, a restart: seeded from the
+rooms' store), so the recognition period keeps the last command instead of turning heating off.
 
 #### I12.12 The page and the analyses
 

@@ -131,14 +131,13 @@ FRESHNESS_BOUNDS_MIN = (1.0, 1440.0)
 # A freshness limit the user switched off (a stored 0): availability only (I6, decision 9).
 FRESHNESS_OFF = 0.0
 
-# Each section's reason where it is stored in another shape (PB-06); circuits and zones are
-# lists, every other section a mapping.
+# Each section's reason where it is stored in another shape (PB-06); the circuits are a list,
+# every other section a mapping. The zones' own section went with I12.11: the rooms are VT's.
 SECTION_CODES: Mapping[str, str] = MappingProxyType(
     {
         SIGNALS: "invalid_signals",
         BOILER: "invalid_boiler",
         CIRCUITS: "invalid_circuit",
-        ZONES: "invalid_zone",
         PARAMETERS: "invalid_parameters",
         BUILDING: "invalid_building",
         MONITOR: "invalid_monitor",
@@ -146,12 +145,12 @@ SECTION_CODES: Mapping[str, str] = MappingProxyType(
         CONTROL: "invalid_control",
     }
 )
-_LIST_SECTIONS = frozenset({CIRCUITS, ZONES})
+_LIST_SECTIONS = frozenset({CIRCUITS})
 
 
 def section_fits(key: str, value: object) -> bool:
-    """Whether a stored section has its shape: nothing, a list of mappings for circuits and
-    zones, a mapping for every other section."""
+    """Whether a stored section has its shape: nothing, a list of mappings for the circuits, a
+    mapping for every other section."""
     if value is None:
         return True
     if key in _LIST_SECTIONS:
@@ -169,11 +168,6 @@ def _section(options: Mapping[str, Any], key: str) -> Any:
     if value is None:
         return [] if key in _LIST_SECTIONS else {}
     return value
-
-
-@dataclass(frozen=True, slots=True)
-class ZoneConfig:
-    entity_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,9 +276,10 @@ class EntryConfig:
     level: str
     signals: dict[Signal, str]
     weather: str | None
+    # The circuits and how the options map the rooms to them; the rooms themselves are VT's,
+    # known at run time (I12.11, ``Installation.with_rooms``).
     installation: Installation
     parameters: ParameterSet
-    zones: tuple[ZoneConfig, ...]
     circuit_flow_entities: dict[str, str]
     monitor: MonitorConfig
     freshness: dict[Signal, float | None]
@@ -304,10 +299,6 @@ class EntryConfig:
     circuit_need_entities: dict[str, str] = field(default_factory=dict)
 
     @property
-    def zone_entities(self) -> tuple[str, ...]:
-        return tuple(z.entity_id for z in self.zones)
-
-    @property
     def setpoint_read_back(self) -> str | None:
         """The control's setpoint read-back, recorded into the history where the boiler's CH
         setpoint signal is not mapped: the lowest water temperature's evidence reads the setpoint
@@ -325,10 +316,10 @@ class EntryConfig:
 
     @property
     def watched_entities(self) -> tuple[str, ...]:
-        """Every entity whose changes the plugin follows."""
+        """Every entity whose changes the plugin follows — never VT's climates: the rooms are
+        read through ``vtherm_api`` at each refresh and control step (I12.11)."""
         entities = [
             *self.signals.values(),
-            *self.zone_entities,
             *self.circuit_flow_entities.values(),
             *self.circuit_request_entities.values(),
             *self.circuit_need_entities.values(),
@@ -363,12 +354,7 @@ class EntryConfig:
             _flag("invalid_boiler", boiler_data, "bypass", False),
         )
         circuits, circuit_entities = _circuits(_section(options, CIRCUITS))
-        zones, zone_configs = _zones(
-            _section(options, ZONES),
-            {c.circuit_id for c in circuits},
-            options.get(CIRCUITS),
-        )
-        installation = Installation(boiler, circuits, zones)
+        installation = Installation(boiler, circuits, _zones(_section(options, CIRCUITS)))
         errors = [i for i in installation.issues() if i.severity.value == "error"]
         if errors:
             raise ConfigError(errors[0].code.value, errors[0].subject)
@@ -401,7 +387,6 @@ class EntryConfig:
             weather=options.get(WEATHER) or None,
             installation=installation,
             parameters=parameters,
-            zones=tuple(zone_configs),
             circuit_flow_entities=circuit_entities.flow,
             circuit_request_entities=circuit_entities.requests,
             circuit_names=circuit_names(options),
@@ -421,8 +406,9 @@ type EntityVisit = Callable[[str, str], str]
 
 def named_entities(options: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
     """Every entity the options name, each with the fields that name it (``signals.flame``,
-    ``zones``, ``control.setpoint_entity``, ...) — what a rename is followed in and a removal
-    names (P-19). Options of another shape (a hand edit) are read as far as they go."""
+    ``zones`` — a circuit's rooms —, ``control.setpoint_entity``, ...) — what a rename is
+    followed in and a removal names (P-19). Options of another shape (a hand edit) are read as
+    far as they go."""
     found: dict[str, list[str]] = {}
 
     def note(field_name: str, entity: str) -> str:
@@ -454,9 +440,6 @@ def _map_entities(options: Mapping[str, Any], visit: EntityVisit) -> dict[str, A
     circuits = options.get(CIRCUITS)
     if isinstance(circuits, list):
         result[CIRCUITS] = [_circuit_entities(visit, item) for item in circuits]
-    zones = options.get(ZONES)
-    if isinstance(zones, list):
-        result[ZONES] = [_zone_entities(visit, item) for item in zones]
     control = options.get(CONTROL)
     if isinstance(control, Mapping):
         result[CONTROL] = map_control_entities(
@@ -502,13 +485,6 @@ def _circuit_entities(visit: EntityVisit, item: Any) -> Any:
             for zone, entities in devices.items()
         }
     return result
-
-
-def _zone_entities(visit: EntityVisit, item: Any) -> Any:
-    """A zone item with its thermostat visited."""
-    if not isinstance(item, Mapping):
-        return item
-    return _visit_item(visit, item, "entity_id", ZONES)
 
 
 def _enum[E: StrEnum](kind: type[E], data: Mapping[str, Any], key: str, default: E, code: str) -> E:
@@ -683,50 +659,26 @@ def circuits_hold_zones(circuits: Any) -> bool:
     )
 
 
-# I8 (decisions F2, F4): what a circuit lists — the VT zones it feeds, and of them those with
-# underfloor heating and those with convectors (the rest radiators).
+# I8 (decisions F2, F4): what a circuit lists — the rooms it feeds, and of them those with
+# underfloor heating and those with convectors (the rest radiators). With one circuit every room
+# is its (I12.11): only the emitter lists are kept.
 CIRCUIT_ZONES = "zones"
 CIRCUIT_EMITTERS = {"underfloor": EmitterType.UNDERFLOOR, "convectors": EmitterType.CONVECTOR}
-# I8.8b (decision F2): of a zone a circuit feeds only in part — a zone in two circuits — the
-# zone's devices it feeds, by zone; a zone without an entry is the circuit's whole.
+# I8.8b (decision F2): of a room a circuit feeds only in part — a room in two circuits — the
+# room's devices it feeds, by room; a room without an entry is the circuit's whole.
 CIRCUIT_DEVICES = "devices"
 
 
-def _zones(
-    data: Any, circuit_ids: set[str], circuits: Any = None
-) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
-    if circuits_hold_zones(circuits):
-        return _circuit_zones(data, circuits)
-    zones: list[Zone] = []
-    configs: list[ZoneConfig] = []
-    default_circuit = sorted(circuit_ids)[0] if len(circuit_ids) == 1 else None
-    for item in data or []:
-        entity_id = _item_text(item, "entity_id", "invalid_zone")
-        circuit = item.get("circuit") or default_circuit
-        if circuit is None:
-            raise ConfigError("zone_without_circuit", entity_id)
-        zones.append(
-            Zone(
-                entity_id,
-                str(circuit),
-                _enum(EmitterType, item, "emitter", EmitterType.RADIATOR, "invalid_zone"),
-                # Decision 4: only a clear "yes" counts; the zone step shows it (X5).
-                closes_when_off=item.get("closes_when_off") is True,
-            )
-        )
-        configs.append(ZoneConfig(entity_id))
-    return tuple(zones), configs
-
-
 def zones_on_circuits(options: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The circuits and the zones' section as this version stores them (I8.7c, decisions F2 and
-    F4), from an entry that names a circuit in each zone: each circuit lists the zones it
+    """The circuits and the zones' section as minor version 20 stored them (I8.7c, decisions F2
+    and F4), from an entry that names a circuit in each zone: each circuit lists the zones it
     feeds, and of them those with underfloor heating and with convectors; the zones' section
-    keeps whether a zone's valves close when it is off. A zone naming no circuit is the one
-    circuit's, where there is one; with none stored, the one the options imply (``main``, fed
-    straight) gets them. ``None`` where the circuits hold the zones already, or the stored
-    shapes leave nothing to move safely — zones or circuits of another shape, a zone naming a
-    circuit that is not there, or none among several: the check reports them."""
+    keeps whether a zone's valves close when it is off (minor version 25 drops it). A zone
+    naming no circuit is the one circuit's, where there is one; with none stored, the one the
+    options imply (``main``, fed straight) gets them. ``None`` where the circuits hold the zones
+    already, or the stored shapes leave nothing to move safely — zones or circuits of another
+    shape, a zone naming a circuit that is not there, or none among several: the check reports
+    them."""
     zones = options.get(ZONES)
     circuits = options.get(CIRCUITS)
     if circuits_hold_zones(circuits):
@@ -771,43 +723,48 @@ def zones_on_circuits(options: Mapping[str, Any]) -> dict[str, Any] | None:
     return moved
 
 
-def _circuit_zones(data: Any, circuits: list[Any]) -> tuple[tuple[Zone, ...], list[ZoneConfig]]:
-    """The zones as the circuits list them (I8, decision F4): each zone in its circuit, its
-    emitter as the circuit lists it (F2); whether its valves close when it is off from the
-    zones' own section (decision 4: only a clear "yes" counts). A zone in two circuits is the
-    installation check's to report."""
-    closes = {
-        str(item.get("entity_id")): item.get("closes_when_off") is True
-        for item in data or []
-        if isinstance(item, Mapping)
-    }
+def rooms_from_vt(options: Mapping[str, Any]) -> dict[str, Any]:
+    """I12.11 (minor version 25, the user's decision of 2026-11-25): the rooms are VT's — the
+    thermostats VT hands over and counts for its central boiler — so the zones' own section
+    goes, and with it whether a zone's valves close when it is off (it served only the plugin's
+    frost protection, gone at minor version 24). With one circuit every room is its: its own list
+    of rooms and the devices it fed of them go, its emitter lists stay. With several, each keeps
+    its list — the mapping of rooms to circuits. A circuit list of another shape is left as it
+    is, for the options' check to report."""
+    moved = {key: value for key, value in options.items() if key != ZONES}
+    circuits = options.get(CIRCUITS)
+    if isinstance(circuits, list) and len(circuits) == 1 and isinstance(circuits[0], Mapping):
+        moved[CIRCUITS] = [
+            {k: v for k, v in circuits[0].items() if k not in (CIRCUIT_ZONES, CIRCUIT_DEVICES)}
+        ]
+    return moved
+
+
+def _zones(circuits: Sequence[Any]) -> tuple[Zone, ...]:
+    """How the options map the rooms to the circuits (I12.11; I8, decisions F2 and F4). With one
+    circuit, every room is its at run time (``Installation.with_rooms``): only the rooms its
+    emitter lists name are kept here, with their emitter — a list of rooms or devices stored
+    beside them (a hand edit) is not read. With several, each circuit's rooms, their emitters as
+    it lists them and, for a room it feeds in part, its devices (I8.8b); a room in two circuits
+    whole is the installation check's to report."""
     zones: list[Zone] = []
-    configs: list[ZoneConfig] = []
     for circuit in circuits:
         if not isinstance(circuit, Mapping):
             raise ConfigError("invalid_circuit", "-")
         circuit_id = _item_text(circuit, "id", "invalid_circuit")
+        emitters: dict[str, EmitterType] = {}
+        for key, emitter in CIRCUIT_EMITTERS.items():
+            for entity in _zone_list(circuit, key, circuit_id):
+                emitters.setdefault(entity, emitter)
+        if len(circuits) == 1:
+            zones.extend(Zone(entity, circuit_id, emitter) for entity, emitter in emitters.items())
+            continue
         listed = _zone_list(circuit, CIRCUIT_ZONES, circuit_id)
-        emitters = {
-            entity: emitter
-            for key, emitter in CIRCUIT_EMITTERS.items()
-            for entity in _zone_list(circuit, key, circuit_id)
-        }
         devices = _device_lists(circuit, circuit_id, listed)
         for entity_id in listed:
             emitter = emitters.get(entity_id, EmitterType.RADIATOR)
-            zones.append(
-                Zone(
-                    entity_id,
-                    circuit_id,
-                    emitter,
-                    closes.get(entity_id, False),
-                    devices.get(entity_id, frozenset()),
-                )
-            )
-            if all(c.entity_id != entity_id for c in configs):  # a split zone is one zone
-                configs.append(ZoneConfig(entity_id))
-    return tuple(zones), configs
+            zones.append(Zone(entity_id, circuit_id, emitter, devices.get(entity_id, frozenset())))
+    return tuple(zones)
 
 
 def _device_lists(

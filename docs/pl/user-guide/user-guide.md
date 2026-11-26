@@ -44,8 +44,10 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
 
 - **Home Assistant 2026.10.4 lub nowszy** — wymaga go najnowszy Versatile Thermostat (10.6.5), a
   wtyczka jest na nim testowana.
-- **Versatile Thermostat 10.6.5 lub nowszy**, z termostatami (wtyczka nazywa je strefami)
-  ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł. Ze starszym VT wtyczka nie steruje
+- **Versatile Thermostat 10.6.5 lub nowszy**, z termostatami (wtyczka nazywa je strefami albo
+  pokojami) ustawionymi dla pomieszczeń ogrzewanych przez ten kocioł i z zaznaczonym w każdym
+  **Używane przez kocioł centralny**: pokoje wtyczki to termostaty, które liczy kocioł centralny
+  VT. Ze starszym VT wtyczka nie steruje
   kotłem i prosi o aktualizację VT. VT 10.6.5 przedstawia się w Home Assistancie jako 10.6.4, co
   wtyczka przyjmuje. Sam VT 10.6.5 wymaga Home Assistanta 2026.10.4 i `vtherm_api` 0.9.0.
 - Biblioteka `vtherm_api` w wersji 0.9.0 lub nowszej. Home Assistant instaluje ją razem z VT i
@@ -90,7 +92,10 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 
 ## 3. Szybki start
 
-1. **Przygotuj VT.** Ustaw termostaty VT dla pomieszczeń. Do sterowania utwórz pomocnika wł./wył.
+1. **Przygotuj VT.** Ustaw termostaty VT dla pomieszczeń i zaznacz **Używane przez kocioł
+   centralny** w każdym termostacie, którego pokój grzeje ten kocioł: to są pokoje wtyczki, i
+   tylko je liczy kocioł centralny VT. We wtyczce nie ma listy pokoi do prowadzenia. Do
+   sterowania utwórz pomocnika wł./wył.
    (Ustawienia → Urządzenia i usługi → Pomocnicy → Przełącznik) i ustaw kocioł centralny VT w
    konfiguracji centralnej VT: jego progi i opóźnienie włączenia oraz oba polecenia na pomocniku
    (`input_boolean.twoj_pomocnik/input_boolean.turn_on` i `…/input_boolean.turn_off`). Nigdy nie
@@ -113,15 +118,21 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
      przez kocioł (wymagana) i odczyt zwrotny włączenia ogrzewania.
    - **Kocioł** — co o nim wiesz; nieznane wartości zostaw puste.
    - **Obieg: <nazwa>** — jedna pozycja na obieg grzewczy (do czterech na poziomie
-     zaawansowanym): jego typ, zasilane strefy VT i które z nich mają podłogówkę albo
-     konwektory, jego najwyższa temperatura wody. Strefa poza obiegami nie jest pilnowana i nie
-     prosi o ciepło.
-   - **Strefy VT** — których zawory zamykają się, gdy VT wyłącza strefę.
+     zaawansowanym): jego typ, jego najwyższa temperatura wody i które pokoje mają podłogówkę
+     albo konwektory. Przy jednym obiegu wszystkie pokoje są w nim. Przy kilku każdy wymienia
+     swoje pokoje; pokój poza obiegami liczy się do tego, ile pokoi woła o ciepło, ale nie do
+     wody żadnego obiegu.
    - **Budynek** i **Progi monitora** — na poziomie zaawansowanym, tylko dla monitora; tam jest
      **Dni danych do werdyktu** (domyślnie 7).
    - **Pozycje sterowania** — przy pełnym sterowaniu albo wł./wył.: urządzenie sterujące, krzywa
      grzewcza, zachowanie sterowania i reakcje na alarmy (zobacz
      [Sterowanie włączasz sam](#42-sterowanie-włączasz-sam)).
+   - **Przeładuj raz VT.** VT przekazuje wtyczce swoje termostaty tylko wtedy, gdy je
+     uruchamia. Jeśli VT już działa, gdy konfigurujesz wtyczkę, po **Utwórz** uruchom raz
+     ponownie Home Assistant albo przeładuj wpisy Versatile Thermostat w Ustawienia → Urządzenia
+     oraz usługi. Ostatni krok konfiguracji mówi o tym tam, gdzie to potrzebne, a zgłoszenie
+     „Przeładuj raz Versatile Thermostat” przypomina; znika samo, gdy VT przekaże pierwszy
+     termostat. Do tego czasu wtyczka nie zna żadnego pokoju.
 4. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie ([4.1](#41-monitorowanie-i-werdykt)). Decyzja należy do ciebie.
 5. **Włącz sterowanie** w opcjach integracji: **Tryb sterowania**, zaznacz **Sterowanie
@@ -373,7 +384,8 @@ przed startem kotła i jego pompy. Wtyczka nie ma własnego opóźnienia.
 ### 4.7 Po ponownym uruchomieniu
 
 **Okres rozpoznania.** Po starcie Home Assistant albo przeładowaniu VT wtyczka czeka, aż każda
-strefa poda swój stan, najwyżej 10 minut. W tym czasie nie podejmuje nowych decyzji. Jeśli przed
+strefa poda swój stan, najwyżej 10 minut. Strefy to pokoje, które wtyczka znała wcześniej — VT
+przekazuje swoje termostaty dopiero wtedy, gdy je uruchamia. W tym czasie nie podejmuje nowych decyzji. Jeśli przed
 ponownym uruchomieniem sterowała kotłem i nic się nie zmieniło, co by tego zabraniało,
 zachowuje albo od razu przywraca swoje ostatnie polecenie. Jeśli coś
 się zmieniło, najpierw oddaje kocioł.
@@ -447,11 +459,16 @@ Obieg to część instalacji zasilana w jeden sposób, wybrany jako jego **Typ o
   każdym wołaniu jej stref (formularz raz ostrzeże).
 - **Mieszany przez kocioł** (drugi obieg grzewczy kotła) — jeszcze nie sterowany.
 
-Każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką albo konwektorami; pozostałe to
-grzejniki. Pokój zasilany przez dwa obiegi — grzejnik z jednego, pętla podłogówki z drugiego —
-trafia do każdego przez swoje urządzenia (**Pojedyncze urządzenia strefy**, poziom
-zaawansowany); pozostaje jedną strefą, pilnowaną i liczoną raz. Strefa poza obiegami nie jest
-pilnowana i nie prosi o ciepło.
+Pokoje są z VT: to termostaty, które VT przekazuje wtyczce i liczy dla kotła centralnego (w VT
+zaznaczone **Używane przez kocioł centralny**). Wtyczka nie prowadzi listy pokoi. Przy jednym
+obiegu wszystkie pokoje są w nim, a jego formularz pyta tylko, które pokoje mają podłogówkę albo
+konwektory; pozostałe to grzejniki. Przy kilku obiegach każdy wymienia zasilane pokoje (obszar
+dopisuje swoje pokoje przy zapisie), a z nich te z podłogówką albo konwektorami. Gdy dodasz
+drugi obieg, pierwszy zatrzymuje wszystkie pokoje, których nie bierze nowy; gdy zostanie jeden
+obieg, znów obejmuje wszystkie pokoje. Pokój zasilany przez dwa obiegi — grzejnik z jednego,
+pętla podłogówki z drugiego — trafia do każdego przez swoje urządzenia (**Pojedyncze urządzenia
+pokoju**, poziom zaawansowany); pozostaje jednym pokojem, liczonym raz. Pokój poza obiegami
+liczy się do tego, ile pokoi woła o ciepło, ale nie do wody żadnego obiegu.
 
 ### 4.11 Obok algorytmów stref VT
 
@@ -1127,11 +1144,12 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Decyzja VT nie jest znana (2 warianty) | sprawdź pomocnika i to, czy kocioł centralny VT go przełącza |
 | Kocioł centralny VT przełącza coś innego niż pomocnika | skieruj polecenia VT na pomocnika |
 | Ustaw progi wezwania ciepła w kotle centralnym VT | po aktualizacji: ustaw swoje dawne wartości w VT |
-| Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
+| Obieg grzewczy nie ma pomieszczeń | przy kilku obiegach: dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
 | Versatile Thermostat jest za stary dla wtyczki | zaktualizuj VT; do tego czasu sterowanie jest zablokowane |
-| Część termostatów VT wymaga przeładowania, żeby trafiły do wtyczki | przeładuj VT; do tego czasu te pokoje są nieznane |
+| Przeładuj raz Versatile Thermostat | przy pierwszej instalacji, gdy VT działa: uruchom ponownie Home Assistant albo przeładuj wpisy VT; do tego czasu wtyczka nie zna żadnego pokoju. Jego „Zatwierdź” sprawdza ponownie |
+| Kocioł centralny Versatile Thermostat nie liczy części termostatów | zaznacz w VT „Używane przez kocioł centralny” dla każdego, którego pokój grzeje ten kocioł; do tego czasu nie jest pokojem |
 
 „3 warianty”: kocioł nie grzeje albo wrócił do swojego termostatu, albo wtyczka tylko
 monitoruje.

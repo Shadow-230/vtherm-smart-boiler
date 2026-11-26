@@ -167,7 +167,8 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
      `sensor.boiler_sim_ch_setpoint`, `binary_sensor.boiler_sim_ch_active` and
      `binary_sensor.boiler_sim_pump_running`.
    - Weather: `weather.boiler_sim_weather`.
-   - Boiler: class "Flow setpoint", DHW "combi"; one unmixed circuit; the three VT zones.
+   - Boiler: class "Flow setpoint", DHW "combi"; one unmixed circuit, which takes every room:
+     the three VT zones, each with "Used by central boiler" ticked in VT (I12.11).
 4. **The simulated gateway**: Settings → Devices & services → Add integration → "OpenTherm Gateway
    (simulator stub, test only)" → Submit. Its entry has the gateway ID `sim`. It is a test-only
    stand-in on the simulator for Home Assistant's own OpenTherm Gateway integration, which it

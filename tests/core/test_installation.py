@@ -100,10 +100,45 @@ def test_a_circuit_carries_its_alarm_temperature_and_time() -> None:
     assert Circuit("main").max_flow_alarm_s is None
 
 
-def test_a_zone_may_close_when_vt_switches_it_off() -> None:
-    """Decision 4's per-zone option: off by default."""
-    assert not Zone("a", "main").closes_when_off
-    assert Zone("a", "main", closes_when_off=True).closes_when_off
+def test_one_circuit_takes_every_room_vt_hands_over() -> None:
+    """I12.11: with one circuit every room is its — those its emitter lists name with their
+    emitter, the rest radiators; a listed room VT does not hand over now is on it no more; one
+    circuit alone is never empty."""
+    installation = Installation(
+        BOILER,
+        circuits=(Circuit("main", max_flow=45.0),),
+        zones=(Zone("b", "main", EmitterType.UNDERFLOOR), Zone("gone", "main")),
+    )
+    assert installation.every_room
+    assert installation.issues() == []
+    assert Installation(BOILER, circuits=(Circuit("main"),)).issues() == []
+    resolved = installation.with_rooms(["a", "b", "a"])
+    assert resolved.zones == (
+        Zone("a", "main"),
+        Zone("b", "main", EmitterType.UNDERFLOOR),
+    )
+    assert resolved.circuits == installation.circuits
+    assert installation.with_rooms([]).zones == ()
+
+
+def test_several_circuits_keep_their_mapping() -> None:
+    """I12.11: with several circuits each keeps the rooms it lists that are rooms now; a room
+    no circuit lists is on none; a room listed and not handed over is left out."""
+    installation = Installation(
+        BOILER,
+        circuits=(Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
+        zones=(
+            Zone("a", "main"),
+            Zone("b", "floor", EmitterType.UNDERFLOOR, frozenset({"switch.b_floor"})),
+            Zone("b", "main", devices=frozenset({"switch.b_radiator"})),
+            Zone("late", "floor"),
+        ),
+    )
+    assert not installation.every_room
+    resolved = installation.with_rooms(["a", "b", "unmapped"])
+    assert resolved.zones == installation.zones[:3]
+    assert [z.zone_id for z in resolved.zones_in("floor")] == ["b"]
+    assert resolved.zone("unmapped") is None
 
 
 def test_each_boiler_type_names_its_hot_water() -> None:

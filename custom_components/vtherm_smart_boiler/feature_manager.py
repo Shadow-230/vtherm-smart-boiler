@@ -17,8 +17,12 @@ error of the plugin's ever reaches VT (T-53).
 
 Whether the manager works is shown: a repair issue when VT cannot load feature managers — an API
 without them, or a VT older than the first version that creates them, whatever its API offers
-(P-60) — and one listing the zones VT shows running whose thermostat VT has not handed over some
-time after the registration: it started before it and needs VT's reload (P-59).
+(P-60) — and, at a first installation while VT runs, one asking to reload VT once (I12.11, gap
+18): VT hands its thermostats over only when it starts them, so none comes until VT's reload or
+Home Assistant's restart. That one is raised once VT is loaded, Home Assistant's entity registry
+lists VT climate entities, and VT has handed none over in this Home Assistant run some time
+after the registration; it goes as soon as one is handed over, and its fix flow checks again
+(``repairs.ReloadVtFlow``). No state or attribute of VT's is read for it.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ from homeassistant.config_entries import (
     ConfigEntryState,
 )
 from homeassistant.const import EVENT_COMPONENT_LOADED
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
@@ -49,7 +53,8 @@ _LOGGER = logging.getLogger(__name__)
 MANAGER_NAME = DOMAIN
 DATA_KEY = f"{DOMAIN}_feature_manager"
 UNSUPPORTED_ISSUE = "vt_feature_manager_unsupported"
-RELOAD_GRACE_S = 15 * 60  # a started thermostat is handed over within this, else needs a reload
+RELOAD_ISSUE = "vt_reload_once"  # I12.11: a first installation while VT runs
+RELOAD_GRACE_S = 15 * 60  # VT hands its thermostats over within this, else it needs a reload
 
 
 class RegistrationState(StrEnum):
@@ -318,40 +323,46 @@ def async_attach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
         shared["registration"].start()
 
 
+def reload_issue_id(entry_id: str) -> str:
+    return f"{RELOAD_ISSUE}_{entry_id}"
+
+
+def reload_needed(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> bool:
+    """I12.11 (gap 18): VT has thermostats and has handed none over in this Home Assistant run,
+    though the plugin has been registered with it for ``RELOAD_GRACE_S`` while Home Assistant
+    runs — a first installation while VT runs: VT hands its thermostats over only when it starts
+    them. Home Assistant's information only — VT loaded, its climate entities in the registry —
+    and what VT handed over; no state of VT's."""
+    if vtherm_link.any_handed_over(hass):
+        return False
+    current = registration(hass)
+    if (
+        current is None
+        or current.registered_at is None
+        or hass.state is not CoreState.running
+        or dt_util.utcnow().timestamp() - current.registered_at < RELOAD_GRACE_S
+    ):
+        return False
+    return coordinator.link.capabilities().vt_loaded and vtherm_link.vt_climates_registered(hass)
+
+
 def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
-    """At each update: registered with VT's current API, and the zones whose thermostat VT has
-    still not handed over some time after the registration reported — they started before it and
-    pick the manager up only at VT's next reload. Only a zone VT's climate shows running is
-    listed: ready, its mode known (P-59; I12.11 replaces this read of VT's climate with the
-    first installation's "reload VT once"); one away, unavailable or still starting would not be
-    handed over yet anyway."""
+    """At each update: registered with VT's current API, and the first installation's "reload VT
+    once" repair while it is needed (``reload_needed``) — gone as soon as a thermostat is handed
+    over."""
     current = registration(hass)
     if current is not None:
         current.check()
-    issue_id = f"vt_reload_needed_{coordinator.config_entry.entry_id}"
-    missing: list[str] = []
-    data = coordinator.data
-    if (
-        current is not None
-        and current.registered_at is not None
-        and dt_util.utcnow().timestamp() - current.registered_at >= RELOAD_GRACE_S
-        and data is not None
-    ):
-        link = coordinator.link
-        for zone_id in coordinator.config.zone_entities:
-            if zone_id not in data.zones:
-                continue
-            if link.shows_running(zone_id) and vtherm_link.vt_thermostat(hass, zone_id) is None:
-                missing.append(link.zone_name(zone_id))
-    if missing:
+    issue_id = reload_issue_id(coordinator.config_entry.entry_id)
+    if reload_needed(hass, coordinator):
         ir.async_create_issue(
             hass,
             DOMAIN,
             issue_id,
-            is_fixable=False,
+            data={"entry_id": coordinator.config_entry.entry_id},
+            is_fixable=True,
             severity=ir.IssueSeverity.WARNING,
-            translation_key="vt_reload_needed",
-            translation_placeholders={"zones": ", ".join(missing)},
+            translation_key=RELOAD_ISSUE,
         )
     else:
         ir.async_delete_issue(hass, DOMAIN, issue_id)
@@ -359,7 +370,7 @@ def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> Non
 
 def async_detach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
     """Remove an installation; the last one unregisters the factory."""
-    ir.async_delete_issue(hass, DOMAIN, f"vt_reload_needed_{coordinator.config_entry.entry_id}")
+    ir.async_delete_issue(hass, DOMAIN, reload_issue_id(coordinator.config_entry.entry_id))
     shared = hass.data.get(DATA_KEY)
     if shared is None:
         return

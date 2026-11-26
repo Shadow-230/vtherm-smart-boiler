@@ -29,6 +29,7 @@ class HeatReason(StrEnum):
     CIRCUIT_NOT_MEASURED = "circuit_not_measured"
     NOT_MAPPED = "not_mapped"  # no water sensor for the circuit at all (I9)
     ROOM_UNKNOWN = "room_unknown"
+    NO_CIRCUIT = "no_circuit"  # a room no circuit lists, among several (I12.11)
 
 
 class Against(StrEnum):
@@ -98,7 +99,10 @@ def heat_available(
 
 def heat_through_any(heats: Sequence[Heat]) -> Heat:
     """A zone fed by several circuits through its devices (I8.8b): heat while any circuit
-    brings it; else what cannot be told, before a no; else the first no."""
+    brings it; else what cannot be told, before a no; else the first no. A room on no circuit
+    (I12.11) cannot be told."""
+    if not heats:
+        return Heat(None, HeatReason.NO_CIRCUIT)
     return next(
         (h for h in heats if h.available is True),
         next((h for h in heats if h.available is None), heats[0]),

@@ -344,6 +344,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_learning_pauses(hass, entry)
     if entry.minor_version < 24:
         _migrate_frost(hass, entry)
+    if entry.minor_version < 25:
+        _migrate_rooms_from_vt(hass, entry)
     return True
 
 
@@ -763,6 +765,18 @@ def _migrate_frost(hass: HomeAssistant, entry: ConfigEntry) -> None:
             severity=ir.IssueSeverity.WARNING,
             translation_key=FROST_ISSUE,
         )
+
+
+def _migrate_rooms_from_vt(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I12.11 (minor version 25, the user's decision of 2026-11-25): the rooms are VT's — the
+    thermostats VT hands over and counts for its central boiler — so the zones' section goes,
+    "valves close when off" with it; the only circuit takes every room, its list of rooms (and
+    the devices it fed of them) going; several circuits keep theirs, the mapping of rooms to
+    circuits (``config.rooms_from_vt``)."""
+    from .config import rooms_from_vt
+
+    options = rooms_from_vt(entry.options)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=25)
 
 
 def _stored_float(raw: Any, default: float) -> float:

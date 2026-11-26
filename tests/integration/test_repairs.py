@@ -11,6 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.repairs import (
+    ReloadVtFlow,
     ReturnedByHandFlow,
     async_create_fix_flow,
     async_release,
@@ -32,6 +33,27 @@ async def test_only_an_owed_hand_back_with_its_entry_gets_the_release_flow(
         ("hand_back_owed_abc", {"entry_id": 5}),
     ):
         assert isinstance(await async_create_fix_flow(hass, issue_id, data), ConfirmRepairFlow)
+
+
+async def test_reload_vt_once_closes_only_once_a_thermostat_has_come(
+    hass: HomeAssistant,
+) -> None:
+    """I12.11 (gap 18): the first installation's "reload VT once" — its form says how; its
+    "done" checks again, and the issue closes only once VT has handed a thermostat over: before,
+    the form stays with what is missing."""
+    from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
+
+    flow = await async_create_fix_flow(hass, "vt_reload_once_abc", {"entry_id": "abc"})
+    assert isinstance(flow, ReloadVtFlow)
+    flow.hass = hass
+    shown = await flow.async_step_init()
+    assert (shown["type"], shown["step_id"], shown["errors"]) == ("form", "done", {})
+    refused = await flow.async_step_done({})
+    assert refused["type"] == "form"
+    assert refused["errors"] == {"base": "no_thermostats_yet"}
+    register_thermostat(hass, object())  # VT reloaded: a thermostat handed over
+    done = await flow.async_step_done({})
+    assert done["type"] == "create_entry"
 
 
 async def test_releasing_an_entry_that_is_gone_changes_nothing(

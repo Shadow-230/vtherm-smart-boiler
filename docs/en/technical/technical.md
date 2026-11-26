@@ -35,8 +35,15 @@ writes that to the boiler and hands the boiler back on every exit.
   timers and state changes, carries out its writes, and publishes sensors, binary sensors,
   switches, buttons and repair issues.
 - **`vtherm_link.py` is the only door to zone data.** It reads each zone only through
-  `vtherm_api` (the user's rule, 2026-11-24/25; I12.7). A zone is the thermostat VT handed to
-  the plugin's feature manager whose declared `entity_id` matches. From the thermostat: the room
+  `vtherm_api` (the user's rule, 2026-11-24/25; I12.7). The rooms are the thermostats VT hands
+  to the plugin's feature manager whose `entry_infos` say VT's central boiler counts them
+  (`used_by_controls_central_boiler`; I12.11); the plugin keeps no list of its own. One handed
+  over and not counted is no room, and one information repair issue names it. While VT holds
+  no thermostat for a room the plugin knew — VT reloading it, or not started yet after a
+  restart (the rooms its own store kept) — the room stays, not known, so decision 3's
+  recognition period and grace still apply; it goes once VT hands it over not counted, or once
+  Home Assistant's registry no longer lists its entity. A zone is matched by its declared
+  `entity_id` and named by its declared `name`. From the thermostat: the room
   temperature and when VT measured it, the target, the mode, whether the zone heats and its
   device is on, and why VT keeps it off (the window only). From its `entry_infos`: its type,
   cycle and devices, whether VT's central boiler counts it, the room's thermometer and window
@@ -45,17 +52,22 @@ writes that to the boiler and hands the boiler back on every exit.
   hook last said VT applied. A zone whose thermostat VT has not handed over is not known; nothing
   of VT's climate entity stands in for it. The rooms' history is what it read, kept by the
   plugin itself (see [Persistent state](#6-persistent-state)); nothing of VT's climates goes into
-  it. Still read from VT's climate entities for now: the zone picker, the zones' names, the
-  reload repair and VT's central mode (until the rooms come from VT, step I12.11). It
-  detects what is installed (VT and its version, `vtherm_api`) instead of assuming it; it reads
-  nothing of SmartPI. No other module looks up a zone's state by entity name.
+  it. Nothing of VT's climate entities is read, nor VT's central mode. What it takes from Home
+  Assistant about VT is Home Assistant's information, not VT's data: whether VT is loaded and its
+  version (its integrations and config entries), and its entity registry — whether VT has
+  climate entities (the reload repair below) and an entity's area (a circuit's area shortcut).
+  It reads nothing of SmartPI. No other module looks up a zone's state by entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
   `register_feature_manager`) is the channel VT hands each thermostat through. It keeps what VT
   tells it — its `refresh_state` and its power hook `async_on_underlying_power` — and publishes
   nothing on VT's thermostats: the water data it showed until I12.9 went, as nothing read it
   (the user's decision of 2026-11-25). It is registered only once VT is loaded; a thermostat
   already running is handed over only after VT's next reload, which the plugin never triggers
-  itself — a repair issue names such zones, and until then they are not known.
+  itself. At a first installation while VT runs, none comes: a fixable repair issue, "Reload
+  Versatile Thermostat once", is raised once VT is loaded, Home Assistant's registry lists VT
+  climates and none has been handed over in this run 15 minutes after the registration; it goes
+  as soon as one is handed over, and its fix flow (`repairs.ReloadVtFlow`) checks again. The
+  setup's last step says the same where it applies.
 - **"Gives no heat"** (`binary_sensor`, key `no_heat`; `core/boiler_call.py`): one house-wide
   signal, on while the boiler gives the rooms no heat now, with its reason — VT's central boiler
   not calling, its activation delay, hot water, a boiler fault, or the plugin unable to vouch for
@@ -237,12 +249,14 @@ the control device, the heating curve, the control behaviour, frost protection, 
 reactions (`CONTROL_ITEMS`) —, each shown where it applies and opened with the write path's
 own checks (`_control_path`). A form shows itself again with the fields an answer reveals
 (`entity_form_fields`, `relay_form_fields`); a value whose field is hidden is kept. Control reads its section with the connection's MQTT topics and the signals'
-read-backs put in (`with_boiler_inputs`): each value is stored once. The zones are the
-circuits': each circuit lists the VT zones it feeds and, of them, those with underfloor and
-with convectors, and, of a zone it feeds only in part, its devices (`devices`, by zone — the
-form resolves each device to its zone through `vtherm_link.zone_devices`); a zone may be in
-two circuits only so. The zones' own section keeps only whether a zone's valves close when it
-is off (`config._circuit_zones`). `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
+read-backs put in (`with_boiler_inputs`): each value is stored once. The rooms are VT's
+(I12.11): the options keep only how they map to the circuits. With one circuit every room is
+its, and it stores only which rooms have underfloor heating and convectors. With several, each
+circuit lists the rooms it feeds and, of them, those with underfloor and with convectors, and,
+of a room it feeds only in part, its devices (`devices`, by room — the form resolves each
+device to its room through `vtherm_link.room_devices`); a room may be in two circuits only so.
+`config._zones` reads the mapping, and `Installation.with_rooms` puts it together with the
+rooms VT hands over at each refresh and control step. `repairs.py` holds the repair flows (for example confirming a hand-back done by hand).
 
 ## 4. One control step
 
@@ -356,8 +370,9 @@ Each series is one line of text — moments in whole seconds, each after the fir
 since the one before; values to three decimals — as Home Assistant writes its stores indented.
 It keeps the newest 10,000 samples of a series at most, so a value that flaps cannot grow the
 file without end. Written half an hour after a change (about 48 writes a day at most) and at a
-clean stop; read back at the start, for the rooms configured now, unknown from its last write
-until the rooms are read again — a crash loses what came since. A series that cannot be read is
+clean stop; read back at the start, every room it kept, unknown from its last write until the
+rooms are read again — a crash loses what came since. The rooms it kept are the rooms the plugin
+expects until VT hands their thermostats over (I12.11, decision 3). A series that cannot be read is
 left out; a store without the moment of its write is ignored. Nothing is written to it before
 it was read. It goes with the entry's other stores when the entry is removed.
 

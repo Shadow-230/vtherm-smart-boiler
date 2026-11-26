@@ -14,9 +14,9 @@ ALLOWED = {"vtherm_link.py", "vtherm_attributes.py"}
 
 # VT's names the plugin reads (I12.7): the thermostat members ``vtherm_api`` declares and its
 # power hook's kinds of device; the keys of a thermostat's ``entry_infos`` (VT 10.6.5
-# ``const.py``); VT's events (I12.10: safety mode and the automatic window detection); and the
-# climate attribute the reload repair still reads (I12.11). None for the rooms' history: it is the
-# plugin's own reads (I12.7b).
+# ``const.py``); and VT's events (I12.10: safety mode and the automatic window detection). No
+# climate attribute: nothing of VT's climates is read (I12.11). None for the rooms' history: it is
+# the plugin's own reads (I12.7b).
 # Generic Home Assistant words ("heat", "temperature", "on") are not VT's.
 VT_NAMES = frozenset(
     {
@@ -28,7 +28,6 @@ VT_NAMES = frozenset(
         "hvac_off_reason",
         "hvac_off_window_detection",
         "is_device_active",
-        "is_ready",
         "last_temperature_measure",
         "target_temperature",
         "temperature_sensor_entity_id",

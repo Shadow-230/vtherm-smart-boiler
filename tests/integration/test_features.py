@@ -84,7 +84,6 @@ def water_options(zone: str) -> dict[str, Any]:
         "boiler": {"class": "flow_setpoint", "dhw": "combi", "condensing": True},
         "parameters": {"gas_at_min_power": 0.4, "gas_at_max_power": 2.5},
         "circuits": [{"id": "main", "max_flow": 60}],
-        "zones": [{"entity_id": zone}],
         "monitor": {"monitoring_days": 0, "add_water_below": 1.0},
         "control": {
             "write_path": "opentherm_gw",
@@ -158,7 +157,14 @@ def no_control(options: dict[str, Any]) -> None:
 
 
 def no_zones(options: dict[str, Any]) -> None:
-    options["zones"] = []
+    """No room (I12.11): VT's central boiler counts no thermostat — ``_setup`` unticks it."""
+    options[NO_ROOMS] = True
+
+
+# The rooms are VT's, known only at run time (I12.11): what only they tell never keeps an
+# entity from being created.
+NO_ROOMS = "_no_rooms"
+RUN_TIME_CODES = frozenset({"zone_data", "valve_openings"})
 
 
 # (feature, the base, what is taken away, the status then, the code it names). Every input of
@@ -310,6 +316,8 @@ async def _setup(
     set_signals(hass)
     options = copy.deepcopy(water_options(zone) if base == "water" else relay_options(zone))
     change(options)
+    if options.pop(NO_ROOMS, False):
+        zones.configure("living", used_by_controls_central_boiler=False)
     entry = MockConfigEntry(domain=DOMAIN, title="Boiler", data={}, options=options)
     entry.add_to_hass(hass)
     if store:
@@ -370,7 +378,8 @@ async def test_every_feature_names_its_missing_input(
     assert code in attributes[f"{feature}_missing"]
     assert missing_text(code, "en") in attributes[f"{feature}_missing_text"]
     assert missing_text(code, "pl")
-    if status == "inactive" and feature != "verdict":  # the verdict says it itself (S-43)
+    if status == "inactive" and feature != "verdict" and code not in RUN_TIME_CODES:
+        # The verdict says it itself (S-43); the rooms are known at run time only (I12.11).
         keys = created(hass, entry)
         for key in FEATURE_ENTITIES.get(_feature(feature), ()):
             assert not any(k == key or k.startswith(f"{key}_") for k in keys), key
@@ -611,9 +620,7 @@ async def test_every_attribute_has_a_translated_name(
     registry = er.async_get(hass)
     # A zone is shown by its own name, which needs no text (the critical zone, the reference).
     coordinator = entry.runtime_data
-    names: set[object] = {
-        coordinator.link.zone_name(zone.zone_id) for zone in coordinator.config.installation.zones
-    }
+    names: set[object] = {coordinator.link.zone_name(room) for room in coordinator.link.rooms()}
     missing: set[str] = set()
     for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
         if registered.disabled_by is not None:

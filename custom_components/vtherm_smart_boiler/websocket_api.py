@@ -82,7 +82,9 @@ def installation_view(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) 
     the curve's settings — what the page needs to draw the schematic and the curve."""
     config = coordinator.config
     entry = coordinator.config_entry
-    installation = config.installation
+    # I12.11: the rooms VT hands over now, on their circuits as the options map them (the page's
+    # rooms are I12.12's).
+    installation = config.installation.with_rooms(coordinator.link.rooms())
     registry = er.async_get(hass)
     prefix = f"{entry.entry_id}_"
     # The entities this run creates, by domain and unique ID: an earlier version's entry with

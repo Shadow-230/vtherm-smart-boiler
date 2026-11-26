@@ -330,7 +330,6 @@ CONFIG_BLOCKERS = (
     "curve_not_entered",
     "one_direct_circuit_only",
     "underfloor_without_max_flow",
-    "no_zones",
     # I12: no helper for VT's central boiler picked, or one that is no input_boolean.
     "no_vt_boiler_helper",
     "off_setpoint_not_below_hard_min",
@@ -923,13 +922,14 @@ ROOM_MODE = "room_mode"
 ROOM_EXCLUDED = "room_excluded"  # the zones Auto leaves out
 
 
-def _room_excluded(curve_data: Mapping[str, Any], zones: Collection[str]) -> frozenset[str]:
-    """The zones Auto leaves out, among those configured; one no longer configured is dropped. A
-    stored value of another shape raises ``ValueError`` naming it (PB-24)."""
+def _room_excluded(curve_data: Mapping[str, Any]) -> frozenset[str]:
+    """The rooms Auto leaves out, as stored: the rooms are VT's, known at run time (I12.11), so
+    one that is no room now simply leaves nothing out. A stored value of another shape raises
+    ``ValueError`` naming it (PB-24)."""
     raw = curve_data.get(ROOM_EXCLUDED) or []
     if not isinstance(raw, list) or not all(isinstance(zone, str) for zone in raw):
         raise ValueError(f"{ROOM_EXCLUDED}: {raw!r} is not a list of zones")
-    return frozenset(zone for zone in raw if zone in zones)
+    return frozenset(raw)
 
 
 def parse_relay(data: Mapping[str, Any]) -> RelayOptions:
@@ -1036,12 +1036,14 @@ def parse_control(
         (c.max_flow if c.max_flow is not None else default_max for c in direct),
         default=default_max,
     )
+    # I12.11: the only circuit takes every room VT hands over; with several, each its own.
     other = tuple(
         OtherAutomation(
             c.circuit_id,
             frozenset(z.zone_id for z in installation.zones_in(c.circuit_id)),
             c.circuit_id in requests,
             c.needed,
+            every_room=installation.every_room,
         )
         for c in installation.circuits
         if c.control is CircuitControl.SEPARATE
@@ -1071,7 +1073,7 @@ def parse_control(
         correction_max_k=_required(value, "comfort_correction_max_k"),
         # G11 D: Auto by default for a curve entered now; an entry from before runs Manual.
         room_auto=RoomMode(curve_data.get(ROOM_MODE, RoomMode.AUTO)) is RoomMode.AUTO,
-        room_excluded=_room_excluded(curve_data, {z.zone_id for z in installation.zones}),
+        room_excluded=_room_excluded(curve_data),
         # The relay path (R5, R6): heating on and off only, and its link is the relay itself —
         # never a hand-back for the boiler's signals, which never gate it.
         on_off=on_off,
@@ -1637,13 +1639,11 @@ def relay_blockers(
     return found
 
 
-def _zone_blockers(control: ControlOptions, installation: Installation) -> list[str]:
-    """No zone (S-04); no helper for VT's central boiler, which decides whether the boiler heats
-    (I12) — or one that is no ``input_boolean``."""
-    found = [] if installation.zones else ["no_zones"]  # nothing could ever ask for heat
-    if not vt_helper_valid(control.vt_boiler_helper):
-        found.append("no_vt_boiler_helper")
-    return found
+def _vt_blockers(control: ControlOptions) -> list[str]:
+    """No helper for VT's central boiler, which decides whether the boiler heats (I12) — or one
+    that is no ``input_boolean``. No room is asked for: the rooms are VT's, known at run time,
+    and VT's decision needs none of the plugin's (I12.11)."""
+    return [] if vt_helper_valid(control.vt_boiler_helper) else ["no_vt_boiler_helper"]
 
 
 def config_blockers(
@@ -1676,7 +1676,7 @@ def config_blockers(
         return [
             *found,
             *relay_blockers(control, signals, others),
-            *_zone_blockers(control, installation),
+            *_vt_blockers(control),
         ]
     return [
         *found,
@@ -1685,7 +1685,7 @@ def config_blockers(
         *_topology_blockers(control),
         *_curve_blockers(control),
         *_circuit_blockers(installation),
-        *_zone_blockers(control, installation),
+        *_vt_blockers(control),
         *_off_blockers(control),
     ]
 

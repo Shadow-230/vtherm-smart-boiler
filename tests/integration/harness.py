@@ -65,7 +65,8 @@ def vt_central_settings(helper: str = VT_HELPER, **changes: Any) -> dict[str, An
 class FakeVtThermostat:
     """A thermostat VT handed to the plugin's feature manager, as ``vtherm_api`` declares it —
     its entity, name, unique ID and ``entry_infos`` — standing in for VT's central boiler
-    settings; its unique ID matches no zone, so no zone is read through it."""
+    settings. VT's central boiler does not count it (its ``entry_infos`` do not say so), so it is
+    no room (I12.11): a thermostat of VT's that heats no room of the boiler's."""
 
     entry_infos: dict[str, Any] = field(default_factory=vt_central_settings)
     entity_id: str = "climate.fake_vt_stand_in"
@@ -73,12 +74,17 @@ class FakeVtThermostat:
     unique_id: str = "fake_vt_stand_in"
 
 
+def _counted() -> dict[str, Any]:
+    return {"used_by_controls_central_boiler": True}
+
+
 @dataclass
 class FakeZoneThermostat:
     """A zone's thermostat as VT hands it over (I12.7): VT's central boiler settings as the
     stand-in carries them, merged with the room's thermometer and window sensor — the user's
     devices — and the thermostat's own settings (``settings``: its type, cycle, devices, whether
-    VT's central boiler counts it), all in ``entry_infos``; its live members as ``vtherm_api``
+    VT's central boiler counts it — by default it does, so it is a room, I12.11), all in
+    ``entry_infos``; its live members as ``vtherm_api``
     declares them (``members``: one not set is missing, as in a VT without it); and VT's clock of
     its last measurement, ``vtherm_api``'s ``last_temperature_measure``: by default a thermometer
     that measures all the time, so a room counts once time has moved past the plugin's start;
@@ -91,7 +97,7 @@ class FakeZoneThermostat:
     window_sensor: str
     name: str = "zone"
     measured: datetime | None = None
-    settings: dict[str, Any] = field(default_factory=dict)
+    settings: dict[str, Any] = field(default_factory=_counted)
     members: dict[str, Any] = field(default_factory=dict)
 
     def __getattr__(self, name: str) -> Any:
@@ -322,7 +328,7 @@ class FakeZones:
         from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
 
         now = dt_util.utcnow().timestamp()
-        zones = VThermLink(self.hass, list(self.entities.values())).zones()
+        zones = VThermLink(self.hass).zones()
         calling = any(z.is_known(now, None) and zone_wants_heat(z) for z in zones)
         self.set_helper("on" if calling else "off", follow=True)
 
@@ -340,7 +346,7 @@ class FakeZones:
             f"fake_{zone_id}",
             f"sensor.fake_{zone_id}_temperature",
             f"binary_sensor.fake_{zone_id}_window",
-            name=zone_id,
+            name=f"fake {zone_id}",  # as its climate is named
         )
         self.thermostats[zone_id] = thermostat
         if handed_over:

@@ -35,8 +35,16 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   rdzeń na timerach i przy zmianach stanu, wykonuje jego zapisy i publikuje czujniki, czujniki
   binarne, przełączniki, przyciski i zgłoszenia w Naprawach.
 - **`vtherm_link.py` to jedyne wejście do danych stref.** Czyta każdą strefę wyłącznie przez
-  `vtherm_api` (zasada użytkownika, 2026-11-24/25; I12.7). Strefa to termostat przekazany przez
-  VT modułowi funkcji wtyczki, którego zadeklarowane `entity_id` się zgadza. Z termostatu:
+  `vtherm_api` (zasada użytkownika, 2026-11-24/25; I12.7). Pokoje to termostaty przekazane przez
+  VT modułowi funkcji wtyczki, których `entry_infos` mówią, że liczy je kocioł centralny VT
+  (`used_by_controls_central_boiler`; I12.11); wtyczka nie prowadzi własnej listy. Termostat
+  przekazany, a nieliczony, nie jest pokojem, i wymienia go jedno informacyjne zgłoszenie w
+  Naprawach. Gdy VT nie trzyma termostatu pokoju, który wtyczka znała — VT go przeładowuje albo
+  po ponownym starcie jeszcze go nie uruchomił (pokoje zapisane we własnym magazynie wtyczki) —
+  pokój zostaje, jako nieznany, więc okres rozpoznania i okres karencji z decyzji 3 nadal
+  działają; znika, gdy VT przekaże go jako nieliczony albo gdy rejestr Home Assistanta nie zna
+  już jego encji. Strefę rozpoznaje się po zadeklarowanym `entity_id`, a nazywa zadeklarowanym
+  `name`. Z termostatu:
   temperatura pokoju i czas jej pomiaru przez VT, nastawa, tryb, czy strefa grzeje i czy jej
   urządzenie pracuje oraz powód, dla którego VT trzyma ją wyłączoną (tylko okno). Z jego
   `entry_infos`: typ, cykl i urządzenia, czy liczy go centralny kocioł VT, termometr i czujnik
@@ -45,18 +53,23 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   to, co ostatnio podał hak mocy VT jako zastosowane. Strefa, której termostatu VT nie przekazał,
   jest nieznana; nic z encji klimatu VT jej nie zastępuje. Historia pokoi to to, co odczytał,
   przechowywane przez samą wtyczkę (zobacz [Stan trwały](#6-stan-trwały)); nic z encji klimatu VT
-  do niej nie trafia. Z encji klimatu VT czyta na razie jeszcze: wybór stref, nazwy stref,
-  zgłoszenie o przeładowaniu i tryb centralny VT (aż pokoje będą pochodzić z VT, krok I12.11).
-  Wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`), zamiast to zakładać;
-  nie czyta niczego ze SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
+  do niej nie trafia. Nic z encji klimatu VT nie jest czytane, ani tryb centralny VT. To, co
+  bierze z Home Assistanta o VT, to informacja Home Assistanta, nie dane VT: czy VT jest wczytany
+  i jego wersja (integracje i wpisy konfiguracji) oraz rejestr encji — czy VT ma encje klimatu
+  (zgłoszenie o przeładowaniu niżej) i obszar encji (skrót obszaru w obiegu). Nie czyta niczego
+  ze SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
   `register_feature_manager` z `vtherm_api`) to kanał, którym VT przekazuje każdy termostat.
   Zachowuje to, co mówi mu VT — jego `refresh_state` i hak mocy `async_on_underlying_power` — i
   nie publikuje niczego na termostatach VT: dane o wodzie, które pokazywał do I12.9, usunięto, bo
   nikt ich nie czytał (decyzja użytkownika z 2026-11-25). Jest rejestrowany dopiero po wczytaniu
   VT; termostat, który już działa, trafia do niego dopiero po następnym przeładowaniu VT, którego
-  wtyczka nigdy sama nie wywołuje — takie strefy wymienia zgłoszenie w Naprawach, a do tego czasu
-  są nieznane.
+  wtyczka nigdy sama nie wywołuje. Przy pierwszej instalacji, gdy VT działa, nie przychodzi
+  żaden: zgłoszenie do naprawy „Przeładuj raz Versatile Thermostat” pojawia się, gdy VT jest
+  wczytany, rejestr Home Assistanta zna encje klimatu VT, a w tym uruchomieniu żaden termostat
+  nie został przekazany przez 15 minut od rejestracji; znika, gdy tylko pierwszy zostanie
+  przekazany, a jego przepływ naprawy (`repairs.ReloadVtFlow`) sprawdza ponownie. Ostatni krok
+  konfiguracji mówi to samo tam, gdzie to potrzebne.
 - **„Nie daje ciepła”** (`binary_sensor`, klucz `no_heat`; `core/boiler_call.py`): jeden sygnał
   dla całego domu, włączony, gdy kocioł nie daje teraz pokojom ciepła, z powodem — kocioł
   centralny VT nie wzywa ciepła, trwa jego opóźnienie włączenia, ciepła woda, usterka kotła albo
@@ -244,12 +257,14 @@ formularz — urządzenie sterujące, krzywa grzewcza, zachowanie sterowania, oc
 reakcje na alarmy (`CONTROL_ITEMS`) —, każda pokazana tam, gdzie ma zastosowanie, i otwierana
 po sprawdzeniu ścieżki zapisu (`_control_path`). Formularz pokazuje się ponownie z polami, które
 odsłoniła odpowiedź (`entity_form_fields`, `relay_form_fields`); wartość ukrytego pola zostaje. Sterowanie czyta swoją sekcję z dołożonymi tematami MQTT połączenia i odczytami
-zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Strefy należą do
-obiegów: każdy obieg wymienia zasilane strefy VT, a z nich te z podłogówką i z konwektorami,
-a ze strefy zasilanej tylko w części — jej urządzenia (`devices`, według strefy; formularz
-przypisuje każde urządzenie do strefy przez `vtherm_link.zone_devices`); tylko tak strefa może
-być w dwóch obiegach. Własna sekcja stref trzyma tylko to, czy zawory strefy zamykają się, gdy
-jest wyłączona (`config._circuit_zones`). `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
+zwrotnymi z sygnałów (`with_boiler_inputs`): każda wartość jest zapisana raz. Pokoje są z VT
+(I12.11): opcje trzymają tylko to, jak należą do obiegów. Przy jednym obiegu wszystkie pokoje są
+jego, a zapisuje on tylko, które pokoje mają podłogówkę i konwektory. Przy kilku każdy obieg
+wymienia zasilane pokoje, a z nich te z podłogówką i z konwektorami, a z pokoju zasilanego tylko
+w części — jego urządzenia (`devices`, według pokoju; formularz przypisuje każde urządzenie do
+pokoju przez `vtherm_link.room_devices`); tylko tak pokój może być w dwóch obiegach.
+`config._zones` czyta to przypisanie, a `Installation.with_rooms` łączy je z pokojami, które VT
+przekazuje, przy każdym odświeżeniu i kroku sterowania. `repairs.py` zawiera przepływy napraw (na przykład potwierdzenie oddania kotła
 zrobionego ręcznie).
 
 ## 4. Jeden krok sterowania
@@ -374,8 +389,9 @@ dniach. Każda seria to jeden wiersz tekstu — chwile w pełnych sekundach, ka�
 sekundy od poprzedniej; wartości do trzech miejsc po przecinku — bo Home Assistant zapisuje swoje
 magazyny z wcięciami. Trzyma najwyżej 10 000 najnowszych próbek serii, więc migocząca wartość nie
 powiększa pliku bez końca. Zapisywany pół godziny po zmianie (najwyżej około 48 zapisów na dobę)
-i przy czystym zatrzymaniu; odczytywany przy starcie, dla pokoi skonfigurowanych teraz, nieznany
-od ostatniego zapisu do następnego odczytu pokoi — awaria gubi to, co przyszło od zapisu. Serii,
+i przy czystym zatrzymaniu; odczytywany przy starcie, każdy zapisany pokój, nieznany od
+ostatniego zapisu do następnego odczytu pokoi — awaria gubi to, co przyszło od zapisu. Zapisane
+pokoje to pokoje, których wtyczka oczekuje, aż VT przekaże ich termostaty (I12.11, decyzja 3). Serii,
 której nie da się odczytać, nie bierze; magazyn bez chwili zapisu pomija. Nic do niego nie jest
 zapisywane, zanim go odczytano. Znika razem z innymi magazynami wpisu, gdy wpis jest usuwany.
 

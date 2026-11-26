@@ -1,6 +1,5 @@
-"""What VT's thermostats tell the plugin through ``vtherm_api`` (I12.7), and what the reload
-repair still reads of VT's climate and its central mode (I12.11). Nothing of VT's climates goes
-into the rooms' history (I12.7b)."""
+"""What VT's thermostats tell the plugin through ``vtherm_api`` (I12.7). Nothing of VT's climates
+is read (I12.11), nor goes into the rooms' history (I12.7b)."""
 
 from __future__ import annotations
 
@@ -10,39 +9,14 @@ import pytest
 
 from custom_components.vtherm_smart_boiler import vtherm_attributes
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
-from custom_components.vtherm_smart_boiler.vtherm_attributes import (
-    RUNTIME_MEMBERS,
-    CentralMode,
-    central_mode,
-    live_zone,
-    shows_running,
-)
+from custom_components.vtherm_smart_boiler.vtherm_attributes import RUNTIME_MEMBERS, live_zone
 
 
-def test_central_mode() -> None:
-    assert central_mode("Stopped") is CentralMode.STOPPED
-    assert central_mode("Frost protection") is CentralMode.FROST_PROTECTION
-    assert central_mode("unavailable") is None
-
-
-@pytest.mark.parametrize(
-    ("state", "attributes", "running"),
-    [
-        ("heat", {"is_ready": True, "specific_states": {}}, True),
-        ("off", {"is_ready": True}, True),
-        ("off", {"is_ready": False, "specific_states": {}}, False),  # VT has not started it
-        ("off", {}, False),  # VT's placeholder before its first refresh
-        ("sleep", {"is_ready": True}, True),  # VT's own mode, read as off
-        ("unavailable", {"is_ready": True}, False),
-        ("heat", {"is_ready": "yes"}, False),  # not VT's shape
-    ],
-)
-def test_vts_climate_shows_the_thermostat_running(
-    state: str, attributes: dict[str, object], running: bool
-) -> None:
-    """I12.11: the reload repair still reads whether VT's climate shows the thermostat started
-    — ``is_ready`` true — in a mode the plugin reads."""
-    assert shows_running(state, attributes) is running
+def test_nothing_reads_vts_climate_or_central_mode() -> None:
+    """I12.11: the reload repair no longer reads VT's climate, nor the plugin VT's central mode
+    select (gap 12)."""
+    for gone in ("shows_running", "CentralMode", "central_mode"):
+        assert not hasattr(vtherm_attributes, gone)
 
 
 @pytest.mark.parametrize("action", [["heating"], {"a": 1}])

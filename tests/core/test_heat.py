@@ -113,6 +113,11 @@ def test_a_zone_split_between_circuits_has_heat_through_either() -> None:
     assert heat_through_any([yes]) == yes
 
 
+def test_a_room_on_no_circuit_cannot_be_told() -> None:
+    """I12.11: among several circuits, a room none lists takes heat through none: unknown."""
+    assert heat_through_any([]) == Heat(None, HeatReason.NO_CIRCUIT)
+
+
 def test_no_water_sensor_cannot_tell_but_a_known_no_comes_first() -> None:
     """I9.1: no water sensor at all — `not_mapped`, unknown; hot water with priority and a flame
     known out still say no."""

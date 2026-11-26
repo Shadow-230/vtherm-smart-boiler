@@ -6,10 +6,12 @@ thermostat — "off", before its first refresh neither ``is_ready`` nor the rest
 2026-10-06) — so nothing VT shows then is taken for an answer, nor after the recognition period:
 
 - **The recognition period** runs from the control unit's start (Home Assistant starting, the
-  entry reloading), and again whenever every configured zone stops answering at once — all of
-  them answered at the step before (VT reloading). No new decision is taken until every
-  configured zone has reported since it began — VT shows it started, and its mode and data are
-  known — or for at most ``RECOGNITION_S``, and never before Home Assistant runs.
+  entry reloading), and again whenever every zone stops answering at once — all of them
+  answered at the step before (VT reloading). No new decision is taken until every zone has
+  reported since it began — VT shows it started, and its mode and data are known — or for at
+  most ``RECOGNITION_S``, and never before Home Assistant runs. The zones are the rooms VT
+  hands over (I12.11): with none known yet — VT has not handed its thermostats over — only the
+  time ends it, never an empty list.
 - **The grace:** a zone that stops answering after it answered — unknown, or showing again that
   VT has not started it (a thermostat's reload) — keeps its last answer for ``GRACE_S`` from when
   it went away, also when the recognition period ends meanwhile (SB-28); then it drops out and
@@ -125,7 +127,10 @@ def follow_zones(
         # step with Home Assistant running, however long the start took.
         since = now if starting else _not_after(since, now)
         reported = reported | answering.keys()
-        done = all(zone_id in reported for zone_id in ids) or now - since >= RECOGNITION_S
+        # No room known yet is VT not having handed its thermostats over (I12.11): only time.
+        done = (bool(ids) and all(zone_id in reported for zone_id in ids)) or (
+            now - since >= RECOGNITION_S
+        )
         if done and not starting:
             since, reported = None, frozenset()
     last = {zone_id: state for zone_id, state in watch.last.items() if zone_id in ids}

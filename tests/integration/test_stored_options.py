@@ -68,7 +68,6 @@ def entry_with(
         ("monitor", [], "invalid_monitor"),
         ("signals", ["sensor.flow"], "invalid_signals"),
         ("boiler", "flow_setpoint", "invalid_boiler"),
-        ("zones", "climate.living", "invalid_zone"),
         ("circuits", {"id": "main"}, "invalid_circuit"),
         ("parameters", [], "invalid_parameters"),
         ("freshness", [60], "invalid_freshness"),

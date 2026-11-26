@@ -823,7 +823,10 @@ async def E1(r: Run):
     await r.options()
 
 
-# The living room's VT options as E2 saves them, with or without VT's central mode.
+# The living room's VT options as E2 saves them, with or without VT's central mode. "Used by
+# central boiler" stays ticked: VT's central boiler decides whether the boiler heats (I12.8),
+# and the plugin's rooms are the thermostats it counts (I12.11) — unticked, the living room would
+# be no room and never call.
 E2_LIVING = {
     "name": "zone_living",
     "temperature_sensor_entity_id": "sensor.boiler_sim_zone_living_temperature",
@@ -831,7 +834,7 @@ E2_LIVING = {
     "device_power": 1,
     "power_unit": "w",
     "use_main_central_config": True,
-    "used_by_controls_central_boiler": False,
+    "used_by_controls_central_boiler": True,
 }
 
 

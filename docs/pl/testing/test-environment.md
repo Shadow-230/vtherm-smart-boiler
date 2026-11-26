@@ -168,7 +168,9 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
      `sensor.boiler_sim_ch_setpoint`, `binary_sensor.boiler_sim_ch_active` i
      `binary_sensor.boiler_sim_pump_running`.
    - Pogoda: `weather.boiler_sim_weather`.
-   - Kocioł: klasa „Nastawa zasilania”, c.w.u. „combi”; jeden obieg niemieszany; trzy strefy VT.
+   - Kocioł: klasa „Nastawa zasilania”, c.w.u. „combi”; jeden obieg niemieszany, który obejmuje
+     wszystkie pokoje: trzy strefy VT, każda z zaznaczonym w VT „Używane przez kocioł
+     centralny” (I12.11).
 4. **Symulowana bramka**: Settings → Devices & services → Add integration → „OpenTherm Gateway
    (simulator stub, test only)” → Submit. Jej wpis ma identyfikator bramki `sim`. To zamiennik tylko do
    testów, na symulatorze, w miejsce własnej integracji OpenTherm Gateway Home Assistanta, którą

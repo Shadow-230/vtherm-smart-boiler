@@ -14,17 +14,21 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class OtherAutomation:
     """A circuit run by other automation. ``requests``: an entity says whether it asks for
-    heat; ``needed``: the water it needs, entered — an entity's reading of it comes first."""
+    heat; ``needed``: the water it needs, entered — an entity's reading of it comes first.
+    ``every_room``: the only circuit, which every room is on (I12.11) — ``zones`` then unused."""
 
     circuit_id: str
     zones: frozenset[str] = frozenset()
     requests: bool = False
     needed: float | None = None
+    every_room: bool = False
 
     def asks_through(self, zones_wanting: Collection[str]) -> bool:
         """One of its zones wants heat. A zone it feeds by some devices only (I8.8b) asks
         through it too: ``vtherm_api`` does not tell which devices VT has on (I12.7) — the warmer
         side."""
+        if self.every_room:
+            return bool(zones_wanting)
         return any(zone in zones_wanting for zone in self.zones)
 
 

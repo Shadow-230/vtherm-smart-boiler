@@ -43,8 +43,10 @@ the [technical documentation](../technical/technical.md).
 
 - **Home Assistant 2026.10.4 or later** — the newest Versatile Thermostat (10.6.5) needs it, and
   the plugin is tested on it.
-- **Versatile Thermostat 10.6.5 or later**, with its thermostats (the plugin calls them zones)
-  set up for the rooms this boiler heats. With an older VT the plugin does not control the
+- **Versatile Thermostat 10.6.5 or later**, with its thermostats (the plugin calls them zones
+  or rooms) set up for the rooms this boiler heats, and **Used by central boiler** ticked in
+  each of them: the plugin's rooms are the thermostats VT's central boiler counts. With an older
+  VT the plugin does not control the
   boiler and asks you to update VT. VT 10.6.5 shows itself as 10.6.4 in Home Assistant, which
   the plugin accepts. VT 10.6.5 itself needs Home Assistant 2026.10.4 and `vtherm_api` 0.9.0.
 - The `vtherm_api` library, 0.9.0 or later. Home Assistant installs it with VT and the plugin.
@@ -85,7 +87,10 @@ Only one entry of the integration can exist: it runs one boiler.
 
 ## 3. Quick start
 
-1. **Prepare VT.** Set up VT's thermostats for the rooms. For control, create an on/off helper
+1. **Prepare VT.** Set up VT's thermostats for the rooms, and tick **Used by central boiler** in
+   each thermostat whose room this boiler heats: those are the plugin's rooms, and VT's central
+   boiler counts only them. There is no list of rooms to keep in the plugin. For control, create
+   an on/off helper
    (Settings → Devices & services → Helpers → Toggle) and set up VT's central boiler in VT's
    central configuration: its thresholds and activation delay, and its two commands on the helper
    (`input_boolean.your_helper/input_boolean.turn_on` and `…/input_boolean.turn_off`). Never point
@@ -107,14 +112,20 @@ Only one entry of the integration can exist: it runs one boiler.
      the boiler received (required) and the heating on/off read-back.
    - **Boiler** — what you know about it; leave unknown values empty.
    - **Circuit: <name>** — one item per heating circuit (up to four at the advanced level): its
-     type, the VT zones it feeds and which of them have underfloor heating or convectors, its
-     highest water temperature. A zone in no circuit is neither watched nor asked for heat.
-   - **VT zones** — whose valves close while VT has the zone off.
+     type, its highest water temperature, and which rooms have underfloor heating or
+     convectors. With one circuit every room is on it. With several, each lists its rooms; a
+     room in no circuit still counts for how many rooms call, but for no circuit's water.
    - **Building** and **Monitor thresholds** — at the advanced level, for the monitor only;
      **Days of data for the verdict** is there (7 by default).
    - **Control items** — with full control or on/off: the control device, the heating curve, the
      control behaviour and the alarm reactions (see
      [Control is opt-in](#42-control-is-opt-in)).
+   - **Reload VT once.** VT hands its thermostats to the plugin only when it starts them. If VT
+     already runs when you set up the plugin, restart Home Assistant, or reload Versatile
+     Thermostat's entries in Settings → Devices & services, once after **Create**. The setup's
+     last step says so where it applies, and a repair issue "Reload Versatile Thermostat once"
+     reminds you; it goes by itself once VT has handed a thermostat over. Until then the plugin
+     knows no room.
 4. **Read the verdict.** Once it has the days of data, the sensor **Control verdict** says whether
    control is worth enabling ([4.1](#41-monitoring-and-the-verdict)). You decide.
 5. **Switch control on** in the integration's options: **Control mode**, tick **Control on**,
@@ -354,7 +365,8 @@ pump start. The plugin has no delay of its own.
 ### 4.7 After a restart
 
 **Recognition period.** After Home Assistant starts or VT reloads, the plugin waits until every
-zone has reported, for at most 10 minutes. It takes no new decision meanwhile. If it was
+zone has reported, for at most 10 minutes. The zones are the rooms the plugin knew before — VT
+hands its thermostats over only as it starts them. It takes no new decision meanwhile. If it was
 controlling the boiler before the restart, and nothing has changed that forbids it, it keeps or
 restores its last command at once. If something has changed, it hands
 the boiler back first.
@@ -424,11 +436,16 @@ A circuit is the part of the heating fed one way, picked as its **Circuit type**
   raises the boiler at every call of its zones (the form warns once).
 - **Mixed through the boiler** (a second heating circuit of the boiler) — not controlled yet.
 
-Each circuit lists the VT zones it feeds, and of them those with underfloor heating or
-convectors; the rest are radiators. A room fed by two circuits — a radiator on one, a floor loop
-on the other — goes into each by its own devices (**Single devices of a zone**, advanced level);
-it stays one zone, watched and counted once. A zone in no circuit is neither watched nor asked
-for heat.
+The rooms are VT's: the thermostats VT hands to the plugin and counts for its central boiler
+(**Used by central boiler** ticked in VT). The plugin keeps no list of rooms. With one circuit
+every room is on it, and its form only asks which rooms have underfloor heating or convectors;
+the rest are radiators. With several circuits each lists the rooms it feeds (an area adds its
+rooms at the save), and of them those with underfloor heating or convectors. When you add a
+second circuit, the first keeps every room the new one does not take; when one circuit is left,
+it takes every room again. A room fed by two circuits — a radiator on one, a floor loop on the
+other — goes into each by its own devices (**Single devices of a room**, advanced level); it
+stays one room, counted once. A room in no circuit still counts for how many rooms call, but
+for no circuit's water.
 
 ### 4.11 Beside VT's zone algorithms
 
@@ -1077,11 +1094,12 @@ not confirmed.
 | VT's decision is unknown (2 variants) | check the helper, and that VT's central boiler switches it |
 | VT's central boiler switches something other than the helper | point VT's commands at the helper |
 | Set the heat-call thresholds in VT's central boiler | after an update: set your old values in VT |
-| A heating circuit has no rooms | add its rooms, or remove the circuit |
+| A heating circuit has no rooms | with several circuits: add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
 | Versatile Thermostat is too old for the plugin | update VT; control is blocked meanwhile |
-| Some VT thermostats need a reload to be handed to the plugin | reload VT; until then those rooms are unknown |
+| Reload Versatile Thermostat once | at a first installation while VT runs: restart Home Assistant or reload VT's entries; until then the plugin knows no room. Its "Submit" checks again |
+| Versatile Thermostat's central boiler does not count some thermostats | tick "Used by central boiler" in VT for each one whose room this boiler heats; until then it is no room |
 
 "3 variants": the boiler is not heating, or it is back on its thermostat, or the plugin only
 monitors.

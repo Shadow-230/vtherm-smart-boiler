@@ -203,8 +203,7 @@ from .transport.entities import (
     weather_from_state,
 )
 from .transport.mqtt_reports import MqttReports, ems_esp_topics, mqtt_signals, otgw_topics
-from .vtherm_attributes import CentralMode
-from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm
+from .vtherm_link import VtCapabilities, VThermLink, ZoneAlgorithm, holds_thermostats
 
 if TYPE_CHECKING:
     from .control import ControlUnit
@@ -246,6 +245,9 @@ LOWEST_WATER_ISSUE = "lowest_water_suggestion"
 # cycles an hour (UK room-thermostat manuals); in the simulation 10–15 min cut the plugin's starts
 # by a third to a half in mild weather, the rooms as warm (research, 2026-11-17).
 ZONE_CYCLE_ISSUE = "zone_cycle_short"
+# I12.11: the thermostats VT hands over that its central boiler does not count — no rooms of the
+# plugin's — in one information issue.
+NOT_COUNTED_ISSUE = "vt_thermostats_not_counted"
 SHORT_CYCLE_MIN = 10.0
 ZONE_MAX_AGE_S: float | None = None  # one freshness rule: a steady room is not a stale one
 # Y1's notifications: repair issues the plugin raises itself — warnings, not fixable
@@ -349,10 +351,9 @@ class MonitorData:
     # Every mapped link signal fresh and, on the relay path, the relay within reach; ``None``
     # with no link signal mapped and no relay (X8, R4).
     connected: bool | None
-    zones: dict[str, ZoneView]
+    zones: dict[str, ZoneView]  # the rooms VT hands over now (I12.11)
     critical: dict[str, CriticalZone]
     alarms: dict[AlarmKind, Alarm]
-    central_mode: CentralMode | None
     analysis: Analysis | None
     monitoring_since: float
     forecast_snapshots: int
@@ -400,7 +401,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.transport = EntityTransport(hass, config.signals, gateway)
         self.reports = MqttReports()  # the interface's own MQTT messages (I6, decision 9)
         self.transport.heard = self.reports.heard
-        self.link = VThermLink(hass, config.zone_entities)
+        self.link = VThermLink(hass)
         self.history = self._empty_history()
         # I12.7b: the rooms' history in a store of its own; nothing is written to it before it
         # was read (a setup that fails earlier must not write over what the last run kept).
@@ -459,6 +460,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._failing: set[str] = set()
         self._alive_stop_unsub: CALLBACK_TYPE | None = None
         self._zone_algorithms: dict[str, ZoneAlgorithm] = {}  # the last read of each (PB-47)
+        # I12.11: the thermostats VT's central boiler does not count, as the issue last named.
+        self._not_counted: tuple[str, ...] | None = None
         # The monitor's refreshes of the last ten minutes, each failed or not: control hands back
         # while they fail for five (V6); and the first failure of the current streak, shown.
         self._refreshes = OutageWindow()
@@ -618,6 +621,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._alive_stop_unsub = None
         for key in (
             ZONE_CYCLE_ISSUE,
+            NOT_COUNTED_ISSUE,
             NO_ZONE_KNOWN_ISSUE,
             WALL_ISSUE,
             LOWEST_WATER_ISSUE,
@@ -626,6 +630,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         ):
             ir.async_delete_issue(self.hass, DOMAIN, f"{key}_{self.config_entry.entry_id}")
         self._no_zone_issue = None
+        self._not_counted = None
         self._wall_issue = self._lowest_water_issue = None
         await self.async_shutdown()
         if self._loaded:
@@ -965,11 +970,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.history.prepend(older)
 
     def _history_entities(self) -> list[str]:
-        """The entities whose states the history keeps: the watched ones but VT's climates — the
-        rooms are the plugin's own reads (I12.7b) — and the helper VT's central boiler switches,
-        where one is set."""
-        zones = set(self.config.zone_entities)
-        entity_ids = [e for e in self.config.watched_entities if e not in zones]
+        """The entities whose states the history keeps: the watched ones — never VT's climates:
+        the rooms are the plugin's own reads (I12.7b) — and the helper VT's central boiler
+        switches, where one is set."""
+        entity_ids = list(self.config.watched_entities)
         helper = self.config.vt_boiler_helper
         if helper is not None and helper not in entity_ids:
             entity_ids.append(helper)
@@ -1014,33 +1018,41 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     @callback
     def _handle_state_event(self, event: Event[EventStateChangedData]) -> None:
+        """A followed entity changed — never VT's climates: the rooms are read through
+        ``vtherm_api`` at each refresh and control step (I12.11)."""
         entity_id = event.data["entity_id"]
-        # I12.11: a VT climate's change only asks for a refresh, which reads its room through
-        # ``vtherm_api``; nothing of its state is read (I12.7b).
-        if entity_id not in self.config.zone_entities:
-            state = event.data["new_state"]
-            moment = state.last_updated.timestamp() if state is not None else event.time_fired
-            if isinstance(moment, datetime):
-                moment = moment.timestamp()
-            self._record(entity_id, state, float(moment))
+        state = event.data["new_state"]
+        moment = state.last_updated.timestamp() if state is not None else event.time_fired
+        if isinstance(moment, datetime):
+            moment = moment.timestamp()
+        self._record(entity_id, state, float(moment))
         self.config_entry.async_create_task(self.hass, self.async_request_refresh())
 
     # --- the rooms' history (I12.7b) ------------------------------------------------------
 
     async def _async_restore_rooms(self, now: float) -> None:
-        """The rooms' history the last run kept, for the rooms configured now: the last
-        ``HISTORY_DAYS``, unknown from the store's last write on — put before anything recorded
-        since. A store that cannot be read starts it empty."""
+        """The rooms' history the last run kept: every room it kept — the rooms are VT's, known
+        only once VT hands them over (I12.11) —, the last ``HISTORY_DAYS``, unknown from the
+        store's last write on — put before anything recorded since. A store that cannot be read
+        starts it empty."""
         raw = _mapping(await _async_try_load(self._rooms_store))
         saved_at = _timestamp(raw.get("saved_at"))
         if saved_at is not None:
+            kept = raw.get("zones")
             rooms, damaged = rooms_from_stored(
-                raw.get("zones"), self.history.zones, now - HISTORY_DAYS * DAY, saved_at
+                kept,
+                kept.keys() if isinstance(kept, Mapping) else (),
+                now - HISTORY_DAYS * DAY,
+                saved_at,
             )
             if damaged:
                 _LOGGER.warning("Ignoring %d unreadable series of the rooms' history", damaged)
+            for zone_id in rooms:
+                self.history.zones.setdefault(zone_id, ZoneSeries(zone_id))
             older = History(zones=rooms)
             self.history.prepend(older)
+            # The rooms the last run knew are expected until VT hands them over (decision 3).
+            self.link.expect(rooms)
         elif raw:
             _LOGGER.warning("Ignoring the rooms' history: it says not when it was written")
         self._rooms_read = True
@@ -1051,8 +1063,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         (I12.7b)."""
         changed = False
         for zone in zones:
-            series = self.history.zones.get(zone.zone_id)
-            if series is not None and series.record(zone, now):
+            # A room VT hands over for the first time gets its series (I12.11).
+            series = self.history.zones.setdefault(zone.zone_id, ZoneSeries(zone.zone_id))
+            if series.record(zone, now):
                 changed = True
         if changed:
             self._schedule_rooms_save()
@@ -1094,7 +1107,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def _empty_history(self) -> History:
         return History(
             signals={signal: Series() for signal in self.config.signals},
-            zones={zone: ZoneSeries(zone) for zone in self.config.zone_entities},
         )
 
     def _record(
@@ -1136,6 +1148,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         now = dt_util.utcnow().timestamp()
         try:
             feature_manager.async_check(self.hass, self)
+            self.check_rooms()
             data = self._compute(now)
         except Exception as err:
             self._job_failed(MONITOR_REFRESH)
@@ -1362,15 +1375,18 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         return_temp = snapshot.number(Signal.RETURN, self._max_age(Signal.RETURN))
         dhw = self.dhw_takes_heat(snapshot)
 
-        zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
+        # I12.11: the rooms VT hands over now, on their circuits as the options map them.
+        rooms = self.link.rooms()
+        installation = config.installation.with_rooms(rooms)
+        zone_states = {room: self.link.zone(room) for room in rooms}
         self.record_rooms(zone_states.values(), now)
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_long_run(snapshot, zone_states, flame, now)
-        heats: dict[str, list[Heat]] = {}
-        circuits_of: dict[str, list[str]] = {}
-        for zone in config.installation.zones:
+        heats: dict[str, list[Heat]] = {room: [] for room in rooms}
+        circuits_of: dict[str, list[str]] = {room: [] for room in rooms}
+        for zone in installation.zones:
             state = zone_states[zone.zone_id]
-            circuit = config.installation.circuit(zone.circuit_id)
+            circuit = installation.circuit(zone.circuit_id)
             assert circuit is not None  # the config was validated
             circuit_flow = None
             own_stale = False
@@ -1400,9 +1416,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 flame_mapped=Signal.FLAME in mapped,
             )
             self._heat[zone.zone_id, zone.circuit_id] = heat.available
-            heats.setdefault(zone.zone_id, []).append(heat)
-            circuits_of.setdefault(zone.zone_id, []).append(zone.circuit_id)
-        # A zone split between circuits takes heat through either (I8.8b).
+            heats[zone.zone_id].append(heat)
+            circuits_of[zone.zone_id].append(zone.circuit_id)
+        # A zone split between circuits takes heat through either (I8.8b); a room no circuit
+        # lists, among several, cannot be told (I12.11).
         views = {}
         for zone_id, found in heats.items():
             heat = heat_through_any(found)
@@ -1415,10 +1432,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             )
 
         held = self._follow_windows(zone_states, now)
-        for circuit in config.installation.circuits:
-            members = [
-                zone_states[z.zone_id] for z in config.installation.zones_in(circuit.circuit_id)
-            ]
+        for circuit in installation.circuits:
+            members = [zone_states[z.zone_id] for z in installation.zones_in(circuit.circuit_id)]
             self._critical[circuit.circuit_id] = critical_zone(
                 circuit.circuit_id,
                 members,
@@ -1467,7 +1482,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             zones=views,
             critical=dict(self._critical),
             alarms=alarms,
-            central_mode=self.link.central_mode(),
             analysis=self.analysis,
             monitoring_since=self.monitoring_since,
             forecast_snapshots=self.forecasts.store.count() if self.forecasts else 0,
@@ -1502,8 +1516,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         read_back: bool | None = None,
     ) -> dict[Feature, FeatureState]:
         """The feature table (the missing-data rule, Y4) for ``mapped`` signals: by default
-        what the options give — zones configured, the control's read-back configured — or,
-        given, what is known now."""
+        what the options give — rooms, which are VT's and known only at run time (I12.11), taken
+        as there; the control's read-back configured — or, given, what is known now."""
         config = self.config
         control = config.control
         kind: ControlKind | None = None
@@ -1522,7 +1536,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             pressure_high=config.monitor.alarms.pressure_high is not None,
             bypass=config.installation.boiler.bypass,
             zone_valves=zone_valves,
-            zone_data=bool(config.installation.zones) if zone_data is None else zone_data,
+            zone_data=True if zone_data is None else zone_data,
             gateway=self.transport.gateway,
             has_dhw=config.monitor.monitor.has_dhw,
             condensing=config.installation.boiler.condensing,
@@ -2057,13 +2071,17 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             _LOGGER.warning("Could not write when the plugin last ran", exc_info=True)
 
     def check_zone_cycles(self) -> None:
-        """With control configured, warn about the zones VT switches on and off in cycles under
-        ``SHORT_CYCLE_MIN`` (K4): their gaps stop the burner. A zone whose settings cannot be
-        read — VT not started, the zone unknown — keeps its last answer (PB-47), so an issue the
-        user ignored is not deleted and raised anew."""
+        """With control configured, warn about the rooms VT switches on and off in cycles under
+        ``SHORT_CYCLE_MIN`` (K4): their gaps stop the burner. A room whose thermostat VT holds
+        no longer — VT reloading it — keeps its last answer (PB-47), so an issue the user ignored
+        is not deleted and raised anew; one that is no room any more — unticked in VT, or
+        removed — goes (I12.11)."""
         control = self.config.control
         short_cycles: list[str] = []
-        for zone_id in self.config.zone_entities:
+        rooms = self.link.rooms()
+        for zone_id in [z for z in self._zone_algorithms if z not in rooms]:
+            del self._zone_algorithms[zone_id]
+        for zone_id in rooms:
             algorithm = self.link.zone_algorithm(zone_id)
             if algorithm.known:
                 self._zone_algorithms[zone_id] = algorithm
@@ -2108,8 +2126,8 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 "No Versatile Thermostat zone has answered for ten minutes (%s)",
                 effects.get(kind, "the monitor cannot judge them"),
             )
-            zones = ", ".join(self.link.zone_name(zone) for zone in self.config.zone_entities)
-            key, placeholders = f"{NO_ZONE_KNOWN_ISSUE}_{kind}", {"zones": zones}
+            zones = ", ".join(self.link.zone_name(zone) for zone in self.link.rooms())
+            key, placeholders = f"{NO_ZONE_KNOWN_ISSUE}_{kind}", {"zones": zones or "-"}
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -2122,6 +2140,20 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             translation_key=key,
             translation_placeholders=placeholders,
         )
+
+    def check_rooms(self) -> None:
+        """I12.11: one information issue naming the thermostats VT hands over that its central
+        boiler does not count — no rooms of the plugin's, nor counted by VT's decision whether to
+        heat (a circuit that lists one included); it goes once there is none. While VT holds no
+        thermostat at all (it reloads them) it is left as it is, so an issue the user ignored is
+        not raised anew."""
+        if not holds_thermostats(self.hass):
+            return
+        found = tuple(self.link.not_counted())
+        if found == self._not_counted:
+            return
+        self._not_counted = found
+        self._issue(NOT_COUNTED_ISSUE, [self.link.zone_name(entity) for entity in found])
 
     def _issue(self, key: str, zones: list[str]) -> None:
         issue_id = f"{key}_{self.config_entry.entry_id}"

@@ -42,7 +42,8 @@ LIVING = "climate.living"
 def vt_thermostat(current: bool = False, **changes: Any) -> MockConfigEntry:
     """A VT over_switch thermostat in the entry format of VT 10.4.0; ``changes`` replace its
     data's keys. ``current``: stored at VT's own entry version, which VT does not migrate — its
-    migration from an older version switches Auto-TPI off."""
+    migration from an older version switches Auto-TPI off. VT's central boiler counts it ("Used
+    by central boiler" ticked), so it is a room of the plugin's (I12.11)."""
     from custom_components.versatile_thermostat import const as vt
 
     version = (vt.CONFIG_VERSION, vt.CONFIG_MINOR_VERSION) if current else (1, 1)
@@ -76,6 +77,7 @@ def vt_thermostat(current: bool = False, **changes: Any) -> MockConfigEntry:
             vt.CONF_SAFETY_DELAY_MIN: 5,
             vt.CONF_SAFETY_MIN_ON_PERCENT: 0.4,
             vt.CONF_SAFETY_DEFAULT_ON_PERCENT: 0.3,
+            vt.CONF_USED_BY_CENTRAL_BOILER: True,
         }
         | changes,
     )
@@ -98,7 +100,6 @@ async def room_and_boiler(hass: HomeAssistant) -> MockConfigEntry:
         options={
             "signals": boiler.mapping(),
             "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0},
-            "zones": [{"entity_id": LIVING}],
         },
     )
 
@@ -146,8 +147,9 @@ async def test_at_start_a_real_vt_thermostat_is_read_through_the_plugins_manager
     assert zone.temperature_at is not None
     assert DOMAIN in VThermAPI.get_vtherm_api(hass).list_feature_managers()
     # I12 (the user's rule, 2026-11-24): VT handed the thermostat to the plugin's manager, and
-    # the zone above was read from it through ``vtherm_api``.
-    assert entry.runtime_data.link.zones_through_api() == [LIVING]
+    # the zone above was read from it through ``vtherm_api``; it is a room, as VT's central boiler
+    # counts it (I12.11: ``entry_infos``' ``used_by_controls_central_boiler``).
+    assert entry.runtime_data.link.rooms() == [LIVING]
     await entry.runtime_data.async_refresh()
     await heat_to(hass, 21.5)  # VT publishes its attributes again
     assert "smart_boiler" not in hass.states.get(LIVING).attributes
@@ -205,7 +207,8 @@ OFFICE = "climate.office"
 
 
 def vt_over_climate() -> MockConfigEntry:
-    """A VT over_climate thermostat over a climate of its own (Home Assistant's generic one)."""
+    """A VT over_climate thermostat over a climate of its own (Home Assistant's generic one),
+    counted by VT's central boiler: a room of the plugin's (I12.11)."""
     from custom_components.versatile_thermostat import const as vt
 
     return MockConfigEntry(
@@ -223,6 +226,7 @@ def vt_over_climate() -> MockConfigEntry:
             vt.CONF_STEP_TEMPERATURE: 0.1,
             vt.CONF_UNDERLYING_LIST: ["climate.office_trv"],
             vt.CONF_AC_MODE: False,
+            vt.CONF_USED_BY_CENTRAL_BOILER: True,
         },
     )
 
@@ -300,7 +304,7 @@ async def test_what_a_vt_zone_shows_before_its_start_during_a_reload_and_after(
     }
     assert await async_setup_component(hass, "climate", {"climate": trv})
     await hass.async_block_till_done()
-    link = VThermLink(hass, (LIVING, OFFICE))
+    link = VThermLink(hass)
     seen: list[Shown] = []
     phase = ["before_start"]
 
@@ -420,7 +424,7 @@ async def test_a_vt_thermostat_whose_devices_never_report_stays_unknown(
     assert "is_ready" not in living.attributes
     assert "specific_states" not in living.attributes
     assert (office.state, office.attributes.get("is_ready")) == ("off", False)
-    link = VThermLink(hass, (LIVING, OFFICE))
+    link = VThermLink(hass)
     for state in (living, office):
         assert handed_over(hass, state.entity_id) is not None
         zone = link.zone(state.entity_id)
@@ -779,7 +783,6 @@ async def controlling_with_the_plugin(
             "signals": boiler.mapping(),
             "boiler": {"class": "flow_setpoint", "dhw": "combi"},
             "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 25.0},
-            "zones": [{"entity_id": zone} for zone in zones],
             "monitor": {"monitoring_days": 0},
             "control": {
                 "write_path": "entity",
@@ -985,7 +988,8 @@ async def test_j4_sets_a_real_vts_cycle_through_vts_own_options(
     from custom_components.versatile_thermostat import const as vt
 
     await room_and_boiler(hass)
-    zone = vt_thermostat(current=True)
+    # VT refuses "used by central boiler" in its own form without a central configuration.
+    zone = vt_thermostat(current=True, **{vt.CONF_USED_BY_CENTRAL_BOILER: False})
     await setup(hass, zone)
     before = {**zone.data, **zone.options}
     rest = await _vt_rest(hass, hass_client)

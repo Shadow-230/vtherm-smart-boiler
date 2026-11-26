@@ -1059,14 +1059,17 @@ def test_the_switch_says_who_keeps_frost_protection_after_a_hand_back(
     assert (None if shown is None else shown.value) == after_hand_back
 
 
-# --- X3: control needs a zone (S-04); the boiler's own room controller (answers F, M) -----------
+# --- I12.11: no room asked of the options; the boiler's own room controller (answers F, M) ----
 
 
-def test_control_needs_at_least_one_zone() -> None:
-    """S-04: without a VT zone nothing can ask for heat — a blocker that names it alone."""
+def test_control_asks_no_room_of_the_options() -> None:
+    """I12.11: the rooms are VT's, known at run time, and VT decides whether to heat — the
+    options need no room (S-04's blocker went), and none stored is no lack."""
     none = Installation(Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),))
-    assert config_blockers(parse_control(OTGW, none, None), none) == ["no_zones"]
-    assert "no_zones" not in config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS)
+    from custom_components.vtherm_smart_boiler.control_config import CONFIG_BLOCKERS
+
+    assert config_blockers(parse_control(OTGW, none, None), none) == []
+    assert "no_zones" not in CONFIG_BLOCKERS
 
 
 def test_the_own_room_controller_tick_makes_a_working_thermostat() -> None:
@@ -1871,7 +1874,7 @@ def test_the_circuit_rules_do_not_apply_to_a_relay() -> None:
     unhelped = parse_control({**RELAY, "vt_boiler_helper": ""}, ON_OFF, None)
     assert config_blockers(unhelped, ON_OFF) == ["no_vt_boiler_helper"]
     no_zones = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
-    assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == ["no_zones"]
+    assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == []
 
 
 def test_the_relay_in_another_role_is_a_blocker() -> None:
@@ -1996,7 +1999,7 @@ BLOCKER_PRECEDENCE = [
         _READ_ONLY,
         None,
         _ALL_SIGNALS,
-        ["boiler_class_no_control", "one_direct_circuit_only", "no_zones"],
+        ["boiler_class_no_control", "one_direct_circuit_only"],
     ),
     (
         "the relay on a flow-setpoint boiler",
@@ -2015,7 +2018,7 @@ BLOCKER_PRECEDENCE = [
         ["path_not_for_boiler_class"],
     ),
     (
-        "the relay: its own lacks and the zones', nothing about water",
+        "the relay: its own lacks and the helper's, nothing about water",
         {"write_path": "relay"},
         _ON_OFF_NO_ZONES,
         {"flow": "flame"},
@@ -2024,7 +2027,6 @@ BLOCKER_PRECEDENCE = [
             "entity_for_two_signals",
             "no_relay_entity",
             "relay_contact_not_confirmed",
-            "no_zones",
             "no_vt_boiler_helper",
         ],
     ),
@@ -2044,7 +2046,6 @@ BLOCKER_PRECEDENCE = [
             "no_confirmed_setpoint",
             "no_topology",
             "curve_not_entered",
-            "no_zones",
             "no_vt_boiler_helper",
         ],
     ),
@@ -2175,12 +2176,12 @@ BLOCKER_PRECEDENCE = [
         ["underfloor_without_max_flow"],
     ),
     (
-        "no zone before the helper",
+        "no helper, with no room in the options (I12.11)",
         {key: value for key, value in OTGW.items() if key != "vt_boiler_helper"},
         _NO_ZONES,
         None,
         _ALL_SIGNALS,
-        ["no_zones", "no_vt_boiler_helper"],
+        ["no_vt_boiler_helper"],
     ),
     (
         "a helper that is no input_boolean",
