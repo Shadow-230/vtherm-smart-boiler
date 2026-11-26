@@ -100,10 +100,12 @@ i nazywa się Marketplace. Repozytorium spoza jego listy nadal można dodać z l
   open source (Apache-2.0 przechodzi); kolejka trwa miesiące. Lista wtyczek VT to formularz na
   stronie VT.
 
-**Wersje.** Testy przechodzą na najnowsze wersje — Home Assistant 2026.11, VT 10.6.5, SmartPI
-0.6.5, `vtherm_api` 0.9.0 — w osobnej sesji testowej; kod wtyczki musi z nimi działać (decyzja
-użytkownika, 2026-11-16). Najstarszy obsługiwany Home Assistant idzie za najnowszym VT: 2026.10.4,
-jak wymaga VT 10.6.5 (użytkownik, 2026-11-17; `hacs.json`, dwie wersje środowiska testowego w CI).
+**Wersje.** Testy przechodzą na najnowsze wersje; kod wtyczki musi z nimi działać (decyzja
+użytkownika, 2026-11-16). VT 10.6.5 i `vtherm_api` 0.9.0 weszły z I12.6; SmartPI wyszedł z testów z
+I12.9, bo wtyczka nic z niego nie czyta. Home Assistant 2026.11 to osobny krok, po poprawkach
+następujących po I12 (użytkownik, 2026-11-26). Najstarszy obsługiwany Home Assistant idzie za
+najnowszym VT: 2026.10.4, jak wymaga VT 10.6.5 (użytkownik, 2026-11-17; `hacs.json`, dwie wersje
+środowiska testowego w CI).
 
 **Home Assistant 2027.11** usuwa pięć starych interfejsów. Wtyczka używała jednego — starego
 sposobu zmiany ID encji — i jest gotowa na nowy (#147, 2026-11-16). VT 10.6.5 nadal używa starych
@@ -135,7 +137,7 @@ o których badania nic nie mówią (progi zapłonu i spalin, mróz, rampa, czasy
 5. Gaz na stopniodzień z 7 dni; zmiana względem poprzedniego dnia z pasmem na szum.
 6. Tekst werdyktu wskazuje przewymiarowany kocioł jako główną przyczynę krótkich paleń.
 7. Do 0.3: krótka przerwa przed ponownym startem palnika (3 do 5 minut), skracana przy dużym
-   niedogrzaniu, ochronie przed mrozem albo ciepłej wodzie i nigdy nieopóźniająca wyłączenia. Jest
+   niedogrzaniu albo ciepłej wodzie i nigdy nieopóźniająca wyłączenia. Jest
    sprzeczna z zasadą 12 (grzanie od razu za VT), więc decyduje użytkownik. Razem z nią korekta
    proporcjonalna do niedogrzania: tylko z pokoi przy pełnym zapotrzebowaniu przez całe cykle, poza
    strefą martwą, z co najmniej dwóch pokoi, najwyżej 1 do 2 K.
@@ -159,7 +161,7 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
 - Punkt decyzyjny po 2–4 tygodniach danych grzewczych z 0.2: pełny zakres, odchudzony zakres albo
   zatrzymanie po 0.2.
 - W tym punkcie (K4, 2026-11-17): przerwa 3–5 min przed ponownym startem po zatrzymaniu grzania —
-  skracana przy dużym niedogrzaniu, ochronie przed mrozem albo ciepłej wodzie, nigdy nieopóźniająca
+  skracana przy dużym niedogrzaniu albo ciepłej wodzie, nigdy nieopóźniająca
   wyłączenia (Siemens LMS14, czas przeciw taktowaniu w kotłach Vaillant; około 0,04 K przy −5 °C) —
   oraz histereza wezwania do grzania (ASHRAE Guideline 36). Obie są sprzeczne z zasadą 12 (grzanie
   od razu za VT): decyduje użytkownik.

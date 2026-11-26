@@ -99,10 +99,12 @@ named the Marketplace. A repository that is not on its list can still be added f
   open-source licence (Apache-2.0 passes); its queue takes months. VT's list of plugins is a
   form on VT's website.
 
-**Versions.** The tests move to the newest versions — Home Assistant 2026.11, VT 10.6.5,
-SmartPI 0.6.5, `vtherm_api` 0.9.0 — in a separate test session; the plugin's code must work with
-them (the user's decision, 2026-11-16). The oldest Home Assistant supported follows the newest
-VT: 2026.10.4, as VT 10.6.5 needs (the user, 2026-11-17; `hacs.json`, CI's two harness pins).
+**Versions.** The tests move to the newest versions; the plugin's code must work with them (the
+user's decision, 2026-11-16). VT 10.6.5 and `vtherm_api` 0.9.0 came with I12.6; SmartPI left the
+tests with I12.9, as the plugin reads nothing of it. Home Assistant 2026.11 is a step of its own,
+after the corrections that follow I12 (the user, 2026-11-26). The oldest Home Assistant supported
+follows the newest VT: 2026.10.4, as VT 10.6.5 needs (the user, 2026-11-17; `hacs.json`, CI's two
+harness pins).
 
 **Home Assistant 2027.11** removes five old interfaces. The plugin used one — the old way an
 entity's ID is renamed — and is ready for the new one (#147, 2026-11-16). VT 10.6.5 still uses the old
@@ -134,7 +136,7 @@ nothing on (ignition and flue-gas limits, frost, the ramp, the timings).
 5. Gas per degree-day over 7 days; the change against the day before with a band for noise.
 6. The verdict's text names an oversized boiler as the main cause of short burns.
 7. For 0.3: a short pause before the burner starts again (3 to 5 minutes), cut short by a large
-   shortfall, frost protection or hot water, and never delaying a stop. It goes against
+   shortfall or hot water, and never delaying a stop. It goes against
    principle 12 (heating follows VT at once), so it is the user's to decide. With it, the
    correction in proportion to the shortfall: only from rooms at full demand for whole cycles,
    past a dead band, from at least two rooms, 1 to 2 K at most.
@@ -158,7 +160,7 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
 - Decision gate after 2–4 weeks of heating data from 0.2: full scope, slimmed scope, or
   stop after 0.2.
 - At that gate (K4, 2026-11-17): a restart pause of 3–5 min after a heating stop — cut short by
-  a large shortfall, frost protection or hot water, never delaying a stop (Siemens LMS14,
+  a large shortfall or hot water, never delaying a stop (Siemens LMS14,
   Vaillant's anti-cycle time; about 0.04 K at −5 °C) — and hysteresis on the heat call
   (ASHRAE Guideline 36). Both go against principle 12 (heating follows VT at once): the user's
   decision.

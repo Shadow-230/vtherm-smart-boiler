@@ -484,9 +484,9 @@ stref też liczą temperaturę zewnętrzną, więc pogoda działa wtedy dwa razy
   temperatura zewnętrzna) do czasu grzania każdej strefy. Z krzywą wtyczki chłodniejsza pogoda
   daje i cieplejszą wodę, i dłuższe grzanie. To ustawienie VT, osobne w każdej strefie; wtyczka go
   nie zmienia.
-- **SmartPI** (0.4.0) uczy się własnego członu zewnętrznego (`u_ff1`, wyuczony współczynnik ×
-  (nastawa − temperatura zewnętrzna)). Nie da się go ustawić ani wyłączyć; uczy się przy wodzie,
-  którą ustawia wtyczka.
+- **SmartPI** (sprawdzone w 0.6.7 i 1.0) uczy się własnego członu zewnętrznego (`u_ff1`, wyuczony
+  współczynnik × (nastawa − temperatura zewnętrzna)). Nie da się go ustawić ani wyłączyć; uczy się
+  przy wodzie, którą ustawia wtyczka.
 
 Jak strefa zachowuje się przy obu, zależy od pomieszczenia i algorytmu; wtyczka to opisuje i nie
 doradza tych ustawień.
