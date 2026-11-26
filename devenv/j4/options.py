@@ -5,7 +5,7 @@ reads the same values the runner writes."""
 
 from __future__ import annotations
 
-# I12.8: the helper VT's central boiler switches (devenv/config/configuration.yaml).
+# I12.8: the helper VT's central boiler switches (every configuration in devenv/config/).
 VT_HELPER = "input_boolean.j4_vt_central_boiler"
 
 # The menu items instance 1's options live in, in the menu's order.

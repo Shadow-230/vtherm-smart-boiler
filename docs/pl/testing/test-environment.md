@@ -153,7 +153,7 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
 
 1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego i włączonym kotłem centralnym
    VT, z jego progami domyślnymi i oboma poleceniami na pomocniku
-   `input_boolean.j4_vt_central_boiler` (`devenv/config/configuration.yaml`):
+   `input_boolean.j4_vt_central_boiler`, który ma każda konfiguracja w `devenv/config/`:
    `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` i `…/input_boolean.turn_off`.
    O tym, czy kocioł grzeje, decyduje VT; wtyczka idzie za pomocnikiem (I12.8). Nigdy nie kieruj
    tych poleceń na symulowany kocioł.

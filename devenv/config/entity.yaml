@@ -37,6 +37,13 @@ boiler_sim:
   outdoor: 3.0
   gateway_id: sim
 
+# I12.8: the helper VT's central boiler switches, as in configuration.yaml — VT decides whether the
+# boiler heats; the instance's VT central boiler points its two commands at it. Without it,
+# control stays blocked.
+input_boolean:
+  j4_vt_central_boiler:
+    name: J4 VT central boiler
+
 # J4: this configuration's role, read by the runner before every scenario and by base.py
 # (devenv/j4/run.py ROLES): a scenario runs only on an instance of its role.
 input_text:
