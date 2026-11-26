@@ -351,8 +351,8 @@ Trzy warstwy ([`docs/pl/development/plan.md`, „Test environment”](../develop
 1. **Testy rdzenia** (`tests/core/`) — zwykły pytest, bez HA, bez sieci.
 2. **Testy integracyjne** — `pytest-homeassistant-custom-component`: HA działa wewnątrz procesu
    testów; bez instancji, bez sieci. Ciągła integracja (CI) pobiera też VT 10.6.5 z jego tagu,
-   więc testy z prawdziwym VT działają przy każdej zmianie (bez SmartPI: wtyczka nie czyta z
-   niego niczego).
+   więc testy z prawdziwym VT działają przy każdej zmianie. Pobiera też SmartPI 0.4.0, tylko do
+   wdrożenia na testowy HA: wtyczka nie czyta niczego ze SmartPI.
 3. **Testowy HA** — osobny kontener (`devenv/`) z wtyczką, VT, SmartPI i symulatorem, w którym
    scenariusze odbiorcze są uruchamiane, zanim cokolwiek trafi do prawdziwego kotła.
 

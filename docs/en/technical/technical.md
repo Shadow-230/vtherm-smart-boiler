@@ -333,8 +333,8 @@ Three layers ([`docs/en/development/plan.md`, "Test environment"](../development
 1. **Core tests** (`tests/core/`) — plain pytest, no HA, no network.
 2. **Integration tests** — `pytest-homeassistant-custom-component`: HA runs inside the test
    process; no instance, no network. Continuous integration (CI) also fetches VT 10.6.5 from its
-   tag, so the tests with a real VT run on every change (no SmartPI: the plugin reads nothing of
-   it).
+   tag, so the tests with a real VT run on every change. It fetches SmartPI 0.4.0 too, only for
+   the test HA's deploy: the plugin reads nothing of SmartPI.
 3. **Test HA** — a dedicated container (`devenv/`) running the plugin, VT, SmartPI and the
    simulator, where the acceptance scenarios run before anything reaches a real boiler.
 

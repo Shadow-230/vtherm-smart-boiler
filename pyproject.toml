@@ -26,7 +26,8 @@ ha-minimum = ["pytest-homeassistant-custom-component==0.13.375"]  # pins homeass
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# vendor/ holds VT 10.6.5; vendor/custom_components links its integration (the tests use no SmartPI).
+# vendor/ holds VT 10.6.5 and SmartPI 0.4.0; vendor/custom_components links their integrations.
+# The tests load no SmartPI: it is there for the test bench's deploy (scripts/deploy_test.sh).
 pythonpath = [".", "vendor", "sim"]
 # Work stealing: with -n, an idle worker takes tests from a busy one, so a few long tests do not
 # hold the run at its end (on 4 workers, as GitHub's runner: 268 s → 212 s, 2026-11-17).
