@@ -417,8 +417,10 @@ it was read. It goes with the entry's other stores when the entry is removed.
 Three layers ([`docs/en/development/plan.md`, "Test environment"](../development/plan.md#test-environment)):
 
 1. **Core tests** (`tests/core/`) — plain pytest, no HA, no network.
-2. **Integration tests** — `pytest-homeassistant-custom-component`: HA runs inside the test
-   process; no instance, no network. Continuous integration (CI) also fetches VT 10.6.5 from its
+2. **Integration tests** — `pytest-homeassistant` 2026.11.3 (Home Assistant 2026.11.3) and, on the
+   oldest version supported, its predecessor `pytest-homeassistant-custom-component` 0.13.375 (Home
+   Assistant 2026.10.4); the tests import the new name, which the old package serves on the oldest
+   version (`tests/conftest.py`). HA runs inside the test process; no instance, no network. Continuous integration (CI) also fetches VT 10.6.5 from its
    tag, so the tests with a real VT run on every change. It fetches SmartPI 0.4.0 too, only for
    the test HA's deploy: the plugin reads nothing of SmartPI.
 3. **Test HA** — a dedicated container (`devenv/`) running the plugin, VT, SmartPI and the

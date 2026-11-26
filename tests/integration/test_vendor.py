@@ -13,7 +13,7 @@ from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_integration
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from vtherm_api.vtherm_api import VThermAPI
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN, control_store_key
@@ -183,7 +183,7 @@ async def test_a_steady_room_under_real_vt_stays_known(hass: HomeAssistant, free
     from datetime import timedelta
 
     from homeassistant.util import dt as dt_util
-    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    from pytest_homeassistant.common import async_fire_time_changed
 
     from custom_components.vtherm_smart_boiler.coordinator import ZONE_MAX_AGE_S
 
@@ -454,7 +454,7 @@ async def started_with_the_plugin(hass: HomeAssistant, *thermostats: MockConfigE
 async def later(hass: HomeAssistant, freezer: Any, seconds: float) -> None:
     from datetime import timedelta
 
-    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    from pytest_homeassistant.common import async_fire_time_changed
 
     freezer.tick(timedelta(seconds=seconds))
     async_fire_time_changed(hass)
@@ -875,7 +875,7 @@ async def test_a_vt_central_entry_update_reloads_every_zone_without_a_hand_back(
 
     from homeassistant.const import EVENT_STATE_CHANGED
     from homeassistant.core import Event, callback
-    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    from pytest_homeassistant.common import async_fire_time_changed
 
     central = vt_central_with_boiler()
     entry, _ = await controlling_with_the_plugin(
