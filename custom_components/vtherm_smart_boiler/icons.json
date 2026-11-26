@@ -18,7 +18,6 @@
       "critical_zone": { "default": "mdi:radiator" },
       "control_state": { "default": "mdi:state-machine" },
       "demand_count": { "default": "mdi:radiator" },
-      "demand_power": { "default": "mdi:flash" },
       "control_setpoint": { "default": "mdi:thermometer-water" }
     },
     "binary_sensor": {
@@ -51,7 +50,7 @@
       "alarm_commands_lost": { "default": "mdi:message-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_confirmation_missing": { "default": "mdi:help-rhombus-outline", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_no_zone_known": { "default": "mdi:home-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
-      "alarm_demand_criterion_no_data": { "default": "mdi:database-alert-outline", "state": { "off": "mdi:check-circle-outline" } },
+      "alarm_vt_decision_unknown": { "default": "mdi:help-circle-outline", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_relay_unreachable": { "default": "mdi:electric-switch", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_boiler_not_responding": { "default": "mdi:fire-off", "state": { "off": "mdi:check-circle-outline" } }
     },

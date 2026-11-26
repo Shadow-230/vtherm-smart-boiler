@@ -38,6 +38,7 @@ RADIATORS = Installation(
     Boiler(BoilerClass.FLOW_SETPOINT), (Circuit("main"),), (Zone("climate.a", "main"),)
 )
 CURVE = {"design_outdoor": -15, "design_flow": 55}
+HELPER = "input_boolean.vt_central_boiler"  # I12: the helper VT's central boiler switches
 OTGW = {
     "write_path": "opentherm_gw",
     "gateway_id": "otgw",
@@ -45,6 +46,7 @@ OTGW = {
     "topology": "gateway_standalone",
     "thermostat_kind": "none",  # nothing on the gateway's thermostat terminals (decision 1)
     "curve": CURVE,
+    "vt_boiler_helper": HELPER,
 }
 # A gateway with an OpenTherm thermostat on its terminals.
 WITH_THERMOSTAT = {"topology": "gateway_with_thermostat", "thermostat_kind": "opentherm"}
@@ -54,6 +56,7 @@ RELAY = {
     "write_path": "relay",
     "relay_entity": "switch.boiler_relay",
     "relay_is_separate_contact": True,
+    "vt_boiler_helper": HELPER,
 }
 
 
@@ -89,6 +92,7 @@ ENTITY = {
     "confirmed_entity": "sensor.boiler_flow_setpoint",
     "topology": "virtual",
     "curve": CURVE,
+    "vt_boiler_helper": HELPER,
 }
 # The entity path with the virtual topology and answer F's tick "the boiler has its own room
 # controller".
@@ -229,7 +233,7 @@ def test_every_blocker_is_listed() -> None:
         (OTGW, two),
         (OTGW, floor),
         (OTGW, no_zones),
-        (OTGW | {"count_threshold": 5, "count_by": "zones"}, RADIATORS),
+        (OTGW | {"vt_boiler_helper": None}, RADIATORS),
         (ENTITY | {"off_setpoint": 30}, RADIATORS),
         (ENTITY | {"hand_back": "switch", "hand_back_entity": "switch.external"}, RADIATORS),
         (ENTITY | {"hand_back_value": 75}, RADIATORS),
@@ -525,26 +529,47 @@ def test_frequent_starts_are_information_only() -> None:
     assert options.reaction("frequent_starts") is AlarmReaction.INFO
 
 
-def test_the_count_threshold_must_fit_the_zones() -> None:
-    """Counting zones, a count above the zones is a blocker. Counting VT's devices (2026-10-14)
-    it is not: the zones' devices are VT's to tell — the form checks them, and the count never
-    asks more than the known zones drive (``core.demand``)."""
-    options = parse_control(OTGW | {"count_threshold": 2, "count_by": "zones"}, RADIATORS, None)
-    assert config_blockers(options, RADIATORS) == ["count_threshold_above_zones"]
+def test_vts_helper_must_be_an_input_boolean() -> None:
+    """I12: VT's central boiler decides through a helper the user picks: none, or one of another
+    kind, is a blocker naming it; an ``input_boolean`` is read as stored, and its renames are
+    followed."""
+    from custom_components.vtherm_smart_boiler.control_config import ENTITY_KEYS, VT_HELPER
+
+    assert parse_control(OTGW, RADIATORS, None).vt_boiler_helper == HELPER
     assert config_blockers(parse_control(OTGW, RADIATORS, None), RADIATORS) == []
-    devices = parse_control(OTGW | {"count_threshold": 2}, RADIATORS, None)
-    assert devices.loop.control.demand.count_by.value == "devices"  # the default
-    assert config_blockers(devices, RADIATORS) == []
-    # I8.8b: a zone split between circuits counts once.
-    split = Installation(
-        Boiler(BoilerClass.FLOW_SETPOINT),
-        (Circuit("main"), Circuit("floor", CircuitControl.SEPARATE)),
-        (
-            Zone("climate.a", "main", devices=frozenset({"switch.radiator"})),
-            Zone("climate.a", "floor", devices=frozenset({"switch.loop"})),
-        ),
+    for helper in (None, "", "switch.boiler", "input_boolean.", "input_boolean"):
+        options = parse_control(OTGW | {"vt_boiler_helper": helper}, RADIATORS, None)
+        assert config_blockers(options, RADIATORS) == ["no_vt_boiler_helper"], helper
+    assert VT_HELPER in ENTITY_KEYS
+
+
+def test_the_demand_settings_moved_are_named_with_their_values() -> None:
+    """I12's migration: a count above 1, a power or opening threshold, a delay above 0 — each as
+    stored, the others "-"; the defaults and a section of another shape name nothing; the
+    section without them is what is left."""
+    from custom_components.vtherm_smart_boiler.control_config import (
+        vt_settings_set,
+        without_vt_settings,
     )
-    assert config_blockers(options, split) == ["count_threshold_above_zones"]
+
+    assert vt_settings_set(OTGW | {"count_threshold": 1, "activation_delay_s": 0}) == {}
+    assert vt_settings_set(["count_threshold", 3]) == {}
+    assert vt_settings_set({"count_threshold": 3, "opening_threshold": "x"}) == {
+        "count": "3",
+        "power": "-",
+        "opening": "-",
+        "delay": "-",
+    }
+    assert vt_settings_set({"power_threshold_kw": 1.5, "opening_threshold": 30}) == {
+        "count": "-",
+        "power": "1.5",
+        "opening": "30",
+        "delay": "-",
+    }
+    stored = OTGW | {"count_by": "devices", "power_threshold_kw": None}
+    assert without_vt_settings(stored) == OTGW
+    assert without_vt_settings(OTGW) is OTGW
+    assert without_vt_settings(None) is None
 
 
 def test_frost_protection_watches_the_zone_picked_or_every_zone() -> None:
@@ -1125,24 +1150,7 @@ def test_a_tick_with_a_hand_back_value_that_stops_heating_is_ignored() -> None:
     assert not working_thermostat(options)
 
 
-# --- X4: VT's activation delay (decision 5), frost's closed zones (decision 4), the circuit
-# alarm information only (decision 10) ----------------------------------------------------------
-
-
-def test_the_activation_delay_is_read_with_its_cautious_default() -> None:
-    """0 s by default (VT's), the stored value otherwise; outside 0–600 s the parser raises.
-    Never taken from VT at parse time: only what the user saved counts."""
-    from custom_components.vtherm_smart_boiler.control_config import CONTROL_DEFAULTS
-
-    assert CONTROL_DEFAULTS["activation_delay_s"] == 0
-    assert parse_control(OTGW, RADIATORS, None).loop.control.activation_delay_s == 0.0
-    stored = parse_control(OTGW | {"activation_delay_s": 120}, RADIATORS, None)
-    assert stored.loop.control.activation_delay_s == 120.0
-    unset = parse_control(OTGW | {"activation_delay_s": None}, RADIATORS, None)
-    assert unset.loop.control.activation_delay_s == 0.0  # PB-95: the default, not just parsed
-    for bad in (-10, 700):
-        with pytest.raises(ValueError, match="activation_delay_s"):
-            parse_control(OTGW | {"activation_delay_s": bad}, RADIATORS, None)
+# --- X4: frost's closed zones (decision 4), the circuit alarm information only (decision 10) ---
 
 
 @pytest.mark.parametrize(
@@ -1155,7 +1163,6 @@ def test_the_activation_delay_is_read_with_its_cautious_default() -> None:
         ({"alarm_reactions": ["write_ignored"]}, "alarm_reactions"),
         ({"learning_pauses": "no"}, "learning_pauses"),
         ({"hand_back_value": "nan"}, "hand_back_value"),
-        ({"count_threshold": float("inf")}, "count_threshold"),
         ({"off_setpoint": -1}, "off_setpoint"),
     ],
 )
@@ -1836,15 +1843,15 @@ def test_the_own_room_controller_tick_counts_on_the_relay_path_with_rest_state_o
 
 def test_the_circuit_rules_do_not_apply_to_a_relay() -> None:
     """R1: the relay sets no water temperature — the circuit, curve, topology and read-back
-    blockers do not apply; the demand thresholds do."""
+    blockers do not apply; VT's helper does (I12)."""
     two = Installation(
         Boiler(BoilerClass.ON_OFF),
         (Circuit("a"), Circuit("b", CircuitControl.SEPARATE)),
         (Zone("climate.a", "a", EmitterType.UNDERFLOOR),),
     )
     assert config_blockers(parse_control(RELAY, two, None), two) == []
-    many = parse_control({**RELAY, "count_threshold": 3, "count_by": "zones"}, ON_OFF, None)
-    assert config_blockers(many, ON_OFF) == ["count_threshold_above_zones"]
+    unhelped = parse_control({**RELAY, "vt_boiler_helper": ""}, ON_OFF, None)
+    assert config_blockers(unhelped, ON_OFF) == ["no_vt_boiler_helper"]
     no_zones = Installation(Boiler(BoilerClass.ON_OFF), (Circuit("main"),))
     assert config_blockers(parse_control(RELAY, no_zones, None), no_zones) == ["no_zones"]
 
@@ -1995,7 +2002,13 @@ BLOCKER_PRECEDENCE = [
         _ON_OFF_NO_ZONES,
         {"flow": "flame"},
         _NO_SIGNALS,
-        ["entity_for_two_signals", "no_relay_entity", "relay_contact_not_confirmed", "no_zones"],
+        [
+            "entity_for_two_signals",
+            "no_relay_entity",
+            "relay_contact_not_confirmed",
+            "no_zones",
+            "no_vt_boiler_helper",
+        ],
     ),
     (
         "the entity path with everything missing, in the list's order",
@@ -2014,6 +2027,7 @@ BLOCKER_PRECEDENCE = [
             "no_topology",
             "curve_not_entered",
             "no_zones",
+            "no_vt_boiler_helper",
         ],
     ),
     (
@@ -2065,7 +2079,13 @@ BLOCKER_PRECEDENCE = [
         RADIATORS,
         None,
         (Signal.FLAME, Signal.FLOW),
-        ["no_gateway", "no_confirmed_setpoint", "no_topology", "curve_not_entered"],
+        [
+            "no_gateway",
+            "no_confirmed_setpoint",
+            "no_topology",
+            "curve_not_entered",
+            "no_vt_boiler_helper",
+        ],
     ),
     (
         "the firmware's topics missing, no topology",
@@ -2073,6 +2093,7 @@ BLOCKER_PRECEDENCE = [
             "write_path": "otgw_mqtt",
             "confirmed_entity": "sensor.x",
             "curve": CURVE,
+            "vt_boiler_helper": HELPER,
         },
         RADIATORS,
         None,
@@ -2136,20 +2157,20 @@ BLOCKER_PRECEDENCE = [
         ["underfloor_without_max_flow"],
     ),
     (
-        "no zone before the count",
-        OTGW | {"count_threshold": 3},
+        "no zone before the helper",
+        {key: value for key, value in OTGW.items() if key != "vt_boiler_helper"},
         _NO_ZONES,
         None,
         _ALL_SIGNALS,
-        ["no_zones"],
+        ["no_zones", "no_vt_boiler_helper"],
     ),
     (
-        "a count above the zones",
-        OTGW | {"count_threshold": 3, "count_by": "zones"},
+        "a helper that is no input_boolean",
+        OTGW | {"vt_boiler_helper": "switch.boiler"},
         RADIATORS,
         None,
         _ALL_SIGNALS,
-        ["count_threshold_above_zones"],
+        ["no_vt_boiler_helper"],
     ),
     (
         '"off" next to the lowest water temperature, without heating writes',

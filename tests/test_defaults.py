@@ -153,10 +153,9 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
     ("decision interval", lambda: CONTROL_DEFAULTS["decision_interval_min"], 5.0),
     ("decision interval (form)", lambda: BEHAVIOUR_FORM["decision_interval_min"], 5.0),
     ("decision interval (parser)", lambda: BARE.loop.control.decision_interval_s, 300.0),
-    # Activation delay | 0 s
-    ("activation delay", lambda: CONTROL_DEFAULTS["activation_delay_s"], 0),
-    ("activation delay (form)", lambda: BEHAVIOUR_FORM["activation_delay_s"], 0),
-    ("activation delay (parser)", lambda: BARE.loop.control.activation_delay_s, 0.0),
+    # VT's central boiler's helper (I12) | none — control waits until the user picks it
+    ("VT's helper (parser)", lambda: BARE.vt_boiler_helper, None),
+    ("VT's helper (form)", lambda: BEHAVIOUR_FORM["vt_boiler_helper"], vol.UNDEFINED),
     # Write type of a picked target | unknown — control stays off until declared
     ("write type (form)", lambda: ENTITY_FORM["write_type"], WriteType.UNKNOWN.value),
     ("write type (parser)", lambda: BARE_ENTITY.write_type, WriteType.UNKNOWN),
@@ -215,18 +214,6 @@ ROWS: list[tuple[str, Callable[[], Any], Any]] = [
         lambda: ZONE_FORM["closes_when_off"],
         [],
     ),
-    # Demand threshold | one zone calling
-    ("demand threshold", lambda: CONTROL_DEFAULTS["count_threshold"], 1),
-    ("demand threshold (form)", lambda: BEHAVIOUR_FORM["count_threshold"], 1),
-    (
-        "demand threshold (parser)",
-        lambda: _demand(BARE),
-        (1, None, None),
-    ),
-    # What the count counts | VT's devices (2026-10-14)
-    ("count by", lambda: CONTROL_DEFAULTS["count_by"], "devices"),
-    ("count by (parser)", lambda: BARE.loop.control.demand.count_by.value, "devices"),
-    ("count by (form)", lambda: BEHAVIOUR_FORM["count_by"], "devices"),
     # Comfort correction | off (K4, the user's decision of 2026-11-17); up to its limit, 3 K by
     # default (at most 10 K), rising at most 3 K a day
     ("comfort correction", lambda: CONTROL_DEFAULTS["comfort_correction"], False),
@@ -368,11 +355,6 @@ def _gateway_blockers(**stored: Any) -> list[str]:
     section = {"write_path": WritePath.OPENTHERM_GW.value, "topology": "gateway_with_thermostat"}
     control = parse_control(section | stored, INSTALLATION, None)
     return config_blockers(control, INSTALLATION, signals=(Signal.FLAME, Signal.FLOW))
-
-
-def _demand(control: ControlOptions) -> tuple[int, float | None, float | None]:
-    demand = control.loop.control.demand
-    return demand.count_threshold, demand.power_threshold_kw, demand.opening_threshold
 
 
 @pytest.mark.parametrize(("row", "read", "expected"), ROWS, ids=[row for row, _, _ in ROWS])

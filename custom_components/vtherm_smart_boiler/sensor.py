@@ -20,7 +20,6 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     EntityCategory,
-    UnitOfPower,
     UnitOfRatio,
     UnitOfTemperature,
     UnitOfTime,
@@ -415,8 +414,7 @@ async def async_setup_entry(
     ]
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))
-        # What VT's central boiler shows beside its sensor (2026-10-14).
-        entities += [DemandCountSensor(coordinator), DemandPowerSensor(coordinator)]
+        entities.append(DemandCountSensor(coordinator))  # the rooms calling (2026-10-14)
         if coordinator.control.options.write_path is not WritePath.RELAY:
             # A relay sets no water temperature (R15).
             entities.append(ControlSetpointSensor(coordinator))
@@ -622,7 +620,6 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "reasons",
             "reasons_text",
             "blockers_text",
-            "blockers_waiting_text",
             "latched_by_text",
             "target",
             "heating_on",
@@ -663,9 +660,6 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "reasons_text": self._text("reasons", status.reasons),
             "blockers": list(status.blockers),
             "blockers_text": self._text("blockers", status.blockers),
-            # Blockers that do not count yet: VT's central boiler unknown in its grace (P-105).
-            "blockers_waiting": list(status.blockers_waiting),
-            "blockers_waiting_text": self._text("blockers", status.blockers_waiting),
             "target": _round(status.target, 1),
             "heating_on": status.heating_on,
             "heating_confirmation": status.heating_check,
@@ -688,9 +682,8 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             # And the outdoor temperature it was decided with, as the curve reads it — the lower
             # of the current and the averaged: the Boiler page puts "where we are" on the curve.
             "curve_outdoor": _round(status.curve_outdoor, 1),
-            # Whether the boiler is called and why not, the demand against its thresholds — and
-            # when a start waiting VT's activation delay is due (decision 5) — as VT's central
-            # boiler shows them (2026-10-14).
+            # Whether the boiler is called and why not, the rooms calling, and when VT's central
+            # boiler's activation delay ends (I12).
             "boiler_called": status.boiler_called,
             "call_reason": status.call_reason,
             **demand_attributes(status),
@@ -710,13 +703,10 @@ class ControlStateSensor(ControlEntity, SensorEntity):
 
 
 class DemandCountSensor(ControlEntity, SensorEntity):
-    """The devices — or zones, as the count is set — calling for heat now, what VT's central
-    boiler shows as its active devices (2026-10-14); unknown with no zone known. Its threshold,
-    the zones calling and the devices VT lists active in its attributes."""
+    """The rooms calling for heat now (2026-10-14); unknown with no zone known. Which they are in
+    its attributes."""
 
-    _unrecorded_attributes = frozenset(
-        {"count_threshold", "count_by", "calling_zones", "active_devices"}
-    )
+    _unrecorded_attributes = frozenset({"calling_zones"})
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
@@ -729,34 +719,7 @@ class DemandCountSensor(ControlEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         status = self.control.status
-        return {
-            "count_threshold": status.count_threshold,
-            "count_by": status.count_by,
-            "calling_zones": list(status.calling_zones),
-            "active_devices": list(status.active_devices),
-        }
-
-
-class DemandPowerSensor(ControlEntity, SensorEntity):
-    """The zones' mean power summed, as VT's central boiler shows its total (2026-10-14) —
-    counted toward its threshold only while a calling zone's valve is open or device on; unknown
-    where no zone gives a power. Its threshold in its attributes."""
-
-    _unrecorded_attributes = frozenset({"power_threshold_kw"})
-    _attr_device_class = SensorDeviceClass.POWER
-    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
-        super().__init__(coordinator, "demand_power")
-
-    @property
-    def native_value(self) -> float | None:
-        return _round(self.control.status.demand_power_kw, 3)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return {"power_threshold_kw": self.control.status.power_threshold_kw}
+        return {"calling_zones": list(status.calling_zones)}
 
 
 class ControlSetpointSensor(ControlEntity, SensorEntity):

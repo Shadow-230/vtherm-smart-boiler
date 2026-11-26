@@ -93,8 +93,9 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
     który nie zgłasza własnego stanu, jest sterowany ślepymi powtórzeniami i pokazany jako
     „sterowany bez potwierdzenia”; świeżość dotyczy wtedy wejść decyzji — stref i temperatury
     zewnętrznej.
-12. **VT decyduje, czy grzać** — wtyczka zastępuje centralny kocioł VT: grzanie włącza się i wyłącza
-    zgodnie z zapotrzebowaniem stref, od razu i w obu kierunkach; wtyczka decyduje tylko o tym, jak ciepła
+12. **VT decyduje, czy grzać** — centralny kocioł VT, z własnymi progami i opóźnieniem włączenia,
+    przełącza pomocnika, za którym idzie wtyczka (I12): grzanie włącza się i wyłącza tak, jak
+    decyduje VT, od razu i w obu kierunkach; wtyczka decyduje tylko o tym, jak ciepła
     jest woda — krzywa, limity i rampa. Nic, co wtyczka liczy lub odmierza, nie wstrzymuje ani nie
     utrzymuje grzania wbrew VT: stary kocioł z wysoką minimalną mocą sam często się włącza i wyłącza,
     a jego blokowanie zostawiłoby dom zimny. Częste starty to informacja — alarm z progiem i werdykt.

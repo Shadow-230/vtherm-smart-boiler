@@ -113,6 +113,8 @@ from .control_config import (
     ROOM_MODE,
     TARGET_KEYS,
     VIRTUAL_CONNECTIONS,
+    VT_HELPER,
+    VT_HELPER_DOMAIN,
     AlarmReaction,
     Connection,
     ControlMode,
@@ -136,6 +138,7 @@ from .control_config import (
     off_too_close_to_lowest,
     own_room_controller_offered,
     parse_thermostat_kind,
+    vt_helper_valid,
     with_boiler_inputs,
     write_ignored_offered,
 )
@@ -147,7 +150,6 @@ from .core.alarms import (
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
 )
-from .core.demand import CountBy, feeds_opening, feeds_power
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, HeatSource
 from .core.metrics import ModulationScale
@@ -162,17 +164,12 @@ from .transport.entities import (
     through_cloud,
 )
 from .vtherm_link import (
-    VtCentralBoiler,
-    VtCommands,
-    VThermLink,
     is_vt_climate,
     relay_of_boiler_interface,
     relay_used_by_zone,
-    vt_central_boiler_settings,
     vt_zones_in_area,
     zone_devices,
     zone_name,
-    zone_underlying_entities,
     zones_on_boiler_thermostat,
 )
 
@@ -1405,10 +1402,6 @@ CONTROL_ADVANCED_KEYS = (
     "frost_limit",
     "frost_release",
     "frost_zone",
-    "count_by",
-    "count_threshold",
-    "power_threshold_kw",
-    "opening_threshold",
     "ramp_k_per_min",
     "decision_interval_min",
     "off_setpoint",
@@ -1435,12 +1428,6 @@ _HAND_BACK_DEFAULTS = {
     HAND_BACK_TIMEOUT: HAND_BACK_TIMEOUT_DEFAULT_MIN,
 }
 HAND_BACK_PENDING = "hand_back_pending"
-# A demand threshold no zone can feed (P-14): the field, and what the form says.
-_UNFED = {
-    "power_threshold_kw": "power_criterion_no_zone",
-    "opening_threshold": "opening_criterion_no_zone",
-    "count_threshold": "zone_feeds_no_criterion",  # PB-23: a zone a count of 0 never hears
-}
 
 
 THERMOSTAT_KIND = "thermostat_kind"
@@ -1746,24 +1733,25 @@ def _offers_own_room_controller(control: Mapping[str, Any]) -> bool:
     return own_room_controller_offered(path, topology)
 
 
-ACTIVATION_DELAY = "activation_delay_s"
+_VT_HELPER_ENTITY = {"domain": VT_HELPER_DOMAIN}
 
 
-def activation_delay_field(
-    control: Mapping[str, Any], vt_delay: float | None = None
-) -> dict[Any, Any]:
-    """VT's activation delay (decision 5), 0–600 s in steps of 10, at every level: the stored
-    value, else VT's own where VT kept one (``vt_delay``, read from VT's central entry), else 0 —
-    offered for the user to confirm by saving, never taken silently. The relay path's behaviour
-    step shows the same field (X8)."""
-    stored = control.get(ACTIVATION_DELAY)
-    if stored is None:
-        stored = CONTROL_DEFAULTS[ACTIVATION_DELAY] if vt_delay is None else vt_delay
-    return {
-        vol.Required(ACTIVATION_DELAY, default=stored): _number(
-            *CONTROL_BOUNDS[ACTIVATION_DELAY], 10, "s"
-        )
-    }
+def vt_helper_field(control: Mapping[str, Any]) -> dict[Any, Any]:
+    """I12: the helper VT's central boiler switches — VT's decision whether the boiler heats — at
+    every level and on every path. No default: the user picks the ``input_boolean`` they created
+    and pointed VT's central boiler commands at."""
+    stored = control.get(VT_HELPER)
+    return {vol.Required(VT_HELPER, default=stored or vol.UNDEFINED): _entity(_VT_HELPER_ENTITY)}
+
+
+def vt_helper_error(hass: HomeAssistant, entity: object) -> str | None:
+    """I12, in the form: the helper is an ``input_boolean`` that exists. The error key, or
+    ``None``."""
+    if not vt_helper_valid(entity):
+        return "vt_helper_not_input_boolean"
+    if hass.states.get(str(entity)) is None:
+        return "vt_helper_missing"
+    return None
 
 
 def control_curve_schema(options: dict[str, Any]) -> vol.Schema:
@@ -1881,25 +1869,20 @@ def relay_form_fields(options: Mapping[str, Any], answers: Mapping[str, Any]) ->
 
 
 def control_relay_schema(
-    options: dict[str, Any],
-    prefill: VtCentralBoiler | None = None,
-    answers: Mapping[str, Any] | None = None,
+    options: dict[str, Any], answers: Mapping[str, Any] | None = None
 ) -> vol.Schema:
     """The relay and its own settings (R3) — the user's declaration, each with its cautious
     default — and the tick "the boiler has its own room controller" (answer M); the fields
-    ``relay_form_fields`` shows for the answers so far (A2). ``prefill``: VT's central boiler,
-    whose relay and repeat interval are offered for confirmation where nothing is stored yet
-    (R14). The separate-contact tick is never pre-filled (answer G)."""
+    ``relay_form_fields`` shows for the answers so far (A2). The separate-contact tick is never
+    pre-filled (answer G)."""
     control = {**options.get(CONTROL, {}), **(answers or {})}
     shown = relay_form_fields(options, answers or {})
 
     def choice(key: str, kind: type[StrEnum]) -> Any:
         return _choice(control.get(key), kind, RELAY_DEFAULTS[key])
 
-    relay = control.get(RELAY_ENTITY) or (prefill.relay if prefill is not None else None)
+    relay = control.get(RELAY_ENTITY)
     repeat = control.get("relay_repeat_s")
-    if repeat in (None, "") and prefill is not None:
-        repeat = prefill.repeat_s
     fields: dict[Any, Any] = {
         vol.Required(RELAY_ENTITY, default=relay or vol.UNDEFINED): _entity(_RELAY_ENTITY),
         vol.Required(
@@ -1968,22 +1951,14 @@ def apply_control_relay(options: dict[str, Any], user_input: dict[str, Any]) -> 
     options[CONTROL] = control
 
 
-def control_behaviour_schema(
-    options: dict[str, Any],
-    prefill: VtCentralBoiler | None = None,
-    vt_delay: float | None = None,
-) -> vol.Schema:
-    """The "Control behaviour" item (I8, decision H3), one form for both modes: VT's activation
-    delay at every level, pre-filled from VT's own (R14); at the advanced level the demand
-    criteria — on the relay path pre-filled with VT's thresholds as it used them — and the
-    learning pauses; with full control also the ramp, the decision interval and the "off"
-    setpoint where "off" is written as a low setpoint — not with a heating switch, nor where
-    "off" is the connection's own, as EMS-ESP's 0 (I8, decision H3). ``vt_delay``: VT's own
-    activation delay, else the one ``prefill`` read."""
+def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
+    """The "Control behaviour" item (I8, decision H3), one form for both modes: the helper VT's
+    central boiler switches at every level (I12); at the advanced level the learning pauses;
+    with full control also the ramp, the decision interval and the "off" setpoint where "off" is
+    written as a low setpoint — not with a heating switch, nor where "off" is the connection's
+    own, as EMS-ESP's 0 (I8, decision H3)."""
     control = options.get(CONTROL, {})
-    if vt_delay is None and prefill is not None:
-        vt_delay = prefill.activation_delay_s
-    fields: dict[Any, Any] = {**activation_delay_field(control, vt_delay)}
+    fields: dict[Any, Any] = {**vt_helper_field(control)}
 
     def required(key: str, field: Any) -> dict[Any, Any]:
         return {vol.Required(key, default=control.get(key, CONTROL_DEFAULTS[key])): field}
@@ -1997,32 +1972,7 @@ def control_behaviour_schema(
             fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
         return vol.Schema(fields)
 
-    by = control.get("count_by", CONTROL_DEFAULTS["count_by"])
-    count = control.get("count_threshold")
-    if count is None and prefill is not None:
-        # VT's count as VT counts — devices —, or as rooms where every zone has one device.
-        count = (
-            prefill.count_threshold_devices
-            if by == CountBy.DEVICES.value
-            else prefill.count_threshold
-        )
-    power = control.get("power_threshold_kw")
-    if power in (None, "") and prefill is not None:
-        power = prefill.power_threshold_kw
-    fields |= {
-        vol.Required("count_by", default=by): _select("count_by", [c.value for c in CountBy]),
-        vol.Required(
-            "count_threshold",
-            default=CONTROL_DEFAULTS["count_threshold"] if count is None else count,
-        ): _number(*CONTROL_BOUNDS["count_threshold"], 1),
-        _optional("power_threshold_kw", {"power_threshold_kw": power}): _number(
-            *CONTROL_BOUNDS["power_threshold_kw"], 0.1, "kW"
-        ),
-        _optional("opening_threshold", control): _number(
-            *CONTROL_BOUNDS["opening_threshold"], 1, "%"
-        ),
-        **required("learning_pauses", selector.BooleanSelector()),
-    }
+    fields |= required("learning_pauses", selector.BooleanSelector())
     if _relay_path(options):
         return vol.Schema(fields)
     fields |= {
@@ -2898,7 +2848,6 @@ CONTROL_ITEMS = ("control", "control_curve", "control_behaviour", "control_frost
 _CONTROL_ITEM_OF_STEP = {
     "control_entity": "control",
     "control_relay": "control",
-    "control_relay_from_vt": "control",
     "control_return_confirm": "control_alarms",
 }
 
@@ -2975,7 +2924,6 @@ class _Steps:
     _circuit_index: int | None = None  # the circuit the form edits (I8, decision F1)
     # A problem the last check found: shown on its step, which the flow goes back to.
     _problem: tuple[str, dict[str, str]] | None = None
-    _unfed_zones: str = ""  # PB-23: the zones a count of 0 could never hear, for the form
     # I7: the menu's step, and where its section labels are in the translations.
     _MENU = "menu"
     _CATEGORY = "config"
@@ -3570,11 +3518,7 @@ class _ControlSteps(_Steps):
             if path == NO_CONTROL:
                 return await self._after("control")
             if path == WritePath.RELAY:
-                # R14: moving over from VT's central boiler, where it is set up or its commands
-                # are still kept: its settings offered, with the steps that follow.
-                prefill = self._vt_prefill()
-                moving = prefill is not None and prefill.exists
-                return await self._goto("control_relay_from_vt" if moving else "control_relay")
+                return await self._goto("control_relay")
             if path == WritePath.ENTITY:
                 return await self._goto("control_entity")
             # The gateway and the firmware's topics are the interface's (I8, decision D2): no
@@ -3646,24 +3590,8 @@ class _ControlSteps(_Steps):
             errors=errors,
         )
 
-    def _vt_prefill(self) -> VtCentralBoiler | None:
-        """VT's central boiler settings, read only (R14)."""
-        return vt_central_boiler_settings(self.hass, _zone_entities(self.options))
-
     async def async_step_control_relay(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        return await self._async_relay_step("control_relay", user_input)
-
-    async def async_step_control_relay_from_vt(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """The relay step moving over from VT's central boiler: the same form, pre-filled, with
-        the migration's steps in its description (R14)."""
-        return await self._async_relay_step("control_relay_from_vt", user_input)
-
-    async def _async_relay_step(
-        self, step_id: str, user_input: dict[str, Any] | None
     ) -> ConfigFlowResult:
         """The relay and its own settings (R2, R3): refused in the form where the relay is no
         switch or boiler thermostat entity, cannot be set to heat and off, is driven by a VT
@@ -3672,8 +3600,8 @@ class _ControlSteps(_Steps):
         through — the relay and its rest state — cannot change while a hand-back is owed or
         control holds the relay. The form shows itself again with the fields an answer reveals
         (I8, decisions A2, H1)."""
-        prefill = self._vt_prefill()
-        schema = control_relay_schema(self.options, prefill, user_input or self._relay_draft)
+        step_id = "control_relay"
+        schema = control_relay_schema(self.options, user_input or self._relay_draft)
         errors: dict[str, str] = {}
         if user_input is not None:
             shown = relay_form_fields(self.options, self._relay_draft or {})
@@ -3701,13 +3629,6 @@ class _ControlSteps(_Steps):
                 apply_control_relay(self.options, user_input)
                 self._relay_draft = None
                 return await self._after("control")
-        elif (
-            prefill is not None
-            and prefill.commands is VtCommands.NOT_SUPPORTED
-            and not self.options.get(CONTROL, {}).get(RELAY_ENTITY)
-        ):
-            # VT's commands name no switch or boiler thermostat pair: the user picks the relay.
-            errors = {"base": "vt_commands_not_supported"}
         return self._form(step_id=step_id, data_schema=schema, errors=errors)
 
     def _contact_to_confirm(self, user_input: Mapping[str, Any]) -> bool:
@@ -3760,14 +3681,6 @@ class _ControlSteps(_Steps):
             description_placeholders=water_limits(self.options),
         )
 
-    def _behaviour_schema(self) -> vol.Schema:
-        """The behaviour form: VT's own activation delay, where VT kept one, offered for the user
-        to confirm; on the relay path VT's thresholds too (R14)."""
-        if _relay_path(self.options):
-            return control_behaviour_schema(self.options, self._vt_prefill())
-        link = VThermLink(self.hass, _zone_entities(self.options))
-        return control_behaviour_schema(self.options, vt_delay=link.vt_central_activation_delay())
-
     async def async_step_control_behaviour(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -3775,10 +3688,9 @@ class _ControlSteps(_Steps):
         if (elsewhere := await self._control_path()) is not None:
             return elsewhere
         errors: dict[str, str] = {}
-        schema = self._behaviour_schema()
+        schema = control_behaviour_schema(self.options)
         shown = {str(marker) for marker in schema.schema}
         if user_input is not None:
-            count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
             hard_min = float(
                 self.options.get(CONTROL, {}).get("hard_min", CONTROL_DEFAULTS["hard_min"])
             )
@@ -3788,31 +3700,18 @@ class _ControlSteps(_Steps):
             as_setpoint = "off_setpoint" in shown and not heating_writes(
                 self.options.get(CONTROL, {})
             )
-            if as_setpoint and _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
+            if (helper := vt_helper_error(self.hass, user_input.get(VT_HELPER))) is not None:
+                errors[VT_HELPER] = helper
+            elif as_setpoint and _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
             elif as_setpoint and off_too_close_to_lowest(off, hard_min):
                 errors["off_setpoint"] = "off_setpoint_not_below_hard_min"  # 1 K below (P-43)
             elif "off_setpoint" in shown and self._off_near_hand_back_value(user_input):
                 errors["off_setpoint"] = "off_setpoint_near_hand_back_value"
-            elif "count_threshold" not in shown:
-                pass  # the demand is the advanced level's
-            elif count > self._countable(user_input.get("count_by")):
-                errors["count_threshold"] = "count_threshold_above_zones"
-            elif count == 0 and not (
-                user_input.get("power_threshold_kw") or user_input.get("opening_threshold")
-            ):
-                errors["count_threshold"] = "no_demand_criterion"
-            elif (unfed := self._criterion_no_zone_feeds(user_input)) is not None:
-                errors[unfed] = _UNFED[unfed]
             if not errors:
                 apply_control_behaviour(self.options, user_input)
                 return await self._after("control_behaviour")
-        return self._form(
-            step_id="control_behaviour",
-            data_schema=schema,
-            errors=errors,
-            description_placeholders=self._unfed_placeholders(errors),
-        )
+        return self._form(step_id="control_behaviour", data_schema=schema, errors=errors)
 
     async def async_step_control_frost(
         self, user_input: dict[str, Any] | None = None
@@ -3862,55 +3761,6 @@ class _ControlSteps(_Steps):
         if zones_not_vt(self.hass, [zone]):
             return {"frost_zone": "zone_not_vt"}
         return {"frost_zone": "entity_not_suitable"}
-
-    def _countable(self, count_by: object) -> int:
-        """The most a count can reach: the zones the circuits list, or — counting devices — the
-        devices VT drives in them (one for a zone whose list cannot be read; 2026-10-14)."""
-        zones = watched_zones(self.options)
-        if count_by != CountBy.DEVICES.value:
-            return len(zones)
-        hass: HomeAssistant = self.hass
-        return sum(len(zone_underlying_entities(hass, zone) or ()) or 1 for zone in zones)
-
-    def _criterion_no_zone_feeds(self, user_input: dict[str, Any]) -> str | None:
-        """P-14: a power or opening threshold no zone can feed could never be reached — VT
-        publishes a device power of 0 where none is set, and a zone of VT's over_climate type
-        no opening. Refused where at least one zone can be read and none feeds it; with none
-        readable (VT away, or not started yet) nothing can be told, and it is kept — at run time
-        the criterion then counts as without data, with an alarm. PB-23: with a zone count of 0,
-        a readable zone that feeds none of the thresholds set could never ask for heat —
-        refused too, naming it (``_unfed_zones``); one that cannot be read is not judged, and a
-        calling zone without the data raises the run-time alarm. The field to fix, or
-        ``None``."""
-        power = user_input.get("power_threshold_kw")
-        opening = user_input.get("opening_threshold")
-        if not power and not opening:
-            return None
-        now = dt_util.utcnow().timestamp()
-        link = VThermLink(self.hass, _zone_entities(self.options))
-        readable = [zone for zone in link.zones() if zone.has_reported(now, None)]
-        if not readable:
-            return None
-        if power and not any(feeds_power(zone) for zone in readable):
-            return "power_threshold_kw"
-        if opening and not any(feeds_opening(zone) for zone in readable):
-            return "opening_threshold"
-        count = int(user_input.get("count_threshold", CONTROL_DEFAULTS["count_threshold"]))
-        unheard = [
-            zone.zone_id
-            for zone in readable
-            if not (power and feeds_power(zone)) and not (opening and feeds_opening(zone))
-        ]
-        if count == 0 and unheard:
-            self._unfed_zones = ", ".join(link.zone_name(zone) for zone in unheard)
-            return "count_threshold"
-        return None
-
-    def _unfed_placeholders(self, errors: Mapping[str, str]) -> dict[str, str] | None:
-        """PB-23: the zone the form's error names."""
-        if errors.get("count_threshold") == _UNFED["count_threshold"]:
-            return {"zone": self._unfed_zones}
-        return None
 
     def _off_near_hand_back_value(self, user_input: dict[str, Any]) -> bool:
         """S-49: "off" sent as a low setpoint next to a hand-back value that returns the boiler
@@ -3981,7 +3831,7 @@ class SmartBoilerConfigFlow(_ControlSteps, ConfigFlow, domain=DOMAIN):
     # it gives; 14: "room temperature only" reads as monitoring only; 15: the OTGW firmware's
     # topics are stored once, with the connection; 16: a gateway's "monitor mode" topology is
     # the control mode monitoring only (see async_migrate_entry).
-    MINOR_VERSION = 21
+    MINOR_VERSION = 22
 
     def __init__(self) -> None:
         self.options: dict[str, Any] = {}

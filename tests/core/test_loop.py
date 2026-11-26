@@ -15,6 +15,7 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     Reason,
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
+from custom_components.vtherm_smart_boiler.core.demand import zone_wants_heat
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
     GuardConfig,
@@ -64,10 +65,13 @@ ECHOED_SWITCH = GuardConfig(write_type=WriteType.HELD, two_valued=True)
 
 
 def inputs(t: float, opening: float = 0.6, **kw) -> ControlInputs:
+    """A step's inputs; VT's decision, unless given, as VT's central boiler with a count of 1
+    would set its helper (I12)."""
     kw.setdefault("enabled", True)
     kw.setdefault("zones", (ZoneState("z", 20.0, 21.0, True, reported_at=t, valve_open=opening),))
     kw.setdefault("outdoor_sensor", 5.0)
     kw.setdefault("flame", False)
+    kw.setdefault("vt_heat", any(z.is_known(t, None) and zone_wants_heat(z) for z in kw["zones"]))
     return ControlInputs(now=t, dhw=False, **kw)
 
 

@@ -174,41 +174,16 @@ class ControlEntity(SmartBoilerEntity):
 
 
 # The demand's diagnostics change at nearly every step: shown, not recorded.
-DEMAND_ATTRIBUTES = frozenset(
-    {
-        "demand_count",
-        "count_threshold",
-        "count_by",
-        "demand_power_kw",
-        "power_threshold_kw",
-        "demand_opening",
-        "opening_threshold",
-        "activation_at",
-    }
-)
+DEMAND_ATTRIBUTES = frozenset({"demand_count", "activation_at"})
 
 
 def demand_attributes(status: ControlStatus) -> dict[str, Any]:
-    """The demand judged against its thresholds, as VT's central boiler shows its own: the
-    count (of devices or zones) and its threshold, the power in kW, the widest opening in %."""
+    """The rooms calling now, and when VT's central boiler's activation delay ends while it
+    runs (I12)."""
     return {
         "demand_count": status.demand_count,
-        "count_threshold": status.count_threshold,
-        "count_by": status.count_by,
-        "demand_power_kw": _rounded(status.demand_power_kw, 3),
-        "power_threshold_kw": status.power_threshold_kw,
-        "demand_opening": _percent(status.demand_opening),
-        "opening_threshold": _percent(status.opening_threshold),
         "activation_at": _moment(status.activation_at),
     }
-
-
-def _rounded(value: float | None, digits: int) -> float | None:
-    return None if value is None else round(value, digits)
-
-
-def _percent(fraction: float | None) -> float | None:
-    return None if fraction is None else round(fraction * 100.0, 1)
 
 
 def _moment(t: float | None) -> str | None:

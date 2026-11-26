@@ -34,7 +34,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.control_config import MIGRATED_HARD_MIN
 
-from .harness import VT_PLATFORM, FakeZones, ServiceSpy, analyse_now
+from .harness import VT_HELPER, VT_PLATFORM, FakeZones, ServiceSpy, analyse_now
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -65,6 +65,7 @@ GATEWAY_CONTROL = {
     "confirmed_entity": CONFIRMED,
     "topology": "gateway_with_thermostat",
     "curve": {"design_outdoor": -15, "design_flow": 55},
+    "vt_boiler_helper": VT_HELPER,  # I12: the helper VT's central boiler switches
 }
 
 
@@ -156,6 +157,8 @@ class Rig:
                 is_ready=self.vt_ready,
                 **extra,
             )
+        if self.zones.follow:
+            self.zones.follow_zones()  # VT's central boiler, after every room (I12)
 
     async def advance(self, seconds: float, step: float = 10.0) -> None:
         elapsed = 0.0
@@ -1221,6 +1224,7 @@ ENTITY_CONTROL = {
     "hand_back_value": 0,
     "hand_back_value_effect": "own_control",
     "topology": "virtual",
+    "vt_boiler_helper": VT_HELPER,
 }
 
 
@@ -1535,12 +1539,18 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
     curve = {"design_outdoor": -15, "design_flow": 55, "hard_min": 25}  # the highest: the circuit's
     result = await options_step(rig, result, curve)
     assert result["type"] == "menu"  # I7: back at the menu, nothing saved yet
+    # I12: the helper VT's central boiler switches, in the control behaviour's item.
+    result = await options_step(rig, result, {"next_step_id": "control_behaviour"})
+    assert "vt_boiler_helper" in {str(m) for m in result["data_schema"].schema}
+    result = await options_step(rig, result, {"vt_boiler_helper": VT_HELPER})
+    assert result["type"] == "menu"
     assert "control" not in rig.entry.options
     result = await options_step(rig, result, {"next_step_id": "save"})
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
     control = rig.entry.options["control"]
     assert (control["write_path"], control["gateway_id"]) == ("opentherm_gw", "sim")
+    assert control["vt_boiler_helper"] == VT_HELPER
     await rig.switch(True)
     await rig.advance(600, step=30.0)
     assert rig.setpoints()
@@ -1825,6 +1835,7 @@ RELAY_CONTROL = {
     "relay_reports_state": "yes",
     "relay_power_on_state": "off",
     "relay_off_timer": "none",
+    "vt_boiler_helper": VT_HELPER,
 }
 START_TRACE_S = 310.0  # past the five minutes a unit's start counts as a trace of an outage
 
@@ -2505,11 +2516,12 @@ async def test_every_zone_unknown_with_and_without_the_own_room_controller_tick(
 
 
 @pytest.mark.parametrize("path", ["opentherm_gw", "relay"])
-async def test_the_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: str) -> None:
-    """TB-14 (decision 5): VT's activation delay of 120 s. The rooms warm when control starts;
-    then they call. Heating is not switched on for 120 s from that first call, and a call that
-    drops and comes back meanwhile neither cancels nor restarts the wait; at its end heating
-    starts. Switching off is at once."""
+async def test_vts_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: str) -> None:
+    """TB-14, I12: VT's central boiler decides, and waits its own activation delay of 120 s. The
+    rooms call; VT's event announces the delay and VT keeps the helper off: heating stays off,
+    with the reason ``activation_delay`` and when it ends. VT turns the helper on at the delay's
+    end: heating starts at once, without waiting for the next tick; switching off follows within
+    a step."""
     relay = path == "relay"
 
     def heating() -> bool:
@@ -2519,34 +2531,44 @@ async def test_the_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: 
         return bool(switched) and switched[-1][2] is True
 
     if relay:
-        await start_relay(rig, activation_delay_s=120)
+        await start_relay(rig)
     else:
-        await start(rig, activation_delay_s=120)
+        await start(rig)
     rooms_call(rig, False)
     await rig.switch(True)
     await rig.advance(60)
     assert not heating()
+    rig.zones.set_helper("off")  # VT's central boiler takes the helper over
     rooms_call(rig, True)
+    rig.hass.bus.async_fire(
+        "versatile_thermostat_central_boiler_event", {"delayed_activation_sec": 120}
+    )
     await rig.advance(60)
     assert not heating()
-    assert "activation_delay" in rig.state("sensor", "control_state").attributes["reasons"]
-    rooms_call(rig, False)  # the call drops for 10 s...
-    await rig.advance(10)
-    rooms_call(rig, True)  # ...and comes back
-    await rig.advance(40)  # 110 s after the first call
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" in state.attributes["reasons"]
+    assert state.attributes["activation_at"] is not None
+    await rig.advance(50)
     assert not heating()
-    await rig.advance(20)  # past 120 s
-    assert heating()
+    rig.zones.set_helper("on")  # VT's delay is over: its command
+    rig.hass.bus.async_fire("versatile_thermostat_central_boiler_event", {"central_boiler": True})
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert heating()  # at once
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" not in state.attributes["reasons"]
+    assert state.attributes["activation_at"] is None
+    await rig.advance(30)
+    rig.zones.set_helper("off")
     rooms_call(rig, False)
     await rig.advance(10)
-    assert not heating()  # at once
+    assert not heating()
 
 
 async def test_a_planned_relay_restart_rests_then_restores_at_once(rig: Rig) -> None:
     """TB-14 (R9): a planned restart — the entry stopped and started again, as Home Assistant
     does. The relay goes to its rest state ("off") at the stop, and gets its last command ("on")
-    again at once at the start — no activation delay, no hand-back first — and keeps it."""
-    await start_relay(rig, activation_delay_s=120)
+    again at once at the start — no hand-back first — and keeps it."""
+    await start_relay(rig)
     rooms_call(rig, True)
     await rig.switch(True)
     await rig.advance(130)

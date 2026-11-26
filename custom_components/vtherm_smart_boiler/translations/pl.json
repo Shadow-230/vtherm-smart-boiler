@@ -261,7 +261,7 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka pisze do kotła: nastawą zasilania albo włączając i wyłączając go przekaźnikiem. Nic się nie zmienia, dopóki nie włączysz sterowania; możesz je włączyć od pierwszego dnia, także bez werdyktu. Wtedy wtyczka zastępuje kocioł centralny VT — najpierw go usuń i uruchom ponownie Home Assistant. Ścieżkę wyznacza połączenie kotła.",
+        "description": "Jak wtyczka pisze do kotła: nastawą zasilania albo włączając i wyłączając go przekaźnikiem. Nic się nie zmienia, dopóki nie włączysz sterowania; możesz je włączyć od pierwszego dnia, także bez werdyktu. O tym, czy grzać, nadal decyduje kocioł centralny VT: zostaw go, z obiema komendami na pomocniku wybranym w „Zachowaniu sterowania”, nigdy na kotle. Ścieżkę wyznacza połączenie kotła.",
         "data": {
           "write_path": "Ścieżka zapisu"
         },
@@ -303,35 +303,7 @@
       },
       "control_relay": {
         "title": "Przekaźnik",
-        "description": "Jak wtyczka włącza i wyłącza kocioł wł./wył., tak jak kocioł centralny VT; kocioł sam ustala temperaturę wody, więc krzywa i limity wody nie obowiązują. Gdy Home Assistant przestanie działać, przekaźnik zostaje, jak był: przełączysz go ręcznie w jego własnej aplikacji albo stronie. Przekaźnik w zasilaniu kotła odcina też wybieg pompy i ochronę przed mrozem; zaciski termostatu pokojowego mogą mieć napięcie sieciowe.",
-        "data": {
-          "relay_entity": "Przekaźnik",
-          "relay_is_separate_contact": "Ten przekaźnik albo encja termostatu nie jest ustawieniem zapisywanym w pamięci kotła",
-          "relay_reports_state": "Przekaźnik zgłasza swój rzeczywisty stan",
-          "relay_power_on_state": "Stan po zaniku zasilania",
-          "relay_off_timer": "Własny wyłącznik czasowy przekaźnika",
-          "relay_off_timer_min": "Długość wyłącznika czasowego (min)",
-          "relay_repeat_s": "Odstęp powtórzeń",
-          "relay_rest_state": "Przekaźnik po oddaniu sterowania",
-          "own_room_controller": "Kocioł ma własny regulator pokojowy",
-          "boiler_heats_above_w": "Kocioł grzeje powyżej"
-        },
-        "data_description": {
-          "relay_entity": "Przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Nie pomocnik, nie przełącznik strefy VT, nigdy ustawienie zapisywane w pamięci kotła. Przekaźnik Zigbee może wyglądać na dostępny długo po awarii: włącz zgłaszanie dostępności.",
-          "relay_is_separate_contact": "Zaznacz, aby potwierdzić, że przekaźnik to osobny styk — a dla encji termostatu, że jej tryb grzanie/wyłączenie nie jest zapisywany w pamięci kotła, którą każde przełączenie by zużywało (np. „heating activated” EMS-ESP). Nie wiesz: nie zaznaczaj. Bez tego sterowanie nie ruszy.",
-          "relay_reports_state": "Tak: wtyczka sprawdza stan przekaźnika, zapisuje tylko przy różnicy i ustępuje, gdy coś innego go stale przełącza. Nie albo Nie wiem (domyślnie): powtarza polecenie co odstęp powtórzeń, bez potwierdzenia; zmiana zrobiona na przekaźniku jest cofana w tym czasie.",
-          "relay_power_on_state": "Co robi przekaźnik po powrocie zasilania — jego własne ustawienie. Wyłączony: kocioł czeka na polecenie Home Assistant. Włączony, ostatni stan albo Nie wiem (domyślnie): po zaniku zasilania kocioł może grzać bez sterowania, dopóki Home Assistant nie wróci.",
-          "relay_off_timer": "Czy przekaźnik sam się wyłącza jakiś czas po „wł.” (PulseTime w Tasmocie; auto-off Shelly — czy Shelly liczy go od nowa po powtórzonym „wł.”, nie jest udokumentowane). Brak: zapis tylko przy różnicy. Długość: „wł.” powtarzane w połowie tego czasu; gdy Home Assistant stanie, przekaźnik sam wyłączy grzanie. Nie wiem (domyślnie): „wł.” powtarzane co odstęp powtórzeń; wyłączenia przychodzące w tym samym czasie po „wł.”, 9 min lub więcej, są brane za jego wyłącznik, inne się liczą, a czwarte w ciągu doby sprawia, że wtyczka ustępuje — więc podaj jego długość. Wyłącznik w przekaźniku ustaw dopiero, gdy ruszy sterowanie wtyczki.",
-          "relay_off_timer_min": "Długość wyłącznika, 10–120 min, dokładnie jak w przekaźniku: wyłączenie w innym czasie liczy się jako przełączenie przez coś innego. Krótszy jest odrzucany: każde jego upłynięcie ponownie uruchamiałoby kocioł.",
-          "relay_repeat_s": "Jak często polecenie jest powtarzane, w sekundach, 10–300; puste (domyślnie): 300 s albo keep-alive VT, jeśli wynosiło najwyżej 300 s. Przekaźnik po restarcie w złym stanie zostaje tak najwyżej tyle; niektóre przekaźniki zapisują każde polecenie.",
-          "relay_rest_state": "Na co przekaźnik jest ustawiany przy każdym oddaniu sterowania. Wyłączony (domyślnie): bez termostatu podłączonego do kotła grzanie staje, a wtyczka powiadamia, gdy pokój prosi o ciepło albo zbliża się do zamarzania. Włączony: kocioł grzeje według własnego ustawienia, pokoje ogranicza tylko ich zawór.",
-          "own_room_controller": "Zaznacz tylko, jeśli kocioł ma własny regulator pokojowy, a przekaźnik po oddaniu to „wł.”: gdy VT nie odpowiada, przekaźnik się włącza i grzeje ten regulator. Przy „wył.” zaznaczenie nic nie zmienia. Domyślnie wyłączone.",
-          "boiler_heats_above_w": "Moc elektryczna kotła, w W, powyżej której liczy się on jako grzejący. Puste (domyślnie): moc nie jest dowodem. Za niska: czuwanie liczy się jako grzanie; za wysoka: prawdziwe grzanie zostaje przeoczone."
-        }
-      },
-      "control_relay_from_vt": {
-        "title": "Przekaźnik — przejście z Versatile Thermostat",
-        "description": "Jak wtyczka włącza i wyłącza kocioł wł./wył., tak jak kocioł centralny VT; kocioł sam ustala temperaturę wody, więc krzywa i limity wody nie obowiązują. Gdy Home Assistant przestanie działać, przekaźnik zostaje, jak był: przełączysz go ręcznie w jego własnej aplikacji albo stronie. Przekaźnik w zasilaniu kotła odcina też wybieg pompy i ochronę przed mrozem; zaciski termostatu pokojowego mogą mieć napięcie sieciowe. Ten kocioł prowadzi teraz kocioł centralny VT: jego przekaźnik, opóźnienie, odstęp powtórzeń i progi są wpisane, gdzie się da — sprawdź i zapisz. Potem w VT odznacz „Use a central boiler”, uruchom ponownie Home Assistant, odznacz „Used by central boiler” w pokojach, gdzie uczy się Auto-TPI, przenieś automatyzacje z czujnika kotła VT i włącz sterowanie.",
+        "description": "Jak wtyczka włącza i wyłącza kocioł wł./wył., gdy kocioł centralny VT prosi o ciepło; kocioł sam ustala temperaturę wody, więc krzywa i limity wody nie obowiązują. Gdy Home Assistant przestanie działać, przekaźnik zostaje, jak był: przełączysz go ręcznie w jego własnej aplikacji albo stronie. Przekaźnik w zasilaniu kotła odcina też wybieg pompy i ochronę przed mrozem; zaciski termostatu pokojowego mogą mieć napięcie sieciowe.",
         "data": {
           "relay_entity": "Przekaźnik",
           "relay_is_separate_contact": "Ten przekaźnik albo encja termostatu nie jest ustawieniem zapisywanym w pamięci kotła",
@@ -389,27 +361,19 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Grzanie włącza się i wyłącza razem ze strefami VT, od razu — przy starcie po opóźnieniu włączenia; nic, co wtyczka liczy lub odmierza, go nie wstrzymuje. Na poziomie zaawansowanym: progi zapotrzebowania i pauzy nauki; przy pełnym sterowaniu rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
+        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym: pauzy nauki; przy pełnym sterowaniu rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
         "data": {
-          "activation_delay_s": "Opóźnienie włączenia",
+          "vt_boiler_helper": "Pomocnik przełączany przez kocioł centralny VT",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
           "off_setpoint": "Nastawa „wyłączone”",
-          "count_by": "Co liczyć",
-          "count_threshold": "Wołające (urządzenia albo strefy)",
-          "power_threshold_kw": "Moc stref potrzebujących ciepła",
-          "opening_threshold": "Otwarcie zaworów stref potrzebujących ciepła",
           "learning_pauses": "Wstrzymuj naukę stref"
         },
         "data_description": {
-          "activation_delay_s": "Ile sekund grzanie czeka po pierwszym wezwaniu, żeby wolne zawory otworzyły się przed startem kotła i pompy, jak w kotle centralnym VT; wpisane z VT, do potwierdzenia. Wyłączenie nigdy nie jest opóźniane. Domyślnie 0. Impuls grzania krótszy niż opóźnienie nigdy nie uruchomi kotła.",
+          "vt_boiler_helper": "Pomocnik wł./wył. (input_boolean), którego kocioł centralny Versatile Thermostat włącza i wyłącza. VT decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia; wtyczka idzie za tym pomocnikiem i ustala temperaturę wody. Utwórz pomocnika, daj kotłowi centralnemu VT polecenia input_boolean.turn_on i input_boolean.turn_off na nim i wybierz go tutaj. Nigdy nie kieruj poleceń VT na sam kocioł: dwa sterowniki by się kłóciły. Brak wartości domyślnej: sterowanie czeka, aż go wybierzesz.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
-          "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie za strefami co 10 s. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
+          "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie od razu za kotłem centralnym VT. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
           "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
-          "count_by": "Co liczy próg poniżej: urządzenia VT — głowice, zawory, przełączniki — tak jak liczy je kocioł centralny VT (domyślnie), albo strefy, każdą jako jedną, ile by nie miała urządzeń. Przy progu 1 jedno i drugie działa tak samo; przy liczeniu urządzeń strefa z kilkoma otwartymi głowicami sama osiąga wyższy próg.",
-          "count_threshold": "Ogrzewanie jest potrzebne, gdy woła co najmniej tyle urządzeń — albo stref, zależnie od wyboru powyżej. Domyślnie 1, najwyżej tyle urządzeń (albo stref), ile mają obiegi. 0 zostawia sam próg mocy albo otwarcia — każda strefa musi wtedy podawać, czego on potrzebuje, inaczej nigdy nie poprosi o ciepło. Więcej zostawia pojedynczy pokój bez ciepła.",
-          "power_threshold_kw": "Opcjonalnie: ogrzewanie jest potrzebne, gdy średnia moc stref, liczona jak w VT, osiągnie tyle, w kW, przy otwartym zaworze albo włączonym urządzeniu. Strefa bez mocy urządzenia w VT nie daje danych. Za wysoki zostawia małe pokoje bez ciepła.",
-          "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród proszących stref osiągnie tyle, w %. Strefy VT over_climate nie dają danych. Za wysoki zostawia bez ciepła pokój, który otwiera się trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas ciepłej wody, gdy sterowanie trzyma grzanie wyłączone przez usterkę kotła i gdy woda się waha, żeby nie uczył się tego, co zrobił kocioł; najwyżej godzinę każdą. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez utraty nauki: takie strefy są zgłaszane."
         }
       },
@@ -496,12 +460,7 @@
       "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, odczyty zwrotne i typy zapisu, po których ocenia się oddanie, limit czasu urządzenia oraz najniższa temperatura wody nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
       "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie (Tryb sterowania, Sterowanie włączone), żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
-      "count_threshold_above_zones": "Więcej niż stref w obiegach — albo, przy liczeniu urządzeń, ich urządzeń: grzanie nigdy nie zostałoby wezwane.",
-      "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
-      "power_criterion_no_zone": "Żadna strefa nie podaje mocy urządzenia w Versatile Thermostat, więc tego progu nie da się osiągnąć: ustaw moc w VT albo zostaw puste.",
-      "opening_criterion_no_zone": "Żadna strefa nie podaje otwarcia zaworu ani wypełnienia, więc tego progu nie da się osiągnąć.",
-      "zone_feeds_no_criterion": "Przy liczbie stref 0 {zone} nigdy nie poprosi o ciepło: nie podaje niczego, czego potrzebują progi (mocy urządzenia w VT dla mocy, otwarcia zaworu albo cyklu pracy dla otwarcia). Ustaw liczbę stref co najmniej 1 albo brakującą wartość w VT.",
       "off_setpoint_not_below_hard_min": "„Wyłączone” musi być co najmniej 1 °C poniżej najniższej temperatury wody, inaczej kocioł nie zauważy zmiany.",
       "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "confirmed_entity_missing": "Sterowanie porównuje każdy zapis z nastawą odebraną przez kocioł: wskaż ją jako „Nastawa c.o. odebrana przez kocioł” w Sygnałach kotła.",
@@ -535,7 +494,6 @@
       "relay_off_timer_min_short": "Wyłącznik czasowy krótszy niż 10 min nie jest przyjmowany: po każdym jego zadziałaniu kocioł startowałby od nowa. Ustaw wyłącznik w samym przekaźniku na co najmniej 30 min albo go wyłącz i wybierz „Brak”.",
       "relay_contact_confirm_again": "Przekaźnik się zmienił: zaznaczenie, że nie jest on ustawieniem zapisywanym w pamięci kotła, dotyczyło poprzedniej encji. Sprawdź nowy przekaźnik lub encję termostatu i zatwierdź ponownie z zaznaczeniem albo je odznacz, jeśli nie wiesz.",
       "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła, który przyjmuje temperaturę wody. Sprawdź, jak kocioł jest podłączony, w „Połączenie i typ kotła”.",
-      "vt_commands_not_supported": "Polecenia kotła w Versatile Thermostat nie wskazują przełącznika włączanego i wyłączanego ani termostatu kotła ustawianego na grzanie i wyłączenie: wybierz przekaźnik.",
       "path_not_for_control_mode": "Wybrano tylko monitorowanie: pasuje tylko „Bez sterowania”. Najpierw zmień tryb sterowania w „Tryb sterowania”.",
       "path_not_for_connection": "Ścieżka zapisu nie pasuje do sposobu podłączenia kotła. Najpierw zmień połączenie w „Połączenie i typ kotła”.",
       "topology_not_for_connection": "ESPHome OpenTherm i EMS-ESP to sterowniki po stronie Home Assistant: wybierz topologię wirtualną.",
@@ -546,7 +504,9 @@
       "device_not_in_zone": "{zone} nie jest urządzeniem żadnej strefy Versatile Thermostat.",
       "zone_whole_and_devices": "{zone} wybrano i jako całą strefę, i przez jej urządzenia: wybierz jedno.",
       "device_in_another_circuit": "{zone} jest już na liście innego obiegu: urządzenie należy do jednego obiegu.",
-      "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie."
+      "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie.",
+      "vt_helper_not_input_boolean": "Wybierz pomocnika wł./wył. (input_boolean).",
+      "vt_helper_missing": "Ten pomocnik nie istnieje w Home Assistant."
     }
   },
   "options": {
@@ -860,7 +820,7 @@
       },
       "control": {
         "title": "Sterowanie (eksperymentalne)",
-        "description": "Jak wtyczka pisze do kotła: nastawą zasilania albo włączając i wyłączając go przekaźnikiem. Nic się nie zmienia, dopóki nie włączysz sterowania; możesz je włączyć od pierwszego dnia, także bez werdyktu. Wtedy wtyczka zastępuje kocioł centralny VT — najpierw go usuń i uruchom ponownie Home Assistant. Ścieżkę wyznacza połączenie kotła.",
+        "description": "Jak wtyczka pisze do kotła: nastawą zasilania albo włączając i wyłączając go przekaźnikiem. Nic się nie zmienia, dopóki nie włączysz sterowania; możesz je włączyć od pierwszego dnia, także bez werdyktu. O tym, czy grzać, nadal decyduje kocioł centralny VT: zostaw go, z obiema komendami na pomocniku wybranym w „Zachowaniu sterowania”, nigdy na kotle. Ścieżkę wyznacza połączenie kotła.",
         "data": {
           "write_path": "Ścieżka zapisu"
         },
@@ -932,27 +892,19 @@
       },
       "control_behaviour": {
         "title": "Zachowanie sterowania",
-        "description": "Grzanie włącza się i wyłącza razem ze strefami VT, od razu — przy starcie po opóźnieniu włączenia; nic, co wtyczka liczy lub odmierza, go nie wstrzymuje. Na poziomie zaawansowanym: progi zapotrzebowania i pauzy nauki; przy pełnym sterowaniu rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
+        "description": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia: wybierz pomocnika, którego przełącza. Na poziomie zaawansowanym: pauzy nauki; przy pełnym sterowaniu rampa, odstęp decyzji i, bez przełącznika grzania, nastawa „wyłączone”.",
         "data": {
-          "activation_delay_s": "Opóźnienie włączenia",
+          "vt_boiler_helper": "Pomocnik przełączany przez kocioł centralny VT",
           "ramp_k_per_min": "Rampa nastawy",
           "decision_interval_min": "Odstęp decyzji",
           "off_setpoint": "Nastawa „wyłączone”",
-          "count_by": "Co liczyć",
-          "count_threshold": "Wołające (urządzenia albo strefy)",
-          "power_threshold_kw": "Moc stref potrzebujących ciepła",
-          "opening_threshold": "Otwarcie zaworów stref potrzebujących ciepła",
           "learning_pauses": "Wstrzymuj naukę stref"
         },
         "data_description": {
-          "activation_delay_s": "Ile sekund grzanie czeka po pierwszym wezwaniu, żeby wolne zawory otworzyły się przed startem kotła i pompy, jak w kotle centralnym VT; wpisane z VT, do potwierdzenia. Wyłączenie nigdy nie jest opóźniane. Domyślnie 0. Impuls grzania krótszy niż opóźnienie nigdy nie uruchomi kotła.",
+          "vt_boiler_helper": "Pomocnik wł./wył. (input_boolean), którego kocioł centralny Versatile Thermostat włącza i wyłącza. VT decyduje, czy kocioł grzeje, według własnych progów i opóźnienia włączenia; wtyczka idzie za tym pomocnikiem i ustala temperaturę wody. Utwórz pomocnika, daj kotłowi centralnemu VT polecenia input_boolean.turn_on i input_boolean.turn_off na nim i wybierz go tutaj. Nigdy nie kieruj poleceń VT na sam kocioł: dwa sterowniki by się kłóciły. Brak wartości domyślnej: sterowanie czeka, aż go wybierzesz.",
           "ramp_k_per_min": "Najszybsza zmiana nastawy, w K na minutę. Domyślnie 1. Szybsze zmiany obciążają kocioł i powodują przegrzewanie stref.",
-          "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie za strefami co 10 s. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
+          "decision_interval_min": "Jak często temperatura wody jest ustalana od nowa, w minutach; domyślnie 5. Włączanie grzania i tak idzie od razu za kotłem centralnym VT. Krócej: szybciej za pogodą, ale woda częściej się zmienia pod algorytmami stref.",
           "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana.",
-          "count_by": "Co liczy próg poniżej: urządzenia VT — głowice, zawory, przełączniki — tak jak liczy je kocioł centralny VT (domyślnie), albo strefy, każdą jako jedną, ile by nie miała urządzeń. Przy progu 1 jedno i drugie działa tak samo; przy liczeniu urządzeń strefa z kilkoma otwartymi głowicami sama osiąga wyższy próg.",
-          "count_threshold": "Ogrzewanie jest potrzebne, gdy woła co najmniej tyle urządzeń — albo stref, zależnie od wyboru powyżej. Domyślnie 1, najwyżej tyle urządzeń (albo stref), ile mają obiegi. 0 zostawia sam próg mocy albo otwarcia — każda strefa musi wtedy podawać, czego on potrzebuje, inaczej nigdy nie poprosi o ciepło. Więcej zostawia pojedynczy pokój bez ciepła.",
-          "power_threshold_kw": "Opcjonalnie: ogrzewanie jest potrzebne, gdy średnia moc stref, liczona jak w VT, osiągnie tyle, w kW, przy otwartym zaworze albo włączonym urządzeniu. Strefa bez mocy urządzenia w VT nie daje danych. Za wysoki zostawia małe pokoje bez ciepła.",
-          "opening_threshold": "Opcjonalnie: ogrzewanie jest potrzebne, gdy największe otwarcie zaworu wśród proszących stref osiągnie tyle, w %. Strefy VT over_climate nie dają danych. Za wysoki zostawia bez ciepła pokój, który otwiera się trochę.",
           "learning_pauses": "Wstrzymuj naukę SmartPI podczas ciepłej wody, gdy sterowanie trzyma grzanie wyłączone przez usterkę kotła i gdy woda się waha, żeby nie uczył się tego, co zrobił kocioł; najwyżej godzinę każdą. Domyślnie włączone. Auto-TPI nie da się wstrzymać bez utraty nauki: takie strefy są zgłaszane."
         }
       },
@@ -1010,35 +962,7 @@
       },
       "control_relay": {
         "title": "Przekaźnik",
-        "description": "Jak wtyczka włącza i wyłącza kocioł wł./wył., tak jak kocioł centralny VT; kocioł sam ustala temperaturę wody, więc krzywa i limity wody nie obowiązują. Gdy Home Assistant przestanie działać, przekaźnik zostaje, jak był: przełączysz go ręcznie w jego własnej aplikacji albo stronie. Przekaźnik w zasilaniu kotła odcina też wybieg pompy i ochronę przed mrozem; zaciski termostatu pokojowego mogą mieć napięcie sieciowe.",
-        "data": {
-          "relay_entity": "Przekaźnik",
-          "relay_is_separate_contact": "Ten przekaźnik albo encja termostatu nie jest ustawieniem zapisywanym w pamięci kotła",
-          "relay_reports_state": "Przekaźnik zgłasza swój rzeczywisty stan",
-          "relay_power_on_state": "Stan po zaniku zasilania",
-          "relay_off_timer": "Własny wyłącznik czasowy przekaźnika",
-          "relay_off_timer_min": "Długość wyłącznika czasowego (min)",
-          "relay_repeat_s": "Odstęp powtórzeń",
-          "relay_rest_state": "Przekaźnik po oddaniu sterowania",
-          "own_room_controller": "Kocioł ma własny regulator pokojowy",
-          "boiler_heats_above_w": "Kocioł grzeje powyżej"
-        },
-        "data_description": {
-          "relay_entity": "Przełącznik na zaciskach termostatu pokojowego kotła albo encja termostatu kotła ustawiana na grzanie lub wyłączenie. Nie pomocnik, nie przełącznik strefy VT, nigdy ustawienie zapisywane w pamięci kotła. Przekaźnik Zigbee może wyglądać na dostępny długo po awarii: włącz zgłaszanie dostępności.",
-          "relay_is_separate_contact": "Zaznacz, aby potwierdzić, że przekaźnik to osobny styk — a dla encji termostatu, że jej tryb grzanie/wyłączenie nie jest zapisywany w pamięci kotła, którą każde przełączenie by zużywało (np. „heating activated” EMS-ESP). Nie wiesz: nie zaznaczaj. Bez tego sterowanie nie ruszy.",
-          "relay_reports_state": "Tak: wtyczka sprawdza stan przekaźnika, zapisuje tylko przy różnicy i ustępuje, gdy coś innego go stale przełącza. Nie albo Nie wiem (domyślnie): powtarza polecenie co odstęp powtórzeń, bez potwierdzenia; zmiana zrobiona na przekaźniku jest cofana w tym czasie.",
-          "relay_power_on_state": "Co robi przekaźnik po powrocie zasilania — jego własne ustawienie. Wyłączony: kocioł czeka na polecenie Home Assistant. Włączony, ostatni stan albo Nie wiem (domyślnie): po zaniku zasilania kocioł może grzać bez sterowania, dopóki Home Assistant nie wróci.",
-          "relay_off_timer": "Czy przekaźnik sam się wyłącza jakiś czas po „wł.” (PulseTime w Tasmocie; auto-off Shelly — czy Shelly liczy go od nowa po powtórzonym „wł.”, nie jest udokumentowane). Brak: zapis tylko przy różnicy. Długość: „wł.” powtarzane w połowie tego czasu; gdy Home Assistant stanie, przekaźnik sam wyłączy grzanie. Nie wiem (domyślnie): „wł.” powtarzane co odstęp powtórzeń; wyłączenia przychodzące w tym samym czasie po „wł.”, 9 min lub więcej, są brane za jego wyłącznik, inne się liczą, a czwarte w ciągu doby sprawia, że wtyczka ustępuje — więc podaj jego długość. Wyłącznik w przekaźniku ustaw dopiero, gdy ruszy sterowanie wtyczki.",
-          "relay_off_timer_min": "Długość wyłącznika, 10–120 min, dokładnie jak w przekaźniku: wyłączenie w innym czasie liczy się jako przełączenie przez coś innego. Krótszy jest odrzucany: każde jego upłynięcie ponownie uruchamiałoby kocioł.",
-          "relay_repeat_s": "Jak często polecenie jest powtarzane, w sekundach, 10–300; puste (domyślnie): 300 s albo keep-alive VT, jeśli wynosiło najwyżej 300 s. Przekaźnik po restarcie w złym stanie zostaje tak najwyżej tyle; niektóre przekaźniki zapisują każde polecenie.",
-          "relay_rest_state": "Na co przekaźnik jest ustawiany przy każdym oddaniu sterowania. Wyłączony (domyślnie): bez termostatu podłączonego do kotła grzanie staje, a wtyczka powiadamia, gdy pokój prosi o ciepło albo zbliża się do zamarzania. Włączony: kocioł grzeje według własnego ustawienia, pokoje ogranicza tylko ich zawór.",
-          "own_room_controller": "Zaznacz tylko, jeśli kocioł ma własny regulator pokojowy, a przekaźnik po oddaniu to „wł.”: gdy VT nie odpowiada, przekaźnik się włącza i grzeje ten regulator. Przy „wył.” zaznaczenie nic nie zmienia. Domyślnie wyłączone.",
-          "boiler_heats_above_w": "Moc elektryczna kotła, w W, powyżej której liczy się on jako grzejący. Puste (domyślnie): moc nie jest dowodem. Za niska: czuwanie liczy się jako grzanie; za wysoka: prawdziwe grzanie zostaje przeoczone."
-        }
-      },
-      "control_relay_from_vt": {
-        "title": "Przekaźnik — przejście z Versatile Thermostat",
-        "description": "Jak wtyczka włącza i wyłącza kocioł wł./wył., tak jak kocioł centralny VT; kocioł sam ustala temperaturę wody, więc krzywa i limity wody nie obowiązują. Gdy Home Assistant przestanie działać, przekaźnik zostaje, jak był: przełączysz go ręcznie w jego własnej aplikacji albo stronie. Przekaźnik w zasilaniu kotła odcina też wybieg pompy i ochronę przed mrozem; zaciski termostatu pokojowego mogą mieć napięcie sieciowe. Ten kocioł prowadzi teraz kocioł centralny VT: jego przekaźnik, opóźnienie, odstęp powtórzeń i progi są wpisane, gdzie się da — sprawdź i zapisz. Potem w VT odznacz „Use a central boiler”, uruchom ponownie Home Assistant, odznacz „Used by central boiler” w pokojach, gdzie uczy się Auto-TPI, przenieś automatyzacje z czujnika kotła VT i włącz sterowanie.",
+        "description": "Jak wtyczka włącza i wyłącza kocioł wł./wył., gdy kocioł centralny VT prosi o ciepło; kocioł sam ustala temperaturę wody, więc krzywa i limity wody nie obowiązują. Gdy Home Assistant przestanie działać, przekaźnik zostaje, jak był: przełączysz go ręcznie w jego własnej aplikacji albo stronie. Przekaźnik w zasilaniu kotła odcina też wybieg pompy i ochronę przed mrozem; zaciski termostatu pokojowego mogą mieć napięcie sieciowe.",
         "data": {
           "relay_entity": "Przekaźnik",
           "relay_is_separate_contact": "Ten przekaźnik albo encja termostatu nie jest ustawieniem zapisywanym w pamięci kotła",
@@ -1082,12 +1006,7 @@
       "own_room_controller_but_heating_stops": "Wartość przy oddaniu, która zatrzymuje grzanie, nie zostawia nic do przejęcia własnemu regulatorowi kotła: odznacz pole albo zmień działanie wartości przy oddaniu.",
       "hand_back_pending": "Oddanie sterowania jeszcze nie dotarło do kotła: ścieżka zapisu, to, do czego sterowanie pisze, odczyty zwrotne i typy zapisu, po których ocenia się oddanie, limit czasu urządzenia oraz najniższa temperatura wody nie mogą się zmienić, dopóki nie dotrze. Przywróć cel albo wybierz „Bez sterowania”: oddanie jest nadal ponawiane.",
       "control_holds_boiler": "Sterowanie ma kocioł: najpierw wyłącz sterowanie (Tryb sterowania, Sterowanie włączone), żeby kocioł został oddany przez urządzenie, które go trzyma; potem zmień, do czego sterowanie pisze, odczyty zwrotne, typy zapisu albo limit czasu urządzenia.",
-      "count_threshold_above_zones": "Więcej niż stref w obiegach — albo, przy liczeniu urządzeń, ich urządzeń: grzanie nigdy nie zostałoby wezwane.",
-      "no_demand_criterion": "Ustaw co najmniej jedno kryterium: liczba stref 0 wymaga progu mocy albo otwarcia.",
       "no_zones": "Przed konfiguracją sterowania dodaj co najmniej jedną strefę Versatile Thermostat.",
-      "power_criterion_no_zone": "Żadna strefa nie podaje mocy urządzenia w Versatile Thermostat, więc tego progu nie da się osiągnąć: ustaw moc w VT albo zostaw puste.",
-      "opening_criterion_no_zone": "Żadna strefa nie podaje otwarcia zaworu ani wypełnienia, więc tego progu nie da się osiągnąć.",
-      "zone_feeds_no_criterion": "Przy liczbie stref 0 {zone} nigdy nie poprosi o ciepło: nie podaje niczego, czego potrzebują progi (mocy urządzenia w VT dla mocy, otwarcia zaworu albo cyklu pracy dla otwarcia). Ustaw liczbę stref co najmniej 1 albo brakującą wartość w VT.",
       "off_setpoint_not_below_hard_min": "„Wyłączone” musi być co najmniej 1 °C poniżej najniższej temperatury wody, inaczej kocioł nie zauważy zmiany.",
       "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury (°C, °F lub K): zapisana wartość znaczyłaby dla niej coś innego. Wybierz encję nastawy temperatury zasilania kotła.",
       "missing_signal": "Brakuje wymaganego sygnału.",
@@ -1147,7 +1066,6 @@
       "relay_off_timer_min_short": "Wyłącznik czasowy krótszy niż 10 min nie jest przyjmowany: po każdym jego zadziałaniu kocioł startowałby od nowa. Ustaw wyłącznik w samym przekaźniku na co najmniej 30 min albo go wyłącz i wybierz „Brak”.",
       "relay_contact_confirm_again": "Przekaźnik się zmienił: zaznaczenie, że nie jest on ustawieniem zapisywanym w pamięci kotła, dotyczyło poprzedniej encji. Sprawdź nowy przekaźnik lub encję termostatu i zatwierdź ponownie z zaznaczeniem albo je odznacz, jeśli nie wiesz.",
       "path_not_for_boiler_class": "Ścieżka zapisu nie pasuje do kotła: przekaźnik dla kotła wł./wył., ścieżka nastawy dla kotła, który przyjmuje temperaturę wody. Sprawdź, jak kocioł jest podłączony, w „Połączenie i typ kotła”.",
-      "vt_commands_not_supported": "Polecenia kotła w Versatile Thermostat nie wskazują przełącznika włączanego i wyłączanego ani termostatu kotła ustawianego na grzanie i wyłączenie: wybierz przekaźnik.",
       "invalid_connection": "Ta wersja nie potrafi odczytać jednej z odpowiedzi o połączeniu kotła, źródle ciepła, rodzaju kotła albo trybie sterowania: wybierz ją ponownie.",
       "path_not_for_control_mode": "Wybrano tylko monitorowanie: pasuje tylko „Bez sterowania”. Najpierw zmień tryb sterowania w „Tryb sterowania”.",
       "path_not_for_connection": "Ścieżka zapisu nie pasuje do sposobu podłączenia kotła. Najpierw zmień połączenie w „Połączenie i typ kotła”.",
@@ -1159,7 +1077,9 @@
       "device_not_in_zone": "{zone} nie jest urządzeniem żadnej strefy Versatile Thermostat.",
       "zone_whole_and_devices": "{zone} wybrano i jako całą strefę, i przez jej urządzenia: wybierz jedno.",
       "device_in_another_circuit": "{zone} jest już na liście innego obiegu: urządzenie należy do jednego obiegu.",
-      "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie."
+      "emitter_twice": "Strefa to podłogówka albo konwektory, nie jedno i drugie.",
+      "vt_helper_not_input_boolean": "Wybierz pomocnika wł./wył. (input_boolean).",
+      "vt_helper_missing": "Ten pomocnik nie istnieje w Home Assistant."
     }
   },
   "selector": {
@@ -1319,12 +1239,6 @@
       "options": {
         "auto": "Auto (najcieplejszy pokój)",
         "manual": "Ręcznie (wpisana wartość)"
-      }
-    },
-    "count_by": {
-      "options": {
-        "devices": "Urządzenia (jak kocioł centralny VT)",
-        "zones": "Strefy"
       }
     },
     "menu_state": {
@@ -1689,9 +1603,9 @@
               "outdoor_weather": "Temperatura zewnętrzna z encji pogody",
               "outdoor_held": "Temperatura zewnętrzna zachowana sprzed chwili",
               "outdoor_unknown": "Temperatura zewnętrzna nieznana",
-              "demand": "Strefa prosi o ciepło",
-              "no_demand": "Żadna strefa nie prosi o ciepło",
-              "zones_unknown": "Stan żadnej strefy nie jest znany",
+              "demand": "Kocioł centralny VT prosi o ciepło",
+              "no_demand": "Kocioł centralny VT nie prosi o ciepło",
+              "zones_unknown": "Nic nie może poprosić o ciepło: nie jest znany stan żadnej strefy ani decyzja VT",
               "zones_recognition": "Strefy jeszcze się zgłaszają: nic nowego nie jest ustalane",
               "frost": "Ochrona przed mrozem",
               "ramp": "Nastawa zmienia się stopniowo (rampa)",
@@ -1700,7 +1614,7 @@
               "limit_circuit_max": "Ograniczona do maksimum obiegu",
               "limit_boiler_max": "Ograniczona do maksimum kotła",
               "comfort_correction": "Zastosowana korekta komfortu",
-              "activation_delay": "Czeka na opóźnienie włączenia",
+              "activation_delay": "Kocioł centralny VT czeka na opóźnienie włączenia",
               "boiler_fault": "Kocioł zgłasza własną usterkę: grzanie wyłączone",
               "circuit_asks": "Obieg sterowany przez inną automatykę prosi o ciepło",
               "circuit_request_unknown": "Prośby obiegu nie da się odczytać: nie prosi",
@@ -1730,7 +1644,7 @@
               "one_direct_circuit_only": "Sterować można najwyżej jednym obiegiem zasilanym wprost z kotła i żadnym mieszanym przez kocioł",
               "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
               "no_zones": "Brak strefy Versatile Thermostat",
-              "count_threshold_above_zones": "Próg zapotrzebowania przekracza liczbę stref",
+              "no_vt_boiler_helper": "Nie wybrano pomocnika kotła centralnego VT",
               "off_setpoint_not_below_hard_min": "„Wyłączone” nie jest poniżej najniższej temperatury wody",
               "hand_back_switch_not_writable": "Typu zapisu przełącznika sterowania zewnętrznego nie można użyć",
               "hand_back_value_above_max": "Wartość oddania przekracza maksimum",
@@ -1755,8 +1669,10 @@
               "relay_in_another_role": "Przekaźnik pełni też inną rolę",
               "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
               "ha_starting": "Home Assistant się uruchamia",
-              "vt_central_boiler_active": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant: wtedy wystarczy jedno ponowne uruchomienie Home Assistant",
-              "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
+              "vt_boiler_helper_missing": "Wybrany pomocnik kotła centralnego VT nie istnieje",
+              "vt_central_boiler_not_set": "Kocioł centralny VT nie jest ustawiony albo brakuje mu polecenia",
+              "vt_command_not_helper": "Kocioł centralny VT przełącza coś innego niż pomocnika: dwa sterowniki",
+              "vt_central_boiler_unknown": "Ustawienia kotła centralnego VT nie są jeszcze znane",
               "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
               "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
               "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
@@ -1784,12 +1700,6 @@
           },
           "blockers_text": {
             "name": "Blokady (tekst)"
-          },
-          "blockers_waiting": {
-            "name": "Blokady w oczekiwaniu"
-          },
-          "blockers_waiting_text": {
-            "name": "Blokady w oczekiwaniu (tekst)"
           },
           "latched_by": {
             "name": "Zablokowane przez",
@@ -1844,8 +1754,8 @@
             "name": "Dlaczego nie wezwany",
             "state": {
               "no_demand": "Nic nie woła",
-              "below_threshold": "Strefy wołają, poniżej progów",
-              "activation_delay": "Start czeka na opóźnienie włączenia VT",
+              "below_threshold": "Pokoje wołają, kocioł centralny VT nie",
+              "activation_delay": "Kocioł centralny VT czeka na opóźnienie włączenia",
               "boiler_fault": "Kocioł zgłasza usterkę",
               "not_controlling": "Wtyczka nie steruje teraz kotłem",
               "waiting_data": "Jeszcze nie wiadomo"
@@ -1853,57 +1763,14 @@
           },
           "demand_count": {
             "name": "Wołające o ciepło"
-          },
-          "count_threshold": {
-            "name": "Liczba, od której rusza kocioł"
-          },
-          "count_by": {
-            "name": "Liczone",
-            "state": {
-              "devices": "Urządzenia",
-              "zones": "Strefy"
-            }
-          },
-          "demand_power_kw": {
-            "name": "Moc wołających stref"
-          },
-          "power_threshold_kw": {
-            "name": "Moc, od której rusza kocioł"
-          },
-          "demand_opening": {
-            "name": "Największe otwarcie"
-          },
-          "opening_threshold": {
-            "name": "Otwarcie, od którego rusza kocioł"
           }
         }
       },
       "demand_count": {
         "name": "Wołające o ciepło",
         "state_attributes": {
-          "count_threshold": {
-            "name": "Liczba, od której rusza kocioł"
-          },
-          "count_by": {
-            "name": "Liczone",
-            "state": {
-              "devices": "Urządzenia",
-              "zones": "Strefy"
-            }
-          },
           "calling_zones": {
             "name": "Wołające strefy"
-          },
-          "active_devices": {
-            "name": "Aktywne urządzenia"
-          }
-        }
-      },
-      "demand_power": {
-        "name": "Moc wołających",
-        "state_attributes": {
-          "power_threshold_kw": {
-            "name": "Moc, od której rusza kocioł"
           }
         }
       },
@@ -2416,7 +2283,7 @@
               "one_direct_circuit_only": "Sterować można najwyżej jednym obiegiem zasilanym wprost z kotła i żadnym mieszanym przez kocioł",
               "underfloor_without_max_flow": "Ogrzewanie podłogowe na obiegu bez mieszania nie ma ustawionego maksimum",
               "no_zones": "Brak strefy Versatile Thermostat",
-              "count_threshold_above_zones": "Próg zapotrzebowania przekracza liczbę stref",
+              "no_vt_boiler_helper": "Nie wybrano pomocnika kotła centralnego VT",
               "off_setpoint_not_below_hard_min": "„Wyłączone” nie jest poniżej najniższej temperatury wody",
               "hand_back_switch_not_writable": "Typu zapisu przełącznika sterowania zewnętrznego nie można użyć",
               "hand_back_value_above_max": "Wartość oddania przekracza maksimum",
@@ -2441,8 +2308,10 @@
               "relay_in_another_role": "Przekaźnik pełni też inną rolę",
               "relay_contact_not_confirmed": "Brak potwierdzenia osobnego styku przekaźnika",
               "ha_starting": "Home Assistant się uruchamia",
-              "vt_central_boiler_active": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od uruchomienia Home Assistant: wtedy wystarczy jedno ponowne uruchomienie Home Assistant",
-              "vt_central_boiler_unknown": "Nie da się jeszcze wykluczyć kotła centralnego Versatile Thermostat",
+              "vt_boiler_helper_missing": "Wybrany pomocnik kotła centralnego VT nie istnieje",
+              "vt_central_boiler_not_set": "Kocioł centralny VT nie jest ustawiony albo brakuje mu polecenia",
+              "vt_command_not_helper": "Kocioł centralny VT przełącza coś innego niż pomocnika: dwa sterowniki",
+              "vt_central_boiler_unknown": "Ustawienia kotła centralnego VT nie są jeszcze znane",
               "setpoint_outside_entity_range": "Encja nastawy nie przyjmuje każdej wartości możliwej do zapisania przez sterowanie",
               "setpoint_unit_not_supported": "Jednostka encji nastawy nie jest jednostką temperatury",
               "setpoint_step_too_coarse": "Krok encji nastawy jest za duży",
@@ -2489,8 +2358,8 @@
             "name": "Dlaczego nie wezwany",
             "state": {
               "no_demand": "Nic nie woła",
-              "below_threshold": "Strefy wołają, poniżej progów",
-              "activation_delay": "Start czeka na opóźnienie włączenia VT",
+              "below_threshold": "Pokoje wołają, kocioł centralny VT nie",
+              "activation_delay": "Kocioł centralny VT czeka na opóźnienie włączenia",
               "boiler_fault": "Kocioł zgłasza usterkę",
               "not_controlling": "Wtyczka nie steruje teraz kotłem",
               "waiting_data": "Jeszcze nie wiadomo"
@@ -2498,28 +2367,6 @@
           },
           "demand_count": {
             "name": "Wołające o ciepło"
-          },
-          "count_threshold": {
-            "name": "Liczba, od której rusza kocioł"
-          },
-          "count_by": {
-            "name": "Liczone",
-            "state": {
-              "devices": "Urządzenia",
-              "zones": "Strefy"
-            }
-          },
-          "demand_power_kw": {
-            "name": "Moc wołających stref"
-          },
-          "power_threshold_kw": {
-            "name": "Moc, od której rusza kocioł"
-          },
-          "demand_opening": {
-            "name": "Największe otwarcie"
-          },
-          "opening_threshold": {
-            "name": "Otwarcie, od którego rusza kocioł"
           },
           "activation_at": {
             "name": "Start zaplanowany na"
@@ -2858,24 +2705,8 @@
       "alarm_no_zone_known": {
         "name": "Sterowanie: żadna strefa nie odpowiada"
       },
-      "alarm_demand_criterion_no_data": {
-        "name": "Sterowanie: kryterium zapotrzebowania bez danych",
-        "state_attributes": {
-          "criteria": {
-            "name": "Kryteria",
-            "state": {
-              "count": "Liczba stref potrzebujących ciepła",
-              "power": "Moc",
-              "opening": "Otwarcie zaworów"
-            }
-          },
-          "zones": {
-            "name": "Wołające strefy bez danych"
-          },
-          "criteria_text": {
-            "name": "Kryteria (tekst)"
-          }
-        }
+      "alarm_vt_decision_unknown": {
+        "name": "Sterowanie: decyzja VT nieznana"
       },
       "alarm_relay_unreachable": {
         "name": "Sterowanie: przekaźnik poza zasięgiem"
@@ -2972,20 +2803,14 @@
     "blocked_underfloor_without_max_flow": {
       "message": "Ogrzewanie podłogowe na obiegu bez mieszania wymaga maksymalnej temperatury zasilania tego obiegu. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
-    "blocked_count_threshold_above_zones": {
-      "message": "Próg zapotrzebowania wymaga więcej stref, niż jest skonfigurowanych, więc grzanie nigdy nie zostałoby wezwane: obniż go w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
-    },
     "blocked_no_zones": {
       "message": "Sterowanie wymaga co najmniej jednej strefy Versatile Thermostat: dodaj je w opcjach. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_ha_starting": {
       "message": "Home Assistant jeszcze się uruchamia. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
-    "blocked_vt_central_boiler_active": {
-      "message": "Własny kocioł centralny Versatile Thermostat jest skonfigurowany albo mógł działać od startu Home Assistant: odznacz go, żeby kotłem sterował jeden sterownik, i uruchom ponownie Home Assistant. Sterowanie czeka na restart Home Assistant, nawet po odznaczeniu — także gdy konfigurację centralną VT utworzono lub zmieniono po starcie Home Assistant, nawet bez kotła centralnego. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
-    },
     "blocked_vt_central_boiler_unknown": {
-      "message": "Nie da się jeszcze wykluczyć centralnego kotła Versatile Thermostat: nie udało się załadować centralnej konfiguracji VT (zobacz Ustawienia → Urządzenia i usługi) albo jej ustawienia nie mówią, czy kocioł centralny jest włączony. Sterowanie czeka. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+      "message": "Versatile Thermostat nie przekazał jeszcze wtyczce swoich termostatów, więc nie da się sprawdzić ustawień jego kotła centralnego. Sterowanie czeka i ruszy, gdy VT uruchomi termostaty (jeśli wtyczkę dodano, gdy VT już działał, przeładuj VT raz). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     },
     "blocked_control_error": {
       "message": "Sterowanie zatrzymało się po błędzie wewnętrznym. Sprawdź log, potem wyłącz i włącz sterowanie. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
@@ -3142,13 +2967,21 @@
     },
     "control_not_running": {
       "message": "Wtyczka nie steruje teraz kotłem: sterowanie nie jest ustawione albo wtyczka nie działa."
+    },
+    "blocked_no_vt_boiler_helper": {
+      "message": "Kocioł centralny Versatile Thermostat decyduje, czy kocioł grzeje, przez pomocnika wł./wył. (input_boolean), którego przełącza: utwórz go, skieruj na niego polecenia kotła centralnego VT i wybierz go w opcjach sterowania (Zachowanie sterowania). Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_vt_boiler_helper_missing": {
+      "message": "Pomocnik wybrany dla kotła centralnego VT nie istnieje w Home Assistant: utwórz go ponownie albo wybierz innego w opcjach sterowania. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_vt_central_boiler_not_set": {
+      "message": "Kocioł centralny Versatile Thermostat nie jest ustawiony: w centralnej konfiguracji VT włącz kocioł centralny, ustaw jego progi i opóźnienie włączenia i podaj oba polecenia — input_boolean.turn_on i input_boolean.turn_off na pomocniku wybranym tutaj. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
+    },
+    "blocked_vt_command_not_helper": {
+      "message": "Polecenia kotła centralnego Versatile Thermostat przełączają coś innego niż pomocnika wybranego tutaj, więc kotłem sterowałyby dwa sterowniki. Skieruj oba polecenia na pomocnika — zgłoszenie naprawy podaje, co przełączają teraz. Inne powody: {count} (wszystkie są wymienione w stanie sterowania)."
     }
   },
   "issues": {
-    "auto_tpi_blocked": {
-      "title": "Auto-TPI nie może się uczyć w części stref",
-      "description": "Te strefy działają z Auto-TPI i są w VT oznaczone „używane przez kocioł centralny”, ale kocioł centralny VT jest wyłączony — zastępuje go wtyczka — więc Auto-TPI się w nich nie uczy: {zones}. Usunięcie oznaczenia pozwala mu się uczyć — ale też podczas ciepłej wody i wahań wody oraz gdy strefy proszą, a kocioł nie grzeje (po oddaniu, przy usterce, podczas opóźnienia włączenia i okresu monitorowania), co może go zniekształcić: wtyczka nie umie wstrzymać Auto-TPI."
-    },
     "hand_back_owed": {
       "title": "Oddanie kotła nie dotarło",
       "fix_flow": {
@@ -3206,10 +3039,6 @@
     "vt_reload_needed": {
       "title": "Część termostatów VT wymaga przeładowania, żeby pokazać wartość z wtyczki",
       "description": "Te termostaty działały już, gdy wtyczka zarejestrowała się w Versatile Thermostat, i przejmą ją dopiero po przeładowaniu VT: {zones}. Przeładuj Versatile Thermostat, żeby pokazać na nich, czy ciepło dociera do ich stref. Nic innego od tego nie zależy."
-    },
-    "vt_central_entry_not_running": {
-      "title": "Centralna konfiguracja Versatile Thermostat nie działa",
-      "description": "Jej uruchomienie się nie powiodło, a jej ustawienia mówią, że kocioł centralny VT jest włączony. Sterowanie czeka, żeby kotłem nigdy nie sterowały dwa sterowniki: napraw centralną konfigurację VT albo odznacz w niej kocioł centralny i uruchom ponownie Home Assistant."
     },
     "entity_removed": {
       "title": "Encja używana przez wtyczkę zniknęła",
@@ -3274,18 +3103,6 @@
     "no_zone_known_monitor": {
       "title": "Versatile Thermostat nie odpowiada",
       "description": "Żadna strefa nie odpowiada ({zones}); monitor nie może ich ocenić. Sprawdź, czy Versatile Thermostat jest załadowany, jego termostaty są włączone, a ich identyfikatory encji zgadzają się z opcjami wtyczki."
-    },
-    "no_criterion_judged_off": {
-      "title": "Żadnego kryterium zapotrzebowania nie da się ocenić: kocioł nie grzeje",
-      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania z opcji nie dostaje od nich danych, więc nie widać żadnej prośby o ciepło ({criteria}: „moc” wymaga mocy urządzenia w VT, „otwarcie” — otwarcia zaworu albo cyklu pracy). Wtyczka trzyma grzanie wyłączone, dopóki kryterium nie dostanie danych. Ustaw moc urządzenia w VT albo liczbę stref co najmniej 1 w opcjach sterowania."
-    },
-    "no_criterion_judged_handed_back": {
-      "title": "Żadnego kryterium zapotrzebowania nie da się ocenić: kocioł wrócił do termostatu albo własnego regulatora pokojowego",
-      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania z opcji nie dostaje od nich danych, więc nie widać żadnej prośby o ciepło ({criteria}: „moc” wymaga mocy urządzenia w VT, „otwarcie” — otwarcia zaworu albo cyklu pracy). Wtyczka oddała kocioł termostatowi albo jego własnemu regulatorowi pokojowemu i przejmie go znowu, gdy kryterium dostanie dane. Ustaw moc urządzenia w VT albo liczbę stref co najmniej 1 w opcjach sterowania."
-    },
-    "no_criterion_judged_monitor": {
-      "title": "Żadnego kryterium zapotrzebowania nie da się ocenić",
-      "description": "Strefy odpowiadają, ale żadne kryterium zapotrzebowania z opcji nie dostaje od nich danych, więc nie widać żadnej prośby o ciepło ({criteria}: „moc” wymaga mocy urządzenia w VT, „otwarcie” — otwarcia zaworu albo cyklu pracy). Po włączeniu sterowanie nie mogłoby grzać dla żadnego pokoju. Ustaw moc urządzenia w VT albo liczbę stref co najmniej 1 w opcjach sterowania."
     },
     "frost_zone_closed": {
       "title": "Pokój poniżej progu mrozu nie może dostać ciepła",
@@ -3466,6 +3283,22 @@
     "boiler_power_limit": {
       "title": "Kocioł jest na granicy mocy dla: {zones}",
       "description": "Od trzech godzin palnik pracuje bez przerwy, {zones} nie dochodzi do nastawy, a woda jest ponad kelwin poniżej nastawy przy modulacji 90 % lub więcej: kocioł nie da więcej. Sprawdź, czy jest ustawiony na pełną moc grzewczą i czy dom nie traci więcej ciepła, niż kocioł przewidziano. Sterowanie niczego nie zmienia."
+    },
+    "vt_command_not_helper": {
+      "title": "Kocioł centralny Versatile Thermostat przełącza coś innego niż pomocnika",
+      "description": "Polecenia kotła centralnego VT przełączają {entity}, a powinny przełączać tylko pomocnika wybranego we wtyczce ({helper}): polecenie włączenia ma go włączać, polecenie wyłączenia — wyłączać. Kotłem nigdy nie mogą sterować dwa sterowniki, więc sterowanie czeka. Jeśli {entity} to przekaźnik kotła, wybierz go jako przekaźnik w opcjach sterowania wtyczki i skieruj polecenia VT na pomocnika."
+    },
+    "vt_decision_unknown_off": {
+      "title": "Decyzja VT nie jest znana: kocioł nie grzeje",
+      "description": "Pomocnik {helper}, którego przełącza kocioł centralny Versatile Thermostat, od dziesięciu minut nie jest ani włączony, ani wyłączony, więc wtyczka nie wie, czy VT chce ciepła, i trzyma grzanie wyłączone. Sprawdź, czy pomocnik istnieje i działa i czy kocioł centralny VT go przełącza."
+    },
+    "vt_decision_unknown_handed_back": {
+      "title": "Decyzja VT nie jest znana: kocioł wrócił do termostatu albo własnego regulatora pokojowego",
+      "description": "Pomocnik {helper}, którego przełącza kocioł centralny Versatile Thermostat, od dziesięciu minut nie jest ani włączony, ani wyłączony, więc wtyczka nie wie, czy VT chce ciepła: oddała kocioł termostatowi albo jego własnemu regulatorowi pokojowemu i przejmie go znowu, gdy pomocnik będzie włączony albo wyłączony. Sprawdź, czy pomocnik istnieje i działa i czy kocioł centralny VT go przełącza."
+    },
+    "vt_settings_moved": {
+      "title": "Ustaw progi wezwania ciepła w kotle centralnym VT",
+      "description": "Kocioł centralny Versatile Thermostat decyduje teraz, czy kocioł grzeje, więc własne ustawienia wezwania ciepła wtyczki zniknęły. Część z nich była ustawiona: wołające pokoje {count}, moc {power} kW, otwarcie zaworu {opening} %, opóźnienie włączenia {delay} s („-”: nieustawione). Ustaw w kotle centralnym VT to, co VT oferuje — progi liczby urządzeń i mocy oraz opóźnienie włączenia; VT nie ma progu otwarcia zaworu — i skieruj jego polecenia na pomocnika, którego wybierzesz we wtyczce."
     }
   },
   "services": {

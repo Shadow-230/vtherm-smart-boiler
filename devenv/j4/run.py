@@ -893,6 +893,7 @@ async def _demand(r: Run) -> bool:
 
 async def E3(r: Run):
     """VT's activation delay of 120 s holds a start"""
+    raise NotRun(_NO_PLUGIN_DELAY)
     try:
         d = await r.options(behaviour={"activation_delay_s": 120})
         r.note(f"options {d.get('type')} {d.get('errors')}")
@@ -1017,7 +1018,7 @@ BASE_EXPECT: dict[str, dict[str, object]] = {
         # gateway scenario on one of them is not run (J4 of 2026-11-18).
         "curve.exponent": None,
         "circuit.max_flow": None,
-        "activation_delay_s": 0,
+        "vt_boiler_helper": "input_boolean.j4_vt_central_boiler",  # I12.8
         "comfort_correction": False,
         "curve.design_flow": 55.0,
         "curve.room_mode": "manual",
@@ -1037,7 +1038,7 @@ BASE_EXPECT: dict[str, dict[str, object]] = {
         "relay_rest_state": "off",
         "relay_is_separate_contact": True,
         "own_room_controller": False,
-        "activation_delay_s": 0,
+        "vt_boiler_helper": "input_boolean.j4_vt_central_boiler",  # I12.8
     },
 }
 
@@ -1199,6 +1200,11 @@ async def check_written_exactly(r: Run, since: float) -> None:
 class NotRun(Exception):
     """A scenario whose precondition does not hold on the instance: not run, its reason said
     (J4 of 2026-11-18: Q5 ran with SmartPI still learning from scratch)."""
+
+
+# I12.8: the plugin's own activation delay is gone — VT's central boiler waits its own, set in
+# VT; the scenarios that set the plugin's are to be redone at I12.15.
+_NO_PLUGIN_DELAY = "the plugin has no activation delay of its own since I12.8: VT's is set in VT"
 
 
 async def main(ids: list[str]) -> None:

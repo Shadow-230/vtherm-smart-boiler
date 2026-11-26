@@ -5,6 +5,9 @@ reads the same values the runner writes."""
 
 from __future__ import annotations
 
+# I12.8: the helper VT's central boiler switches (devenv/config/configuration.yaml).
+VT_HELPER = "input_boolean.j4_vt_central_boiler"
+
 # The menu items instance 1's options live in, in the menu's order.
 GATEWAY_ITEMS = (
     "interface",
@@ -47,10 +50,9 @@ BASE_GATEWAY: dict[str, object] = {
     "exponent": None,
     "offset": 0.0,
     "comfort_correction": False,
-    # Control behaviour; "off" is asked only at the simple level, where S-49 refuses it.
-    "activation_delay_s": 0,
-    "count_by": "devices",  # VT's heads, the default since 2026-10-14; at 1 the same as zones
-    "count_threshold": 1,
+    # Control behaviour; "off" is asked only at the simple level, where S-49 refuses it. VT's
+    # central boiler decides whether the boiler heats, through its helper (I12.8).
+    "vt_boiler_helper": VT_HELPER,
     "learning_pauses": True,
     "ramp_k_per_min": 1.0,
     "decision_interval_min": 5.0,
