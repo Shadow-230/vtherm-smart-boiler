@@ -12,10 +12,11 @@ over_climate). A zone whose thermostat VT has not handed over — one VT started
 registered, until VT's reload — is not known: nothing of VT's climate entity stands in for it.
 Nothing of SmartPI is read (I12.9).
 
-What is still read from VT's climate entities: the zone history (I12.7b — ``zone_from_state``,
-``recorded_state``), and, until the rooms come from VT (I12.11), the zone picker's lists, the
-zones' names, the reload repair (``shows_running``) and VT's central mode select. VT's version
-and whether VT is loaded are Home Assistant's knowledge of its integrations.
+Nothing of VT's climate entities goes into the history: the rooms' history is what the plugin
+read here, kept in its own store (I12.7b). What is still read from VT's climate entities, until
+the rooms come from VT (I12.11): the zone picker's lists, the zones' names, the reload repair
+(``shows_running``) and VT's central mode select. VT's version and whether VT is loaded are Home
+Assistant's knowledge of its integrations.
 
 VT's central boiler decides whether the boiler heats (I12): its settings reach the plugin in each
 handed-over thermostat's ``entry_infos``, read here only to check that its commands switch the
@@ -49,7 +50,7 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_loaded_integration
@@ -61,11 +62,9 @@ from .core.zones import room_trusted
 from .vtherm_attributes import (
     RUNTIME_MEMBERS,
     CentralMode,
-    ZoneValues,
     central_mode,
     live_zone,
     shows_running,
-    zone_values,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -708,14 +707,6 @@ class VThermLink:
         state = self._hass.states.get(entity_id)
         return _MISSING if state is None else state.state
 
-    def zone_from_state(self, state: State | None) -> ZoneValues:
-        """I12.7b: a zone's values for its history from a state of its climate entity (current
-        or recorded), until the plugin's own store replaces it."""
-        if state is None:
-            return ZoneValues()
-        unit = str(self._hass.config.units.temperature_unit)
-        return zone_values(state.state, state.attributes, unit)
-
     def shows_running(self, entity_id: str) -> bool:
         """I12.11: VT's climate shows the thermostat started — for the reload repair only, until
         the rooms come from VT."""
@@ -749,10 +740,6 @@ class VThermLink:
         """The zones built on the boiler's or the gateway's own thermostat (X5.19), as VT's
         entries say now: VT can be reconfigured without the plugin's options changing."""
         return zones_on_boiler_thermostat(self._hass, self._zones, boiler_entities)
-
-    def recorded_state(self, entity_id: str) -> State | None:
-        """I12.7b: a zone's current state as the history records it."""
-        return self._hass.states.get(entity_id)
 
     def zone_algorithm(self, entity_id: str) -> ZoneAlgorithm:
         """A zone's settings, from its thermostat's ``entry_infos`` (I12.7); not known while VT

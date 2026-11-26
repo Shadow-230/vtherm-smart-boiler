@@ -14,8 +14,9 @@ ALLOWED = {"vtherm_link.py", "vtherm_attributes.py"}
 
 # VT's names the plugin reads (I12.7): the thermostat members ``vtherm_api`` declares and its
 # power hook's kinds of device; the keys of a thermostat's ``entry_infos`` (VT 10.6.5
-# ``const.py``); VT's events (I12.10: safety mode and the automatic window detection); and VT
-# 10.4.0's climate attributes the zone history (I12.7b) and the reload repair (I12.11) still read.
+# ``const.py``); VT's events (I12.10: safety mode and the automatic window detection); and the
+# climate attribute the reload repair still reads (I12.11). None for the rooms' history: it is the
+# plugin's own reads (I12.7b).
 # Generic Home Assistant words ("heat", "temperature", "on") are not VT's.
 VT_NAMES = frozenset(
     {
@@ -23,16 +24,12 @@ VT_NAMES = frozenset(
         "central_boiler_deactivation_service",
         "cycle_min",
         "delayed_activation_sec",
-        "device_power",
         "entry_infos",
         "hvac_off_reason",
         "hvac_off_window_detection",
         "is_device_active",
         "is_ready",
         "last_temperature_measure",
-        "on_percent",
-        "power_manager",
-        "power_unit",
         "target_temperature",
         "temperature_sensor_entity_id",
         "thermostat_over_switch",
@@ -40,7 +37,6 @@ VT_NAMES = frozenset(
         "underlying_entity_ids",
         "use_central_boiler_feature",
         "used_by_controls_central_boiler",
-        "valve_open_percent",
         "valve_regulation",
         "versatile_thermostat_central_boiler_event",
         "versatile_thermostat_safety_event",

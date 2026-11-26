@@ -4,8 +4,9 @@ nothing here changes a setting or writes anything.
 
 The lowest water temperature (decision 2, S-02, S-56) is one setting the user enters, like a
 point of the curve; 0.2.2 only suggests. The evidence, over the last ``WINDOW_DAYS`` of the
-history: a heating burn counts when it is complete, the zones asked for heat throughout it and
-at its end (a moment not known does not count — a burn with it is left out), no hot water ran
+history: a heating burn counts when it is complete, heat was called throughout it and at its end
+— VT's call where its helper's state is known, else the rooms (I12.7b); a moment not known does
+not count, a burn with it is left out —, no hot water ran
 during it, its setpoint at its start lay within ``BAND_K`` of the reference, it ended on
 temperature (the flow at its end at least its setpoint − ``ENDED_ON_TEMPERATURE_K``), and —
 valves as an input — where a zone calling during it reports its opening, one such zone was at
@@ -162,8 +163,9 @@ def _setpoints(history: History, source: SetpointSource | None) -> Series[float]
 
 
 def _asked_throughout(demand: Series[bool] | None, start: float, end: float) -> bool:
-    """The zones asked for heat at every moment of the burn and at its end, each moment known:
-    an unknown one leaves the burn out (the evidence's side of the missing-data rule)."""
+    """Heat was called at every moment of the burn and at its end — VT's call where its
+    helper's state is known, else the rooms (I12.7b) —, each moment known: an unknown one
+    leaves the burn out (the evidence's side of the missing-data rule)."""
     if demand is None or demand.value_at(end) is not True:
         return False
     return all(part.value is True for part in demand.segments(start, end) if part.duration > 0)

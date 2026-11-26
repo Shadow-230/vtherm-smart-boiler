@@ -43,10 +43,11 @@ jego woda, zapisuje to do kotła i oddaje kocioł przy każdym wyjściu.
   okna pokoju oraz ustawienia centralnego kotła VT. Z wywołań VT na module funkcji: strefa liczy
   się jako uruchomiona od pierwszego `refresh_state` od VT, a jej wypełnienie i otwarcie zaworu to
   to, co ostatnio podał hak mocy VT jako zastosowane. Strefa, której termostatu VT nie przekazał,
-  jest nieznana; nic z encji klimatu VT jej nie zastępuje. Z encji klimatu VT czyta na razie
-  jeszcze: historię stref (aż wtyczka będzie miała własną, krok I12.7b) oraz wybór stref, nazwy
-  stref, zgłoszenie o przeładowaniu i tryb centralny VT (aż pokoje będą pochodzić z VT, krok
-  I12.11). Wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`), zamiast to zakładać;
+  jest nieznana; nic z encji klimatu VT jej nie zastępuje. Historia pokoi to to, co odczytał,
+  przechowywane przez samą wtyczkę (zobacz [Stan trwały](#6-stan-trwały)); nic z encji klimatu VT
+  do niej nie trafia. Z encji klimatu VT czyta na razie jeszcze: wybór stref, nazwy stref,
+  zgłoszenie o przeładowaniu i tryb centralny VT (aż pokoje będą pochodzić z VT, krok I12.11).
+  Wykrywa, co jest zainstalowane (VT i jego wersję, `vtherm_api`), zamiast to zakładać;
   nie czyta niczego ze SmartPI. Żaden inny moduł nie odczytuje stanu strefy po nazwie encji.
 - **Moduł funkcji (feature manager) zarejestrowany w VT** (`feature_manager.py`, przez
   `register_feature_manager` z `vtherm_api`) to kanał, którym VT przekazuje każdy termostat.
@@ -95,7 +96,8 @@ docs/                                     dokumentacja, osobny katalog na każdy
 - `sim/custom_components/` zawiera `boiler_sim` (symulowany kocioł, pomieszczenia i pogodę) oraz
   zastępczy `opentherm_gw`, oba tylko do testów.
 - `tools/import_history.py` zamienia kopię bazy recordera HA na historię rdzenia, żeby analizę
-  monitora można było sprawdzić na zapisanych danych.
+  monitora można było sprawdzić na zapisanych danych: sygnały kotła, pogodę i pomocnika
+  przełączanego przez kocioł centralny VT — nigdy encje klimatu VT.
 - Strona „Kocioł” ([`plan-0.2-i10.md`](../../en/development/plans/plan-0.2-i10.md)):
   `frontend/` to jej źródło; `npm run build` w tym katalogu zapisuje moduł, który wtyczka
   udostępnia, do `custom_components/vtherm_smart_boiler/frontend/`, razem z licencjami pakietów w
@@ -162,6 +164,20 @@ historię kroczącą i wylicza to, co publikują encje. Szybka ścieżka działa
 co 30 sekund (odczyty, sprawdzenie sygnałów, ciepła woda, bieżące alarmy); analiza
 (`core/analysis.py`) działa co kilka minut na kopii historii, poza pętlą zdarzeń. Koordynator
 zarządza też magazynami (zobacz [Stan trwały](#6-stan-trwały)).
+
+Historia (`core/history.py`, `History`) ma trzy źródła. Sygnały kotła, pogoda, stan sterowania
+wtyczki i pomocnik przełączany przez kocioł centralny VT przychodzą na żywo z ich stanów, a po
+starcie z rejestratora: ostatnie 8 dni (`HISTORY_DAYS`) i starsze dni, do roku wstecz, tylko do
+budowy podsumowań dni. Pokoje pochodzą z własnych odczytów wtyczki przez `vtherm_api`, przy każdym
+odświeżeniu (30 s) i każdym kroku sterowania (10 s), tylko zmiany (`ZoneSeries.record`), a po
+starcie z magazynu pokoi — nigdy z zapisów encji klimatu VT w rejestratorze (I12.7b). „Czy kocioł
+był wezwany do grzania” (`History.zone_demand`, `zone_calling`) to stan pomocnika wszędzie, gdzie
+jest znany — własna decyzja VT, z jego progami — a pokoje tylko tam, gdzie nie jest, albo gdy
+pomocnik nie jest ustawiony (samo monitorowanie). Odróżnia palenia na grzanie od ciepłej wody
+(każde podsumowanie dnia, werdykt, dopasowanie budynku), przerwy, które może ocenić dryf
+histerezy, krótkie palenia liczone przez niestabilny zapłon i palenia brane przez dowody
+najniższej temperatury wody. Własne szczegóły pokoi — średnia nastawa w raporcie, otwarcia
+zaworów w tych dowodach — pochodzą tylko z magazynu pokoi, więc zaczynają się od instalacji.
 
 **Monitor i analiza (`core/monitor.py`, `core/analysis.py`, `core/verdict.py`).** Od historii do
 cykli pracy palnika, metryk, ostrzeżeń o trendach, raportu i werdyktu sterowania, zawsze z
@@ -319,7 +335,7 @@ ręcznie.
 ## 6. Stan trwały
 
 Sterowanie ma własny magazyn (`ControlStore` w `coordinator.py`), oddzielny od głównego magazynu
-wpisu, który trzyma historię monitora i podsumowania dni.
+wpisu, który trzyma drobne dane monitora i podsumowania dni.
 
 - **Co trzyma:** czy sterowanie jest włączone, ostatnie polecenie i to, czy wtyczka steruje,
   zatrzaski i ich przyczyny, zaległe oddanie kotła i dowody zwolnienia, wartości bazowe, z którymi porównują zabezpieczenia, obserwacje przekaźnika i aktywne alarmy
@@ -350,6 +366,18 @@ dni i najwyżej 2000 wpisów, najstarsze wypadają pierwsze (tymczasowo, K4); za
 zmianie, od razu przy wyładowaniu wpisu i przez Home Assistanta przy jego zatrzymaniu; magazyn,
 którego nie da się odczytać, zaczyna pusty dziennik. Znika razem z innymi magazynami wpisu, gdy
 wpis jest usuwany.
+
+**Historia pokoi** (`rooms_store` w `coordinator.py`, jej format w `core/history.py`) też ma
+własny magazyn, `<domain>.<entry_id>.rooms`: temperatura, nastawa, tryb, wezwanie, wypełnienie i
+otwarcie zaworu każdego pokoju, tak jak wtyczka odczytała je przez `vtherm_api` w ostatnich 8
+dniach. Każda seria to jeden wiersz tekstu — chwile w pełnych sekundach, każda po pierwszej jako
+sekundy od poprzedniej; wartości do trzech miejsc po przecinku — bo Home Assistant zapisuje swoje
+magazyny z wcięciami. Trzyma najwyżej 10 000 najnowszych próbek serii, więc migocząca wartość nie
+powiększa pliku bez końca. Zapisywany pół godziny po zmianie (najwyżej około 48 zapisów na dobę)
+i przy czystym zatrzymaniu; odczytywany przy starcie, dla pokoi skonfigurowanych teraz, nieznany
+od ostatniego zapisu do następnego odczytu pokoi — awaria gubi to, co przyszło od zapisu. Serii,
+której nie da się odczytać, nie bierze; magazyn bez chwili zapisu pomija. Nic do niego nie jest
+zapisywane, zanim go odczytano. Znika razem z innymi magazynami wpisu, gdy wpis jest usuwany.
 
 ## 7. Testowanie
 

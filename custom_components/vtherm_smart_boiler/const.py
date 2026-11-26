@@ -22,6 +22,9 @@ ALIVE_STORE_VERSION = 1
 # The journal, ``<DOMAIN>.<entry_id>.journal``: what the plugin decided and why, for the Boiler
 # page (I10.6) — kept apart, so the entry's store and its version stay as they are.
 JOURNAL_STORE_VERSION = 1
+# The rooms' history, ``<DOMAIN>.<entry_id>.rooms``: what the plugin read of each room through
+# ``vtherm_api`` over the last ``HISTORY_DAYS`` (I12.7b), kept apart from the entry's store.
+ROOMS_STORE_VERSION = 1
 # In the entry's store: the control state lives in its own store (0.2.2 on). Without it, the
 # entry's store is 0.2.1's, whose "control" copy is the state.
 CONTROL_STORE_MARKER = "control_store"
@@ -98,6 +101,10 @@ def alive_store_key(entry_id: str) -> str:
 
 def journal_store_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}.journal"
+
+
+def rooms_store_key(entry_id: str) -> str:
+    return f"{DOMAIN}.{entry_id}.rooms"
 
 
 def stored_flag(raw: object) -> bool:

@@ -1,5 +1,6 @@
-"""What VT's thermostats tell the plugin through ``vtherm_api`` (I12.7), and the zone history's
-reading of VT's climate states and attributes (I12.7b; names verified in VT 10.4.0)."""
+"""What VT's thermostats tell the plugin through ``vtherm_api`` (I12.7), and what the reload
+repair still reads of VT's climate and its central mode (I12.11). Nothing of VT's climates goes
+into the rooms' history (I12.7b)."""
 
 from __future__ import annotations
 
@@ -7,105 +8,21 @@ from datetime import UTC, datetime
 
 import pytest
 
+from custom_components.vtherm_smart_boiler import vtherm_attributes
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.vtherm_attributes import (
     RUNTIME_MEMBERS,
     CentralMode,
-    ZoneValues,
     central_mode,
     live_zone,
     shows_running,
-    zone_values,
 )
-
-
-def test_over_valve_zone() -> None:
-    attributes = {
-        "current_temperature": 20.4,
-        "temperature": 21.0,
-        "hvac_action": "heating",
-        "on_percent": 0.35,
-        "power_percent": 35,
-        "valve_open_percent": 35,
-        "power_manager": {"device_power": 1500, "power_unit": "W"},
-    }
-    assert zone_values("heat", attributes) == ZoneValues(
-        20.4, 21.0, True, True, 0.35, pytest.approx(0.35), pytest.approx(1.5)
-    )
-
-
-def test_over_climate_zone_has_no_on_percent() -> None:
-    values = zone_values(
-        "heat", {"current_temperature": 19.0, "temperature": 20.0, "hvac_action": "idle"}
-    )
-    assert values.calling is False
-    assert values.on_percent is None
-    assert values.valve_open is None
-    assert values.power is None
-
-
-@pytest.mark.parametrize(
-    ("state", "enabled"),
-    [
-        ("heat", True),
-        ("auto", True),
-        ("heat_cool", True),
-        ("off", False),
-        ("cool", False),
-        ("unavailable", None),
-        ("unknown", None),
-    ],
-)
-def test_heating_enabled(state: str, enabled: bool | None) -> None:
-    assert zone_values(state, {}).heating_enabled is enabled
-
-
-def test_implausible_or_foreign_values_are_unknown() -> None:
-    values = zone_values(
-        "heat",
-        {
-            "current_temperature": "unavailable",
-            "on_percent": 35,  # not a fraction
-            "valve_open_percent": 140,
-            "hvac_action": "bogus",
-            "power_manager": {"device_power": -3},
-        },
-    )
-    assert values == ZoneValues(heating_enabled=True)
-
-
-def test_fahrenheit_system() -> None:
-    values = zone_values("heat", {"current_temperature": 68.0, "temperature": 69.8}, "°F")
-    assert values.temperature == pytest.approx(20.0)
-    assert values.target == pytest.approx(21.0)
-
-
-def test_kilowatt_power_unit() -> None:
-    values = zone_values("heat", {"power_manager": {"device_power": 1.2, "power_unit": "kW"}})
-    assert values.power == pytest.approx(1.2)
-
-
-@pytest.mark.parametrize(("device_power", "kw"), [(1.5, 1.5), (100.0, 100.0), (1500.0, 1.5)])
-def test_a_power_without_its_unit_is_read_as_vt_did(device_power: float, kw: float) -> None:
-    """P67: VT before its power unit option took a device power above 100 as W, else kW — the
-    rule its own migration keeps; reading such a power as W made it 1000 times too small."""
-    values = zone_values("heat", {"power_manager": {"device_power": device_power}})
-    assert values.power == pytest.approx(kw)
 
 
 def test_central_mode() -> None:
     assert central_mode("Stopped") is CentralMode.STOPPED
     assert central_mode("Frost protection") is CentralMode.FROST_PROTECTION
     assert central_mode("unavailable") is None
-
-
-@pytest.mark.parametrize("device_power", [0, 0.0, -1.0, "0"])
-def test_a_device_power_of_zero_is_no_data(device_power: object) -> None:
-    """P-14: VT 10.4.0 publishes ``device_power`` 0 when no power is configured (observed)."""
-    values = zone_values(
-        "heat", {"power_manager": {"device_power": device_power, "power_unit": "kW"}}
-    )
-    assert values.power is None
 
 
 @pytest.mark.parametrize(
@@ -131,11 +48,16 @@ def test_vts_climate_shows_the_thermostat_running(
 @pytest.mark.parametrize("action", [["heating"], {"a": 1}])
 def test_a_malformed_hvac_action_or_unit_is_unknown(action: object) -> None:
     """PB-41: an action or a temperature unit that is not text reads as unknown, never raises."""
-    values = zone_values(
-        "heat", {"current_temperature": 19.0, "hvac_action": action}, temperature_unit=["°C"]
-    )
-    assert values.calling is None
-    assert values.temperature is None
+    found = live_zone({"current_temperature": 19.0, "hvac_action": action}, ["°C"])
+    assert "calling" not in found
+    assert found.get("temperature") is None
+
+
+def test_nothing_reads_vts_climate_for_the_rooms_history() -> None:
+    """I12.7b: the parser of VT's climate states and attributes for the history is gone — the
+    rooms' history is the plugin's own reads through ``vtherm_api``."""
+    assert not hasattr(vtherm_attributes, "zone_values")
+    assert not hasattr(vtherm_attributes, "ZoneValues")
 
 
 def test_the_thermostats_members_give_the_zones_values() -> None:
@@ -205,15 +127,12 @@ def test_every_vt_mode_reads_as_its_state(mode: str, heating: bool, auto: bool) 
     """VT's modes (``vtherm_hvac_mode.py``, 10.6.5) through the API mean what the climate's state
     VT publishes from them means — for every thermostat type."""
     assert live_zone({"vtherm_hvac_mode": mode}) == {"heating_enabled": heating, "auto_mode": auto}
-    state = zone_values("off" if mode == "sleep" else mode, {})
-    assert state.heating_enabled is heating
 
 
 @pytest.mark.parametrize("mode", ["unknown", "unavailable"])
 def test_a_vt_mode_the_plugin_does_not_know_gives_nothing(mode: str) -> None:
     """VT's modes before a start read as nothing: the zone's mode is not known."""
     assert live_zone({"vtherm_hvac_mode": mode}) == {}
-    assert zone_values(mode, {}).heating_enabled is None
 
 
 def test_the_duty_cycle_is_not_read_from_the_thermostat() -> None:

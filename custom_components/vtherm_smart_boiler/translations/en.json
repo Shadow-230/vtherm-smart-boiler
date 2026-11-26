@@ -2531,7 +2531,7 @@
             "state": {
               "held": "Held: its input is unknown for now (up to an hour)",
               "unknown_input": "Unknown: its input is missing or not enough",
-              "no_zone_data": "No zone data"
+              "no_zone_data": "No data on calls for heat: no helper of VT's central boiler, and no room history yet"
             }
           },
           "limit": {

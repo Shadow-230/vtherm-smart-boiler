@@ -297,10 +297,11 @@ def unstable_ignition(
     known_s: float | None = None,
 ) -> Alarm:
     """Complete burns shorter than ``shortest_s`` in the last day — flame lost soon after
-    ignition — above ``limit``. A burn that ended with the zones' demand (a TPI zone's short
-    on-time, followed at once) lost no flame: with ``demand`` — whether the zones ask for heat
-    at each moment — only one during which, its end included, no moment is known without
-    demand counts; the boiler was told to stop at such a moment. Nor did one that ended on the
+    ignition — above ``limit``. A burn that ended with the demand (a TPI zone's short on-time,
+    followed at once) lost no flame: with ``demand`` — whether heat was called at each moment,
+    VT's call where its helper's state is known, else the rooms (I12.7b) — only one during
+    which, its end included, no moment is known without demand counts; the boiler was told to
+    stop at such a moment. Nor did one that ended on the
     boiler's own hysteresis (P-81): with ``flow`` and ``setpoint`` mapped (given), only a burn
     that ended with the flow known and more than ``SETPOINT_REACHED_K`` below the CH setpoint
     then in force counts — either unknown at its end, it does not; with either not mapped every
@@ -501,9 +502,10 @@ def hysteresis_samples(
 ) -> list[float]:
     """Flow when the burner stopped minus flow when it restarted, for heating cycles.
 
-    Only pauses between two heating burns with both edges seen count, during which the zones'
-    demand (``History.zone_calling``) was known "asking" throughout — a pause without demand
-    comes from the zones, not the burner's hysteresis (P-29); without zone data, none — and,
+    Only pauses between two heating burns with both edges seen count, during which the demand
+    (``History.zone_calling``: VT's call where its helper's state is known, else the rooms,
+    I12.7b) was known "asking" throughout — a pause without demand comes from the zones, not
+    the burner's hysteresis (P-29); without either, none — and,
     when the setpoint is mapped, only those during which it was known throughout and its range
     stayed within ``max_setpoint_change`` (PB-67).
     """

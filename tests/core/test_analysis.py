@@ -172,6 +172,19 @@ def test_the_flue_gas_and_hysteresis_trends_compare_the_baseline_with_the_last_d
     assert trends_of(trend_history([*BASELINE, *RECENT])) == JUDGED
 
 
+def test_the_hysteresis_drift_is_judged_from_vts_call_alone() -> None:
+    """I12.7b: VT's call — the helper on throughout — tells pauses the zones did not cause, as
+    the rooms did: the drift is judged without any room's history (before the plugin's store
+    has any). Negative: the helper off in the pauses gives no sample, whatever the rooms say."""
+    on = trend_history([*BASELINE, *RECENT])
+    on.zones.clear()
+    on.vt_called.append(0.0, True)
+    assert trends_of(on)[AlarmKind.HYSTERESIS_DRIFT] == JUDGED[AlarmKind.HYSTERESIS_DRIFT]
+    off = trend_history([*BASELINE, *RECENT])
+    off.vt_called.append(0.0, False)
+    assert trends_of(off)[AlarmKind.HYSTERESIS_DRIFT] == UNKNOWN_HYSTERESIS
+
+
 def test_the_pressure_trend_compares_the_medians_of_its_windows() -> None:
     """The quiet, cold pressure 1.5 bar in the baseline's last day and 1.2 bar since: falling
     over 0.2 bar is a warning. Negative: without zone data no pause tells the hysteresis."""

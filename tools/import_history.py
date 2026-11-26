@@ -5,8 +5,10 @@ Usage (every command through scripts/env.sh):
     scripts/env.sh python -m tools.import_history --db data/home-assistant_v2.db \\
         --mapping data/mapping.toml [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--tz <IANA zone>]
 
-The mapping (see tools/mapping.example.toml) says which entity provides each signal. The database
-is only read. The report shows signal coverage, burns, metrics and the verdict.
+The mapping (see tools/mapping.example.toml) says which entity provides each signal, and the
+helper VT's central boiler switches: whether VT called for heat (I12.7b). Nothing of VT's climates
+is read — the rooms' history is the plugin's own. The database is only read. The report shows
+signal coverage, burns, metrics and the verdict.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from custom_components.vtherm_smart_boiler.core.daily import (
     fit_points,
     summarize_day,
 )
-from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries
+from custom_components.vtherm_smart_boiler.core.history import History
 from custom_components.vtherm_smart_boiler.core.metrics import HOUR, ModulationScale
 from custom_components.vtherm_smart_boiler.core.monitor import MonitorOptions, summarize, verdict
 from custom_components.vtherm_smart_boiler.core.parameters import (
@@ -40,23 +42,22 @@ from custom_components.vtherm_smart_boiler.core.parameters import (
 from custom_components.vtherm_smart_boiler.core.series import Series, known_duration
 from custom_components.vtherm_smart_boiler.core.signals import LINK_SIGNALS, Signal
 from custom_components.vtherm_smart_boiler.units import signal_value, temperature_to_celsius
-from custom_components.vtherm_smart_boiler.vtherm_attributes import zone_values
 
 from .recorder_db import RecorderDatabase
 
 DAY = 86400.0
+HELPER = "input_boolean."  # the helper VT's central boiler switches (I12)
 
 
 @dataclass(frozen=True, slots=True)
 class EntityMapping:
-    """The user's mapping: signals, weather entity, zones, parameters and options."""
+    """The user's mapping: signals, weather entity, VT's helper, parameters and options."""
 
     signals: dict[Signal, str]
     weather: str | None = None
-    zones: dict[str, str] = field(default_factory=dict)
+    vt_helper: str | None = None  # the helper VT's central boiler switches (I12.7b)
     parameters: ParameterSet = field(default_factory=ParameterSet)
     options: MonitorOptions = field(default_factory=MonitorOptions)
-    temperature_unit: str = "°C"  # Home Assistant's unit, for the VT zone temperatures
 
 
 class MappingError(ValueError):
@@ -64,10 +65,14 @@ class MappingError(ValueError):
 
 
 # What the mapping may hold: anything else is a misspelling that would be silently ignored.
-SECTIONS = ("boiler", "zones", "parameters", "options", "weather")
-OPTION_KEYS = ("condensing_return", "modulation_scale", "temperature_unit")
-TEMPERATURE_UNITS = ("°C", "°F")  # Home Assistant's unit systems
+SECTIONS = ("boiler", "vt", "parameters", "options", "weather")
+OPTION_KEYS = ("condensing_return", "modulation_scale")
 CONDENSING_RETURN = (40.0, 65.0)  # as the plugin's options allow
+# I12.7b: what an older mapping may still hold, with why it is no longer read.
+REMOVED = {
+    "zones": "VT's climates are no longer read: the rooms' history is the plugin's own; map VT's "
+    "central boiler helper as [vt] helper instead",
+}
 
 
 def load_mapping(path: Path) -> EntityMapping:
@@ -78,6 +83,8 @@ def load_mapping(path: Path) -> EntityMapping:
 
 def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
     for name in data:
+        if name in REMOVED:
+            raise MappingError(f"[{name}]: {REMOVED[name]}")
         if name not in SECTIONS:
             raise MappingError(f"[{name}]: not a known section ({', '.join(SECTIONS)})")
     boiler = _table(data, "boiler")
@@ -94,11 +101,9 @@ def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
     missing = sorted(s.value for s in LINK_SIGNALS if s not in signals)
     if missing:
         raise MappingError(f"[boiler] missing required signals: {', '.join(missing)}")
-    zones: dict[str, str] = {}
-    for name, entity in _table(data, "zones").items():
-        if not isinstance(entity, str) or not entity.startswith("climate."):
-            raise MappingError(f"[zones] {name}: expected a VT thermostat (climate.*)")
-        zones[str(name)] = entity
+    helper = _table(data, "vt", ("helper",)).get("helper")
+    if helper is not None and (not isinstance(helper, str) or not helper.startswith(HELPER)):
+        raise MappingError(f"[vt] helper: expected the helper VT switches ({HELPER}*)")
     parameters = ParameterSet()
     for key, value in _table(data, "parameters").items():
         try:
@@ -121,13 +126,10 @@ def parse_mapping(data: Mapping[str, Any]) -> EntityMapping:
     low, high = CONDENSING_RETURN
     if not low <= options.condensing_return <= high:
         raise MappingError(f"[options] condensing_return: expected {low:g} to {high:g} °C")
-    unit = options_data.get("temperature_unit", "°C")
-    if unit not in TEMPERATURE_UNITS:
-        raise MappingError(f"[options] temperature_unit: expected {' or '.join(TEMPERATURE_UNITS)}")
     weather = _table(data, "weather", ("entity",)).get("entity")
     if weather is not None and (not isinstance(weather, str) or "." not in weather):
         raise MappingError("[weather] entity: expected an entity ID")
-    return EntityMapping(signals, weather, zones, parameters, options, unit)
+    return EntityMapping(signals, weather, helper, parameters, options)
 
 
 def _table(
@@ -160,19 +162,9 @@ def read_history(db: RecorderDatabase, mapping: EntityMapping, start: float, end
             if isinstance(raw, int | float) and not isinstance(raw, bool):
                 value = temperature_to_celsius(float(raw), unit)
             history.weather.append(row.t, value)
-    for zone_id, entity in mapping.zones.items():
-        zone = ZoneSeries(zone_id)
-        for row in db.states(entity, start, end):
-            # I12.7b: from VT's climate attributes, until the plugin's own store replaces them.
-            values = zone_values(row.state, row.attributes, mapping.temperature_unit)
-            zone.temperature.append(row.t, values.temperature)
-            zone.target.append(row.t, values.target)
-            zone.heating_enabled.append(row.t, values.heating_enabled)
-            zone.calling.append(row.t, values.calling)
-            zone.on_percent.append(row.t, values.on_percent)
-            zone.valve_open.append(row.t, values.valve_open)
-            zone.power.append(row.t, values.power)
-        history.zones[zone_id] = zone
+    if mapping.vt_helper is not None:
+        for row in db.states(mapping.vt_helper, start, end):
+            history.vt_called.append(row.t, {"on": True, "off": False}.get(row.state))
     return history
 
 
@@ -241,10 +233,9 @@ def report(
         lines.append(f"  {signal.value:18} {known_duration(series, start, end) / span:6.1%}")
     if len(history.weather):
         lines.append(f"  {'weather':18} {known_duration(history.weather, start, end) / span:6.1%}")
-    for zone_id, zone in history.zones.items():
-        lines.append(
-            f"  zone {zone_id:13} {known_duration(zone.temperature, start, end) / span:6.1%}"
-        )
+    if len(history.vt_called):
+        called = known_duration(history.vt_called, start, end) / span
+        lines.append(f"  {'vt_called':18} {called:6.1%}")
 
     summary = summarize(history, mapping.parameters, start, end, mapping.options)
     heating, dhw = summary.heating, summary.dhw
@@ -380,7 +371,8 @@ def _run(args: argparse.Namespace) -> int:
                 f"the window {_moment(start, tz)} – {_moment(end, tz)} is empty or reversed; "
                 f"the database holds {_moment(span[0], tz)} – {_moment(span[1], tz)}"
             )
-        unknown = [e for e in mapping.signals.values() if e not in db.entity_ids()]
+        mapped = [*mapping.signals.values(), *filter(None, [mapping.vt_helper])]
+        unknown = [e for e in mapped if e not in db.entity_ids()]
         if unknown:
             print(f"warning: not in the database: {', '.join(unknown)}", file=sys.stderr)
         # Twelve hours on each side: the burns across the window's midnights are whole (P-83).

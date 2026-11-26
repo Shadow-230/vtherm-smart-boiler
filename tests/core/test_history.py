@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
 from itertools import islice
 
 import pytest
 
+from custom_components.vtherm_smart_boiler.core.cycles import BurnKind
 from custom_components.vtherm_smart_boiler.core.daily import summarize_day
-from custom_components.vtherm_smart_boiler.core.history import History, ZoneSeries, with_downtime
+from custom_components.vtherm_smart_boiler.core.history import (
+    History,
+    ZoneSeries,
+    rooms_from_stored,
+    rooms_to_stored,
+    series_from_text,
+    series_to_text,
+    with_downtime,
+)
+from custom_components.vtherm_smart_boiler.core.monitor import summarize
 from custom_components.vtherm_smart_boiler.core.parameters import (
     Estimate,
     ParameterKey,
@@ -204,15 +216,14 @@ def test_overlapping_downtimes_are_one() -> None:
 def _full_zone(zone_id: str) -> ZoneSeries:
     """A zone with every series known from 10 s on."""
     zone = ZoneSeries(zone_id)
-    for series, value in zip(zone.series(), (20.5, 21.0, True, True, 0.4, 0.6, 1.5), strict=True):
+    for series, value in zip(zone.series(), (20.5, 21.0, True, True, 0.4, 0.6), strict=True):
         series.append(10.0, value)
     return zone
 
 
 def test_a_zones_state_holds_every_series_value_at_the_moment() -> None:
-    """A zone's state at a moment carries its id and every series' value then — but the device
-    power, which no zone state holds (I12.7); before its first samples everything but the id and
-    the moment is unknown."""
+    """A zone's state at a moment carries its id and every series' value then; before its first
+    samples everything but the id and the moment is unknown."""
     zone = _full_zone("a")
     assert zone.state_at(20.0) == ZoneState(
         "a",
@@ -349,3 +360,198 @@ def test_separate_downtimes_are_each_unknown() -> None:
         (2 * HOUR, True),
         (3 * HOUR, None),
     ]
+
+
+# --- I12.7b: the rooms' own history, and VT's call ----------------------------------------------
+
+
+def test_a_room_is_recorded_by_its_changes_only() -> None:
+    """Each read of a room goes into its series only where a value changed; a read that changes
+    nothing says so. A read stamped before a series' last sample (a refresh and a control step
+    out of order) takes that sample's time rather than going back."""
+    zone = ZoneSeries("a")
+    first = ZoneState("a", temperature=20.0, target=21.0, heating_enabled=True, calling=True)
+    assert zone.record(first, 10.0)
+    assert not zone.record(first, 40.0)  # the same values: nothing new
+    assert zone.record(replace(first, temperature=20.5), 40.0)
+    assert zone.record(replace(first, temperature=20.6), 30.0)  # stamped before the last
+    assert _samples(zone.temperature) == [(10.0, 20.0), (40.0, 20.6)]
+    assert _samples(zone.target) == [(10.0, 21.0)]
+    assert _samples(zone.on_percent) == [(10.0, None)]  # not known: recorded as unknown
+    assert zone.record(ZoneState("a"), 70.0)  # VT handed nothing over: every value unknown
+    assert zone.state_at(70.0) == ZoneState("a", reported_at=70.0)
+
+
+def _room(zone_id: str) -> ZoneSeries:
+    return ZoneSeries(
+        zone_id,
+        temperature=Series([(100.0, 20.0), (200.4, 20.123456), (300.0, None)]),
+        target=Series([(100.0, 21.0)]),
+        calling=Series([(100.0, True), (250.6, False)]),
+        valve_open=Series([(100.0, 0.25)]),
+    )
+
+
+def test_the_rooms_store_gives_back_what_it_kept() -> None:
+    """The rooms go into the store as text and come back as they were — flags as flags, numbers
+    to a thousandth, unknown as unknown, moments to the second — with every series unknown from
+    the store's last write on: what came after it was never kept. A series with nothing recorded
+    is left out of the store."""
+    stored = rooms_to_stored({"a": _room("a")}, since=0.0, max_points=100)
+    assert set(stored["a"]) == {"temperature", "target", "calling", "valve_open"}
+    assert all(isinstance(text, str) for text in stored["a"].values())
+    rooms, damaged = rooms_from_stored(stored, ["a"], since=0.0, unknown_from=400.0)
+    assert damaged == 0
+    zone = rooms["a"]
+    assert _samples(zone.temperature) == [(100.0, 20.0), (200.0, 20.123), (300.0, None)]
+    assert _samples(zone.calling) == [(100.0, True), (251.0, False), (400.0, None)]
+    assert _samples(zone.target) == [(100.0, 21.0), (400.0, None)]
+    assert zone.calling.value_at(300.0) is False
+    assert not len(zone.on_percent)
+    assert not len(zone.heating_enabled)
+
+
+def test_the_rooms_store_keeps_eight_days_and_a_bounded_number_of_samples() -> None:
+    """Points older than the cut are dropped — the value holding at it kept — and each series
+    keeps at most its newest samples, so a value flapping at every read cannot grow the file
+    without end. On the way back, points older than the cut are dropped too."""
+    many = ZoneSeries("a", temperature=Series((float(t), float(t % 2)) for t in range(50)))
+    stored = rooms_to_stored({"a": many}, since=20.5, max_points=10)
+    rooms, _damaged = rooms_from_stored(stored, ["a"], since=0.0, unknown_from=60.0)
+    assert [s.t for s in rooms["a"].temperature] == [*range(40, 50), 60]
+    stored = rooms_to_stored({"a": many}, since=45.5, max_points=100)
+    rooms, _damaged = rooms_from_stored(stored, ["a"], since=0.0, unknown_from=60.0)
+    assert [s.t for s in rooms["a"].temperature] == [45, 46, 47, 48, 49, 60]
+    rooms, _damaged = rooms_from_stored(stored, ["a"], since=47.5, unknown_from=60.0)
+    assert [s.t for s in rooms["a"].temperature] == [47, 48, 49, 60]
+
+
+def test_only_the_rooms_configured_now_come_back() -> None:
+    """Negative: a room no longer configured is not restored; one the store lacks starts empty
+    (not returned); a store of another shape gives nothing."""
+    stored = rooms_to_stored({"a": _room("a"), "gone": _room("gone")}, 0.0, 100)
+    rooms, damaged = rooms_from_stored(stored, ["a", "new"], since=0.0, unknown_from=400.0)
+    assert set(rooms) == {"a"}
+    assert damaged == 0
+    assert rooms_from_stored(["not", "a", "mapping"], ["a"], 0.0, 400.0) == ({}, 0)
+    assert rooms_from_stored({"a": "text"}, ["a"], 0.0, 400.0) == ({}, 0)
+    rooms, damaged = rooms_from_stored({"a": {"temperature": ""}}, ["a"], 0.0, 400.0)
+    assert damaged == 0
+    assert not len(rooms["a"].temperature)  # an empty line: nothing, not even its unknown
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "100:20.5,-5:21.0",  # back in time
+        "100:20.5,30",  # no value
+        "x:20.5",  # no moment
+        "100:warm",  # not a number
+        "100:nan",  # not a finite number
+        7,  # not text
+    ],
+)
+def test_a_damaged_series_is_left_empty_and_counted(text: object) -> None:
+    """Negative: a series that cannot be read in full is left out, counted, the room's other
+    series kept."""
+    raw = {"a": {"temperature": text, "target": "100:21"}}
+    rooms, damaged = rooms_from_stored(raw, ["a"], since=0.0, unknown_from=400.0)
+    assert damaged == 1
+    assert not len(rooms["a"].temperature)
+    assert _samples(rooms["a"].target) == [(100.0, 21.0), (400.0, None)]
+
+
+@pytest.mark.parametrize(
+    ("text", "flag"),
+    [("100:2", True), ("100:yes", True), ("100:1.5e", False)],
+)
+def test_a_value_of_the_wrong_kind_is_damage(text: str, flag: bool) -> None:
+    """Negative: a flag series holds only 1, 0 or nothing; a number series only numbers."""
+    assert series_from_text(text, flag=flag) is None
+
+
+def test_series_text_is_short_and_reads_back() -> None:
+    """One line per series: the first moment whole, then the steps between; an empty series is
+    an empty line, and an empty line an empty series. A value of the wrong kind is unknown."""
+    flags = Series([(1000.2, True), (1030.0, False), (1060.0, None), (1090.0, "on")])
+    assert series_to_text(flags, flag=True) == "1000:1,30:0,30:,30:"
+    numbers = Series([(5.0, 1.23456), (6.0, True), (7.0, math.inf)])
+    assert series_to_text(numbers, flag=False) == "5:1.235,1:,1:"
+    assert series_to_text(Series(), flag=False) == ""
+    back = series_from_text("1000:1,30:0,30:", flag=True)
+    assert back is not None
+    assert _samples(back) == [(1000.0, True), (1030.0, False), (1060.0, None)]
+    empty = series_from_text("", flag=False)
+    assert empty is not None
+    assert not len(empty)
+
+
+def _burn_kind(history: History) -> BurnKind:
+    """The kind of one burn from 1 h to 2 h, nothing but VT's call or the rooms to tell it."""
+    history.signals[Signal.FLAME] = Series([(0.0, False), (HOUR, True), (2 * HOUR, False)])
+    summary = summarize(history, ParameterSet(), 0.0, 3 * HOUR)
+    return summary.burns[0].kind
+
+
+def _calling_room(calling: bool) -> dict[str, ZoneSeries]:
+    return {"a": ZoneSeries("a", calling=Series([(0.0, calling)]))}
+
+
+@pytest.mark.parametrize(
+    ("vt_called", "rooms", "kind"),
+    [
+        (Series([(0.0, True)]), {}, BurnKind.CH),
+        (Series([(0.0, False)]), {}, BurnKind.DHW),
+        (Series([(0.0, False)]), _calling_room(True), BurnKind.DHW),
+        (Series([(0.0, True)]), _calling_room(False), BurnKind.CH),
+        (Series([(0.0, None)]), _calling_room(True), BurnKind.CH),
+        (Series(), _calling_room(True), BurnKind.CH),
+        (Series(), _calling_room(False), BurnKind.DHW),
+        (Series(), {}, BurnKind.UNKNOWN),
+    ],
+    ids=[
+        "helper_on",
+        "helper_off",
+        "helper_off_over_a_calling_room",
+        "helper_on_over_a_quiet_room",
+        "helper_unknown_the_rooms_decide",
+        "no_helper_a_calling_room",
+        "no_helper_a_quiet_room",
+        "nothing",
+    ],
+)
+def test_vts_call_tells_a_heating_burn_where_it_is_known(
+    vt_called: Series[bool], rooms: dict[str, ZoneSeries], kind: BurnKind
+) -> None:
+    """I12.7b: a burn while VT's helper was on counts as heating, one while it was off as hot
+    water — VT's own decision wins over the rooms where both exist; where the helper's state is
+    not known, or no helper is set (monitoring only), the rooms decide as before."""
+    assert _burn_kind(History(zones=rooms, vt_called=vt_called)) is kind
+
+
+def test_vts_call_fills_the_demand_moment_by_moment() -> None:
+    """VT's call where known, the rooms where it is not, for the demand and for the calls at
+    each moment alike; with neither, nothing is known."""
+    history = History(
+        zones=_calling_room(True),
+        vt_called=Series([(0.0, False), (10.0, None), (20.0, True)]),
+    )
+    for found in (history.zone_demand(0.0, 30.0), history.zone_calling(0.0, 30.0)):
+        assert found is not None
+        assert [found.value_at(t) for t in (5.0, 15.0, 25.0)] == [False, True, True]
+    alone = History(vt_called=Series([(0.0, True)]))
+    demand = alone.zone_demand(0.0, 30.0)
+    assert demand is not None
+    assert demand.value_at(5.0) is True
+    assert History().zone_calling(0.0, 30.0) is None
+
+
+def test_vts_call_is_copied_cut_and_backfilled_with_the_rest() -> None:
+    """VT's call goes into the analysis' copy, is cut with the rolling history and takes the
+    recorder's older states before its live ones."""
+    history = History(vt_called=Series([(0.0, False), (20.0, True), (40.0, False)]))
+    assert _samples(history.copy_window(15.0, 30.0).vt_called) == [(15.0, False), (20.0, True)]
+    history.drop_before(30.0)
+    assert _samples(history.vt_called) == [(20.0, True), (40.0, False)]
+    history.prepend(History(vt_called=Series([(5.0, None), (10.0, False)])))
+    assert _samples(history.vt_called) == [(5.0, None), (10.0, False), (20.0, True), (40.0, False)]

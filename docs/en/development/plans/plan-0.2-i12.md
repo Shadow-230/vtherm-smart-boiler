@@ -185,7 +185,7 @@ removed; the climate-state listener for a new VT API removed. The real-VT tests,
 CI, on VT 10.6.5 (its sources fetched into `vendor/` by Claude, the user's consent of 2026-11-25;
 the `workflow` scope for one push, the user's consent of the same day).
 
-#### I12.7 Thermostats through the API
+#### I12.7 Thermostats through the API ✅
 
 The zone matched by its declared `entity_id`; only what is still needed, from the thermostat:
 `current_temperature`, `last_temperature_measure`, `target_temperature`, `vtherm_hvac_mode`,
@@ -199,8 +199,10 @@ In two parts. **I12.7a ✅** (2026-11-26): the live reads through the thermostat
 first `refresh_state` and the power hook, and `entry_infos`; the duty cap is not read (VT caps
 the hook's request itself, and its cap is not in the API: a room counts as fully open from 95 %
 applied); the split of a room between circuits by its devices goes (VT's active devices are not
-in the API). **I12.7b**: the rooms' history in the plugin's own store and "was the boiler called"
-from the helper's history; the attribute parser and the recorder reads of VT's climates go.
+in the API). **I12.7b ✅** (2026-11-26): the rooms' history in the plugin's own store (8 days,
+written 30 min after a change, at unload and at Home Assistant's stop) and "was the boiler
+called" from the helper's history, which wins where both are known; the attribute parser and the
+recorder reads of VT's climates go. The Boiler page still reads VT's climates: I12.12.
 
 #### I12.8 VT decides whether to heat ✅
 

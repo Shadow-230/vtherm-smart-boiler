@@ -43,9 +43,10 @@ writes that to the boiler and hands the boiler back on every exit.
   sensor, and VT's central boiler settings. From VT's calls on the manager: the zone counts as
   started from VT's first `refresh_state`, and its duty and valve opening are what VT's power
   hook last said VT applied. A zone whose thermostat VT has not handed over is not known; nothing
-  of VT's climate entity stands in for it. Still read from VT's climate entities for now: the
-  zone history (until the plugin keeps its own, step I12.7b), and the zone picker, the zones'
-  names, the reload repair and VT's central mode (until the rooms come from VT, step I12.11). It
+  of VT's climate entity stands in for it. The rooms' history is what it read, kept by the
+  plugin itself (see [Persistent state](#6-persistent-state)); nothing of VT's climates goes into
+  it. Still read from VT's climate entities for now: the zone picker, the zones' names, the
+  reload repair and VT's central mode (until the rooms come from VT, step I12.11). It
   detects what is installed (VT and its version, `vtherm_api`) instead of assuming it; it reads
   nothing of SmartPI. No other module looks up a zone's state by entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
@@ -93,7 +94,8 @@ docs/                                     the documentation, one folder per lang
 - `sim/custom_components/` holds `boiler_sim` (the simulated boiler, rooms and weather) and a
   stand-in `opentherm_gw`, both for tests only.
 - `tools/import_history.py` turns a copy of an HA recorder database into the core's history,
-  so the monitor's analysis can be checked on recorded data.
+  so the monitor's analysis can be checked on recorded data: the boiler's signals, the weather
+  and the helper VT's central boiler switches — never VT's climates.
 - The Boiler page ([`plan-0.2-i10.md`](../development/plans/plan-0.2-i10.md)):
   `frontend/` is its source; `npm run build` there writes the module the plugin serves into
   `custom_components/vtherm_smart_boiler/frontend/`, with the licenses of the packages bundled
@@ -160,6 +162,21 @@ keeps a rolling history and computes what the entities publish. A quick path run
 changes and every 30 seconds (readings, signal check, hot water, current alarms); the analysis
 (`core/analysis.py`) runs every few minutes on a copy of the history, off the event loop. It
 also owns the stores (see [Persistent state](#6-persistent-state)).
+
+The history (`core/history.py`, `History`) has three sources. The boiler's signals, the weather,
+the plugin's control state and the helper VT's central boiler switches come live from their
+states and, after a start, from the recorder: the last 8 days (`HISTORY_DAYS`), and older days,
+up to a year, only to build day summaries. The rooms come from the plugin's own reads through
+`vtherm_api`, at every refresh (30 s) and every control step (10 s), changes only
+(`ZoneSeries.record`), and from the rooms' store after a start — never from the recorder's
+records of VT's climates (I12.7b). "Was the boiler called for heat" (`History.zone_demand`,
+`zone_calling`) is the helper's state wherever it is known — VT's own decision, with its
+thresholds — and the rooms only where it is not, or where no helper is set (monitoring only).
+It tells heating burns from hot water (every day summary, the verdict, the building fit), the
+pauses the hysteresis drift may judge, the short burns unstable ignition counts and the burns the
+lowest water temperature's evidence takes. The rooms' own details — the mean target of the
+report, the valve openings of that evidence — come from the rooms' store alone, so they start
+from the installation.
 
 **Monitor and analysis (`core/monitor.py`, `core/analysis.py`, `core/verdict.py`).** From the
 history to burns, metrics, trend warnings, a report and the control verdict, always with its
@@ -302,7 +319,7 @@ a repair issue that outlives the entry tells the user to hand back by hand.
 ## 6. Persistent state
 
 Control has a store of its own (`ControlStore` in `coordinator.py`), apart from the entry's main
-store, which holds the monitor's history and day summaries.
+store, which holds the monitor's small data and day summaries.
 
 - **What it holds:** whether control is enabled, the last command and whether the plugin is
   controlling, latches and their causes, a hand-back owed and its release evidence, the
@@ -331,6 +348,18 @@ already raised are the start's baseline; an alarm that cannot be judged stays as
 first (provisional, K4); written a minute after a change, at once when the entry unloads, and by
 Home Assistant at its stop; a store that cannot be read starts an empty journal. It goes with
 the entry's other stores when the entry is removed.
+
+**The rooms' history** (`rooms_store` in `coordinator.py`, its format in `core/history.py`) has
+a store of its own too, `<domain>.<entry_id>.rooms`: each room's temperature, target, mode,
+call, duty and valve opening as the plugin read them through `vtherm_api` over the last 8 days.
+Each series is one line of text — moments in whole seconds, each after the first as the seconds
+since the one before; values to three decimals — as Home Assistant writes its stores indented.
+It keeps the newest 10,000 samples of a series at most, so a value that flaps cannot grow the
+file without end. Written half an hour after a change (about 48 writes a day at most) and at a
+clean stop; read back at the start, for the rooms configured now, unknown from its last write
+until the rooms are read again — a crash loses what came since. A series that cannot be read is
+left out; a store without the moment of its write is ignored. Nothing is written to it before
+it was read. It goes with the entry's other stores when the entry is removed.
 
 ## 7. Testing
 
