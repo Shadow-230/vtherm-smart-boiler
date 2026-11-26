@@ -1213,21 +1213,24 @@ def test_the_no_sign_the_boiler_heats_issue_is_translated() -> None:
 
 def test_the_comfort_correction_says_it_is_off_and_what_it_costs() -> None:
     """K4 (2026-11-17): the comfort correction's description says it is off by default, what it
-    costs — more gas, more starts — and the risk with VT's TPI zones: in the simulation about 2
-    to 6 times the starts for under 0.15 K of comfort, so a cold room's first step is the curve —
-    in the curve step — its one place at both levels (I8, decision H2) —, in every language; its
-    limit and the "curve too low" issue have their texts."""
+    costs — more gas, more starts — and the risk with VT's TPI zones: in the simulation up to
+    about 3.5 times the starts for under 0.15 K of comfort since I13.3's slower pace (about 2 to
+    6 before), so a cold room's first step is the curve — in the curve step — its one place at
+    both levels (I8, decision H2) —, in every language; it names its wait of an hour and its trim
+    below the curve (I13.3); its limit and the "curve too low" issue have their texts."""
     for step in ("control_curve",):
         text = SOURCE["options"]["step"][step]["data_description"]["comfort_correction"]
         assert text.startswith("Off by default."), step
         assert "more gas" in text, step
         assert "TPI" in text, step
-        assert "about 2 to 6 times the starts for under 0.15 K" in text, step
+        assert "up to about 3.5 times the starts for under 0.15 K" in text, step
         assert "raise the curve first" in text, step
+        assert "for an hour" in text, step
+        assert "under 70 % open" in text, step
         assert "SmartPI" not in text, step  # I12.9: no learning band any more (G11 C removed)
         for language in LANGUAGES:
             translated = _texts(language)["options"]["step"][step]["data_description"]
-            assert "2 do 6" in translated["comfort_correction"], (language, step)
+            assert "3,5 razy" in translated["comfort_correction"], (language, step)
             assert "0,15 K" in translated["comfort_correction"], (language, step)
     curve = SOURCE["options"]["step"]["control_curve"]["data_description"]
     assert "3 K a day" in curve["comfort_correction_max_k"]

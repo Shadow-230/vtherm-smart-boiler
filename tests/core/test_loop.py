@@ -174,6 +174,37 @@ def test_the_comfort_correction_at_its_limit_is_written_exactly(
         assert out.setpoint is None or out.setpoint.kind is not WriteKind.CHANGE
 
 
+@pytest.mark.parametrize(("correction", "written"), [(-3.0, True), (-2.9, False)])
+def test_the_trim_at_its_limit_is_written_exactly(correction: float, written: bool) -> None:
+    """I13.3: the trim below the curve goes down in steps under the read-back's tolerance as the
+    rise goes up; at its limit (3 K) it is a bound, written exactly; above it the deadband
+    stays."""
+    control = ControlConfig(
+        curve=HeatingCurve(),
+        ramp_k_per_min=None,
+        comfort_correction=True,
+        correction_max_k=3.0,
+        decision_interval_s=10.0,  # the water decided again at the next step
+    )
+    config = replace(CONFIG, control=control)
+    calm = (ZoneState("z", 21.0, 21.0, True, reported_at=0.0, valve_open=0.3),)
+    state = LoopState(control=ControlState(correction=-2.53))
+    state, out = loop_step(state, inputs(0.0, zones=calm), None, config)
+    assert out.setpoint is not None
+    first = out.setpoint.value
+    state = replace(state, control=replace(state.control, correction=correction))
+    calm = (ZoneState("z", 21.0, 21.0, True, reported_at=10.0, valve_open=0.3),)
+    state, out = loop_step(state, inputs(10.0, zones=calm), first, config)
+    assert out.decision.correction == correction
+    assert out.decision.target == pytest.approx(first + correction + 2.53, abs=0.05)
+    if written:
+        assert out.setpoint is not None
+        assert out.setpoint.kind is WriteKind.CHANGE
+        assert out.setpoint.value == pytest.approx(first - 0.47, abs=0.05)
+    else:
+        assert out.setpoint is None or out.setpoint.kind is not WriteKind.CHANGE
+
+
 def test_keepalive_follows_between_decisions() -> None:
     state, _ = loop_step(LoopState(), inputs(0.0), None, CONFIG)
     state, out = loop_step(state, inputs(30.0), 45.0, CONFIG)

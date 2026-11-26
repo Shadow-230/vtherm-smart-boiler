@@ -1,22 +1,37 @@
-"""Principle 13's rules 3 and 5 for the comfort correction (decision 11 of 0.2.3, SB-11)."""
+"""Principle 13's rules 3 and 5 for the comfort correction (decision 11 of 0.2.3, SB-11), and its
+pace and trim (I13.3)."""
 
 from __future__ import annotations
 
 import pytest
 
 from custom_components.vtherm_smart_boiler.core.comfort_rules import (
+    DEFAULT_CYCLE_S,
     EXTREME_RATE_K_PER_H,
+    HELD_CYCLES,
+    HELD_S,
     HOUR,
     OUTDOOR_SAMPLE_S,
     OUTDOOR_WINDOW_S,
+    RISE_CYCLES,
     STARTS_WINDOW_S,
+    TRIM_DAY_K,
+    TRIM_MAX_K,
+    TRIM_S,
+    RoomPace,
     StartsBaseline,
+    counted_for,
     extreme_weather,
     follow_baseline,
     follow_outdoor,
+    follow_raise,
+    follow_room,
     heating_starts,
+    held_short,
     may_rise,
+    rise_seconds,
     starts_rose,
+    trim_seconds,
 )
 from custom_components.vtherm_smart_boiler.core.cycles import Burn, BurnKind, ClassifiedBurn
 
@@ -218,3 +233,116 @@ def test_a_spread_within_the_hour_is_extreme_at_wall_clock_times(age: float) -> 
     now = 1_760_000_000.0
     seen = ((now - OUTDOOR_WINDOW_S - OUTDOOR_SAMPLE_S, 5.0), (now - age, 2.0))
     assert extreme_weather(seen, 5.0, now, design_outdoor=-15.0)
+
+
+# --- I13.3: the correction's pace and its trim ---------------------------------------------
+
+
+def test_the_pace_values_are_provisional_and_kept_in_one_place() -> None:
+    """I13.3 (Skogestad 2023; Hägglund 2021; provisional, K4): two cycles and an hour short,
+    four cycles of the slowest room per kelvin, 15 min for a cycle not known; the trim at most
+    3 K, 2 h per kelvin at the fastest, 3 K a day."""
+    assert (HELD_CYCLES, HELD_S, RISE_CYCLES, DEFAULT_CYCLE_S) == (2, HOUR, 4, 900.0)
+    assert (TRIM_MAX_K, TRIM_S, TRIM_DAY_K) == (3.0, 2 * HOUR, 3.0)
+
+
+def test_a_room_counts_as_short_after_an_hour_or_two_of_its_cycles() -> None:
+    """Short since 0: with VT's 5-min cycle, or a 30-min one, an hour; with a 45-min cycle,
+    90 minutes; a cycle not known counts as 15 min — an hour. Not a second before."""
+    pace = RoomPace(short_since=0.0)
+    for cycle, wait in ((300.0, HOUR), (1800.0, HOUR), (2700.0, 5400.0), (None, HOUR)):
+        assert not held_short(pace, wait - 1.0, cycle), cycle
+        assert held_short(pace, wait, cycle), cycle
+    assert not held_short(RoomPace(), 10 * HOUR, 300.0)  # not short now
+
+
+def test_a_run_of_short_starts_continues_and_breaks() -> None:
+    """Short at 0 s: the run starts then; still short, it keeps its start; one look not short
+    breaks it, and the next short look starts a new one. A clock set back starts it from now."""
+    pace = follow_room(RoomPace(), 0.0, True, 20.0, 21.0)
+    assert pace.short_since == 0.0
+    pace = follow_room(pace, 600.0, True, 20.0, 21.0)
+    assert pace.short_since == 0.0
+    pace = follow_room(pace, 610.0, False, 20.0, 21.0)
+    assert pace.short_since is None
+    pace = follow_room(pace, 620.0, True, 20.0, 21.0)
+    assert pace.short_since == 620.0
+    assert follow_room(pace, 100.0, True, 20.0, 21.0).short_since == 100.0
+
+
+def test_a_room_keeps_its_readings_and_last_known_setpoint() -> None:
+    """Its readings as the window rule keeps them (a minute apart); an unknown setpoint keeps
+    the last one known, so a raise across the gap is still seen."""
+    pace = follow_room(RoomPace(), 0.0, False, 20.0, 21.0)
+    pace = follow_room(pace, 30.0, False, 20.1, None)
+    assert pace.readings == ((0.0, 20.0),)
+    assert pace.target == 21.0
+    pace = follow_room(pace, 60.0, False, 20.1, 22.0)
+    assert pace.raised_at == 60.0
+
+
+def test_the_rise_takes_four_cycles_of_the_slowest_room_and_never_less_than_its_fastest() -> None:
+    """Four of VT's 5-min cycles are under 30 min: 30 min per kelvin; four of 15 min, an hour;
+    the slowest room sets it — one not known counts as 15 min, no room as one."""
+    assert rise_seconds([300.0, 300.0], 1800.0) == 1800.0
+    assert rise_seconds([300.0, 900.0], 1800.0) == HOUR
+    assert rise_seconds([300.0, 1800.0], 1800.0) == 2 * HOUR
+    assert rise_seconds([300.0, None], 1800.0) == HOUR
+    assert rise_seconds([], 1800.0) == HOUR
+
+
+def test_the_trim_is_always_slower_than_the_rise() -> None:
+    """Twice the rise's time per kelvin, two hours at least."""
+    assert trim_seconds(1800.0) == 2 * HOUR
+    assert trim_seconds(HOUR) == 2 * HOUR
+    assert trim_seconds(2 * HOUR) == 4 * HOUR
+
+
+def recovering(start: float, end: float, per_min: float) -> tuple[tuple[float, float], ...]:
+    """A room's readings a minute apart from ``start`` to ``end``, from 18 °C."""
+    return tuple(
+        (float(t), 18.0 + per_min * (t - start) / 60.0) for t in range(int(start), int(end) + 1, 60)
+    )
+
+
+def test_a_raised_setpoint_holds_while_the_room_warms_back() -> None:
+    """The setpoint raised from 19 to 21 °C at 0 s: held while the room warms 0.05 K a minute
+    (1.5 K in 30 min), and once warming cannot be told yet."""
+    assert follow_raise(None, 19.0, 21.0, 0.0, (), 18.0) == 0.0
+    readings = recovering(-600.0, 2400.0, 0.05)
+    assert follow_raise(0.0, 21.0, 21.0, 1200.0, readings, 18.0) == 0.0  # 20 min: not told yet
+    assert follow_raise(0.0, 21.0, 21.0, 2400.0, readings, readings[-1][1]) == 0.0
+
+
+def test_the_hold_after_a_raise_ends_within_0_3_k_or_once_the_room_stops_warming() -> None:
+    """Within 0.3 K of the new setpoint: over at once. Risen less than 0.2 K over the last half
+    hour: over, though still short — the room cannot warm further on this water."""
+    assert follow_raise(0.0, 21.0, 21.0, 600.0, (), 20.8) is None
+    flat = recovering(0.0, 2400.0, 0.002)  # 0.06 K in 30 min
+    assert follow_raise(0.0, 21.0, 21.0, 2400.0, flat, flat[-1][1]) is None
+
+
+def test_no_hold_without_a_raise() -> None:
+    """A setpoint lowered, kept, or not known before or now: no hold; a clock set back keeps a
+    hold from now."""
+    assert follow_raise(None, 21.0, 19.0, 0.0, (), 18.0) is None
+    assert follow_raise(None, 21.0, 21.0, 0.0, (), 18.0) is None
+    assert follow_raise(None, None, 21.0, 0.0, (), 18.0) is None
+    assert follow_raise(None, 19.0, None, 0.0, (), 18.0) is None
+    assert follow_raise(5000.0, 21.0, 21.0, 100.0, (), 18.0) == 100.0
+
+
+def test_the_baseline_stays_while_the_correction_is_below_0() -> None:
+    """Rule 3 holds both ways (I13.3): a trim below the curve keeps the baseline as a rise does."""
+    began = StartsBaseline(0.0, before=(), zero_since=500.0)
+    assert follow_baseline(began, -0.5, 1000.0) == StartsBaseline(0.0, before=())
+
+
+def test_a_room_counts_from_the_moment_its_wait_is_met() -> None:
+    """The heat of a decision interval that began before the wait was met counts only from
+    then: the time since, 0 before it and for a room not short."""
+    pace = RoomPace(short_since=0.0)
+    assert counted_for(pace, HOUR - 1.0, 300.0) == 0.0
+    assert counted_for(pace, HOUR + 300.0, 300.0) == 300.0
+    assert counted_for(pace, 5400.0 + 60.0, 2700.0) == 60.0  # two 45-min cycles
+    assert counted_for(RoomPace(), 10 * HOUR, 300.0) == 0.0

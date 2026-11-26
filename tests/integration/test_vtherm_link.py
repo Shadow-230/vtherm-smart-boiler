@@ -808,8 +808,10 @@ async def test_zone_values_come_through_vtherm_api_alone(
     assert zone.window_open is False
     assert thermostat.duty_reads == 0
     assert link.zone_algorithm(living).cycle_min == 10
+    assert zone.cycle_s == 600.0  # I13.3: the comfort correction's pace reads it
     unregister_thermostat(hass, thermostat)
     assert link.zone(living).temperature is None
+    assert link.zone(living).cycle_s is None
     assert link.zone_algorithm(living).cycle_min is None
 
 

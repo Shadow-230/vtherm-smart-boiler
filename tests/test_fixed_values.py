@@ -21,6 +21,7 @@ from custom_components.vtherm_smart_boiler import (
 from custom_components.vtherm_smart_boiler import forecasts as forecasts_module
 from custom_components.vtherm_smart_boiler.core import (
     alarms,
+    comfort_rules,
     controller,
     critical_zone,
     curve,
@@ -66,6 +67,14 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("comfort correction: satisfied below 70 %", controller.SATISFIED, 0.7),
     ("comfort correction: short by 0.3 K", controller.SHORT_K, 0.3),
     ("comfort correction at most 3 K a day", controller.CORRECTION_DAY_K, 3.0),
+    # I13.3: the correction's pace and its trim below the curve.
+    ("comfort correction: short for 2 of the room's cycles", comfort_rules.HELD_CYCLES, 2),
+    ("comfort correction: short for 60 min at least", comfort_rules.HELD_S, H),
+    ("comfort correction: 4 cycles of the slowest room per K", comfort_rules.RISE_CYCLES, 4),
+    ("comfort correction: a cycle not known counts 15 min", comfort_rules.DEFAULT_CYCLE_S, 900.0),
+    ("comfort correction: the trim at most 3 K", comfort_rules.TRIM_MAX_K, 3.0),
+    ("comfort correction: the trim 2 h per K at the fastest", comfort_rules.TRIM_S, 2 * H),
+    ("comfort correction: the trim at most 3 K a day", comfort_rules.TRIM_DAY_K, 3.0),
     ("a zone takes heat above 5 % open", readings.ZONE_OPEN, 0.05),
     ("heat available: the flow 2 K above the return", heat.RETURN_MARGIN_K, 2.0),
     ("heat available: 3 K above the room without a return", heat.ROOM_MARGIN_K, 3.0),

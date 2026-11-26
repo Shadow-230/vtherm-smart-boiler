@@ -355,15 +355,34 @@ krzywej. Awaria czujnika zewnętrznego nigdy nie oznacza zerowego grzania.
 pomieszczenie nie dochodzi do swojej nastawy mimo w
 pełni otwartego zaworu, woda powoli rośnie ponad krzywą, do swojego limitu: domyślnie 3 K,
 najwyżej 10 K, ustawianego w **Krzywej grzewczej** obok korekty; nigdy więcej niż 3 K na dobę.
-„Nie dochodzi” znaczy: co najmniej 0,3 K poniżej nastawy VT, bez względu na algorytm strefy. Nie
-rośnie, gdy kocioł startuje częściej niż wcześniej.
+„Nie dochodzi” znaczy: co najmniej 0,3 K poniżej nastawy VT, bez względu na algorytm strefy.
+Korekta czeka, aż pomieszczenie nie dochodzi do nastawy przez godzinę bez przerwy — i przez dwa
+cykle VT tego pomieszczenia, gdy są dłuższe niż pół godziny. Potem rośnie o 1 K na cztery cykle
+najwolniejszego pomieszczenia (ustawienie cyklu w VT; 15 minut, gdy nie jest znane), nigdy
+szybciej niż 1 K na 30 minut. Dzięki temu jest dużo wolniejsza niż własna regulacja pomieszczeń i
+obie się nie przepychają. Nie rośnie, gdy pomieszczenie wciąż się nagrzewa po podniesieniu nastawy
+— na przykład po nocnym obniżeniu — dopóki nie jest w granicach 0,3 K od nowej nastawy albo nie
+nagrzało się mniej niż o 0,2 K w pół godziny: ten sam test co po otwartym oknie. Nie rośnie, gdy
+kocioł startuje częściej niż wcześniej.
 Jedno niedogrzane pomieszczenie liczy się jak każde inne — woda nigdy nie idzie wyżej dla jednego
 pokoju. Po trzech godzinach tak wysoko, jak może — na limicie albo po wzroście o 3 K w ciągu
 doby — gdy pomieszczenie nadal nie dochodzi do nastawy, korekta tam stoi, a zgłoszenie w Naprawach podaje pomieszczenie i możliwe przyczyny: za niska krzywa, za
-mały grzejnik albo pomieszczenie tracące ciepło. Koszt: więcej gazu i więcej startów palnika — przy
-strefach TPI w VT często stoi na limicie i kilkakrotnie zwiększa liczbę startów, prawie nie dodając
-ciepła. Dlatego jest wyłączona: gdy pokój zostaje zimny, najpierw podnieś krzywą. Przycisk
-„Wyzeruj korektę komfortu” cofa ją do zera.
+mały grzejnik albo pomieszczenie tracące ciepło.
+
+**Pod krzywą.** Gdy płynie ciepło, a każde pomieszczenie, które korekta odczytuje, jest otwarte
+mniej niż w 70 % i żadne nie jest niedogrzane, korekta obniża wodę pod krzywą: najwyżej 1 K na 2
+godziny ciepła (i zawsze co najwyżej z połową szybkości wzrostu), najwyżej o 3 K (nigdy o więcej
+niż jej limit) i najwyżej o 3 K na dobę. Wraca w stronę krzywej, 1 K na 15 minut, gdy tylko
+któreś pomieszczenie nie dochodzi do nastawy albo jest otwarte w 70 %, albo kocioł startuje
+częściej niż wcześniej. Nie schodzi niżej, gdy otwarcie albo temperatura któregoś pomieszczenia
+nie są znane, przy skrajnej pogodzie, podczas ciepłej wody ani gdy najniższa temperatura wody lub
+ograniczenie już trzyma wodę. Najniższa temperatura wody zawsze obowiązuje. Stan sterowania
+pokazuje korektę ze znakiem: `comfort_correction` poniżej 0 znaczy pod krzywą.
+
+Koszt: więcej gazu i więcej startów palnika — przy strefach TPI w VT może stać na limicie: w
+symulacji do około 3,5 razy więcej startów przy stałym mrozie, prawie nie dodając ciepła. Pod
+krzywą pomieszczenie może wolniej się nagrzewać. Dlatego jest wyłączona: gdy pokój zostaje zimny,
+najpierw podnieś krzywą. Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
 
 **Które pokoje oceniają krzywą.** Temperatura pokoju liczy się dla korekty komfortu, jej
 ostrzeżenia „za niska krzywa”, „za chłodnej wody” przy długim spalaniu i strefy krytycznej tylko
@@ -1357,7 +1376,7 @@ Najważniejsze — opisane, nie doradzane:
 | Najniższa temperatura wody | 20 °C (tymczasowo) | za niska: przy łagodnej pogodzie kocioł raz po raz sam staje, a kocioł niekondensacyjny skrapla się w kominie (wartość podaje jego instrukcja) |
 | Najwyższa temperatura wody obiegu | 70 °C, gdy pole puste | ogranicza każdą nastawę w obiegach zasilanych prosto z kotła; kocioł może ją przekroczyć o własną histerezę |
 | Jej alarm za gorącej wody | maksimum + 5 K przez 10 min | tylko informacja; za wysoki przepuszcza prawdziwe przekroczenie bez słowa |
-| Korekta komfortu | wyłączona; po włączeniu do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika |
+| Korekta komfortu | wyłączona; po włączeniu do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę, gdy pomieszczenie nie dochodzi do nastawy od godziny; do 3 K pod krzywą, gdy każde pomieszczenie ma ciepła pod dostatkiem | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika; pod krzywą pomieszczenie może wolniej się nagrzewać |
 | Pomocnik przełączany przez kocioł centralny VT | brak — wybierasz go | kocioł centralny VT decyduje przez niego; skierowany zamiast tego na kocioł dałby dwa kłócące się sterowniki |
 | Typ zapisu wybranego celu | nieznany — bez zapisu | trzeba zadeklarować „wygasa” albo „trzymany”; zła deklaracja zużywa pamięć kotła albo pozwala wartości wygasnąć |
 | Wartość przy oddaniu sterowania | brak — wpisywana razem ze skutkiem | ta sama liczba na jednym urządzeniu znaczy „własne sterowanie”, na innym „bez ciepła” |
@@ -1456,7 +1475,7 @@ automation:
   kotła, blokada kotła, aplikacja producenta, limit modulacji innego sterownika, zezwolenie na
   ciepłą wodę, kocioł obcinający nastawę za bramką — bramka wciąż pokazuje wartość wtyczki. Widać
   je tylko po skutkach: brak oznak grzania kotła, gdy VT woła (po 30 minutach), albo korekta
-  komfortu na swoim limicie (po około 4,5 h).
+  komfortu na swoim limicie (po około 5,5 h, dłużej przy wolniejszych cyklach VT).
 - **Kocioł obcinający stałą nastawę** wygląda jak inny sterownik: niższa wartość jest uznawana za
   własny limit kotła dopiero wtedy, gdy wtyczka wysłała wartości różniące się o co najmniej 1 K.
   Przy jednej stałej wartości jest raz zapisywana ponownie, a druga zmiana w ciągu 24 h każe

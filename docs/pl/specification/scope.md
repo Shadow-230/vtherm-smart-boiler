@@ -801,12 +801,18 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   `docs/pl/development/plan.md`; wpis zachowuje to, co zapisał, „wyłączona” tam, gdzie nigdy nie
   zapisał odpowiedzi; nie przy sterowaniu włącz/wyłącz;
   `docs/en/development/plans/plan-0.2-g11.md` B): gdy zawór strefy jest w pełni otwarty, a pokój
-  wciąż nie dochodzi do nastawy, woda rośnie ponad krzywą — najwyżej o limit użytkownika (domyślnie
+  wciąż nie dochodzi do nastawy — przez godzinę bez przerwy i dwa własne cykle VT tego pokoju
+  (`cycle_min` VT; 15 min, gdy nie jest znany; I13.3) —, woda rośnie ponad krzywą — najwyżej o
+  limit użytkownika (domyślnie
   3 K, do 10 K; jedyna granica ponad krzywą, odkąd zniknął „zakres korekty”, I8 B6), nigdy więcej
-  niż 3 K na dobę, po 1 K co 30 min i tylko gdy płynie ciepło: oceniane po płomieniu, gdy jest
-  znany, w przeciwnym razie po poleceniu (S-24); opada dwa razy szybciej, a strefa bez danych
-  o otwarciu nie blokuje opadania; liczą się tylko strefy biorące ciepło, a korekta nie rośnie, gdy
-  inna strefa biorąca ciepło jest więcej niż 1 K powyżej swojej nastawy (S-08); zatrzymuje się
+  niż 3 K na dobę, po 1 K na cztery cykle najwolniejszego pokoju, który odczytuje, i nigdy szybciej
+  niż 1 K co 30 min (I13.3: wolna pętla co najmniej cztery razy wolniejsza niż własne pętle pokoi,
+  Skogestad 2023; Hägglund 2021), i tylko gdy płynie ciepło: oceniane po płomieniu, gdy jest
+  znany, w przeciwnym razie po poleceniu (S-24); opada o 1 K na 15 min, a strefa bez danych
+  o otwarciu nie blokuje opadania; nie rośnie, gdy pokój wciąż się nagrzewa po podniesieniu
+  nastawy — powrót po obniżeniu — dopóki nie jest w granicach 0,3 K od niej albo nie wzrósł mniej
+  niż o 0,2 K w 30 min, test reguły okna (I13.3); liczą się tylko strefy biorące ciepło, a korekta
+  nie rośnie, gdy inna strefa biorąca ciepło jest więcej niż 1 K powyżej swojej nastawy (S-08); zatrzymuje się
   w miejscu, gdy limit trzyma nastawę, i nie rośnie po cofnięciu zegara (S-25); rośnie tylko
   wtedy, gdy liczba startów na godzinę nie rośnie w porównaniu z tymi samymi godzinami sprzed jej
   początku, a cofa się o krok, gdy rośnie (gdy starty są nieznane, nie rośnie), a jej wzrost jest
@@ -829,6 +835,22 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   krytycznej (pasmo +0.5 K dla fazy nauki SmartPI z G11 C usunięto w I12.9). Oknami zajmuje się VT (I8.1b): strefa, którą VT
   wyłącza lub obniża z powodu okna, już nie prosi o ciepło i nie wygląda na taką, której brakuje
   ciepła; wtyczka nie ma własnej obsługi okien.
+- **Obniżenie pod krzywą** (I13.3; część korekty komfortu, włączana i wyłączana razem z nią): gdy
+  płynie ciepło, a każdy pokój, który korekta odczytuje, jest otwarty poniżej 70 % — jego otwarcie
+  i temperatura są znane, żaden nie jest niedogrzany — woda schodzi pod krzywą: najszybciej 1 K na
+  2 h ciepła, nigdy szybciej niż połowa wzrostu, najwyżej o 3 K (nigdy o więcej niż limit
+  użytkownika) i 3 K na dobę (reset według zaworów: Boegli i in. 2022; „trim and respond” z ASHRAE
+  Guideline 36). Wraca w stronę krzywej o 1 K na 15 min, gdy tylko któryś pokój jest niedogrzany
+  albo otwarty w 70 %. Obowiązuje każda granica wzrostu: ciepła woda zamraża je w obie strony;
+  luka w danych je wstrzymuje — nieświeże łącze, nieznane otwarcie albo temperatura pokoju;
+  ograniczenie trzymające nastawę albo dolna granica (najniższa temperatura wody, potrzeba obiegu),
+  która już ją trzyma, nie pozwala zejść głębiej, a te dolne granice zawsze obowiązują; skrajna
+  pogoda albo nieznane starty nie pozwalają zejść głębiej, a starty rosnące, odkąd zeszła z
+  krzywej, cofają ją (reguły 3 i 5 w obie strony); oddanie sterowania i reset użytkownika ustawiają
+  ją na 0; dobowe 3 K wzrostu liczy tylko wzrosty ponad krzywą — powrót nie jest wzrostem.
+  Pokazywana ze znakiem w stanie sterowania (`comfort_correction`); bez ostrzeżenia na jej
+  krawędzi. W symulacji działa rzadko: symulowane pokoje rzadko są wszystkie otwarte poniżej 70 %,
+  gdy płynie ciepło (najwyżej −0,7 K, przy głowicach termostatycznych i krzywej o 10 K za wysokiej).
 - **Temperatura pokojowa krzywej: Auto albo Ręczna** (`docs/en/development/plans/plan-0.2-g11.md` D).
   Auto, domyślnie dla nowych wpisów: najwyższa nastawa VT wśród stref w trybie grzania, znanych
   i niepominiętych przez użytkownika, nie więcej niż 23 °C i w ramach własnych kontroli krzywej; idzie
@@ -1243,7 +1265,7 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Limit czasu urządzenia przy oddaniu sterowania przez limit czasu | 1 min (1–60), własny limit urządzenia wpisuje użytkownik | zwolnienie jest oceniane dopiero po jego wykonaniu, a „oddanie sterowania nie powiodło się” po 3 min od niego; dłuższy rzeczywisty limit czasu daje fałszywy alarm, który znika, gdy zwolnienie się pokaże (decyzja 5 z `docs/en/development/plans/plan-0.2.3.md`; tymczasowe, K4) |
 | Nastawa awaryjna | ostatnia efektywna temperatura zewnętrzna przez 3 h, potem projektowa temperatura zasilania, albo stała wartość użytkownika (decyzja 9) | nigdy zero ciepła; zawory chronią pokoje przed przegrzaniem |
 | Pomocnik VT | żaden — użytkownik wybiera pomocnika przełączanego przez kocioł centralny VT; sterowanie na niego czeka | wtyczka idzie za decyzją VT i nigdy jej nie zgaduje (I12.8) |
-| Korekta komfortu | wyłączona (K4, decyzja użytkownika z 2026-11-17, odwracająca tę z 2026-10-10 po F8 z J4 i przeglądzie literatury; wpis zostaje przy tym, co zapisał); po włączeniu do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: około 2 do 6 razy więcej startów w symulacji przy dobowym wahaniu temperatury zewnętrznej, za mniej niż 0.15 K komfortu; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
+| Korekta komfortu | wyłączona (K4, decyzja użytkownika z 2026-11-17, odwracająca tę z 2026-10-10 po F8 z J4 i przeglądzie literatury; wpis zostaje przy tym, co zapisał); po włączeniu do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie, gdy pokój nie dochodzi do nastawy od godziny; do 3 K pod krzywą, gdy każdy pokój jest otwarty poniżej 70 % (I13.3) | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: do około 3,5 razy więcej startów w symulacji od wolniejszego tempa I13.3 (stałe −5 °C; przy dobowym wahaniu temperatury zewnętrznej x1.3 i x2.2, wobec x1.1 i x2.0 bez niej; wcześniej około 2 do 6 razy), za mniej niż 0.15 K komfortu; pod krzywą pokój może wolniej się nagrzewać; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
 | Reakcja alarmu | informacja; oddania sterowania z decyzji 7 zawsze | inny sterownik zapisuje wartości — nigdy z nim nie walczymy; wtyczka zatrzymuje grzanie tylko tam, gdzie sam kocioł się zatrzymuje |
 | Alarm maksimum obiegu | maksimum obiegu + 5 K, przez 10 min (informacja); na obiegu zasilanym prosto z kotła c.w.u. z priorytetem nie jest liczona | kocioł może przekroczyć maksimum; użytkownik to widzi (decyzja 10); c.w.u. nie dociera do tego obiegu (2026-10-12) |
 | Próg „dolej wody” | brak | wartość pochodzi z instrukcji kotła; zła wartość domyślna niczego nie zatrzyma, ale wprowadzi w błąd |
@@ -1273,7 +1295,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Krok sterowania 10 s | `const.py` | grzanie od razu podąża za decyzją VT |
 | Podtrzymanie 30 s | `control_config.py` | OTGW potrzebuje `CS` co najmniej raz na minutę |
 | Najniższe `CS` OTGW 8 °C | `transport/writers.py` | poniżej 8 °C nadpisanie nigdy nie wygasa |
-| Limit czasu potwierdzenia 120 s; tolerancja 0.5 K — także strefa nieczułości dla małych zmian krzywej, co ogranicza liczbę startów (symulacja: x1.20 przy +8 °C z nią, x1.36 bez niej); granica, przy której woda jest trzymana (najniższa lub najwyższa temperatura wody, maksimum lub potrzeba obiegu, maksimum kotła oraz korekta komfortu na swojej granicy), jest zapisywana dokładnie, gdy rampa ją osiągnie, powyżej 0.05 K (F14, J4 z 2026-10-14; granica korekty: L12, decyzja użytkownika z 2026-11-22) | `core/guards.py`, `core/loop.py` | tymczasowe, K4 (powód do potwierdzenia) |
+| Limit czasu potwierdzenia 120 s; tolerancja 0.5 K — także strefa nieczułości dla małych zmian krzywej, co ogranicza liczbę startów (symulacja: x1.20 przy +8 °C z nią, x1.36 bez niej); granica, przy której woda jest trzymana (najniższa lub najwyższa temperatura wody, maksimum lub potrzeba obiegu, maksimum kotła oraz korekta komfortu na swojej granicy, ponad krzywą albo pod nią), jest zapisywana dokładnie, gdy rampa ją osiągnie, powyżej 0.05 K (F14, J4 z 2026-10-14; granica korekty: L12, decyzja użytkownika z 2026-11-22; pod krzywą: I13.3) | `core/guards.py`, `core/loop.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Odstęp zapisu co najmniej 5 s | `core/guards.py` | jeden zapis na krok |
 | Własne wygaśnięcie wtyczki po 60 s ciszy | `core/guards.py` | nadpisanie OTGW wygasa po około minucie |
 | Okno ponownego zapisu 24 h | `core/guards.py` | postanowione 2026-09-25 |
@@ -1281,7 +1303,8 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Utrata łączności: 5 min nieświeże w ciągu 10 min; powrót po 60 s świeżych, po 10 min po drugiej utracie w ciągu godziny (I13.2) | `core/controller.py` | 5 min postanowione 2026-09-25; okno i powrót tymczasowe, K4 |
 | Utrzymanie temperatury zewnętrznej 3 h; stała czasowa temperatury zewnętrznej 3 h, 12 h, gdy w obiegu krzywej jest pokój z ogrzewaniem podłogowym (I13.8) | `core/curve.py` | utrzymanie: decyzja 9; stałe czasowe: tymczasowe, K4 (3 h: powód do potwierdzenia, Open after 0.2.2, #27; 12 h: pokoje z ogrzewaniem podłogowym reagują w ciągu 20–70 h, Kull i in. 2017, a instrukcja regulatora pogodowego filtruje przez 10–20 h dla większości budynków, Siemens LMS14 — 12 h w dolnej części, bo dłuższa średnia dłużej trzyma wodę wyżej podczas ocieplenia) |
 | Zawieszony czujnik: jedna wartość trzymana 12 h, gdy pogoda zmienia się o 3 K lub więcej; odchylenie 6 K na przestrzeni co najmniej 2 h nakładających się danych | `core/signal_check.py` | tymczasowe, K4 (powód do potwierdzenia) |
-| Korekta komfortu +3 K (domyślna wartość jej limitu, opcja od 0.5 do 10 K od G11), 30 min na K, 3 h na krawędzi, 1 K powyżej zatrzymuje wzrost; zaspokojona poniżej 70 %, brakuje 0.3 K | `core/controller.py` | postanowione 2026-09-25 |
+| Korekta komfortu +3 K (domyślna wartość jej limitu, opcja od 0.5 do 10 K od G11), najszybciej 30 min na K, 3 h na krawędzi, 1 K powyżej zatrzymuje wzrost; zaspokojona poniżej 70 %, brakuje 0.3 K | `core/controller.py` | postanowione 2026-09-25 |
+| Tempo i obniżenie korekty komfortu (I13.3): pokój liczy się jako niedogrzany po 2 swoich cyklach VT i 60 min bez przerwy; wzrost 1 K na 4 cykle najwolniejszego odczytywanego pokoju, nigdy szybciej niż 30 min na K; nieznany cykl liczy się jako 15 min; bez wzrostu, gdy pokój nagrzewa się po podniesieniu nastawy (0.2 K w 30 min i powrót w granice 0.3 K z reguły okna); obniżenie pod krzywą najwyżej 3 K, najszybciej 1 K na 2 h ciepła i nigdy szybciej niż połowa wzrostu, 3 K na dobę, gdy każdy pokój jest otwarty poniżej 70 %; powrót 1 K na 15 min | `core/comfort_rules.py`, `core/controller.py` | tymczasowe, K4: wolna pętla co najmniej 4 razy wolniejsza niż pętle pokoi (Skogestad 2023; Hägglund 2021); obniżenie z resetu według zaworów (Boegli i in. 2022; ASHRAE Guideline 36) |
 | Długie palenie bez nagrzewania: przebieg 3 h, przerwy płomienia do 30 min zachowane; pokój, który rośnie o mniej niż 0.2 K, się nie nagrzewa; woda doszła do nastawy, gdy zasilanie choć raz w ostatnich 30 min jest najwyżej 1 K poniżej niej albo powyżej, czy palnik gaśnie, czy nie (F15 z J4: kocioł na minimum ponad zbyt niską nastawą; uwaga użytkownika z 2026-11-22: własna histereza i opóźnienia kotła); 90 % to wysoka modulacja, przy granicy mocy z płomieniem przez cały czas; każdy pokój o 0.3 K ponad nastawą przez 1 h to woda za ciepła; średnie z 30 min | `core/long_run.py` | przerwy postanowione w K4 (użytkownik, 2026-11-17, F10 z J4: kocioł taktujący na minimum przy niedogrzanych pokojach to ten sam przypadek); reszta tymczasowa (G11 E) |
 | Strefa pobiera ciepło przy otwarciu powyżej 5 %, nasycona przy 95 % — dla nauki, alarmów i historii; to, czy strefa woła, wynika zamiast tego z reguły VT (powyżej 0, 2026-10-14) | `core/readings.py` | istniejące |
 | Ciepło dostępne: zasilanie 2 K powyżej powrotu albo 3 K powyżej temperatury pokoju, gdy nie ma powrotu; histereza 1 K | `core/heat.py` | tymczasowe, K4 (I8, decyzja C1) |

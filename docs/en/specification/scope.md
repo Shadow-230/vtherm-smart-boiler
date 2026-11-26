@@ -761,12 +761,19 @@ How control decides (principle 12):
   reversing that of 2026-10-10 after J4's F8 and the literature, `docs/en/development/plan.md`; an
   entry keeps what it stored, "off" where it never stored an answer; not with on/off control;
   `docs/en/development/plans/plan-0.2-g11.md` B): while a
-  zone's valve is fully open and its room is still short of its setpoint, the water rises above the
+  zone's valve is fully open and its room is still short of its setpoint — for an hour without a
+  break and two of the room's own VT cycles (VT's `cycle_min`; 15 min where not known; I13.3) —,
+  the water rises above the
   curve — at most the user's limit (default 3 K, up to 10 K; the only bound above the curve
-  since the "correction range" went, I8 B6), never more than 3 K a day, by 1 K per 30 min and only while heat flows: the flame when it is known,
-  else the command (S-24); it falls twice as fast, and a zone without opening data does not block
-  the fall; it counts only zones taking heat, and does not rise while another zone taking heat is
-  more than 1 K over its setpoint (S-08); it freezes while a cap holds the setpoint, and does not
+  since the "correction range" went, I8 B6), never more than 3 K a day, by 1 K per four cycles of
+  the slowest room it reads and never faster than 1 K per 30 min (I13.3: a slow loop at least four
+  times slower than the rooms' own, Skogestad 2023; Hägglund 2021), and only while heat flows: the
+  flame when it is known,
+  else the command (S-24); it falls at 1 K per 15 min, and a zone without opening data does not
+  block the fall; it does not rise while a room warms back after its setpoint was raised — a
+  setback's recovery — until the room is within 0.3 K of it or has risen under 0.2 K in 30 min,
+  the window rule's test (I13.3); it counts only zones taking heat, and does not rise while
+  another zone taking heat is more than 1 K over its setpoint (S-08); it freezes while a cap holds the setpoint, and does not
   rise when the clock is set back (S-25); it rises only while the starts per hour do not rise
   against the same hours before it began, and steps back when they do (with the starts unknown it
   does not rise), and its rise freezes — a fall still passes — in extreme weather, while the outdoor
@@ -789,6 +796,21 @@ How control decides (principle 12):
   rule and in the critical zone (G11 C's +0.5 K band for SmartPI's learning phase went with
   I12.9). Windows are VT's to act on (I8.1b): a zone VT turns off or lowers for a window no longer
   asks, nor looks short; the plugin has no window handling of its own.
+- **The trim below the curve** (I13.3; part of the comfort correction, on and off with it):
+  while heat flows and every room the correction reads is under 70 % open — its opening and its
+  temperature known, none short — the water goes below the curve: 1 K per 2 h of heat at the
+  fastest, never faster than half the rise, at most 3 K (never more than the user's limit) and
+  3 K a day (valve-driven reset: Boegli et al. 2022; ASHRAE Guideline 36's trim and respond). It
+  comes back towards the curve at 1 K per 15 min as soon as a room is short or 70 % open. Every
+  bound of the rise holds: hot water freezes it both ways; a data gap holds it — the link stale,
+  a room's opening or temperature not known; a cap holding the setpoint, or a lower limit (the
+  lowest water temperature, a circuit's need) already holding it, stops it going deeper, and
+  those lower limits always hold; extreme weather or the starts not known stop it going deeper,
+  and starts rising since it left the curve bring it back (rules 3 and 5 both ways); a hand-back
+  and the user's reset set it to 0; the day's 3 K of rise counts rises above the curve only — the
+  way back is no rise. Shown with its sign in the control state (`comfort_correction`); no
+  warning at its edge. In the simulation it seldom acts: the simulated rooms are rarely all under
+  70 % open while heat flows (−0.7 K at most, with thermostatic heads and a curve 10 K too high).
 - **The curve's room temperature: Auto or Manual** (`docs/en/development/plans/plan-0.2-g11.md` D). Auto, the default
   for new entries: the highest VT setpoint among the zones in heat mode, known and not left out by
   the user, at most 23 °C and within the curve's own checks; it follows VT's presets through the
@@ -1167,7 +1189,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | A timeout hand-back's device timeout | 1 min (1–60), the device's own entered by the user | the release is judged only once it has run, and "hand-back failed" 3 min after it; a longer real timeout gives a false alarm that clears once the release shows (decision 5 of `docs/en/development/plans/plan-0.2.3.md`; provisional, K4) |
 | Fallback setpoint | the last effective outdoor temperature for 3 h, then the design flow, or the user's fixed value (decision 9) | never zero heat; the valves keep rooms from overheating |
 | VT's helper | none — the user picks the helper VT's central boiler switches; control waits for it | the plugin follows VT's decision and never guesses one (I12.8) |
-| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: about 2 to 6 times the starts in the simulation with a daily outdoor swing, for under 0.15 K of comfort; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
+| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day once a room has been short for an hour; down to 3 K below the curve while every room is under 70 % open (I13.3) | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: up to about 3.5 times the starts in the simulation since I13.3's slower pace (steady −5 °C; with a daily outdoor swing x1.3 and x2.2, against x1.1 and x2.0 with it off; about 2 to 6 times before), for under 0.15 K of comfort; below the curve a room may warm up more slowly; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
 | Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information); on a circuit fed straight from the boiler, hot water with priority not counted | the boiler may overshoot the maximum; the user sees it (decision 10); the hot water does not reach that circuit (2026-10-12) |
 | "Add water" threshold | none | the value comes from the boiler's manual; a wrong default stops nothing but misleads |
@@ -1197,7 +1219,7 @@ reviews every provisional value at K4.
 | Control step 10 s | `const.py` | heating follows VT's decision at once |
 | Keep-alive 30 s | `control_config.py` | OTGW needs `CS` at least once a minute |
 | Lowest OTGW `CS` 8 °C | `transport/writers.py` | below 8 °C an override never lapses |
-| Confirmation timeout 120 s; tolerance 0.5 K — also a deadband on the curve's small changes, which keeps the starts down (the simulation: x1.20 at +8 °C with it, x1.36 without); a bound the water is held at (the lowest or highest water, a circuit's maximum or need, the boiler's maximum, and the comfort correction at its limit) is written exactly once the ramp has reached it, beyond 0.05 K (F14, J4 of 2026-10-14; the correction's limit: L12, the user's decision of 2026-11-22) | `core/guards.py`, `core/loop.py` | provisional, K4 (reason to confirm) |
+| Confirmation timeout 120 s; tolerance 0.5 K — also a deadband on the curve's small changes, which keeps the starts down (the simulation: x1.20 at +8 °C with it, x1.36 without); a bound the water is held at (the lowest or highest water, a circuit's maximum or need, the boiler's maximum, and the comfort correction at its limit, above the curve or below it) is written exactly once the ramp has reached it, beyond 0.05 K (F14, J4 of 2026-10-14; the correction's limit: L12, the user's decision of 2026-11-22; below the curve: I13.3) | `core/guards.py`, `core/loop.py` | provisional, K4 (reason to confirm) |
 | Write interval at least 5 s | `core/guards.py` | one write per step |
 | The plugin's own lapse after 60 s of silence | `core/guards.py` | an OTGW override lapses after about a minute |
 | Rewrite window 24 h | `core/guards.py` | decided 2026-09-25 |
@@ -1205,7 +1227,8 @@ reviews every provisional value at K4.
 | Lost link: 5 min stale within 10 min; back after 60 s fresh, after 10 min following a second loss within an hour (I13.2) | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
 | Outdoor hold 3 h; outdoor time constant 3 h, 12 h where the curve's circuit has a room with underfloor heating (I13.8) | `core/curve.py` | the hold: decision 9; the time constants: provisional, K4 (3 h: reason to confirm, Open after 0.2.2, #27; 12 h: rooms with underfloor heating answer over 20–70 h, Kull et al. 2017, and a weather compensator's manual filters over 10–20 h for most buildings, Siemens LMS14 — 12 h in the lower part, as a longer mean keeps the water up longer through a mild spell) |
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
-| Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
+| Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K at the fastest, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
+| The comfort correction's pace and trim (I13.3): a room counts as short after 2 of its VT cycles and 60 min without a break; the rise 1 K per 4 cycles of the slowest room it reads, never faster than 30 min per K; a cycle not known counts as 15 min; no rise while a room warms back after a raised setpoint (the window rule's 0.2 K in 30 min, back within 0.3 K); the trim below the curve at most 3 K, 1 K per 2 h of heat at the fastest and never faster than half the rise, 3 K a day, while every room is under 70 % open; back at 1 K per 15 min | `core/comfort_rules.py`, `core/controller.py` | provisional, K4: the slow loop at least 4 times slower than the rooms' own (Skogestad 2023; Hägglund 2021); the trim from valve-driven reset (Boegli et al. 2022; ASHRAE Guideline 36) |
 | Long burn without warming: a run of 3 h, the flame's gaps up to 30 min kept; a room rising under 0.2 K is not warming; the water has reached its setpoint when the flow, at some moment of the last 30 min, is under it by at most 1 K or above it, the burner stopping or not (J4's F15: a boiler at its minimum above a setpoint too low; the user's note of 2026-11-22: the boiler's own hysteresis and delays); 90 % is high modulation, with the flame on throughout for the power limit; every room 0.3 K over for 1 h is too hot; 30-min averages | `core/long_run.py` | the gaps decided at K4 (the user, 2026-11-17, J4's F10: a boiler cycling at its minimum with the rooms short is the same case); the rest provisional (G11 E) |
 | A zone takes heat above 5 % open, saturated at 95 % — for the learning, the alarms and the history; whether a zone calls follows VT's rule instead (above 0, 2026-10-14) | `core/readings.py` | existing |
 | Heat available: the flow 2 K above the return, or 3 K above the room without a return; 1 K hysteresis | `core/heat.py` | provisional, K4 (I8, decision C1) |
