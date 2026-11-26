@@ -202,9 +202,9 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     }
     assert "name" in SOURCE["entity"]["sensor"]["control_setpoint"]
     assert "name" in SOURCE["entity"]["binary_sensor"]["control"]
-    issue = SOURCE["issues"]["learning_not_paused"]
-    assert "{zones}" in issue["description"]
-    assert issue["title"]
+    # I12.9: the learning pauses and their issues are gone.
+    for key in ("learning_not_paused", "learning_not_resumed", "learning_left_off_after_removal"):
+        assert key not in SOURCE["issues"], key
     # I12: VT's commands on anything but the helper; VT's decision unknown; the settings moved.
     for key, placeholders in (
         ("vt_command_not_helper", {"entity", "helper"}),
@@ -298,6 +298,10 @@ def test_coded_states_and_attributes_are_translated() -> None:
     reasons = {reason.value for reason in CallReason}
     assert _values(binary["boiler_called"], "call_reason") == reasons
     assert _values(sensors["control_state"], "call_reason") == reasons
+    # I12.9: why the boiler gives no heat.
+    from custom_components.vtherm_smart_boiler.core.boiler_call import NoHeatReason
+
+    assert _values(binary["no_heat"], "reason") == {reason.value for reason in NoHeatReason}
 
 
 def test_every_icon_belongs_to_an_entity() -> None:
@@ -1028,10 +1032,8 @@ def test_entity_names_do_not_repeat_the_device(language: str) -> None:
 def test_y4_texts_are_translated() -> None:
     """Y4: the correction's limit says it is the only bound above the curve (P-66; I8 B6, the
     "correction range" gone); every freshness
-    field has its own description (P-103); the resumes given up have their issue, naming the
-    zones, and the control state its attribute; the verdict's low condensing through a relay
-    says why it is not changed — in every language."""
-    from custom_components.vtherm_smart_boiler.control import LEARNING_NOT_RESUMED_ISSUE
+    field has its own description (P-103); the verdict's low condensing through a relay says why
+    it is not changed — in every language."""
     from custom_components.vtherm_smart_boiler.core.controller import CORRECTION_MAX_K
 
     curve = SOURCE["options"]["step"]["control_curve"]  # with the correction (I8, H2)
@@ -1044,11 +1046,6 @@ def test_y4_texts_are_translated() -> None:
         texts = _texts(language)
         freshness = texts["options"]["step"]["freshness"]
         assert set(freshness["data_description"]) == set(freshness["data"]), language
-        issue = texts["issues"][LEARNING_NOT_RESUMED_ISSUE]
-        assert issue["title"], language
-        assert set(PLACEHOLDER.findall(issue["description"])) == {"zones"}, language
-        state = texts["entity"]["sensor"]["control_state"]["state_attributes"]
-        assert state["learning_not_resumed"]["name"], language
     detail = SOURCE["entity"]["sensor"]["verdict"]["state_attributes"]["detail"]["state"]
     assert "does not set the water temperature" in detail["water_not_controlled"]
     assert "anti-cycling" not in detail["water_not_controlled"]
@@ -1226,7 +1223,7 @@ def test_the_comfort_correction_says_it_is_off_and_what_it_costs() -> None:
         assert "TPI" in text, step
         assert "about 2 to 6 times the starts for under 0.15 K" in text, step
         assert "raise the curve first" in text, step
-        assert "0.5 K" in text, step  # SmartPI's learning band (G11 C)
+        assert "SmartPI" not in text, step  # I12.9: no learning band any more (G11 C removed)
         for language in LANGUAGES:
             translated = _texts(language)["options"]["step"][step]["data_description"]
             assert "2 do 6" in translated["comfort_correction"], (language, step)

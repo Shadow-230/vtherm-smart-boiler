@@ -513,37 +513,28 @@ async def test_a_failing_step_whose_hand_back_and_issues_fail_keeps_the_debt(
     assert stored["controlling"] is True
 
 
-@pytest.mark.parametrize("also", ["learning_release", "issue_registry"])
 async def test_a_lasting_step_error_with_another_failure_keeps_the_minutes_retry(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch, also: str
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """TB-02 with a second lasting failure (L1 of the part-1 check): the control step raises at
     every step, the gateway does not show the owed hand-back released, and — at every step as
-    well — the release of learning raises, or the issue registry fails for this integration.
-    The hand-back still goes out once a minute: a step that made no attempt does not put the
-    retry off, and an owed issue that cannot be raised does not stop the attempt. Before: CS=0
-    once in six minutes."""
+    well — the issue registry fails for this integration. The hand-back still goes out once a
+    minute: a step that made no attempt does not put the retry off, and an owed issue that
+    cannot be raised does not stop the attempt. Before: CS=0 once in six minutes."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     unit = unit_of(rig)
     rig.gateway.ignore_release = True
     monkeypatch.setattr(type(unit), "_async_step", broken_step)
-    if also == "learning_release":
+    create = ir.async_create_issue
 
-        async def broken_release(self: Any, now: float) -> None:
-            raise RuntimeError("a bug in the learning release")
+    def create_issue(hass: HomeAssistant, domain: str, *args: Any, **kwargs: Any) -> None:
+        if domain == DOMAIN:
+            raise RuntimeError("the issue registry fails")
+        create(hass, domain, *args, **kwargs)
 
-        monkeypatch.setattr(type(unit), "_async_release_learning", broken_release)
-    else:
-        create = ir.async_create_issue
-
-        def create_issue(hass: HomeAssistant, domain: str, *args: Any, **kwargs: Any) -> None:
-            if domain == DOMAIN:
-                raise RuntimeError("the issue registry fails")
-            create(hass, domain, *args, **kwargs)
-
-        monkeypatch.setattr(ir, "async_create_issue", create_issue)
+    monkeypatch.setattr(ir, "async_create_issue", create_issue)
     sent = rig.gateway.setpoints().count(0.0)
     await rig.advance(10)  # the first failing step: the whole safe hand-back
     assert rig.gateway.setpoints().count(0.0) == sent + 1
@@ -558,17 +549,17 @@ async def test_a_lasting_step_error_with_another_failure_keeps_the_minutes_retry
 async def test_an_error_whose_hand_back_raises_with_nothing_held_owes_nothing(
     rig: Rig, hass_storage: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """TB-02's negative: control off, nothing held or owed; the step raises, and so does what
-    the error path does instead of a hand-back (learning's release). No debt is made up: nothing
-    is owed or stored as owed, and nothing is written."""
+    """TB-02's negative: control off, nothing held or owed; the step raises, and so does the
+    error path's hand-back. No debt is made up: nothing is owed or stored as owed, and nothing
+    is written."""
     await start(rig)
     unit = unit_of(rig)
 
-    async def release(self: Any, now: float) -> None:
-        raise RuntimeError("a bug in the learning release")
+    async def hand_back(self: Any, now: float, after_error: bool = False) -> None:
+        raise RuntimeError("a bug in the hand-back")
 
     monkeypatch.setattr(type(unit), "_async_step", broken_step)
-    monkeypatch.setattr(type(unit), "_async_release_learning", release)
+    monkeypatch.setattr(type(unit), "_async_hand_back_now", hand_back)
     await rig.advance(70)
     assert not unit.hand_back_owed
     assert not unit.holding

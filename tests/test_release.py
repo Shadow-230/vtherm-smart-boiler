@@ -128,10 +128,11 @@ def test_integrations_it_uses_are_set_up_before_it() -> None:
     """P90: when present, the integrations it reads or calls start first."""
     from custom_components.vtherm_smart_boiler.const import VT_DOMAIN
     from custom_components.vtherm_smart_boiler.transport.writers import OPENTHERM_GW
-    from custom_components.vtherm_smart_boiler.vtherm_link import SMARTPI_DOMAIN
 
-    used = {"mqtt", OPENTHERM_GW, "recorder", SMARTPI_DOMAIN, VT_DOMAIN, "weather"}
+    used = {"mqtt", OPENTHERM_GW, "recorder", VT_DOMAIN, "weather"}
     assert used <= set(MANIFEST["after_dependencies"])
+    # I12.9: nothing of SmartPI is read or called any more.
+    assert "vtherm_smartpi" not in MANIFEST["after_dependencies"]
 
 
 def test_gateway_integrations_stay_optional_after_dependencies() -> None:
@@ -317,10 +318,10 @@ def test_ci_canaries_run_weekly_on_demand_and_check_types() -> None:
 
 
 def test_ci_fetches_upstream_by_full_commit_and_pins_actions() -> None:
-    """PB-86: VT and SmartPI are fetched by the full commit, not by a tag that can move — in the
-    shared test environment (`.github/actions/test-env`), which the parts and the newest-
-    vtherm_api canary use as it is — and every action runs from a full commit, not from a branch
-    or tag; only the repository's own action is used by its path."""
+    """PB-86: VT is fetched by the full commit, not by a tag that can move — in the shared test
+    environment (`.github/actions/test-env`), which the parts and the newest-vtherm_api canary
+    use as it is — and every action runs from a full commit, not from a branch or tag; only the
+    repository's own action is used by its path. SmartPI is no longer fetched there (I12.9)."""
     import yaml
 
     commit = re.compile(r"[0-9a-f]{40}")
@@ -331,7 +332,7 @@ def test_ci_fetches_upstream_by_full_commit_and_pins_actions() -> None:
     assert "archive/$commit.tar.gz" in fetch
     assert "refs/tags" not in fetch
     assert re.search(r"versatile_thermostat [0-9a-f]{40}", fetch)
-    assert re.search(r"vtherm_smartpi [0-9a-f]{40}", fetch)
+    assert "vtherm_smartpi" not in fetch
     tests = _workflow("tests.yml")
     for job in ("parts", "latest-vtherm-api"):
         local = [

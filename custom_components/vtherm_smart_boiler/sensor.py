@@ -612,8 +612,7 @@ class FeaturesSensor(SmartBoilerEntity, SensorEntity):
 
 class ControlStateSensor(ControlEntity, SensorEntity):
     """What control does now and why: mode, reasons, blockers, latch and hand-back; each coded
-    list with its text (P-39); SmartPI zones whose learning the plugin could not switch back on
-    for a day, no longer tried (Y4)."""
+    list with its text (P-39)."""
 
     _unrecorded_attributes = frozenset(
         {
@@ -626,7 +625,6 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "heating_confirmation",
             "unknown_zones",
             "room_sensor_lost_zones",
-            "learning_paused",
             "hand_back_confirmation",
             "comfort_correction",
             "activation_at",
@@ -669,9 +667,6 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "latched_by_text": self._text("latched_by", status.latched_by),
             "unknown_zones": list(status.unknown_zones),
             "room_sensor_lost_zones": list(status.room_sensor_lost_zones),
-            "learning_paused": list(status.paused_zones),
-            # Y4: SmartPI zones the plugin could not switch back on for a day: no longer tried.
-            "learning_not_resumed": list(status.learning_not_resumed),
             "writes_stopped": status.writes_stopped,
             "monitor_failed_since": _time(status.monitor_failed_since),
             # The comfort correction the session learned, K (P-38); the button resets it.

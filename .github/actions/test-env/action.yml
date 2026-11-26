@@ -1,16 +1,17 @@
 # The test environment every test job starts from: Python 3.14, uv with its cache, the pinned test
 # environment under Home Assistant's own constraints (docs/en/development/plans/plan-0.1.md, A3),
-# and — unless a job brings its own — VT 10.6.5 and SmartPI 0.4.0 by the full commits their
-# release tags pointed at (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86). uv
-# installs the same pins pip did, in seconds instead of a minute (2026-11-18).
+# and — unless a job brings its own — VT 10.6.5 by the full commit its release tag pointed at
+# (docs/en/development/plans/plan-0.2.2.md, decision 14; PB-86). SmartPI is not needed since the
+# plugin reads nothing of it (I12.9). uv installs the same pins pip did, in seconds instead of a
+# minute (2026-11-18).
 name: Test environment
-description: Python, uv, the pinned test environment and the vendored VT and SmartPI
+description: Python, uv, the pinned test environment and the vendored VT
 inputs:
   group:
     description: The dependency group with Home Assistant's test harness (pyproject.toml)
     required: true
   vendor:
-    description: "pinned: VT 10.6.5 and SmartPI 0.4.0; none: the job fetches its own"
+    description: "pinned: VT 10.6.5; none: the job fetches its own"
     required: false
     default: pinned
 runs:
@@ -35,7 +36,7 @@ runs:
         uv pip install --system --group test --group "$GROUP" -c "$constraints"
         echo "HA_CONSTRAINTS=$constraints" >> "$GITHUB_ENV"
         mkdir -p .tmp
-    - name: VT 10.6.5 and SmartPI 0.4.0 by their release commits
+    - name: VT 10.6.5 by its release commit
       if: inputs.vendor == 'pinned'
       shell: bash
       run: |
@@ -49,13 +50,9 @@ runs:
         mkdir -p vendor/custom_components
         fetch jmcollin78/versatile_thermostat a45ec370cf4aaac020f991a323733d6bceaec626 \
           versatile_thermostat-10.6.5
-        fetch KipK/vtherm_smartpi 51db763bb0db7b74747613fe9003b4c22e696b76 vtherm_smartpi-0.4.0
         ln -s ../versatile_thermostat-10.6.5/custom_components/versatile_thermostat \
           vendor/custom_components/versatile_thermostat
-        ln -s ../vtherm_smartpi-0.4.0/custom_components/vtherm_smartpi \
-          vendor/custom_components/vtherm_smartpi
         test -f vendor/custom_components/versatile_thermostat/manifest.json
-        test -f vendor/custom_components/vtherm_smartpi/manifest.json
     - name: The Home Assistant version tested
       shell: bash
       run: python -c 'from homeassistant.const import __version__; print(f"Home Assistant {__version__}")' | tee -a "$GITHUB_STEP_SUMMARY"

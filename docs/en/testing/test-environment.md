@@ -155,7 +155,7 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
 2. **One VT thermostat per simulated zone** (`zone_living`, `zone_bedroom`, `zone_bath`):
    type "over switch"; underlying switch `switch.boiler_sim_<zone>_valve`; room temperature
    `sensor.boiler_sim_<zone>_temperature`; outdoor temperature `sensor.boiler_sim_outdoor`. Use
-   SmartPI in the bedroom, to test the learning pauses. In each zone's advanced settings, its own
+   SmartPI in the bedroom, a zone algorithm that learns. In each zone's advanced settings, its own
    safety delay of 1440 min: VT takes a sensor whose state has not been written for its delay
    (60 min by default) for dead and switches the zone to its safety mode, and the simulator's
    steady rooms, or a steady outdoor temperature, keep one value longer than that.
@@ -217,7 +217,7 @@ before 2026-11-22). In `configuration.yaml` the bedroom, the SmartPI zone, is li
 radiator 2.5 times its design load (`zones: radiators_light_bedroom`). There SmartPI's learning
 from scratch ends in about 11 h in the simulator's model. A bedroom at the house's pace stays at
 about 20.0 °C, the top of SmartPI's learning band, and never ends a phase (L15). Q5 reads NOT RUN
-while that learning goes on. Q1 starts it again: run Q5 before Q1, or half a day after it.
+while that learning goes on.
 
 ## 5. What runs at J4
 

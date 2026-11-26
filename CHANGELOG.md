@@ -47,13 +47,11 @@ version is decided then.
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
   connected is the setup's first question. Control never writes through a cloud service.
 - Frost protection; a fallback setpoint when no outdoor temperature is known; the comfort
-  correction; SmartPI's learning paused while hot water or large swings disturb the rooms.
-- On each VT thermostat the plugin serves, the attribute `smart_boiler`: `heat_available` and
-  the water reaching the zone, rounded.
-- The water data for zone algorithms (`docs/en/specification/water-interface.md`): per VT thermostat,
-  the water reaching its circuit, why it is missing (lasting or momentary), when it was measured,
-  and whether heat reaches the zone — through the feature manager and a function in
-  `hass.data`. A zone algorithm that uses it says so, and is then not paused for water swings.
+  correction.
+- **Gives no heat**: one binary sensor, on while the boiler gives the rooms no heat — VT's central
+  boiler not calling, its activation delay, hot water, a boiler fault, or the plugin unable to
+  vouch for heat — with the reason. Pick it in SmartPI 1.0's "heating unavailable" setting, or
+  use it in an automation; the plugin pauses no zone's learning itself.
 
 **Safety**
 

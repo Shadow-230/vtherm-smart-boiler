@@ -53,7 +53,6 @@ BASE_GATEWAY: dict[str, object] = {
     # Control behaviour; "off" is asked only at the simple level, where S-49 refuses it. VT's
     # central boiler decides whether the boiler heats, through its helper (I12.8).
     "vt_boiler_helper": VT_HELPER,
-    "learning_pauses": True,
     "ramp_k_per_min": 1.0,
     "decision_interval_min": 5.0,
     "off_setpoint": 10.0,

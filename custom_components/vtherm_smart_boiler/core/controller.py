@@ -1072,10 +1072,9 @@ def _counted(inputs: ControlInputs, config: ControlConfig) -> list[ZoneState]:
 
 
 def is_short(zone: ZoneState) -> bool:
-    """Fully open and short by at least ``SHORT_K`` of where its own controller stops heating —
-    VT's setpoint, or with SmartPI learning its upper hysteresis over it (G11 C)."""
-    shortfall = zone.shortfall
-    return _saturated(zone) and shortfall is not None and shortfall >= SHORT_K
+    """Fully open and short of VT's setpoint by at least ``SHORT_K``."""
+    deficit = zone.deficit
+    return _saturated(zone) and deficit is not None and deficit >= SHORT_K
 
 
 def _curve_room(state: ControlState, inputs: ControlInputs, config: ControlConfig) -> float:

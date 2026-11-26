@@ -23,6 +23,7 @@
     "binary_sensor": {
       "control": { "default": "mdi:radiator", "state": { "off": "mdi:radiator-off" } },
       "boiler_called": { "default": "mdi:fire", "state": { "off": "mdi:fire-off" } },
+      "no_heat": { "default": "mdi:radiator-off", "state": { "off": "mdi:radiator" } },
       "connection": { "default": "mdi:lan-connect", "state": { "off": "mdi:lan-disconnect" } },
       "alarm_frequent_starts": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_unstable_ignition": { "default": "mdi:fire-alert", "state": { "off": "mdi:check-circle-outline" } },

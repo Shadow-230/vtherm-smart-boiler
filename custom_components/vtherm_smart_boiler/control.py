@@ -1,5 +1,5 @@
 """Control on the Home Assistant side: a control step every few seconds, its writes, hand-back on
-every exit, learning pauses, and the status the entities show.
+every exit, and the status the entities show.
 
 The step itself is pure (``core.loop``); this module only gathers its inputs, carries out its
 writes through the writer, and turns guard events and failures into alarms. The writer exists
@@ -136,7 +136,6 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-import probatio as vol  # voluptuous's successor in Home Assistant (2026.9; typed from 2026.10)
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import (
     CALLBACK_TYPE,
@@ -148,7 +147,6 @@ from homeassistant.core import (
     State,
     callback,
 )
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
@@ -183,7 +181,7 @@ from .control_config import (
     working_thermostat,
 )
 from .core.alarms import UNKNOWN_HOLD_S, fault_stops, follow_fault
-from .core.boiler_call import CallReason, boiler_call
+from .core.boiler_call import NO_HEAT_UNKNOWN, CallReason, NoHeat, boiler_call, no_heat
 from .core.controller import (
     KEPT_IN_RECOGNITION,
     VT_SETTINGS_UNKNOWN,
@@ -236,15 +234,6 @@ from .core.hand_back import (
     watch_foreign,
 )
 from .core.heat_sign import HeatSignSeen, HeatSignState, follow_heat_sign
-from .core.learning import (
-    LearningState,
-    PauseCause,
-    ZoneLearning,
-    follow_resumes,
-    plan_learning,
-    release_all,
-    rename_zone,
-)
 from .core.limits import (
     Grid,
     handed_back_in_frost,
@@ -270,7 +259,7 @@ from .core.loop import (
     parse_last_command,
     remember_command,
 )
-from .core.readings import ZONE_OPEN, BoilerSnapshot, ZoneState
+from .core.readings import BoilerSnapshot, ZoneState
 from .core.relay import (
     PROOF_WINDOW_S,
     RELAY_NOT_TAKEN_CHECKS,
@@ -313,9 +302,7 @@ from .transport.writers import (
 )
 from .units import parse_binary
 from .vtherm_link import (
-    SMARTPI_DOMAIN,
     VtBoilerCheck,
-    VThermLink,
     central_boiler_event,
     read_central_boiler_event,
     vt_central_boiler,
@@ -326,7 +313,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 MINUTE_S = 60.0
-LEARNING_TIMEOUT_S = 5.0
 # An owed hand-back is sent again this long after an attempt; a gateway's not released by then
 # counts as failed — its override's own lapse time (provisional, K4).
 HAND_BACK_RETRY_S = 60.0
@@ -335,8 +321,8 @@ RELEASE_TOLERANCE_K = 0.5  # a target within this of what it was given shows it
 # logs at DEBUG only: a device may report again only once it has reconnected (P-50; provisional,
 # K4; Q3.5, ESPHome). A target still away meanwhile is tried again at every step.
 START_GRACE_S = 60.0
-# The stop's hand-back — its writes, a short wait for a device that reports late, SmartPI's
-# calls — ends within this: Home Assistant cancels every shutdown job at 20 s (provisional, K4;
+# The stop's hand-back — its writes and a short wait for a device that reports late — ends
+# within this: Home Assistant cancels every shutdown job at 20 s (provisional, K4;
 # Q3.3). Each write at a stop is capped at 3 s (pyotgw gives each command 3 s itself), and the
 # wait is 5 s at most.
 STOP_BUDGET_S = 15.0
@@ -471,11 +457,6 @@ RELAY_TIMER_ISSUE = "relay_timer_seen"
 # Decision 2 of 0.2.3 (SB-01): on the water paths, "no sign the boiler heats" — a warning repair
 # issue beside the information alarm; never a hand-back.
 NO_HEAT_SIGN_ISSUE = "no_sign_boiler_heats"
-# Y4 (the V3 carry-over): SmartPI zones whose learning the plugin paused and could not switch back
-# on for a day — no longer tried: a warning repair issue naming them, told once in the log, until
-# the zone's learning is on again or the plugin pauses it again.
-LEARNING_NOT_RESUMED_ISSUE = "learning_not_resumed"
-SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
 RUNTIME_BLOCKERS = (
     "ha_starting",
@@ -542,46 +523,6 @@ def _cancelled_from_outside() -> bool:
     rather than a ``CancelledError`` raised inside a call it made."""
     task = asyncio.current_task()
     return task is not None and task.cancelling() > 0
-
-
-async def async_resume_left_learning(hass: HomeAssistant, stored: Mapping[str, Any]) -> list[str]:
-    """PB-51: at the entry's removal, SmartPI's learning in the zones a stored control state
-    left paused — or still resuming — is switched back on and read back from SmartPI's flag;
-    the zones whose learning is not seen on are returned, by name. Nothing else is written."""
-    zones = sorted(
-        {
-            str(zone)
-            for key in ("paused", "resuming")
-            if isinstance(stored.get(key), Mapping)
-            for zone in stored[key]
-        }
-    )
-
-    async def resume(zone_id: str) -> None:
-        try:
-            async with asyncio.timeout(LEARNING_TIMEOUT_S):
-                await hass.services.async_call(
-                    SMARTPI_DOMAIN,
-                    SMARTPI_SERVICE,
-                    {"entity_id": zone_id, "learning_enabled": True},
-                    blocking=True,
-                )
-        except asyncio.CancelledError:
-            if _cancelled_from_outside():
-                raise
-            _LOGGER.warning("Could not resume SmartPI learning of %s at the removal", zone_id)
-        except Exception as err:  # read back below whatever the call reported
-            _LOGGER.warning(
-                "Could not resume SmartPI learning of %s at the removal: %s", zone_id, err
-            )
-
-    await asyncio.gather(*(resume(zone_id) for zone_id in zones))
-    link = VThermLink(hass, zones)
-    return [
-        link.zone_name(zone_id)
-        for zone_id in zones
-        if link.zone_algorithm(zone_id).smartpi_learning is not True
-    ]
 
 
 def _local_minute(t: float) -> str:
@@ -663,33 +604,6 @@ def _lapses(raw: Any) -> tuple[tuple[float, float], ...]:
             raise ValueError(f"not a switch-off: {item!r}")
         found.append((_setpoint(item[0]), _length(item[1])))
     return tuple(found)
-
-
-def _zones_changed(before: LearningState, after: LearningState) -> bool:
-    """Whether the zones paused, followed or given up, or a pause's causes, changed (not only
-    when a resume was last sent)."""
-    return (
-        before.paused.keys() != after.paused.keys()
-        or before.resuming.keys() != after.resuming.keys()
-        or before.causes != after.causes
-        or before.given_up.keys() != after.given_up.keys()
-    )
-
-
-def _causes(raw: Any) -> dict[str, tuple[PauseCause, ...]]:
-    """Stored pause causes; a cause this version does not know is left out — a pause left with
-    none is taken for hot water."""
-    causes: dict[str, tuple[PauseCause, ...]] = {}
-    for zone_id, values in raw.items():
-        known = []
-        for value in values:
-            try:
-                known.append(PauseCause(value))
-            except ValueError:
-                continue
-        if known:
-            causes[str(zone_id)] = tuple(known)
-    return causes
 
 
 def _shown(check: Confirmation | None, gateway: bool, self_echo: bool) -> str | None:
@@ -817,7 +731,6 @@ class ControlStatus:
     last_change_at: float | None = None  # last write of a new value (keep-alives aside)
     hand_back_at: float | None = None
     alarms: frozenset[ControlAlarm] = frozenset()
-    paused_zones: tuple[str, ...] = ()
     latched_by: tuple[str, ...] = ()  # the alarms that latched control, while it stays latched
     unknown_zones: tuple[str, ...] = ()  # zones whose state is not known now
     room_sensor_lost_zones: tuple[str, ...] = ()  # VT keeps their last temperature
@@ -846,14 +759,14 @@ class ControlStatus:
     # be judged now, their hold over (S-16): shown unknown.
     blocked_by: tuple[str, ...] = ()
     unknown_alarms: frozenset[ControlAlarm] = frozenset()
-    # Y4: SmartPI zones whose learning could not be switched back on for a day: no longer tried.
-    learning_not_resumed: tuple[str, ...] = ()
     # Whether the boiler is called for heat and why not (the user's decisions of 2026-10-14;
     # ``core.boiler_call``), and the rooms that call — ``None`` with no zone known.
     boiler_called: bool | None = None
     call_reason: str | None = CallReason.NOT_CONTROLLING.value
     demand_count: int | None = None
     calling_zones: tuple[str, ...] = ()
+    # I12.9: whether the boiler gives the rooms no heat now, and why (``core.boiler_call``).
+    no_heat: NoHeat = NO_HEAT_UNKNOWN
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -889,7 +802,6 @@ class _Session:
     """One control session: from switching control on to switching it off."""
 
     loop: LoopState = field(default_factory=LoopState)
-    learning: LearningState = field(default_factory=LearningState)
     alarms: set[ControlAlarm] = field(default_factory=set)
     failed: bool = False
     failing: set[str] = field(default_factory=set)  # writes whose last attempt failed
@@ -904,9 +816,7 @@ class ControlUnit:
     ``raw``: the control options as stored; kept with the state while the boiler may hold a value
     of ours, so a later start can hand back through what took the boiler even if the options
     changed. ``hand_back_only``: built from such stored options after control left the options;
-    it never controls, only makes the owed hand-back, shown as a repair issue, and follows the
-    SmartPI resumes the last run left. ``follow_learning``: such a unit built without options
-    (nothing owed, only resumes to follow): it only follows them.
+    it never controls, only makes the owed hand-back, shown as a repair issue.
     """
 
     def __init__(
@@ -917,14 +827,12 @@ class ControlUnit:
         writer_factory: WriterFactory = make_writer,
         raw: Mapping[str, Any] | None = None,
         hand_back_only: bool = False,
-        follow_learning: bool = False,
     ) -> None:
         self._hass = hass
         self._coordinator = coordinator
         self.options = options
         self._raw = dict(raw or {})
-        self.hand_back_only = hand_back_only or follow_learning
-        self.follow_learning = follow_learning
+        self.hand_back_only = hand_back_only
         self._writer_factory = writer_factory
         self._writer: Writer | None = None
         self.enabled = False
@@ -996,11 +904,6 @@ class ControlUnit:
         self._stopped = False
         self._stopping = False
         self._step_task: asyncio.Task[None] | None = None  # the step running now, if any
-        # SmartPI calls planned by a step or a hand-back; made after the lock is released, so a
-        # slow SmartPI never holds up control or a hand-back.
-        self._learning_calls: list[tuple[str, bool]] = []
-        # Failures already logged: a lasting one is logged once, and its recovery once.
-        self._learning_failing: set[str] = set()
         self._hand_back_logged = False
         self._step_failing = False  # the control step failed: logged once, its end once
         # The monitor's issue is up for a hand-back it caused: when its failures began. It
@@ -1136,10 +1039,7 @@ class ControlUnit:
     @property
     def allowed_services(self) -> frozenset[tuple[str, str]]:
         """Every service control may call, derived from the configuration alone."""
-        services = set(writer_services(self.options))
-        if (services and self.options.learning_pauses) or self.follow_learning:
-            services.add((SMARTPI_DOMAIN, SMARTPI_SERVICE))
-        return frozenset(services)
+        return frozenset(writer_services(self.options))
 
     @property
     def stored_wish(self) -> bool | None:
@@ -1159,16 +1059,13 @@ class ControlUnit:
         return {entity: tuple(fields) for entity, fields in found.items()}
 
     def rename_entity(self, old: str, new: str) -> bool:
-        """P-19: Home Assistant renamed an entity: what this unit keeps for it follows — a
-        zone's paused learning and its resume, the options the boiler was taken with (stored
-        with the control state) and a target another controller holds. Whether anything
-        changed; the options themselves are saved by the caller, which reloads."""
-        learning = self._session.learning
-        renamed = rename_zone(learning, old, new)
+        """P-19: Home Assistant renamed an entity: what this unit keeps for it follows — the
+        options the boiler was taken with (stored with the control state) and a target another
+        controller holds. Whether anything changed; the options themselves are saved by the
+        caller, which reloads."""
         raw = rename_in_control(self._raw, old, new)
         taken = {new if target == old else target for target in self._taken_targets}
-        changed = renamed is not learning or raw != self._raw or taken != self._taken_targets
-        self._session.learning = renamed
+        changed = raw != self._raw or taken != self._taken_targets
         self._raw = raw
         self._taken_targets = taken
         if isinstance(self._taken_with, Mapping):
@@ -1204,9 +1101,9 @@ class ControlUnit:
                 self._listeners_failing.discard(update)
 
     def stored(self) -> dict[str, Any]:
-        """What must survive a restart: whether the boiler may hold a value of ours, paused zones,
-        latches, a hand-back still to be done, the user's wish, the last command, and a blocker
-        that stopped heating (S-10)."""
+        """What must survive a restart: whether the boiler may hold a value of ours, latches, a
+        hand-back still to be done, the user's wish, the last command, and a blocker that stopped
+        heating (S-10)."""
         session = self._session
         owed = self._holding or self._hand_back_pending
         if self.hand_back_only:
@@ -1227,17 +1124,6 @@ class ControlUnit:
             "last_command": None if command is None else command.as_dict(),
             "controlling": self._holding,
             "taken_with": dict(self._raw) if kept and self._raw else None,
-            "paused": dict(session.learning.paused),
-            # What each pause is for (P-89): a pause after hot water waits for the flow. Its
-            # start (``paused``) bounds it: an hour at most (decision 14).
-            "pause_causes": {
-                zone: [cause.value for cause in causes]
-                for zone, causes in session.learning.causes.items()
-            },
-            "resuming": dict(session.learning.resuming),
-            "resume_since": dict(session.learning.resume_since),
-            # Resumes given up (Y4): the next run shows them again.
-            "resume_given_up": dict(session.learning.given_up),
             "latched": session.loop.control.latched,
             "latched_by": list(session.loop.control.latched_by),
             # What another controller showed when the plugin stepped aside: its latch issue
@@ -1295,20 +1181,6 @@ class ControlUnit:
                 _LOGGER.warning("Ignoring unreadable stored control data: %s", key)
                 return default
 
-        paused: dict[str, float] = field(
-            "paused", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
-        )
-        resuming: dict[str, float] = field(
-            "resuming", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
-        )
-        resume_since: dict[str, float] = field(
-            "resume_since", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
-        )
-        # A pause's causes, where stored (P-89); without them it is taken for hot water.
-        causes: dict[str, tuple[PauseCause, ...]] = field("pause_causes", _causes, {})
-        given_up: dict[str, float] = field(
-            "resume_given_up", lambda raw: {str(z): float(t) for z, t in raw.items()}, {}
-        )
         alarms: set[ControlAlarm] = field("alarms", _kept_alarms, set())
         latched_by: tuple[str, ...] = field(
             "latched_by", lambda raw: tuple(str(a) for a in raw), ()
@@ -1361,14 +1233,6 @@ class ControlUnit:
                     lapses=relay_lapses,
                     timer_seen_s=relay_timer_seen,
                 ),
-            ),
-            learning=LearningState(
-                paused=paused,
-                last_toggle=dict(paused),
-                resuming=resuming,
-                resume_since={z: t for z, t in resume_since.items() if z in resuming},
-                causes={z: c for z, c in causes.items() if z in paused},
-                given_up=given_up,
             ),
             alarms=alarms,
             failed=_flag(data.get("failed")),
@@ -1499,12 +1363,11 @@ class ControlUnit:
 
     async def async_start(self) -> None:
         """Start the control clock and hand back when Home Assistant stops."""
-        if not (self.options.configured or self.follow_learning):
+        if not self.options.configured:
             return
         self._report_owed()
         self._report_latched(anew=False)  # a stored latch holds: its issue again (V7)
         self._resume_hand_back_issues()  # Y1: what the last run left of them
-        self._report_given_up()  # Y4: resumes the last run gave up, shown again (not logged)
         self._started_at = dt_util.utcnow().timestamp()
         self._monitor_issue_since = self._monitor_issue_left()
         self._track_outages(self._started_at)
@@ -1538,7 +1401,6 @@ class ControlUnit:
             await self._coordinator.async_save_control_now()
             if changed:
                 await self._async_run_step(dt_util.utcnow().timestamp())
-        await self._async_learning_calls()
         self._notify()
 
     async def _async_shutdown(self) -> None:
@@ -1548,8 +1410,8 @@ class ControlUnit:
         await self.async_stop()
 
     async def async_stop(self) -> None:
-        """Stop the clock and hand back — the writes, a short wait for a device that reports
-        late and SmartPI's calls, all within ``STOP_BUDGET_S`` — and write nothing afterwards.
+        """Stop the clock and hand back — the writes and a short wait for a device that reports
+        late, all within ``STOP_BUDGET_S`` — and write nothing afterwards.
         Never raises; Home Assistant's own cancellation passes, the debt stored before the first
         write (R1), and the next start makes the hand-back."""
         deadline = self._hass.loop.time() + STOP_BUDGET_S
@@ -1588,7 +1450,6 @@ class ControlUnit:
             self._stop_issues()
         except Exception:  # the issue registry failing must not stop the unload (TB-02)
             _LOGGER.exception("Could not update the repair issues at the stop")
-        await self._async_learning_calls(deadline)
         self._coordinator.schedule_control_save()
         if self._stop_unsub is not None:  # not from the shutdown job itself, which keeps it
             self._stop_unsub()
@@ -1614,9 +1475,6 @@ class ControlUnit:
         self._delete_ignored_issue()  # the next session tries the command again
         self._delete_not_shown_issue()  # the next run tells again, after its 5 minutes
         self._end_heat_sign()  # the next run counts afresh
-        # The resumes given up: stored, the next run with a unit shows them again (Y4).
-        entry_id = self._coordinator.config_entry.entry_id
-        ir.async_delete_issue(self._hass, DOMAIN, f"{LEARNING_NOT_RESUMED_ISSUE}_{entry_id}")
 
     async def _async_stop_hand_back(self, now: float, deadline: float) -> None:
         """The stop's own hand-back, each write capped at ``STOP_WRITE_TIMEOUT_S``. One its
@@ -1642,7 +1500,6 @@ class ControlUnit:
                 await self._async_run_step(dt_util.utcnow().timestamp())
         finally:
             self._tick_waiting = False
-        await self._async_learning_calls()
         self._notify()
 
     async def _async_run_step(self, now: float) -> None:
@@ -2021,19 +1878,16 @@ class ControlUnit:
                 self._end_session()
                 # The user has seen to it: the monitor's issue, or its note, goes (answer I).
                 self._delete_monitor_issue()
-        await self._async_learning_calls()
         self._notify()
         return enabled or self._attempts_failed == failed_before or not self._hand_back_pending
 
     def _end_session(self) -> None:
-        """A new session starts fresh; only the learning pauses carry on (a pending hand-back and
-        its alarm belong to the unit, not the session), and each guard's one rewrite, kept for its
-        day (provisional, K4). A latch goes with the session, and its repair issue with it; so
-        does a target ignored from the start, which the new session tries again."""
+        """A new session starts fresh (a pending hand-back and its alarm belong to the unit, not
+        the session), but for each guard's one rewrite, kept for its day (provisional, K4). A
+        latch goes with the session, and its repair issue with it; so does a target ignored from
+        the start, which the new session tries again."""
         now = dt_util.utcnow().timestamp()
-        self._session = _Session(
-            loop=new_session(self._session.loop, now), learning=self._session.learning
-        )
+        self._session = _Session(loop=new_session(self._session.loop, now))
         self._writer = None
         self._baseline = None
         self._quiet_since = None
@@ -2056,7 +1910,7 @@ class ControlUnit:
     # --- the step -------------------------------------------------------------------------
 
     async def _async_tick_locked(self, now: float) -> None:
-        if not (self.options.configured or self.follow_learning):
+        if not self.options.configured:
             return
         try:
             await self._async_follow_store(now)
@@ -2109,6 +1963,7 @@ class ControlUnit:
                 alarms=frozenset(self._alarms()),
                 hand_back_check=self._hand_back_shown,
                 frost_protection_by=self._frost_protection_shown(),
+                no_heat=no_heat(ControlMode.NOT_ALLOWED, (), self._status.no_heat),
             )
         else:
             if self._step_failing:
@@ -2176,16 +2031,6 @@ class ControlUnit:
         setpoint_check, heating_check = self._checks()
         relay_state, relay_shown, heats, confirmation = self._relay_status(now, snapshot)
         self._follow_relay_issues(now, zones, out)
-        command = out.decision.command
-        await self._async_learning(
-            now,
-            snapshot,
-            zones,
-            None if command is None else command.setpoint,
-            out.heating_on,
-            out.blocked,
-            fault=Reason.BOILER_FAULT in out.decision.reasons,
-        )
         self._status = ControlStatus(
             configured=True,
             enabled=self.enabled,
@@ -2201,7 +2046,6 @@ class ControlUnit:
             last_change_at=self._last_change_at,
             hand_back_at=self._hand_back_at,
             alarms=frozenset(self._alarms()),
-            paused_zones=tuple(sorted(session.learning.paused)),
             latched_by=session.loop.control.latched_by if session.loop.control.latched else (),
             unknown_zones=unknown,
             room_sensor_lost_zones=tuple(z.zone_id for z in zones if z.room_sensor_lost),
@@ -2222,8 +2066,15 @@ class ControlUnit:
             confirmation=confirmation,
             blocked_by=self._blocked_by(),
             unknown_alarms=self._unknown_alarms(),
-            learning_not_resumed=tuple(sorted(session.learning.given_up)),
             **self._call_shown(now, zones, out.decision),
+            no_heat=no_heat(
+                out.decision.mode,
+                out.decision.reasons,
+                self._status.no_heat,
+                # Hot water only where it takes the rooms' heat (I6, decision 8).
+                hot_water=self._coordinator.dhw_takes_heat(snapshot),
+                writes_stopped=out.blocked,
+            ),
         )
 
     async def _async_ready_to_decide(self, now: float) -> bool:
@@ -2248,8 +2099,6 @@ class ControlUnit:
             else:
                 await self._async_follow_hand_back(now)
         if self.hand_back_only:
-            # Resumes the last run left are followed until SmartPI's flag reads on (C15).
-            await self._async_release_learning(now)
             self._report_owed()
             return False
         if not self._restored and not self._enabled_now():
@@ -3594,15 +3443,14 @@ class ControlUnit:
     # --- hand-back ------------------------------------------------------------------------
 
     async def _async_hand_back_writes(self, now: float) -> None:
-        """The hand-back write, which no guard holds back, and the release of learning. When the
-        boiler holds nothing of ours there is nothing to give back."""
+        """The hand-back write, which no guard holds back. When the boiler holds nothing of ours
+        there is nothing to give back."""
         if self._holding or self._hand_back_pending:
             await self._async_try_hand_back(now, new=True)
         self._hand_back_at = now
         self._last_change_at = now
         self._forget_last_command()  # the session ended; a stop's own hand-back keeps it
         await self._coordinator.async_save_control_now()  # a latch set with it must survive a crash
-        await self._async_release_learning(now)
 
     async def _async_try_hand_back(
         self, now: float, new: bool = False, only: set[str] | None = None
@@ -4474,7 +4322,6 @@ class ControlUnit:
                 await self._async_try_hand_back(now)
         elif self._holding:
             await self._async_try_hand_back(now, new=True)
-        await self._async_release_learning(now)
 
     def _let_go(self) -> None:
         """The session no longer holds the boiler: its hand-back is made, or owed."""
@@ -4867,177 +4714,3 @@ class ControlUnit:
         self._relay_not_taking_issue = None
         self._rests_off_issue = None
         self._relay_timer_issue = None
-
-    # --- learning pauses ------------------------------------------------------------------
-
-    async def _async_learning(
-        self,
-        now: float,
-        snapshot: BoilerSnapshot,
-        zones: Sequence[ZoneState],
-        heating_setpoint: float | None,
-        heating: bool | None,
-        writes_stopped: bool = False,
-        fault: bool = False,
-    ) -> None:
-        """``fault``: control sends its "off" for a boiler fault — it pauses SmartPI's learning in
-        the zones calling for heat, as a draw does (decision 14)."""
-        controlling = self._session.loop.control.controlling and not writes_stopped
-        if not (self.options.learning_pauses and controlling):
-            await self._async_release_learning(now)
-            return
-        coordinator = self._coordinator
-        opening = ZONE_OPEN  # a zone taking heat now, for its learning (as before 2026-10-14)
-        learning_zones = []
-        for zone in zones:
-            algorithm = coordinator.link.zone_algorithm(zone.zone_id)
-            if algorithm.smartpi_learning is None:
-                continue
-            demand = zone.demand
-            learning_zones.append(
-                ZoneLearning(
-                    zone.zone_id,
-                    algorithm.smartpi_learning,
-                    demand is not None and demand > opening,
-                    uses_water_data=algorithm.uses_water_data,
-                )
-            )
-        plan = plan_learning(
-            self._session.learning,
-            learning_zones,
-            # Hot water pauses the zones' learning only where it takes their heat (I6).
-            coordinator.dhw_takes_heat(snapshot),
-            # The flow by its own age limit, as everywhere (X2): a stale one is unknown.
-            snapshot.number(Signal.FLOW, coordinator.max_age(Signal.FLOW)),
-            heating_setpoint,  # the heating setpoint, not a low "off" value: no false swings
-            now,
-            self.options.learning,
-            heating,
-            fault,
-        )
-        self._learning_calls += [(zone_id, False) for zone_id in plan.pause]
-        self._learning_calls += [(zone_id, True) for zone_id in plan.resume]
-        before = self._session.learning
-        self._session.learning = plan.state
-        self._follow_given_up(before, plan.state)
-        if plan.pause or _zones_changed(before, plan.state):
-            # Stored before SmartPI is asked (the calls come after the step): a crash right
-            # after a pause must still know the zone is the plugin's to resume (P-10).
-            await self._coordinator.async_save_control_now()
-        elif plan.resume or plan.state.resuming != before.resuming:
-            # A resume sent again: only times.
-            self._coordinator.schedule_control_save()
-
-    async def _async_release_learning(self, now: float) -> None:
-        """Resume every zone the plugin paused, and follow the resumes until SmartPI's flag
-        reads on: one that did not take is sent again every minute."""
-        before = learning = self._session.learning
-        if learning.paused:
-            learning, zones = release_all(learning, now)
-            self._learning_calls += [(zone_id, True) for zone_id in zones]
-        if learning.resuming or learning.given_up:
-            link = self._coordinator.link
-            zones = (*learning.resuming, *learning.given_up)
-            flags = {z: link.zone_algorithm(z).smartpi_learning for z in zones}
-            followed, again = follow_resumes(learning, flags, now, self.options.learning)
-            self._learning_calls += [(zone_id, True) for zone_id in again]
-            learning = followed
-        self._session.learning = learning
-        self._follow_given_up(before, learning)
-        if _zones_changed(before, learning):
-            # Which zones are paused or followed is stored before SmartPI is asked (P-10).
-            await self._coordinator.async_save_control_now()
-        elif learning.resuming != before.resuming:
-            self._coordinator.schedule_control_save()  # only when a resume was last sent
-
-    def _follow_given_up(self, before: LearningState, after: LearningState) -> None:
-        """Y4: a SmartPI resume given up a day after the first one is told once in the log and
-        shown — the control state's ``learning_not_resumed`` and a warning repair issue naming
-        the zones — until the zone's learning is on again or the plugin pauses it again."""
-        for zone_id in sorted(after.given_up.keys() - before.given_up.keys()):
-            _LOGGER.warning(
-                "SmartPI learning of %s could not be switched back on for a day after the plugin "
-                "paused it; the plugin no longer tries. Switch it on in SmartPI if you want it",
-                zone_id,
-            )
-        if after.given_up.keys() != before.given_up.keys():
-            self._report_given_up()
-
-    def _report_given_up(self) -> None:
-        """The repair issue of the resumes given up (Y4): raised, with the zones' names, while
-        any is shown; deleted otherwise."""
-        issue_id = f"{LEARNING_NOT_RESUMED_ISSUE}_{self._coordinator.config_entry.entry_id}"
-        zones = sorted(self._session.learning.given_up)
-        if not zones:
-            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
-            return
-        link = self._coordinator.link
-        ir.async_create_issue(
-            self._hass,
-            DOMAIN,
-            issue_id,
-            is_fixable=False,
-            is_persistent=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=LEARNING_NOT_RESUMED_ISSUE,
-            translation_placeholders={"zones": ", ".join(link.zone_name(z) for z in zones)},
-        )
-
-    async def _async_learning_calls(self, deadline: float | None = None) -> None:
-        """Make the planned SmartPI calls, together and without the lock. Whether each took is
-        read back from SmartPI's flag at the next steps, whatever the call reported. At a stop
-        they fit in what is left of its budget (``deadline``, the loop's clock); with nothing
-        left they are not made, and the stored resumes are sent again at the next start."""
-        calls, self._learning_calls = self._learning_calls, []
-        if not calls:
-            return
-        timeout_s = LEARNING_TIMEOUT_S
-        if deadline is not None:
-            timeout_s = min(timeout_s, deadline - self._hass.loop.time())
-            if timeout_s <= 0:
-                _LOGGER.debug("No time left at the stop for %d SmartPI call(s)", len(calls))
-                return
-        await asyncio.gather(
-            *(self._async_set_learning(zone_id, enabled, timeout_s) for zone_id, enabled in calls)
-        )
-
-    async def _async_set_learning(
-        self, zone_id: str, enabled: bool, timeout_s: float = LEARNING_TIMEOUT_S
-    ) -> bool:
-        try:
-            async with asyncio.timeout(timeout_s):
-                await self._hass.services.async_call(
-                    SMARTPI_DOMAIN,
-                    SMARTPI_SERVICE,
-                    {"entity_id": zone_id, "learning_enabled": enabled},
-                    blocking=True,
-                )
-        except asyncio.CancelledError as err:
-            if _cancelled_from_outside():
-                raise  # a real cancellation (a stop): it passes
-            # PB-35: raised inside SmartPI's service — a failed call, not ours to pass on.
-            return self._learning_failed(zone_id, enabled, err)
-        except (HomeAssistantError, TimeoutError, vol.Invalid) as err:
-            return self._learning_failed(zone_id, enabled, err)
-        except Exception:  # a learning pause must never break control; any other error is a bug
-            if zone_id not in self._learning_failing:
-                _LOGGER.exception("Setting SmartPI learning of %s failed unexpectedly", zone_id)
-            self._learning_failing.add(zone_id)
-            return False
-        if zone_id in self._learning_failing:
-            _LOGGER.info("SmartPI learning of %s can be set again", zone_id)
-            self._learning_failing.discard(zone_id)
-        return True
-
-    def _learning_failed(self, zone_id: str, enabled: bool, err: BaseException) -> bool:
-        """A SmartPI call that failed: logged once until it works again; always ``False``."""
-        if zone_id not in self._learning_failing:
-            action = "resume" if enabled else "pause"
-            _LOGGER.warning(
-                "Could not %s SmartPI learning of %s; tried again every minute: %s",
-                action,
-                zone_id,
-                err,
-            )
-        self._learning_failing.add(zone_id)
-        return False

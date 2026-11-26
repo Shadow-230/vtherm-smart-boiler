@@ -21,7 +21,6 @@ Queuing Telemetry Transport (MQTT).
 5. [Lifecycle](#5-lifecycle)
 6. [Persistent state](#6-persistent-state)
 7. [Testing](#7-testing)
-8. [Water data for zone algorithms](#8-water-data-for-zone-algorithms)
 
 ## 1. Overview
 
@@ -42,14 +41,20 @@ writes that to the boiler and hands the boiler back on every exit.
   it off, its cycle (the user's rule, 2026-11-24). The rest, and every value of a thermostat VT
   started before the plugin registered, comes from VT's climate entities; so do VT's central
   configuration and its central boiler. It detects what is installed (VT and its version,
-  `vtherm_api`, SmartPI) instead of assuming it. No other module looks up a zone's state by
-  entity name.
+  `vtherm_api`) instead of assuming it; it reads nothing of SmartPI. No other module looks up a
+  zone's state by entity name.
 - **A feature manager registered with VT** (`feature_manager.py`, through `vtherm_api`'s
-  `register_feature_manager`) shows on each VT thermostat whether the boiler's heat reaches its
-  zone now — `heat_available`, from `core/heat.py` (I8, decision C1) — and, since I9, the water
-  reaching the zone (`core/water.py`; section 8). It is
-  registered only once VT is loaded; a thermostat already running sees it only after VT's next
-  reload, which the plugin never triggers itself. Nothing in control depends on it.
+  `register_feature_manager`) is the channel VT hands each thermostat through. It publishes
+  nothing on VT's thermostats: the water data it showed until I12.9 went, as nothing read it
+  (the user's decision of 2026-11-25). It is registered only once VT is loaded; a thermostat
+  already running is handed over only after VT's next reload, which the plugin never triggers
+  itself — a repair issue names such zones.
+- **"Gives no heat"** (`binary_sensor`, key `no_heat`; `core/boiler_call.py`): one house-wide
+  signal, on while the boiler gives the rooms no heat now, with its reason — VT's central boiler
+  not calling, its activation delay, hot water, a boiler fault, or the plugin unable to vouch for
+  heat. Mapped from control's decision at each step; unavailable while control is off. The user
+  picks it in SmartPI 1.0's "heating unavailable" setting, or uses it in an automation: the
+  plugin pauses no zone's learning itself (I12.9).
 
 Details: [`docs/en/specification/scope.md`, §2](../specification/scope.md#2-why-a-plugin) and
 [§5](../specification/scope.md#5-hardware-circuits-and-zone-algorithms).
@@ -155,8 +160,8 @@ history to burns, metrics, trend warnings, a report and the control verdict, alw
 reasons. `core/alarms.py` holds the monitor's alarms, with hysteresis so they do not flap.
 
 **Control unit (`control.py`, `ControlUnit`).** The HA side of control: a control step every
-few seconds, its writes through the writer, the hand-back on every exit, learning pauses for
-the zone algorithms, and the status the entities show. It turns guard events and failures into
+few seconds, its writes through the writer, the hand-back on every exit, and the status the
+entities show — "gives no heat" among them. It turns guard events and failures into
 alarms. The writer exists only while control is switched on. An internal error hands back and
 latches control.
 
@@ -236,7 +241,7 @@ flowchart TD
     S --> H
     G -- allowed --> W[Writer writes setpoint and heating on or off]
     G -- nothing due --> K[Hold: nothing written]
-    W --> F2[Follow-up: owed hand-back, relay, control store, learning pauses, status]
+    W --> F2[Follow-up: owed hand-back, relay, control store, status and gives no heat]
     K --> F2
     H --> F2
 ```
@@ -294,8 +299,8 @@ Control has a store of its own (`ControlStore` in `coordinator.py`), apart from 
 store, which holds the monitor's history and day summaries.
 
 - **What it holds:** whether control is enabled, the last command and whether the plugin is
-  controlling, latches and their causes, a hand-back owed and its release evidence, learning
-  pauses, the baselines the guards compare against, the relay's observations, and the active
+  controlling, latches and their causes, a hand-back owed and its release evidence, the
+  baselines the guards compare against, the relay's observations, and the active
   control alarms.
 - **Written at once:** every change that a crash must not lose — the controlling marker, a
   latch, an owed hand-back — is saved immediately and atomically. The outcome of each write is
@@ -327,8 +332,9 @@ Three layers ([`docs/en/development/plan.md`, "Test environment"](../development
 
 1. **Core tests** (`tests/core/`) — plain pytest, no HA, no network.
 2. **Integration tests** — `pytest-homeassistant-custom-component`: HA runs inside the test
-   process; no instance, no network. Continuous integration (CI) also fetches VT 10.6.5 and
-   SmartPI 0.4.0 from their tags, so the tests with a real VT run on every change.
+   process; no instance, no network. Continuous integration (CI) also fetches VT 10.6.5 from its
+   tag, so the tests with a real VT run on every change (no SmartPI: the plugin reads nothing of
+   it).
 3. **Test HA** — a dedicated container (`devenv/`) running the plugin, VT, SmartPI and the
    simulator, where the acceptance scenarios run before anything reaches a real boiler.
 
@@ -355,36 +361,4 @@ built page on sample data (`frontend/preview/index.html`) in a headless Chromium
 dark, a desktop and a phone, an administrator and a user who is not — into `.tmp/screenshots/`,
 and fails on any error in the page; `scripts/bootstrap_browser.sh` puts that Chromium, and the
 system libraries it needs, into `.tools/`.
-
-## 8. Water data for zone algorithms
-
-**Built in I9** (the user's decisions of 2026-10-12;
-[`docs/en/development/plans/plan-0.2-i9.md`](../development/plans/plan-0.2-i9.md)). An optional
-interface gives a zone algorithm — SmartPI first — the water reaching each zone's circuit, so
-its room model can account for a weather-compensated boiler, a mixer, burner cycling and hot
-water with priority. Data flows one way, from the plugin to the zone algorithm.
-
-The plugin exposes, per VT thermostat that is one of its zones, the supply temperature with the
-reason it is missing (lasting or momentary), when it was measured, and whether heat reaches the
-zone with its reason: as properties of its feature manager, and, rounded, in the
-`smart_boiler` attribute (a function in `hass.data` until 2026-11-24, removed: the data goes out
-through `vtherm_api` only). It
-reads one key a consumer writes into the thermostat's `specific_states`, and pauses SmartPI's
-learning on its own conditions. No version number: consumers detect what exists, changes only
-add, and a contract test (`tests/test_water_interface.py`) pins every name and value. The parts:
-`core/supply.py` and `core/heat.py` (the reasons), `core/water.py` (a zone's fields),
-`coordinator.py` (each zone's `ZoneWater`), `feature_manager.py` (the properties and the
-attribute), `vtherm_link.py` (the consumer's key) and `core/learning.py` (the pauses).
-
-**Added 2026-10-14, at SmartPI's request:** whether the boiler is called for heat
-(`boiler_called`) and why not (`call_reason` — `below_threshold` where zones call under the
-demand criteria, `no_demand`, `activation_delay`, `boiler_fault`, `not_controlling`,
-`waiting_data`) — so a zone algorithm does not learn
-from heat that never came, which a burner pause does not tell apart. The installation's values,
-the same for each zone, read live from control (`core/boiler_call.py`). The demand against
-its thresholds was there too until 2026-11-24; nothing read it, and the plugin's own entities
-show it.
-
-The full specification — names, types, values, ranges, what happens when a value is missing:
-[`water-interface.md`](../specification/water-interface.md).
 

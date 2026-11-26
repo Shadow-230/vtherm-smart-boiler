@@ -54,7 +54,7 @@ def test_only_an_unmixed_circuit_gives_back_the_boiler_return() -> None:
         assert circuit_return(Circuit("c", control), 38.0) is None
 
 
-# --- I9.1: lasting and momentary reasons, and the time of the reading (water-interface.md §4.1) --
+# --- I9.1: lasting and momentary reasons ----------------------------------------------------------
 
 
 def test_no_water_sensor_at_all_is_not_mapped() -> None:
@@ -89,19 +89,7 @@ def test_a_mixed_circuit_s_own_sensor_lost_for_now_is_momentary(control: Circuit
 def test_a_straight_circuit_falls_back_to_the_boiler_flow() -> None:
     """A circuit fed straight from the boiler whose own sensor is lost for now takes the
     boiler's flow; without the boiler's flow mapped, its own sensor's reason."""
-    assert circuit_supply(SHARED, 45.0, True, own_mapped=True, flow_at=100.0) == Supply(
-        45.0, measured_at=100.0
-    )
+    assert circuit_supply(SHARED, 45.0, True, own_mapped=True) == Supply(45.0)
     assert circuit_supply(
         SHARED, None, False, flow_mapped=False, own_mapped=True, own_stale=True
     ) == Supply(None, SupplyReason.FLOW_STALE)
-
-
-def test_the_supply_carries_the_time_of_the_reading_it_uses() -> None:
-    mixed = Circuit("mixed", CircuitControl.SEPARATE)
-    assert circuit_supply(mixed, 60.0, True, 32.0, flow_at=100.0, own_at=90.0) == Supply(
-        32.0, measured_at=90.0
-    )
-    assert circuit_supply(SHARED, 45.0, True, flow_at=100.0) == Supply(45.0, measured_at=100.0)
-    assert circuit_supply(FIXED, 60.0, True, flow_at=100.0) == Supply(35.0, measured_at=100.0)
-    assert circuit_supply(SHARED, 45.0, False, flow_at=100.0).measured_at is None

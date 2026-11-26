@@ -39,7 +39,6 @@ from .test_control import (  # the rig fixture comes with them
     ran_before,
     rig,  # noqa: F401
     set_up,
-    smartpi_learner,
     start,
     unit_of,
 )
@@ -377,20 +376,23 @@ async def test_a_boiler_fault_switches_heating_off_without_a_hand_back(rig: Rig)
 
 
 @pytest.mark.parametrize("fault", ["on", "unavailable"])
-async def test_a_boiler_fault_pauses_smartpi_learning(rig: Rig, fault: str) -> None:
-    """Decision 14 (SB-29): control's "off" for a boiler fault pauses SmartPI's learning in a
-    zone calling for heat, as a draw does — when it is sent, after five minutes. Negative: the
-    fault unavailable counts as none and pauses nothing."""
-    calls = smartpi_learner(rig)
-    zone = rig.zones.entities["living"]
+async def test_a_boiler_fault_turns_gives_no_heat_on(rig: Rig, fault: str) -> None:
+    """I12.9 (decision 14's case, SB-29): control's "off" for a boiler fault turns "boiler gives
+    no heat" on, with the reason ``boiler_fault``, while a zone calls — when it is sent, after
+    five minutes. Negative: the fault unavailable counts as none: heat is given."""
+    rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
     await set_up(rig, add_entry(rig, with_fault(rig)))
     await rig.switch(True)
     await rig.advance(30)
     rig.hass.states.async_set(LOW_WATER, fault)
     await rig.advance(4 * MINUTE)
-    assert (zone, False) not in calls  # no "off" yet
+    assert rig.state("binary_sensor", "no_heat").state == "off"  # no "off" yet
     await rig.advance(90)
-    assert ((zone, False) in calls) is (fault == "on")
+    shown = rig.state("binary_sensor", "no_heat")
+    if fault == "on":
+        assert (shown.state, shown.attributes["reason"]) == ("on", "boiler_fault")
+    else:
+        assert shown.state == "off"
     state = rig.state("sensor", "control_state").state
     assert (state == "boiler_fault") is (fault == "on")
 

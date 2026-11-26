@@ -69,37 +69,21 @@ async def test_a_zones_device_count_comes_from_its_vt_entry(
     assert states[bedroom].device_count is None
 
 
-@pytest.mark.parametrize(
-    ("specific", "sensor", "expected"),
-    [
-        ({"regulation_diagnostics": "sensor.diag"}, "bootstrap_hysteresis", True),
-        ({"regulation_diagnostics": "sensor.diag"}, "stable", False),
-        ({"regulation_diagnostics": "sensor.diag"}, "calibration", False),
-        ({"regulation_diagnostics": "sensor.diag"}, "inactive", False),
-        ({"regulation_diagnostics": "sensor.diag"}, "unavailable", None),
-        ({"regulation_diagnostics": "sensor.diag"}, "a_later_phase", None),
-        ({"regulation_diagnostics": "sensor.diag"}, None, None),  # the sensor away
-        ({"regulation_diagnostics": 7}, "bootstrap_hysteresis", None),  # not an entity ID
-        ({}, "bootstrap_hysteresis", None),  # not SmartPI, or an older one
-        (None, "bootstrap_hysteresis", None),  # VT not started
-    ],
-)
-async def test_smartpis_learning_phase_is_read_from_its_diagnostic_sensor(
-    hass: HomeAssistant,
-    zones: FakeZones,
-    specific: dict[str, Any] | None,
-    sensor: str | None,
-    expected: bool | None,
-) -> None:
-    """G11 C: SmartPI 0.4.0 shows its phase on its diagnostic sensor, which the VT climate names
-    in ``specific_states``; "bootstrap_hysteresis" is its learning phase. Anything else that
-    cannot be told — no such key, not an entity ID, the sensor away, a state this version does
-    not know — leaves the phase unknown, and today's rule applies."""
-    living = zones.add("living", specific_states=specific)
-    if sensor is not None:
-        hass.states.async_set("sensor.diag", sensor)
-    zone = VThermLink(hass, [living]).zone(living)
-    assert zone.smartpi_learning_phase is expected
+async def test_nothing_of_smartpi_is_read(hass: HomeAssistant, zones: FakeZones) -> None:
+    """I12.9: SmartPI's diagnostic sensor, named in VT's ``specific_states``, is not read, nor
+    its learning flag, nor VT's Auto-TPI keys; a SmartPI room is judged like any other."""
+    living = zones.add(
+        "living",
+        configuration={"proportional_function": "smartpi"},
+        specific_states={"regulation_diagnostics": "sensor.diag", "smartpi_learning_enabled": True},
+    )
+    hass.states.async_set("sensor.diag", "bootstrap_hysteresis")
+    link = VThermLink(hass, [living])
+    zone = link.zone(living)
+    assert not hasattr(zone, "smartpi_learning_phase")
+    algorithm = link.zone_algorithm(living)
+    for gone in ("proportional_function", "smartpi_learning", "auto_tpi", "uses_water_data"):
+        assert not hasattr(algorithm, gone), gone
 
 
 async def test_zone_temperatures_follow_the_unit_system(
@@ -129,7 +113,7 @@ async def test_capabilities_without_vt(hass: HomeAssistant) -> None:
     assert capabilities.vt_loaded is False
     assert capabilities.vt_version is None
     assert capabilities.vtherm_api_version == VTHERM_API
-    assert capabilities.smartpi_loaded is False
+    assert not hasattr(capabilities, "smartpi_loaded")  # I12.9
 
 
 async def test_the_api_version_is_read_once_off_the_event_loop(
@@ -156,61 +140,17 @@ async def test_the_api_version_is_read_once_off_the_event_loop(
 
 
 async def test_zone_algorithm_from_live_attributes(hass: HomeAssistant, zones: FakeZones) -> None:
-    smartpi = zones.add(
-        "smartpi",
-        configuration={"proportional_function": "smartpi", "is_used_by_central_boiler": False},
-        specific_states={"smartpi_learning_enabled": True},
-    )
-    tpi = zones.add(
-        "tpi",
-        configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
-        specific_states={"auto_tpi_state": "on", "auto_tpi_continuous_kext": "off"},
-    )
-    # VT publishes the Auto-TPI keys for every TPI zone; "off" means no Auto-TPI learning.
-    plain = zones.add(
-        "plain",
-        configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
-        specific_states={"auto_tpi_state": "off", "auto_tpi_continuous_kext": "off"},
-    )
-    kext = zones.add(
-        "kext",
-        configuration={"proportional_function": "tpi"},
-        specific_states={"auto_tpi_state": "off", "auto_tpi_continuous_kext": "on"},
-    )
-    link = VThermLink(hass, [smartpi, tpi, plain, kext])
-    assert link.zone_algorithm(smartpi).smartpi_learning is True
-    assert link.zone_algorithm(smartpi).proportional_function == "smartpi"
-    assert not link.zone_algorithm(smartpi).auto_tpi
-    algo = link.zone_algorithm(tpi)
-    assert algo.auto_tpi
-    assert algo.used_by_central_boiler is True
-    assert algo.smartpi_learning is None
-    assert not link.zone_algorithm(plain).auto_tpi
-    assert link.zone_algorithm(kext).auto_tpi
-    assert link.zone_algorithm("climate.missing").proportional_function is None
-
-
-async def test_a_zone_algorithm_using_the_water_data_is_told_by_its_key(
-    hass: HomeAssistant, zones: FakeZones
-) -> None:
-    """I9 (water-interface.md §3.4): the key a zone algorithm writes into VT's
-    `specific_states` — SmartPI's `water_factor`, whatever its value, `None` included — says it
-    uses the plugin's water data. Negative: SmartPI 0.4.0 writes no such key, nor does a zone
-    VT does not show."""
-    water = zones.add(
-        "water",
-        configuration={"proportional_function": "smartpi"},
-        specific_states={"smartpi_learning_enabled": True, "water_factor": None},
-    )
-    plain = zones.add(
-        "plain",
-        configuration={"proportional_function": "smartpi"},
-        specific_states={"smartpi_learning_enabled": True},
-    )
-    link = VThermLink(hass, [water, plain])
-    assert link.zone_algorithm(water).uses_water_data
-    assert not link.zone_algorithm(plain).uses_water_data
-    assert not link.zone_algorithm("climate.missing").uses_water_data
+    """Whether VT's central boiler counts the zone, from its live configuration; unknown for a
+    zone VT does not show."""
+    counted = zones.add("counted", configuration={"is_used_by_central_boiler": True})
+    left_out = zones.add("left_out", configuration={"is_used_by_central_boiler": False})
+    link = VThermLink(hass, [counted, left_out])
+    assert link.zone_algorithm(counted).used_by_central_boiler is True
+    assert link.zone_algorithm(left_out).used_by_central_boiler is False
+    assert link.zone_algorithm(counted).known
+    missing = link.zone_algorithm("climate.missing")
+    assert missing.used_by_central_boiler is None
+    assert not missing.known
 
 
 @pytest.mark.parametrize(

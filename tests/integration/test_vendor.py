@@ -1,4 +1,5 @@
-"""The vendored VT and SmartPI integrations load in the in-process Home Assistant."""
+"""The vendored VT integration loads in the in-process Home Assistant, and the plugin works with it
+(no SmartPI: the plugin reads nothing of it since I12.9)."""
 
 from __future__ import annotations
 
@@ -25,12 +26,9 @@ pytestmark = [requires_vendor, pytest.mark.usefixtures("enable_custom_integratio
 
 
 # The pinned VT is 10.6.5 (I12.6), whose manifest says 10.6.4 (the tag's ``manifest.json``).
-@pytest.mark.parametrize(
-    ("domain", "version"),
-    [("versatile_thermostat", "10.6.4"), ("vtherm_smartpi", "0.0.0")],
-)
-async def test_vendored_integration_loads(hass: HomeAssistant, domain: str, version: str) -> None:
-    integration = await async_get_integration(hass, domain)
+async def test_vendored_integration_loads(hass: HomeAssistant) -> None:
+    integration = await async_get_integration(hass, "versatile_thermostat")
+    version = "10.6.4"
     # CI's early warning runs the newest releases instead of the pinned ones (VENDOR_VERSIONS_PINNED
     # "0"): there only the loading is checked.
     if os.environ.get("VENDOR_VERSIONS_PINNED", "1") != "0":
@@ -122,14 +120,15 @@ async def heat_to(hass: HomeAssistant, target: float, zone: str = LIVING) -> Non
     await hass.async_block_till_done()
 
 
-async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_values(
+async def test_at_start_a_real_vt_thermostat_is_read_through_the_plugins_manager(
     hass: HomeAssistant,
 ) -> None:
     """P59: VT itself (the pinned 10.6.5; 10.5.1 until 2026-11-25, 10.4.0 until 2026-10-13), not a
     state standing in for it, through Home Assistant's start (VT starts its thermostats once Home
-    Assistant has started): the plugin reads the room temperature, target, heating mode and duty
-    cycle of an over_switch thermostat below its target, and the thermostat shows the plugin's
-    values through the feature manager."""
+    Assistant has started): VT hands the thermostat to the plugin's feature manager, and the
+    plugin reads the room temperature, target, heating mode and duty cycle of an over_switch
+    thermostat below its target through it. The manager publishes nothing on the thermostat
+    (I12.9: the water interface went)."""
     entry = await room_and_boiler(hass)
     hass.set_state(CoreState.starting)
     await setup(hass, entry)
@@ -151,105 +150,29 @@ async def test_at_start_a_real_vt_thermostat_is_read_and_shows_the_plugins_value
     assert entry.runtime_data.link.zones_through_api() == [LIVING]
     await entry.runtime_data.async_refresh()
     await heat_to(hass, 21.5)  # VT publishes its attributes again
-    shown = hass.states.get(LIVING).attributes.get("smart_boiler")
-    assert shown is not None
-    # I9 (water-interface.md §3.3): heat available, and the water rounded to 1 °C — the boiler's
-    # flame off, its flow at 30 °C; the same as the manager's properties (§3.1).
-    assert shown == {"heat_available": False, "supply_temperature": 30}
-    assert _water(hass) == {
-        "supply_temperature": 30.0,
-        "supply_reason": None,
-        "heat_available": False,
-        "heat_reason": "flame_off",
-    }
-    FakeBoiler(hass, (Signal.FLAME, Signal.FLOW)).set_many({Signal.FLAME: True, Signal.FLOW: 45.6})
-    await entry.runtime_data.async_refresh()
-    await heat_to(hass, 21.0)
-    # The flame on, the flow 26.6 K above the room at 19 °C: heat reaches it.
-    assert hass.states.get(LIVING).attributes["smart_boiler"] == {
-        "heat_available": True,
-        "supply_temperature": 46,
-    }
-    assert _water(hass) == {
-        "supply_temperature": 45.6,
-        "supply_reason": None,
-        "heat_available": True,
-        "heat_reason": None,
-    }
+    assert "smart_boiler" not in hass.states.get(LIVING).attributes
 
 
-def _water(hass: HomeAssistant) -> dict[str, Any]:
-    """The living room's water fields as its thermostat's manager shows them through
-    ``vtherm_api`` (§3.1), the moment of the reading aside — known while the water is; the
-    boiler's call (§4.3) is pinned in-process with control."""
-    manager = VThermAPI.get_vtherm_api(hass).get_feature_manager(DOMAIN).create(_Climate(LIVING))
-    fields = {key: getattr(manager, key) for key in WATER_KEYS}
-    assert (manager.supply_measured_at is None) is (fields["supply_temperature"] is None)
-    return fields
-
-
-@dataclass
-class _Climate:
-    """A consumer's stand-in for the thermostat, as a manager is asked for one."""
-
-    entity_id: str
-
-
-WATER_KEYS = ("supply_temperature", "supply_reason", "heat_available", "heat_reason")
-
-
-async def test_a_real_vt_thermostat_finds_the_plugins_manager_by_its_name(
+async def test_a_vt_thermostat_already_running_is_handed_over_after_vt_reloads(
     hass: HomeAssistant,
 ) -> None:
-    """I9 (water-interface.md §3.1): from VT 10.5.0 a zone algorithm finds the plugin's manager
-    on its own thermostat by its stable name, ``get_feature_manager("vtherm_smart_boiler")``;
-    its properties are the specification's fields, the zone found by the thermostat's unique ID
-    (I12). The pinned VT 10.6.5 has the lookup; an older one (10.4.0 has none) skips the
-    test."""
-    from homeassistant.components.climate import DATA_COMPONENT
+    """A thermostat that started before the plugin registered does not ask again: VT hands it
+    to the plugin's feature manager at its next reload — what the plugin's repair issue asks
+    for."""
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_thermostat as handed_over
 
-    entry = await room_and_boiler(hass)
-    hass.set_state(CoreState.starting)
-    await setup(hass, entry)
-    await setup(hass, vt_thermostat())
-    hass.set_state(CoreState.running)
-    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
-    await hass.async_block_till_done()
-    await heat_to(hass, 21.0)
-    thermostat = hass.data[DATA_COMPONENT].get_entity(LIVING)
-    assert thermostat is not None
-    lookup = getattr(thermostat, "get_feature_manager", None)
-    if lookup is None:
-        pytest.skip("this VT has no get_feature_manager (from VT 10.5.0)")
-    FakeBoiler(hass, (Signal.FLAME, Signal.FLOW)).set_many({Signal.FLAME: True, Signal.FLOW: 45.6})
-    await entry.runtime_data.async_refresh()
-    manager = lookup(DOMAIN)
-    assert manager is not None
-    assert "vtherm_smart_boiler_api" not in hass.data
-    assert {name: getattr(manager, name) for name in WATER_KEYS} == _water(hass)
-    assert manager.supply_temperature == 45.6
-    assert manager.heat_available is True
-
-
-async def test_a_vt_thermostat_already_running_shows_the_values_after_vt_reloads(
-    hass: HomeAssistant,
-) -> None:
-    """A thermostat that started before the plugin registered does not ask again: it picks the
-    feature manager up at VT's next reload — what the plugin's repair issue asks for."""
     entry = await room_and_boiler(hass)
     thermostat = vt_thermostat()
     await setup(hass, thermostat)
     await setup(hass, entry)
     await heat_to(hass, 21.0)
     await entry.runtime_data.async_refresh()
-    await heat_to(hass, 21.5)
-    assert "smart_boiler" not in hass.states.get(LIVING).attributes
+    assert handed_over(hass, LIVING) is None
     assert await hass.config_entries.async_reload(thermostat.entry_id)
     await hass.async_block_till_done()
     await heat_to(hass, 21.0)
     await entry.runtime_data.async_refresh()
-    await heat_to(hass, 21.5)
-    assert hass.states.get(LIVING).attributes.get("smart_boiler") is not None
+    assert handed_over(hass, LIVING) is not None
 
 
 async def test_a_steady_room_under_real_vt_stays_known(hass: HomeAssistant, freezer: Any) -> None:
@@ -723,7 +646,7 @@ async def test_a_real_vts_central_boiler_reaches_the_plugin_through_its_thermost
     assert settings.check(VT_HELPER) == (VtBoilerCheck.NOT_SET, None)
 
 
-# --- Control on, with VT's learning (TB-15) ------------------------------------------------
+# --- Control on, with VT's central boiler (TB-15) -------------------------------------------
 
 FLOW_NUMBER = "input_number.boiler_flow"
 CH_SWITCH = "input_boolean.boiler_ch"
@@ -733,10 +656,9 @@ async def controlling_with_the_plugin(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
     *thermostats: MockConfigEntry,
-    smartpi: bool = False,
     office: bool = False,
 ) -> tuple[MockConfigEntry, FakeBoiler]:
-    """VT's thermostats (and SmartPI) and the plugin set up through Home Assistant's start, the
+    """VT's thermostats and the plugin set up through Home Assistant's start, the
     plugin controlling a boiler through a setpoint number and a heating switch, every zone
     heating towards 21 °C; ``office``: the over_climate zone too, over its own climate. The
     plugin's entry ran before and owes nothing."""
@@ -796,8 +718,6 @@ async def controlling_with_the_plugin(
     hass.set_state(CoreState.starting)
     for thermostat in thermostats:
         await setup(hass, thermostat)
-    if smartpi:
-        assert await async_setup_component(hass, "vtherm_smartpi", {})
     entry.add_to_hass(hass)
     key = control_store_key(entry.entry_id)
     hass_storage[key] = {"version": 1, "key": key, "data": {}}
@@ -819,62 +739,40 @@ async def controlling_with_the_plugin(
     return entry, boiler
 
 
-async def test_a_hot_water_draw_pauses_and_resumes_a_real_smartpi_zones_learning(
+async def test_a_hot_water_draw_turns_gives_no_heat_on_under_a_real_vt(
     hass: HomeAssistant, freezer: Any, hass_storage: dict[str, Any]
 ) -> None:
-    """TB-15: with control on, a hot-water draw pauses the learning of a real SmartPI zone
-    through SmartPI's own service, and its end switches it back on — read in VT's climate."""
-    thermostat = vt_thermostat(proportional_function="smartpi")
-    _, boiler = await controlling_with_the_plugin(hass, hass_storage, thermostat, smartpi=True)
+    """TB-15, I12.9: with control on and VT's central boiler calling (its helper on), "boiler
+    gives no heat" is off; a hot-water draw on a combi turns it on with the reason ``hot_water``,
+    and its end off again — what SmartPI 1.0's "heating unavailable" input reads."""
+    from custom_components.versatile_thermostat import const as vt
 
-    def learning() -> object:
-        return hass.states.get(LIVING).attributes["specific_states"]["smartpi_learning_enabled"]
-
-    await later(hass, freezer, 10.0)
-    assert hass.states.get(LIVING).attributes["configuration"]["proportional_function"] == (
-        "smartpi"
-    )
-    assert learning() is True
-    boiler.set(Signal.DHW_ACTIVE, True)
-    await later(hass, freezer, 10.0)
-    assert learning() is False
-    boiler.set(Signal.DHW_ACTIVE, False)
-    for _ in range(120):  # the resume waits for the minimum pause
-        await later(hass, freezer, 10.0)
-        if learning() is True:
-            break
-    assert learning() is True
-
-
-async def test_a_real_vt_auto_tpi_session_is_read_and_raises_the_learning_issue(
-    hass: HomeAssistant, freezer: Any, hass_storage: dict[str, Any]
-) -> None:
-    """TB-15: a VT TPI zone whose Auto-TPI session the user starts — VT publishes
-    ``auto_tpi_state`` "on" — is learning the plugin cannot pause: with control on and learning
-    pauses, its warning names the zone."""
-    from homeassistant.helpers import issue_registry as ir
-
-    thermostat = vt_thermostat(current=True, auto_tpi_mode=True)
-    entry, _ = await controlling_with_the_plugin(hass, hass_storage, thermostat)
-    issue_id = f"learning_not_paused_{entry.entry_id}"
-    await later(hass, freezer, 10.0)
-    specific = hass.states.get(LIVING).attributes["specific_states"]
-    assert specific["auto_tpi_state"] == "off"
-    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
-    await hass.services.async_call(
-        "versatile_thermostat",
-        "set_auto_tpi_mode",
-        {"entity_id": LIVING, "auto_tpi_mode": True, "reinitialise": False},
+    thermostat = vt_thermostat(**{vt.CONF_USED_BY_CENTRAL_BOILER: True})  # counted by VT
+    entry, boiler = await controlling_with_the_plugin(hass, hass_storage, thermostat)
+    await hass.services.async_call(  # VT's own count: one device
+        "number",
+        "set_value",
+        {"entity_id": "number.central_number_activation_threshold", "value": 1},
         blocking=True,
     )
-    await hass.async_block_till_done()
-    for _ in range(6):  # the plugin looks again at its next five-minute analysis
-        await later(hass, freezer, 60.0)
-    specific = hass.states.get(LIVING).attributes["specific_states"]
-    assert specific["auto_tpi_state"] == "on"
-    found = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
-    assert found is not None
-    assert found.translation_placeholders == {"zones": "Living"}
+    for _ in range(12):  # within VT's 5-minute cycle, the room's device goes on
+        await later(hass, freezer, 30.0)
+        if hass.states.get(VT_HELPER).state == "on":
+            break
+    assert hass.states.get(VT_HELPER).state == "on"
+    no_heat = er.async_get(hass).async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{entry.entry_id}_no_heat"
+    )
+    assert no_heat is not None
+    await later(hass, freezer, 10.0)
+    assert hass.states.get(no_heat).state == "off"
+    boiler.set(Signal.DHW_ACTIVE, True)
+    await later(hass, freezer, 10.0)
+    state = hass.states.get(no_heat)
+    assert (state.state, state.attributes["reason"]) == ("on", "hot_water")
+    boiler.set(Signal.DHW_ACTIVE, False)
+    await later(hass, freezer, 10.0)
+    assert hass.states.get(no_heat).state == "off"
 
 
 async def test_a_vt_central_entry_update_reloads_every_zone_without_a_hand_back(

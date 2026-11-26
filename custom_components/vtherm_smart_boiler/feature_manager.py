@@ -1,5 +1,6 @@
-"""A VT feature manager that shows on each VT thermostat whether the boiler's heat is reaching
-its zone now — the plugin's one zone value (I8, decision C1).
+"""A VT feature manager: the channel through which VT hands each of its thermostats to the plugin
+(``vtherm_api``). It publishes nothing on VT's thermostats (I12.9, the user's decision of
+2026-11-25: the water interface went, nobody read it) and never controls.
 
 VT picks up external feature managers from the ``vtherm_api`` registry when a thermostat starts
 (research F4): a thermostat already running sees the manager only after VT's next reload, which
@@ -10,21 +11,15 @@ plugin is registered, ``vtherm_central_api.py`` ``remove_entry``). Every method 
 catches its own errors, and every call the plugin makes on VT's API is inside ``try``, so no
 error of the plugin's ever reaches VT (T-53).
 
-The managers reach the plugin's data through a stable access point, not through the installation
-that created them: after the plugin reloads (an options change), the managers VT already holds
-show the value again at once; while no installation runs, they publish nothing. VT records its
-thermostats' attributes, so a manager replaces what it published only when it changes (P-63).
 Whether the manager works is shown: a repair issue when VT cannot load feature managers — an API
 without them, or a VT older than the first version that creates them, whatever its API offers
-(P-60) — and one listing the zones VT shows running whose thermostat started before the
-registration and needs VT's reload (P-59).
+(P-60) — and one listing the zones VT shows running whose thermostat VT has not handed over some
+time after the registration: it started before it and needs VT's reload (P-59).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -42,44 +37,15 @@ from homeassistant.util import dt as dt_util
 
 from . import vtherm_link
 from .const import DOMAIN, VT_DOMAIN
-from .core.boiler_call import CallReason
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 MANAGER_NAME = DOMAIN
-ATTRIBUTE = "smart_boiler"
 DATA_KEY = f"{DOMAIN}_feature_manager"
 UNSUPPORTED_ISSUE = "vt_feature_manager_unsupported"
-RELOAD_GRACE_S = 15 * 60  # a started thermostat shows the value within this, else needs a reload
-# The public name of "heat reaches the zone now" (P-61; "hot water" is the boiler's domestic hot
-# water).
-HEAT_AVAILABLE = "heat_available"
-# The water interface (I9; docs/en/specification/water-interface.md): its fields, in its order.
-SUPPLY_TEMPERATURE = "supply_temperature"
-SUPPLY_REASON = "supply_reason"
-SUPPLY_MEASURED_AT = "supply_measured_at"
-HEAT_REASON = "heat_reason"
-# Whether the boiler is called for heat and why not (§4.3; SmartPI's request, the user's decisions
-# of 2026-10-14): the installation's, the same for each of its zones, read live from control. The
-# demand against its thresholds is the plugin's own entities' only (the user's decision of
-# 2026-11-24: nothing reads it on a thermostat).
-BOILER_CALLED = "boiler_called"
-CALL_REASON = "call_reason"
-WATER_FIELDS = (
-    SUPPLY_TEMPERATURE,
-    SUPPLY_REASON,
-    SUPPLY_MEASURED_AT,
-    HEAT_AVAILABLE,
-    HEAT_REASON,
-    BOILER_CALLED,
-    CALL_REASON,
-)
-# The attribute shows the water rounded, changed only once it has moved this far (§3.3, P-63).
-ATTRIBUTE_STEP_K = 1.0
-
-type Lookup = Callable[[str], dict[str, Any] | None]
+RELOAD_GRACE_S = 15 * 60  # a started thermostat is handed over within this, else needs a reload
 
 
 class RegistrationState(StrEnum):
@@ -88,59 +54,13 @@ class RegistrationState(StrEnum):
     REGISTERED = "registered"
 
 
-def zone_values(
-    coordinators: list[SmartBoilerCoordinator], entity_id: str
-) -> dict[str, Any] | None:
-    """The zone's water and whether heat reaches it now (§4), from the first installation that
-    has the zone and whose last refresh worked; ``None`` when none has it."""
-    for coordinator in coordinators:
-        if not coordinator.last_update_success:
-            continue  # its entities are unavailable: no stale values on VT's either (PB-48)
-        data = coordinator.data
-        view = data.zones.get(entity_id) if data is not None else None
-        if view is None:
-            continue
-        water = view.water
-        measured = water.supply_measured_at
-        return {
-            SUPPLY_TEMPERATURE: water.supply_temperature,
-            SUPPLY_REASON: None if water.supply_reason is None else water.supply_reason.value,
-            SUPPLY_MEASURED_AT: None if measured is None else dt_util.utc_from_timestamp(measured),
-            HEAT_AVAILABLE: water.heat_available,
-            HEAT_REASON: None if water.heat_reason is None else water.heat_reason.value,
-            **boiler_call_values(coordinator),
-        }
-    return None
-
-
-def boiler_call_values(coordinator: SmartBoilerCoordinator) -> dict[str, Any]:
-    """§4.3: whether the boiler is called and why not, as control shows it now — without control
-    (monitoring only), or while it stops, the boiler is not the plugin's: not called by it."""
-    control = coordinator.control
-    if control is None or control.stopping:
-        return {BOILER_CALLED: None, CALL_REASON: CallReason.NOT_CONTROLLING.value}
-    status = control.status
-    return {BOILER_CALLED: status.boiler_called, CALL_REASON: status.call_reason}
-
-
-def _running(hass: HomeAssistant) -> list[SmartBoilerCoordinator]:
-    """The installations running now: the stable access point every manager reads through."""
-    shared = hass.data.get(DATA_KEY)
-    return list(shared["coordinators"]) if shared else []
-
-
 class SmartBoilerFeatureManager:
-    """One per VT thermostat; publishes, never controls. Other plugins read the value as the
-    property ``heat_available``, as it is now; the attribute on VT's thermostat keeps what was
-    last published until it changes (P-63)."""
+    """One per VT thermostat: keeps the thermostat VT handed over, for the plugin to read through
+    ``vtherm_api``; publishes nothing, never controls."""
 
-    def __init__(self, hass: HomeAssistant, thermostat: Any, lookup: Lookup) -> None:
+    def __init__(self, hass: HomeAssistant, thermostat: Any) -> None:
         self._hass = hass
         self._thermostat = thermostat
-        self._lookup = lookup
-        self._failing = False  # a lasting failure is logged once, with its trace
-        self._published: dict[str, Any] | None = None  # what VT's thermostat shows
-        self._published_water: float | None = None  # the unrounded water it was shown from
         try:  # the zone's values are read from it through ``vtherm_api`` (``vtherm_link``)
             vtherm_link.register_thermostat(hass, thermostat)
         except Exception:  # never into VT
@@ -160,7 +80,7 @@ class SmartBoilerFeatureManager:
         return None
 
     async def refresh_state(self) -> bool:
-        return False  # the value comes from the plugin's own coordinator
+        return False  # nothing of the manager's own to refresh
 
     def restore_state(self, old_state: Any) -> None:
         return None
@@ -184,114 +104,22 @@ class SmartBoilerFeatureManager:
     def hass(self) -> HomeAssistant:
         return self._hass
 
-    @property
-    def heat_available(self) -> bool | None:
-        """Heat is reaching the zone now; ``None`` when unknown or not the plugin's zone."""
-        value = self._field(HEAT_AVAILABLE)
-        return value if isinstance(value, bool) else None
-
-    @property
-    def heat_reason(self) -> str | None:
-        """Why heat does not reach the zone, or why it cannot be told (§4.2)."""
-        value = self._field(HEAT_REASON)
-        return value if isinstance(value, str) else None
-
-    @property
-    def supply_temperature(self) -> float | None:
-        """The water reaching the zone's circuit now, °C, as measured (§4)."""
-        value = self._field(SUPPLY_TEMPERATURE)
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            return None
-        return float(value)
-
-    @property
-    def supply_reason(self) -> str | None:
-        """Why the water is not known, lastingly or for now (§4.1)."""
-        value = self._field(SUPPLY_REASON)
-        return value if isinstance(value, str) else None
-
-    @property
-    def supply_measured_at(self) -> datetime | None:
-        """When the reading of the water was taken, UTC — information only (§6)."""
-        value = self._field(SUPPLY_MEASURED_AT)
-        return value if isinstance(value, datetime) else None
-
-    @property
-    def boiler_called(self) -> bool | None:
-        """The boiler is called for space heating now, frost protection included (§4); ``None``
-        while the plugin does not control it, or cannot tell yet."""
-        value = self._field(BOILER_CALLED)
-        return value if isinstance(value, bool) else None
-
-    @property
-    def call_reason(self) -> str | None:
-        """Why the boiler is not called, or why it cannot be told (§4.3)."""
-        value = self._field(CALL_REASON)
-        return value if isinstance(value, str) else None
-
-    def _field(self, name: str) -> Any:
-        values = self._values()
-        return None if values is None else values.get(name)
-
-    def _values(self) -> dict[str, Any] | None:
-        entity_id = vtherm_link.vt_entity_id(self._hass, self._thermostat)
-        return self._lookup(entity_id) if entity_id is not None else None
-
-    def add_custom_attributes(self, attributes: dict[str, Any]) -> None:
-        try:
-            values = self._values()
-            if values is None:
-                self._published = None
-                self._published_water = None
-                attributes.pop(ATTRIBUTE, None)
-            else:
-                attributes[ATTRIBUTE] = dict(self._shown(values))
-        except Exception:  # VT's attribute update must never fail because of the plugin
-            if self._failing:
-                _LOGGER.debug("Could not add the plugin's zone value", exc_info=True)
-            else:
-                _LOGGER.exception("Could not add the plugin's zone value to a VT thermostat")
-                self._failing = True
-        else:
-            self._failing = False
-
-    def _shown(self, values: dict[str, Any]) -> dict[str, Any]:
-        """The attribute (§3.3): the heat on every change, the water rounded to 1 °C and
-        replaced only once it has moved ``ATTRIBUTE_STEP_K`` from what it was shown from, or to
-        or from ``None`` — VT records it (P-63)."""
-        water = values[SUPPLY_TEMPERATURE]
-        last = self._published_water
-        moved = (water is None) != (last is None) or (
-            water is not None and last is not None and abs(water - last) >= ATTRIBUTE_STEP_K
-        )
-        if self._published is None or moved:
-            self._published_water = water
-        shown_water = self._published_water
-        shown = {
-            HEAT_AVAILABLE: values[HEAT_AVAILABLE],
-            SUPPLY_TEMPERATURE: None if shown_water is None else round(shown_water),
-        }
-        if self._published != shown:
-            self._published = shown
-        return self._published
-
 
 class SmartBoilerFeatureFactory:
     """The factory VT asks for a manager per thermostat."""
 
-    def __init__(self, hass: HomeAssistant, lookup: Lookup) -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
-        self._lookup = lookup
 
     @property
     def name(self) -> str:
         return MANAGER_NAME
 
     def supports(self, thermostat: Any) -> bool:
-        return True  # every thermostat; the value appears only for the plugin's zones
+        return True  # every thermostat; the plugin reads only its zones'
 
     def create(self, thermostat: Any) -> SmartBoilerFeatureManager:
-        return SmartBoilerFeatureManager(self._hass, thermostat, self._lookup)
+        return SmartBoilerFeatureManager(self._hass, thermostat)
 
 
 def _api_name() -> str:
@@ -347,9 +175,7 @@ class FeatureRegistration:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self._hass = hass
-        self._factory = SmartBoilerFeatureFactory(
-            hass, lambda entity_id: zone_values(_running(hass), entity_id)
-        )
+        self._factory = SmartBoilerFeatureFactory(hass)
         self._api: Any | None = None
         # PB-46: the API object that refused the factory is not asked again; only the first
         # refusal is logged with its trace.
@@ -476,11 +302,11 @@ def async_attach(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> No
 
 
 def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> None:
-    """At each update: registered with VT's current API, and the zones whose thermostat still
-    shows nothing of the plugin some time after the registration reported — they started before
-    it and pick the manager up only at VT's next reload. Only a zone VT shows running is listed:
-    reported and ready, its mode known (P-59); one away, unavailable or still starting would
-    show nothing anyway."""
+    """At each update: registered with VT's current API, and the zones whose thermostat VT has
+    still not handed over some time after the registration reported — they started before it and
+    pick the manager up only at VT's next reload. Only a zone VT shows running is listed:
+    reported and ready, its mode known (P-59); one away, unavailable or still starting would not
+    be handed over yet anyway."""
     current = registration(hass)
     if current is not None:
         current.check()
@@ -499,7 +325,7 @@ def async_check(hass: HomeAssistant, coordinator: SmartBoilerCoordinator) -> Non
                 continue
             zone = link.zone(zone_id)
             running = zone.started and zone.ready is not False and zone.heating_enabled is not None
-            if running and link.shows_attribute(zone_id, ATTRIBUTE) is False:
+            if running and vtherm_link.vt_thermostat(hass, zone_id) is None:
                 missing.append(link.zone_name(zone_id))
     if missing:
         ir.async_create_issue(

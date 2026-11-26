@@ -83,7 +83,7 @@ DEFAULT_SIGNALS = frozenset(
     }
 )
 
-# SmartPI's learning from scratch, as the plugin reads it (G11 C; SmartPI 0.4.0 ``HYST_UPPER_C``,
+# SmartPI's learning from scratch, as the simulated zone runs it (SmartPI 0.4.0 ``HYST_UPPER_C``,
 # ``HYST_LOWER_C``; 0.6.7's documentation as the test session read it on 2026-11-22: 5 cooling and
 # 4 or 5 heating phases, each a full swing): on at 0.3 K under the setpoint, off at 0.5 K over it,
 # decided at each VT cycle of 5 min. Assumed: SmartPI's own rules beyond the band, and that the
@@ -121,7 +121,6 @@ class SimZoneView:
     target: float
     opening: float
     on_percent: float | None = None  # a TPI zone's on-percent of its cycle
-    smartpi_learning: bool | None = None  # a SmartPI zone: in its learning phase; None: no SmartPI
 
 
 @dataclass
@@ -300,7 +299,6 @@ def simulate(scenario: Scenario) -> SimResult:
                         z.target,
                         round(openings[i], 2),
                         _on_percent(tpi, learning, z.zone_id, openings[i]),
-                        None if z.zone_id not in learning else learning[z.zone_id].learning,
                     )
                     for i, z in enumerate(zones)
                 ),

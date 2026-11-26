@@ -57,7 +57,6 @@ from .core.curve import (
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
 from .core.installation import Boiler, BoilerClass, CircuitControl, EmitterType, Installation
-from .core.learning import LearningConfig
 from .core.limits import FlowLimits, FrostConfig
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
 from .core.relay import (
@@ -97,7 +96,6 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "ramp_k_per_min": 1.0,
         "decision_interval_min": 5.0,
         "off_setpoint": DEFAULT_OFF_SETPOINT,
-        "learning_pauses": True,
         # Off (K4, the user's decision of 2026-11-17, reversing G11 B): with VT's TPI zones it
         # sat at its limit for little comfort and multiplied the starts (J4's F8), and the
         # literature's room influence is a proportional shift from a reference room without a
@@ -157,6 +155,9 @@ VT_SETTINGS_MOVED = (
     "opening_threshold",
     "activation_delay_s",
 )
+# I12.9 (minor version 23, the user's decision of 2026-11-25): the plugin pauses no zone's
+# learning any more; the setting goes from the control section.
+LEARNING_PAUSES_REMOVED = "learning_pauses"
 
 
 class WritePath(StrEnum):
@@ -574,8 +575,6 @@ class ControlOptions:
     thermostat_kind: ThermostatKind | None = None
     curve_entered: bool = False
     loop: LoopConfig = field(default_factory=lambda: LoopConfig(ControlConfig(HeatingCurve())))
-    learning: LearningConfig = field(default_factory=LearningConfig)
-    learning_pauses: bool = True
     alarm_reactions: Mapping[str, AlarmReaction] = field(default_factory=dict)
     # After stepping aside from another controller, take the boiler back by itself once nothing
     # else wrote for an hour (decision 6; off by default, confirmed twice; not for relays).
@@ -750,6 +749,14 @@ def without_vt_settings(section: Any) -> Any:
     return section
 
 
+def without_learning_pauses(section: Any) -> Any:
+    """I12.9 (minor version 23): the learning pauses are gone — pausing a zone's learning is the
+    user's (SmartPI 1.0's "heating unavailable" input, or an automation)."""
+    if isinstance(section, Mapping) and LEARNING_PAUSES_REMOVED in section:
+        return {key: value for key, value in section.items() if key != LEARNING_PAUSES_REMOVED}
+    return section
+
+
 def vt_settings_set(section: Any) -> dict[str, str]:
     """I12: the demand settings a section held that VT's central boiler must now be given — a
     power or opening threshold, a count above 1, an activation delay above 0 — each as stored,
@@ -872,13 +879,13 @@ def with_boiler_inputs(section: Any, boiler: Any, signals: Any) -> Any:
 
 def section_as_migrated(section: Any) -> Any:
     """A control section as this version's entry migrations leave one (G11 B and D, I8 B6, F2,
-    I12's demand settings gone).
+    I12's demand settings and learning pauses gone).
     The entry migration writes each into the options; the options a stored session took the
     boiler with (``taken_with``), which no migration reaches, are read through them, so a
     restart after the update compares like with like. The highest water temperature left the
     section for the circuit's, which the restore's limits apply as they are now (PB-11)."""
     section = without_correction_range(with_room_mode(with_correction_answer(section)))
-    section = without_vt_settings(section)
+    section = without_learning_pauses(without_vt_settings(section))
     if isinstance(section, Mapping) and HARD_MAX_FROM_BEFORE in section:
         return {key: value for key, value in section.items() if key != HARD_MAX_FROM_BEFORE}
     return section
@@ -1130,9 +1137,6 @@ def parse_control(
         thermostat_kind=parse_thermostat_kind(data.get("thermostat_kind")),
         curve_entered=bool(curve_data.get("design_flow")),
         loop=loop,
-        # R13: no water swing on a relay — it sets no water temperature.
-        learning=LearningConfig(pause_on_water_swing=not on_off),
-        learning_pauses=_yes_no(value, "learning_pauses"),
         alarm_reactions=reactions,
         # Decision 6: the return by itself is not offered for relays.
         return_after_outside_change=data.get("return_after_outside_change") is True and not on_off,

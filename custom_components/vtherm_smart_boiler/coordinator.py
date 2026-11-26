@@ -173,8 +173,7 @@ from .core.signal_check import (
     link_connected,
 )
 from .core.signals import GatewayOutdoor, Signal
-from .core.supply import Supply, circuit_return, circuit_supply
-from .core.water import ZoneWater, zone_water
+from .core.supply import circuit_return, circuit_supply
 from .core.zone_watch import every_zone_unknown_since, issue_due
 from .forecasts import ForecastRecorder
 from .transport.entities import (
@@ -313,7 +312,6 @@ class ZoneView:
     circuit_ids: tuple[str, ...]  # one, or each a zone split by its devices is in (I8.8b)
     state: ZoneState
     heat: Heat
-    water: ZoneWater  # what the water interface exposes (I9; water-interface.md §4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,7 +563,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     def async_start_background(self) -> None:
         """The recorder's history, then the first analysis, and the first forecast snapshot,
         without holding up setup."""
-        self.check_learning()
+        self.check_zone_cycles()
         self.config_entry.async_create_background_task(
             self.hass, self._async_backfill_then_analyse(), f"{DOMAIN} analysis"
         )
@@ -583,7 +581,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             self._alive_stop_unsub()
             self._alive_stop_unsub = None
         for key in (
-            "learning_not_paused",
             ZONE_CYCLE_ISSUE,
             NO_ZONE_KNOWN_ISSUE,
             WALL_ISSUE,
@@ -1244,7 +1241,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_long_run(snapshot, zone_states, flame, now)
         heats: dict[str, list[Heat]] = {}
-        supplies: dict[str, list[Supply]] = {}
         circuits_of: dict[str, list[str]] = {}
         for zone in config.installation.zones:
             state = zone_states[zone.zone_id]
@@ -1252,13 +1248,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             assert circuit is not None  # the config was validated
             circuit_flow = None
             own_stale = False
-            own_at = None
             flow_entity = config.circuit_flow_entities.get(circuit.circuit_id)
             if flow_entity is not None:
                 reading = read_temperature(self.hass, flow_entity)
                 if reading.is_fresh(now, self._max_age(Signal.FLOW)):
                     circuit_flow = reading.value
-                    own_at = reading.reported_at
                 else:
                     own_stale = reading.value is not None  # a value, too old: not unknown
             supply = circuit_supply(
@@ -1269,10 +1263,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 flow_mapped=Signal.FLOW in mapped,
                 own_mapped=flow_entity is not None,
                 own_stale=own_stale,
-                flow_at=flow_reading.reported_at,
-                own_at=own_at,
             )
-            supplies.setdefault(zone.zone_id, []).append(supply)
             heat = heat_available(
                 supply,
                 flame,
@@ -1295,7 +1286,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 tuple(circuits_of[zone_id]),
                 zone_states[zone_id],
                 heat,
-                zone_water(supplies[zone_id], heat),
             )
 
         for circuit in config.installation.circuits:
@@ -1873,7 +1863,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     # --- analysis -------------------------------------------------------------------------
 
     async def _async_analysis_tick(self, _now: datetime) -> None:
-        self.check_learning()
+        self.check_zone_cycles()
         self._check_repeats(dt_util.utcnow().timestamp())
         await self.async_run_analysis()
 
@@ -1937,17 +1927,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         except Exception:  # a full disk, say: the stop and the monitor go on
             _LOGGER.warning("Could not write when the plugin last ran", exc_info=True)
 
-    def check_learning(self) -> None:
-        """Warn about zone learning the plugin affects but cannot protect, each warning with
-        what its advice costs: while control runs with learning pauses, learning it cannot
-        pause — Auto-TPI (only a reset would pause it) and SmartPI without its learning flag. A
-        zone whose algorithm cannot be read — VT not started, the zone unknown — keeps its last
-        answer (PB-47), so an issue the user ignored is not deleted and raised anew. With
-        control configured, also the zones VT switches on and off in cycles under
-        ``SHORT_CYCLE_MIN`` (K4): their gaps stop the burner."""
+    def check_zone_cycles(self) -> None:
+        """With control configured, warn about the zones VT switches on and off in cycles under
+        ``SHORT_CYCLE_MIN`` (K4): their gaps stop the burner. A zone whose settings cannot be
+        read — VT not started, the zone unknown — keeps its last answer (PB-47), so an issue the
+        user ignored is not deleted and raised anew."""
         control = self.config.control
-        pauses = control.configured and control.learning_pauses
-        unpaused: list[str] = []
         short_cycles: list[str] = []
         for zone_id in self.config.zone_entities:
             algorithm = self.link.zone_algorithm(zone_id)
@@ -1955,11 +1940,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 self._zone_algorithms[zone_id] = algorithm
             elif (last := self._zone_algorithms.get(zone_id)) is not None:
                 algorithm = last
-            flagless_smartpi = (
-                algorithm.proportional_function == "smartpi" and algorithm.smartpi_learning is None
-            )
-            if pauses and (algorithm.auto_tpi or flagless_smartpi):
-                unpaused.append(self.link.zone_name(zone_id))
             if (
                 control.configured
                 and algorithm.switches_on_off
@@ -1967,7 +1947,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 and algorithm.cycle_min < SHORT_CYCLE_MIN
             ):
                 short_cycles.append(f"{self.link.zone_name(zone_id)} ({algorithm.cycle_min:g} min)")
-        self._issue("learning_not_paused", unpaused)
         self._issue(ZONE_CYCLE_ISSUE, short_cycles)
 
     def report_no_zone_known(self, kind: str | None) -> None:
@@ -2305,9 +2284,6 @@ def alive_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(hass, ALIVE_STORE_VERSION, alive_store_key(entry_id), atomic_writes=True)
 
 
-LEARNING_FIELDS = ("paused", "resuming")  # the stored SmartPI pauses and resumes
-
-
 @dataclass(frozen=True, slots=True)
 class ControlRead:
     """The control state as read, with the cautious answer to whether a hand-back is owed."""
@@ -2394,9 +2370,7 @@ async def async_read_control_state(
         logging.INFO if raw_control is None and raw_main is None else logging.WARNING,
         "No stored control state could be read; control is not configured, so nothing is owed",
     )
-    # PB-52: the copy's SmartPI pauses still say which zones' learning to switch back on.
-    learning = {key: copy[key] for key in LEARNING_FIELDS if isinstance(copy, dict) and key in copy}
-    return ControlRead(learning, False, False, raw_main, True)
+    return ControlRead({}, False, False, raw_main, True)
 
 
 def _owed_flags(control: object) -> tuple[bool, bool] | None:

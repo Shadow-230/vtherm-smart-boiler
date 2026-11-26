@@ -88,7 +88,6 @@ class Rig:
     # PB-39: the translation key of the error the last switching off raised (its hand-back did
     # not get through), else None.
     switch_error: str | None = None
-    smartpi: dict[str, bool] = field(default_factory=dict)  # SmartPI zones: learning on or off
 
     @property
     def sim(self):
@@ -139,12 +138,8 @@ class Rig:
                 self.hass.states.async_set(entity_id, mode, shown)
                 continue
             # What real VT publishes for every thermostat, and what demand follows first (T4):
-            # whether its device heats now, and that it has started; a SmartPI zone, its flag.
+            # whether its device heats now, and that it has started.
             specific: dict[str, Any] = {"is_device_active": active}
-            extra: dict[str, Any] = {}
-            if zone.zone_id in self.smartpi:
-                specific["smartpi_learning_enabled"] = self.smartpi[zone.zone_id]
-                extra["configuration"] = {"proportional_function": "smartpi"}
             self.zones.set(
                 zone.zone_id,
                 mode,
@@ -155,7 +150,6 @@ class Rig:
                 on_percent=0.0 if mode == "off" else round(opening, 2),
                 specific_states=specific if self.vt_ready is not None else None,
                 is_ready=self.vt_ready,
-                **extra,
             )
         if self.zones.follow:
             self.zones.follow_zones()  # VT's central boiler, after every room (I12)
@@ -1564,37 +1558,24 @@ async def test_options_flow_configures_control_on_the_simulator(rig: Rig) -> Non
 
 async def test_a_dhw_draw_under_control_raises_no_outside_change(rig: Rig) -> None:
     """T-21 (P-36, P-22): control through the simulated gateway, its heating switch read back
-    from the boiler's "Central heating 1" (CH enable, not "running"), a SmartPI zone learning. A
-    ten-minute hot-water draw: the boiler leaves heating for the tank — no outside change, no
-    ignored write, no latch, the DHW-enable bit never written; SmartPI's learning paused for the
-    draw and resumed after it; heating back once the draw ends."""
-    hass = rig.hass
-    calls: list[tuple[str, bool]] = []
-
-    async def set_learning(call: Any) -> None:
-        calls.append((call.data["entity_id"], call.data["learning_enabled"]))
-        zone = next(z for z, e in rig.zones.entities.items() if e == call.data["entity_id"])
-        rig.smartpi[zone] = call.data["learning_enabled"]
-
-    hass.services.async_register("vtherm_smartpi", "set_smartpi_learning", set_learning)
-    learner = "zone_bath"
-    rig.smartpi[learner] = True
+    from the boiler's "Central heating 1" (CH enable, not "running"). A ten-minute hot-water
+    draw: the boiler leaves heating for the tank — no outside change, no ignored write, no latch,
+    the DHW-enable bit never written; "boiler gives no heat" on for hot water during the draw
+    and off after it (I12.9); heating back once the draw ends; nothing of SmartPI called."""
     await start(rig, ch_confirmed_entity=CH_ENABLED)
     rig.sim.plant.targets[2] = 24.0  # the bath calls, its valve open
     await rig.switch(True)
     await rig.advance(900, step=30.0)
-    entity = rig.zones.entities[learner]
-    assert calls == []
+    assert rig.state("binary_sensor", "no_heat").state == "off"
     await rig.scenario("start_dhw", minutes=10)
     await rig.advance(60)
     assert rig.sim.last.dhw
-    assert calls == [(entity, False)]
-    assert entity in rig.state("sensor", "control_state").attributes["learning_paused"]
+    shown = rig.state("binary_sensor", "no_heat")
+    assert (shown.state, shown.attributes["reason"]) == ("on", "hot_water")
     await rig.advance(540)
     assert not rig.sim.last.dhw  # the draw is over
     await rig.advance(1800, step=30.0)
-    assert calls[-1] == (entity, True)  # resumed
-    assert rig.smartpi[learner] is True
+    assert rig.state("binary_sensor", "no_heat").state == "off"
     assert rig.sim.last.flame  # heating back
     for alarm in ("alarm_outside_change", "alarm_write_ignored"):
         assert rig.state("binary_sensor", alarm).state == "off", alarm

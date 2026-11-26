@@ -206,9 +206,12 @@ Done 2026-11-26, but for the check that every room is marked: it moves to I12.11
 come from VT. The relay pre-fill from VT's commands went; the repair issue for a command that
 switches anything but the helper names the relay's way out.
 
-#### I12.9 No learning pauses, no water interface
+#### I12.9 No learning pauses, no water interface ✅
 
 Decisions 2 and 3, with the user guide's automations for SmartPI 1.0, SmartPI 0.6.x and Auto-TPI.
+Done 2026-11-26: the binary sensor "Gives no heat" (`no_heat`) with its reason; unavailable while
+control is off, so SmartPI is not held back meanwhile. `tests.yml` still names SmartPI and the
+deleted `water-interface.md`; it waits for a push with the `workflow` scope.
 
 #### I12.10 Frost and the rooms' trust
 

@@ -664,30 +664,17 @@ def test_the_decision_names_the_rooms_short() -> None:
     assert decisions[-1].most_short  # two of three: the curve first (G11, addition 3)
 
 
-@pytest.mark.parametrize(("learning", "after"), [(True, 1.0), (None, 0.0)])
-def test_a_smartpi_zone_learning_just_over_its_setpoint_still_raises_the_correction(
-    learning: bool | None, after: float
-) -> None:
-    """G11 C: a SmartPI zone in its learning phase, fully open, its room 0.1 K over VT's setpoint
-    — SmartPI keeps heating it to 0.5 K over: short by 0.4 K, so the correction rises; without
-    the phase, the room counts as warm enough."""
+@pytest.mark.parametrize(("temperature", "after"), [(20.6, 1.0), (21.1, 0.0)])
+def test_short_is_judged_against_vts_setpoint(temperature: float, after: float) -> None:
+    """I12.9 (G11 C removed): a fully open zone is short against VT's setpoint, whatever its
+    algorithm — 0.4 K under it raises the correction; 0.1 K over it counts as warm enough."""
 
     def zones(t: float) -> tuple[ZoneState, ...]:
-        return (
-            ZoneState(
-                "z",
-                21.1,
-                21.0,
-                True,
-                reported_at=t,
-                valve_open=1.0,
-                smartpi_learning_phase=learning,
-            ),
-        )
+        return (ZoneState("z", temperature, 21.0, True, reported_at=t, valve_open=1.0),)
 
     state, decisions = run(minutes(0.0, 31, zones), WATER)
     assert state.correction == pytest.approx(after)
-    assert decisions[-1].short_zones == (("z",) if learning else ())
+    assert decisions[-1].short_zones == (("z",) if after else ())
 
 
 AUTO = replace(CONFIG, room_auto=True)

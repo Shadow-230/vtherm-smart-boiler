@@ -224,7 +224,7 @@ def _feature_manager(hass: HomeAssistant) -> dict[str, Any]:
 
 def _named_entities(value: Any) -> frozenset[str]:
     """Every entity ID the options name — also one that is away now — in any mapping, its keys
-    too (the stored control state keys the zones it paused by their IDs): the entry's options
+    too (a control state stored by an earlier version keys zones by their IDs): the entry's options
     are a read-only mapping (P-30)."""
     if isinstance(value, str):
         return frozenset({value}) if ENTITY_ID.match(value) else frozenset()

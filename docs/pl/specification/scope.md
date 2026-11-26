@@ -49,8 +49,9 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
    albo zasila obieg, który ma własny sterownik. Strefy dławią przepływ swoimi zaworami; informacja płynie od kotła
    do stref. Kocioł włączany i wyłączany przekaźnikiem (klasa 3) dostaje tylko włączanie i wyłączanie grzania:
    temperatura jego wody zostaje po stronie kotła.
-4. **Nie psuć innych modeli** — wstrzymuj naukę algorytmów stref przez ich publiczne usługi
-   (SmartPI; Auto-TPI dopiero wtedy, gdy jego usługa potrafi wstrzymać bez utraty tego, czego się nauczył, §11).
+4. **Nie psuć innych modeli** — mów algorytmom stref, kiedy kocioł nie daje ciepła (jeden czujnik
+   „nie daje ciepła”, który użytkownik wybiera w SmartPI 1.0 albo używa w automatyzacji); nigdy nie
+   wstrzymuj ani nie zmieniaj ich nauki (I12.9, decyzja użytkownika z 2026-11-25).
 5. **Bezpieczna** — stałe zabezpieczenia z zasady 11 działają zawsze; limity ustawia użytkownik,
    z ostrożnymi wartościami domyślnymi.
 6. **Lokalna** — nic nie jest wysyłane na zewnątrz.
@@ -69,7 +70,7 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
     różnią się od domyślnych.
 11. **Użytkownik decyduje, mając informacje** — wybory dotyczące sterowania należą do użytkownika: droga zapisu,
     sposób oddania sterowania, tryb sterowania (nastawa zasilania, włącz/wyłącz, a od 0.3 tryb podobny do termostatu),
-    limity, krzywa, progi zapotrzebowania, wstrzymania nauki, liczba dni danych, których potrzebuje werdykt.
+    limity, krzywa, progi zapotrzebowania, liczba dni danych, których potrzebuje werdykt.
     Każdy wybór ma ostrożną wartość domyślną i opis tego, co robi i czym grozi — w config flow i w dokumentacji.
     Stałe zabezpieczenia, nie opcje, przy każdym zapisie (nastawa zasilania, włączanie i wyłączanie c.o.,
     ograniczenie modulacji, wartości trybu podobnego do termostatu wysyłane do kotła, przekaźnik): żadnego zapisu bez
@@ -239,8 +240,8 @@ To, co wtyczka może zrobić, zależy od tego, co integracja potrafi zapisać:
   włączone”; olej nie ma licznika gazu). Typ kotła ma standardowe nazwy — jednofunkcyjny z
   zasobnikiem c.w.u. lub bez, combi, combi z wbudowanym zasobnikiem — potem kondensacyjny (tylko
   gaz i olej) i, dla każdego kotła, który grzeje c.w.u., czy c.w.u. ma priorytet (domyślnie), czy
-  nie; bez priorytetu c.w.u. ani nie wstrzymuje nauki, ani nie oznacza ciepła jako niedostępnego
-  dla stref.
+  nie; bez priorytetu c.w.u. ani nie włącza „nie daje ciepła”, ani nie oznacza ciepła jako
+  niedostępnego dla stref.
 - Sterowanie włącza się tylko ze znanym sposobem oddania sterowania, wybranym przez użytkownika: dla
   wbudowanego OTGW jest to bezpieczne oddanie sterowania opisane niżej; dla wskazanej encji —
   wartość, zadeklarowana wraz ze skutkiem (własne sterowanie urządzenia wraca albo grzanie się
@@ -510,42 +511,31 @@ oraz przyjmuje typy odbiorników ciepła swoich stref (S-33); palnik jest wspól
 
 - Rdzeń używa tylko danych VT: `on_percent`, położenia zaworów, temperatura pokojowa względem celu,
   moc urządzeń.
-- Wykrywane dodatki: SmartPI — wstrzymanie nauki i odczyt jego fazy nauki (G11 C); jego „lepszy
-  sygnał” skreślony przez użytkownika 2026-10-12 (§9); Auto-TPI — wykrywany, nie wstrzymywany, ze
-  zgłoszeniem naprawy (§11; S-29).
-- Algorytm uczący się bez usługi wstrzymania dostaje wyraźne ostrzeżenie, które mówi, co kosztują
-  jego rady.
-- Dla każdej strefy wtyczka daje termostatowi VT, jako właściwości menedżera funkcji (menedżer
-  funkcji od 0.2): **ciepło dostępne** (`heat_available`; przed 0.2.2 nazywane „ciepła woda
-  dostępna”, P-61) — ciepło kotła dociera do strefy: tak, dopóki płomień się pali, a temperatura
+- Wtyczka nie czyta niczego ze SmartPI ani z Auto-TPI i nie wstrzymuje nauki żadnej strefy (I12.9,
+  decyzja użytkownika z 2026-11-25: wstrzymywanie algorytmu strefy należy do użytkownika). Przy
+  ustawionym sterowaniu jeden czujnik binarny, **Nie daje ciepła**, jest włączony, gdy kocioł nie
+  daje pokojom ciepła — kocioł centralny VT nie wzywa ciepła, trwa jego opóźnienie włączenia,
+  ciepła woda z priorytetem, usterka kotła albo wtyczka nie może ręczyć za ciepło (oddała kocioł,
+  sterowanie zablokowane, inny sterownik, decyzja VT nieznana) — z powodem, a niedostępny, gdy
+  sterowanie jest wyłączone. Użytkownik wybiera go w wejściu „heating unavailable” SmartPI 1.0
+  albo używa w automatyzacji (instrukcja podaje ją dla SmartPI 0.6.x). „Lepszy sygnał” SmartPI
+  skreślił użytkownik 2026-10-12 (§9).
+- Dla każdej strefy wtyczka ocenia **ciepło dostępne** (przed 0.2.2 nazywane „ciepła woda
+  dostępna”, P-61), pokazywane w diagnostyce — ciepło kotła dociera do strefy: tak, dopóki płomień się pali, a temperatura
   zasilania jest wyraźnie powyżej powrotu (powyżej pokoju, z szerszym marginesem, tylko tam, gdzie
   powrót nie jest znany: woda obiegu mieszanego wraca przez jego własne mieszanie, a instalacja może
   nie mieć przypisanego powrotu); nie, gdy płomień jest zgaszony albo c.w.u. jest aktywne na kotle,
   w którym c.w.u. ma priorytet; nieznane, gdy przypisany płomień, temperatura zasilania albo to, z
   czym się ją porównuje, jest nieznane lub nieświeże. Bez sygnału płomienia decyduje sama woda (I8,
-  decyzja C1). Od I9 (decyzje użytkownika z 2026-10-12) wtyczka daje też **wodę docierającą do
-  obiegu strefy**, z podaniem, dlaczego jej brakuje, kiedy ją zmierzono i dlaczego ciepło nie
-  dociera do strefy — opcjonalny, jednokierunkowy interfejs dla algorytmów stref, dostępny także
-  przez funkcję w `hass.data` i, zaokrąglony, w atrybucie `smart_boiler`
-  (`docs/pl/specification/water-interface.md`). Algorytm strefy, który go używa, mówi o tym kluczem
-  w `specific_states` VT i nie jest wtedy wstrzymywany z powodu wahnięcia wody; SmartPI 0.4.0 go
-  nie używa. Żadna encja wtyczki nie należy do strefy, a strefa to nic więcej niż jej termostat,
+  decyzja C1). Dane o wodzie dla algorytmów stref zbudowane w I9 (atrybut `smart_boiler` na
+  termostatach VT i właściwości menedżera funkcji) usunięto w I12.9: nikt ich nie czytał. Żadna
+  encja wtyczki nie należy do strefy, a strefa to nic więcej niż jej termostat,
   jej obieg, jej typ odbiornika ciepła i to, czy zamyka się po wyłączeniu: encje dla poszczególnych
   stref, moc i wykładnik odbiornika ciepła stref, „blisko temperatury pokojowej” z monitora (I8.1d)
   i współczynnik mocy odbiornika ciepła (I8.2) zostały usunięte
   (`docs/en/development/plans/plan-0.2-i8.md`).
-- Ładowanie zasobnika c.w.u. wstrzymuje naukę tylko tam, gdzie c.w.u. ma priorytet (I6, decyzja 8),
-  i tylko w strefach proszących o ciepło (zawór otwarty); strefy z zamkniętym zaworem uczą się dalej,
-  jak pokój stygnie. Każdy pobór c.w.u. wstrzymuje ją, jakkolwiek krótki, także na kotle combi i
-  także w ciągu 10 min od wznowienia, ponieważ strefy, które proszą o ciepło, w tym czasie go nie
-  dostają (S-41); tak samo robi „wyłączone”, które sterowanie wysyła przy awarii kotła (§7). Nauka
-  wznawia się, gdy temperatura zasilania wróci w granice tolerancji od swojej nastawy (3 K w obie
-  strony), a najpóźniej 1 h po rozpoczęciu wstrzymania, nawet gdy jego przyczyna trwa (decyzja 14 z
-  `docs/en/development/plans/plan-0.2.3.md`); wstrzymanie i wznowienie są odczytywane zwrotnie z
-  flagi algorytmu — wstrzymanie, które się nie udało, nie jest wstrzymaniem wtyczki, wznowienie jest
-  wysyłane ponownie co minutę, aż flaga pokaże „włączone” — a nauka, którą użytkownik wyłączył przed
-  wstrzymaniem, nigdy nie jest wznawiana. Wyłączenia podczas własnego wstrzymania wtyczki nie da się
-  odróżnić od tego wstrzymania: flaga pokazuje „wyłączone” w obu przypadkach.
+- C.w.u. liczy się jako ciepło, którego brakuje pokojom — **Nie daje ciepła** włączony, z powodem
+  „ciepła woda” — tylko tam, gdzie ma priorytet (I6, decyzja 8), i tylko gdy grzanie jest potrzebne.
 - Domyślnie temperatura wody zmienia się stopniowo (rampa, §7): każdy krok nastawy jest na tyle mały,
   żeby kocioł jej nie przekroczył, a algorytmy stref za nią nadążają (S-47).
 
@@ -559,8 +549,7 @@ wersja podrzędna 14), co właśnie robił.
 - Włączanie i wyłączanie grzania podąża za zapotrzebowaniem stref, jak w innych trybach; nigdy nie
   jest to porównanie temperatur.
 - Liczą się tylko strefy, które teraz proszą o ciepło. Wygrywa ta, której brakuje najwięcej; jej cel
-  to najwyższy ze znanych — nastawa VT, +0.5 K, gdy grzeje faza nauki SmartPI, nastawa opublikowana
-  przez SmartPI. Strefa zmienia się tylko przy wyraźnej różnicy, a od razu, gdy przestaje prosić.
+  to najwyższy ze znanych — nastawa VT albo nastawa opublikowana przez SmartPI. Strefa zmienia się tylko przy wyraźnej różnicy, a od razu, gdy przestaje prosić.
 - Dopóki strefa prosi, kocioł widzi co najmniej minimalny niedobór — jego własna regulacja nigdy nie
   zatrzymuje grzania pokoju, który VT nadal grzeje (wartość tymczasowa, K4).
 - Dwa rodzaje, do wyboru przez użytkownika według urządzenia: „temperatura i nastawa” (dwie encje
@@ -625,7 +614,7 @@ wersja podrzędna 14), co właśnie robił.
 |---|---|---|
 | **Monitor** | starty na godzinę, czas palenia, udział kondensacji, gaz na stopniodzień, stan łączności; alarmy — informacyjne, z reakcją w postaci oddania sterowania tylko tam, gdzie pozwala na nią decyzja 7 (§7); **wczesne ostrzeżenie** (spaliny, zapłony, ciśnienie, histereza); **długie palenie bez ocieplania** — płomień pali się 3 h, a temperatura w pokojach nie rośnie: woda za chłodna dla pokoi, którym brakuje ciepła, kocioł na granicy swojej mocy (ostrzeżenie), woda za gorąca (`docs/en/development/plans/plan-0.2-g11.md` E); **raport wyjaśniający zmiany** (pogoda / c.w.u. / ustawienia); kontrola czujnika zewnętrznego; wykrywanie c.w.u.; **zapis prognozy** (FC0); **kontrola sygnałów** — które opcjonalne sygnały są obecne i świeże | nie |
 | **Doradca** | podpowiedzi dotyczące krzywej i ochrony przed częstymi startami, z uzasadnieniem i przyciskiem „zastosuj” | nie |
-| **Krzywa (strategia A)** | zastępuje włącz/wyłącz VT i automatyzacje użytkownika; krzywa dla każdego obiegu; efektywna temperatura zewnętrzna; rampa; podtrzymanie; ochrona przed mrozem; wstrzymania nauki (c.w.u., awaria kotła, duże zmiany — tylko pod sterowaniem, S-61) | tak |
+| **Krzywa (strategia A)** | zastępuje włącz/wyłącz VT i automatyzacje użytkownika; krzywa dla każdego obiegu; efektywna temperatura zewnętrzna; rampa; podtrzymanie; ochrona przed mrozem; czujnik „nie daje ciepła” dla algorytmów stref (tylko pod sterowaniem) | tak |
 | **Ochrona przed częstymi startami** (do rozstrzygnięcia wobec zasady 12, decyzja 13) | praca cyklami przy małym obciążeniu, limit startów na godzinę, ograniczenie modulacji; **planowanie według prognozy** — przed nami łagodne godziny → długie cykle od początku (FC2) | tak |
 | **Strojenie krzywej (strategia B)** | pasmo strojenia Niskie / Średnie / Wysokie / Własne (domyślnie 3 / 8 / 15 %); ręczne / półautomatyczne / automatyczne; **sezonowe dostrajanie** — każdego dnia trochę niżej, dopóki pokoje trzymają komfort; dla każdego obiegu | tak |
 | **Prognoza** | **wyprzedzanie dla wolnych odbiorników ciepła** — podnieść wodę wcześniej przed mrozem, obniżyć ją wcześniej przed ciepłym lub słonecznym dniem (FC3); czas wyprzedzenia uczony dla każdego obiegu | tak |
@@ -636,10 +625,11 @@ wersja podrzędna 14), co właśnie robił.
 - **Nauka po stronie wody:** z historii HA, gdy obejmuje sezon grzewczy, potem na żywo; zmiana
   ograniczona na dobę.
 - **Obce ciepło** (kominek, piec, grzejnik elektryczny) obsługują VT i SmartPI: wtyczka go nie
-  wykrywa i nie wstrzymuje dla niego nauki (I8.1c, decyzja użytkownika z 2026-10-10). Pokój, który
+  wykrywa (I8.1c, decyzja użytkownika z 2026-10-10). Pokój, który
   ono ogrzewa, nie prosi o ciepło.
-- **C.w.u.** jest wykrywane na każdym etapie; pod sterowaniem wstrzymuje naukę — w strefach
-  wołających o ciepło (§5) — i przy każdym poborze trzyma korektę komfortu wtyczki w miejscu (S-61).
+- **C.w.u.** jest wykrywane na każdym etapie; pod sterowaniem, z priorytetem, włącza „nie daje
+  ciepła”, gdy grzanie jest potrzebne (§5), i przy każdym poborze trzyma korektę komfortu wtyczki w
+  miejscu (S-61).
 - **Strona „Kocioł”** (I10, `docs/en/development/plans/plan-0.2-i10.md`) pokazuje, co wtyczka wie
   i decyduje, na każdym etapie, i nic poza tym: przegląd (stan i to, czy sterowanie jest włączone, z drogą do ustawień, kafelki,
   schemat instalacji z pokojami, krzywa z „gdzie jesteśmy”, ostatnie 24 h do odtworzenia), Palnik,
@@ -861,11 +851,9 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   znikają, gdy korekta spadnie poniżej limitu albo w żadnym pokoju nie brakuje ciepła. Jej wartość
   jest publikowana, a przycisk „Zresetuj korektę komfortu” ją zeruje (odpowiedź J). Własne
   integratory PI stref (SmartPI, TPI) działają z nią szeregowo; dokumentacja opisuje to
-  współdziałanie i zalecane przy nim ustawienia VT. Strefa, której SmartPI jest w fazie nauki
-  (włącz/wyłącz, wyłączenie dopiero przy jej nastawie + 0.5 K), liczy się jako taka, której brakuje
-  ciepła, względem nastawy VT + 0.5 K — tu, w regule długotrwałej i w strefie krytycznej; w
-  kalibracji albo gdy faza jest nieznana — względem nastawy VT
-  (`docs/en/development/plans/plan-0.2-g11.md` C). Oknami zajmuje się VT (I8.1b): strefa, którą VT
+  współdziałanie i zalecane przy nim ustawienia VT. Strefa liczy się jako taka, której brakuje
+  ciepła, względem nastawy VT, bez względu na algorytm — tu, w regule długotrwałej i w strefie
+  krytycznej (pasmo +0.5 K dla fazy nauki SmartPI z G11 C usunięto w I12.9). Oknami zajmuje się VT (I8.1b): strefa, którą VT
   wyłącza lub obniża z powodu okna, już nie prosi o ciepło i nie wygląda na taką, której brakuje
   ciepła; wtyczka nie ma własnej obsługi okien.
 - **Temperatura pokojowa krzywej: Auto albo Ręczna** (`docs/en/development/plans/plan-0.2-g11.md` D).
@@ -1019,7 +1007,7 @@ c.o., ograniczenie modulacji, wartości trybu działającego jak termostat (0.3)
   `docs/en/development/plans/plan-0.2.3.md`).
 - **Stan sterowania** — znacznik „steruje”, zaległe oddanie sterowania i opcje, z którymi sterowanie
   zostało przejęte, zatrzaski, życzenie użytkownika (włączone lub wyłączone), ostatnie polecenie dane
-  kotłu, strefa SmartPI wstrzymana przez wtyczkę — jest zapisywany natychmiast i niepodzielnie
+  kotłu — jest zapisywany natychmiast i niepodzielnie
   (atomowo), a odczytywany ostrożnie. Utrata, uszkodzenie lub nieczytelność zapisu stanu dla wpisu,
   który wcześniej działał, oznacza „sterował”: najpierw pełne oddanie sterowania (odpowiedź K). Po
   restarcie bez czystego zatrzymania oddanie sterowania czeka do wznowienia sterowania; po każdym
@@ -1253,7 +1241,6 @@ Opcje, każda z ostrożną wartością domyślną i opisem ryzyka (temperatury w
 - Korekta komfortu włączona (domyślnie w pełnym sterowaniu) lub wyłączona; jej limit (domyślnie
   3 K, do 10 K); wzrost najwyżej 3 K dziennie, stały (zasada 13).
 - Temperatura pokojowa krzywej: Auto (domyślnie) lub Ręcznie, oraz strefy, które Auto pomija.
-- Wstrzymania nauki włączone (domyślnie) lub wyłączone.
 - Reakcje, na które pozwala decyzja 7.
 - Dwa sygnały usterki kotła, „Fault indication” bramki, próg „dolej wody” oraz ostrzeżenie i alarm
   wysokiego ciśnienia (domyślnie brak).
@@ -1279,7 +1266,7 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Krzywa grzewcza | brak — wpisuje się projektową temperaturę zasilania | zła krzywa niedogrzewa lub marnuje gaz; żadnej cichej wartości domyślnej |
 | Typ odbiornika ciepła | grzejnik — chyba że obieg wymienia strefę jako podłogową lub z konwektorami (I8 F2) | podłogówka potrzebuje własnej najwyższej temperatury wody; strefa, której nie ma na liście, jest traktowana jak grzejnik |
 | Najniższa / najwyższa temperatura wody | 20 °C (tymczasowe, K4) / 70 °C tam, gdzie obieg żadnej nie podaje (jego najwyższa temperatura wody, z włączonym dawnym maksimum krzywej — I8 F2) | najniższa ogranicza krzywą od dołu — gdy jest za niska, kocioł co chwilę sam się zatrzymuje w łagodną pogodę, a kocioł niekondensacyjny ma skropliny w kominie (wartość weź z jego instrukcji); gdy jest za wysoka, woda jest cieplejsza, niż potrzebują pokoje (decyzja 2); 70 °C obejmuje typowe punkty projektowe grzejników i mieści się poniżej maksimum kotłów |
-| Rampa | 1 K na minutę | skok nastawy na tyle mały, że kocioł go nie przekracza; algorytmy stref nadążają, a większe wahania wstrzymują naukę SmartPI (S-47) |
+| Rampa | 1 K na minutę | skok nastawy na tyle mały, że kocioł go nie przekracza; algorytmy stref nadążają (S-47) |
 | Odstęp decyzji | 5 min | domyślny cykl VT |
 | Opóźnienie włączenia | 0 s | jak w VT 10.4.0; opóźnienie jest dla powolnych zaworów (decyzja 5) |
 | Typ zapisu wybranego celu | nieznany — sterowanie zostaje wyłączone, dopóki użytkownik nie zadeklaruje typu wygasający lub trzymany | wtyczka sama nie rozpozna typu, a zły domysł zużywa pamięć kotła |
@@ -1292,7 +1279,6 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Próg zapotrzebowania | jedna wołająca strefa | każda wołająca strefa grzeje, jak w centralnym kotle VT |
 | Co liczy licznik | urządzenia VT, jak centralny kocioł VT (decyzja użytkownika z 2026-10-14; wpis sprzed tej daty zostaje przy strefach) | to samo co strefa przy domyślnej liczbie 1; użytkownik przechodzący z VT zachowuje liczbę z VT |
 | Korekta komfortu | wyłączona (K4, decyzja użytkownika z 2026-11-17, odwracająca tę z 2026-10-10 po F8 z J4 i przeglądzie literatury; wpis zostaje przy tym, co zapisał); po włączeniu do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: około 2 do 6 razy więcej startów w symulacji przy dobowym wahaniu temperatury zewnętrznej, za mniej niż 0.15 K komfortu; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
-| Wstrzymania nauki | włączone | chronią model SmartPI przed wahaniami, które wywołuje wtyczka |
 | Reakcja alarmu | informacja; oddania sterowania z decyzji 7 zawsze | inny sterownik zapisuje wartości — nigdy z nim nie walczymy; wtyczka zatrzymuje grzanie tylko tam, gdzie sam kocioł się zatrzymuje |
 | Alarm maksimum obiegu | maksimum obiegu + 5 K, przez 10 min (informacja); na obiegu zasilanym prosto z kotła c.w.u. z priorytetem nie jest liczona | kocioł może przekroczyć maksimum; użytkownik to widzi (decyzja 10); c.w.u. nie dociera do tego obiegu (2026-10-12) |
 | Próg „dolej wody” | brak | wartość pochodzi z instrukcji kotła; zła wartość domyślna niczego nie zatrzyma, ale wprowadzi w błąd |
@@ -1337,7 +1323,6 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Strefa pobiera ciepło przy otwarciu powyżej 5 %, nasycona przy 95 % — dla nauki, alarmów i historii; to, czy strefa woła, wynika zamiast tego z reguły VT (powyżej 0, 2026-10-14) | `core/readings.py` | istniejące |
 | Ciepło dostępne: zasilanie 2 K powyżej powrotu albo 3 K powyżej temperatury pokoju, gdy nie ma powrotu; histereza 1 K | `core/heat.py` | tymczasowe, K4 (I8, decyzja C1) |
 | Wiarygodny odczyt pokoju od −30 do 45 °C, jedna reguła dla każdego odczytu pokoju | `core/limits.py` | węższy zakres ukryłby zimny pokój przed ochroną przed mrozem (S-06; tymczasowe, K4) |
-| Wstrzymania nauki: wahanie 5 K w 30 min, wstrzymanie co najmniej 10 min (pobór lub „wyłączone” z powodu usterki kotła wstrzymuje nawet w ciągu 10 min od wznowienia), wznowienie w granicach 3 K, najdłuższe wstrzymanie 60 min od jego początku, odczyt zwrotny po 1 min | `core/learning.py` | istniejące; reguły poboru i usterki oraz początek limitu: decyzja 14 z `docs/en/development/plans/plan-0.2.3.md` |
 | Ostrzeżenie o małym przepływie po 15 min | `core/alarms.py` | istniejące |
 | Okres rozpoznania najwyżej 10 min; karencja 10 min | `core/zone_watch.py` | postanowione (decyzja 3) |
 | Przekaźnik poza zasięgiem 5 min | sterowanie | postanowione |
@@ -1375,7 +1360,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Zgłoszenie „blokada zatrzymała grzanie” po 60 s | sterowanie (V7) | tymczasowe, K4 (powód do potwierdzenia) |
 | Wspólne cofnięcie obu celów w ciągu 20 s liczone jako jedno zgubienie; próba ze śladem nie jest liczona do „zignorowane od początku” | strażnik zapisu (X1) | tymczasowe, K4 (powód do potwierdzenia) |
 | Karencja P-105 600 s | `control.py` (X3) | tymczasowe, K4 (powód do potwierdzenia) |
-| Histereza alarmu obiegu 1 K; jego czas 1–120 min; korekta komfortu najwyżej 3 K dziennie; limit wstrzymania nauki 1 h od jego początku (decyzja 14 z `docs/en/development/plans/plan-0.2.3.md`) | sterowanie (X4) | tymczasowe, K4 (powód do potwierdzenia) |
+| Histereza alarmu obiegu 1 K; jego czas 1–120 min; korekta komfortu najwyżej 3 K dziennie | sterowanie (X4) | tymczasowe, K4 (powód do potwierdzenia) |
 | Skrajna pogoda (reguła 5 zasady 13): temperatura zewnętrzna poniżej projektowej temperatury zewnętrznej albo zmieniająca się szybciej niż 2 K na godzinę | korekta komfortu (decyzja 11 z `docs/en/development/plans/plan-0.2.3.md`) | tymczasowe, K4: dobowe wahanie ±3 K zmienia temperaturę najwyżej o około 0.8 K na godzinę; przechodzący front zmienia ją szybciej |
 | Projektowa temperatura zasilania co najmniej temperatura pokoju + 5 K; projektowa temperatura zewnętrzna co najwyżej temperatura pokoju − 10 K | formularz (X5) | tymczasowe, K4 (powód do potwierdzenia) |
 | Dowody dla sugestii: 7 dni, 20 paleń, udział 0.5, pasma 1 K, otwarcie 50 %, +2 K, 2 K poniżej górnych limitów; zgłoszenie dotyczące termostatu ściennego po 30 min; dolny próg migracji 25 °C | monitor (X6) | tymczasowe, K4 (powód do potwierdzenia) |
@@ -1391,9 +1376,8 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Zgłoszenie „zamknięta strefa” z ochrony przed mrozem aktualizowane przy zmianie o 1 K; czekanie 60 s na odtworzenie życzenia (od I11 przywraca je start wtyczki) | sterowanie (X4, V3) | tymczasowe, K4 (powód do potwierdzenia) |
 | Limit czasu zapisu 10 s; krok sterowania liczy najwyżej 60 s | sterowanie | tymczasowe, K4 (powód do potwierdzenia) |
 | Próg „dolej wody” przyjmowany w granicach 0.1–2.0 bar | opcje (Y1) | tymczasowe, K4 (powód do potwierdzenia) |
-| Wywołania nauki SmartPI przekraczają limit czasu po 5 s, w ramach 15-sekundowego budżetu zatrzymania | `control.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Najstarszy VT 10.6.5, porównywany jako 10.6.4 — tak podaje jego manifest (testowany jest 10.6.5) | `vtherm_link.py` | postanowione 2026-11-25 (I12.6); podnoszone, gdy potrzebna jest zmiana w VT |
-| Uruchomiony termostat, który nie pokazuje wartości strefy w ciągu 15 min: zgłoszenie naprawy „przeładuj VT” | `feature_manager.py` | tymczasowe, K4 (powód do potwierdzenia) |
+| Uruchomiony termostat, którego VT nie przekazał w ciągu 15 min: zgłoszenie naprawy „przeładuj VT” | `feature_manager.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Dzień się liczy, gdy 90 % jest znane; jego stopniodni wymagają 80 % | monitor (Y2) | tymczasowe, K4 (powód do potwierdzenia) |
 | Sugestia najniższej temperatury wody nigdy powyżej 50 °C | monitor (X6) | tymczasowe, K4 (powód do potwierdzenia) |
 | Sterowanie czeka na odczyt zwrotny bramki: zgłoszenie naprawy po 5 min, na poziomie błędu tam, gdzie oddanie sterowania zatrzymuje grzanie | sterowanie (Z4-10) | tymczasowe, K4 |
@@ -1497,8 +1481,8 @@ opóźnienie włączenia VT. Auto-TPI VT nadal czyta tylko centralny kocioł VT,
 gdy kocioł jest wyłączony: to nie jest do zmiany przez wtyczkę (propozycja dla autorów VT).
 
 **Skreślone przez użytkownika 2026-10-12:** „lepszy sygnał” SmartPI — czytanie wyjścia jego
-regulatora (`u_pi`, `u_ff`) zamiast cyklu pracy stref (S-29); jego faza nauki jest czytana od
-G11 C, więc z części SmartPI w S-29 nic nie zostaje.
+regulatora (`u_pi`, `u_ff`) zamiast cyklu pracy stref (S-29); od I12.9 nic ze SmartPI nie jest
+czytane, więc z części SmartPI w S-29 nic nie zostaje.
 
 **Skreślone przez użytkownika 2026-10-10** (`docs/en/development/plans/plan-0.2-i8.md` B):
 przełączanie lato/zima w jakiejkolwiek formie (FC1), ostrzeżenie o strefach, których kocioł nie
@@ -1546,8 +1530,6 @@ liczone po godzinach, w których było ogrzewanie.
 
 ## 11. Otwarte decyzje
 
-- Wstrzymanie nauki podczas długich przerw przeciwdziałania cyklowaniu (woda blisko temperatury
-  pokojowej, gdy strefa woła o ciepło) — rozstrzygnąć na danych z pierwszych instalacji (przed 0.3).
 - Tryb na wzór termostatu z OTGW (0.3): z fizycznym termostatem (nadpisanie) i bez niego
   (wstrzykiwanie `AA` — czy kocioł grzeje według własnej regulacji bez `CS`); wersja firmware, która
   dodała `RT` i `BS`; co przyjmują ESPHome OpenTherm i EMS-ESP (przed 0.3).
@@ -1618,10 +1600,11 @@ liczone po godzinach, w których było ogrzewanie.
   włącz/wyłącz, a `TSet` nadal niesie `CS` przy `CH=0` (firmware PIC 6.6, ustalone w przeglądzie z
   2026-09-24). Oddanie sterowania to bezpieczne oddanie sterowania: `CS` na najniższej temperaturze
   wody, `CH=1`, potem `CS=0`.
-- Auto-TPI (badanie F2): bez centralnego kotła VT Auto-TPI nigdy nie uczy się w strefach oznaczonych
-  jako „używane przez centralny kocioł”; wtyczka tworzy zgłoszenie naprawy z ich nazwami, które
-  mówi, co kosztuje jego porada. Jest to wykrywane, a nie wstrzymywane, bo `set_auto_tpi_mode` nie
-  jest czystym wstrzymaniem; wstrzymanie przyjdzie w wydaniu ustalonym przy K4 (S-29).
+- Auto-TPI (badanie F2; VT 10.6.5 sprawdzony 2026-11-26): pomija naukę, gdy centralny kocioł VT
+  jest wyłączony, w strefach oznaczonych jako „używane przez centralny kocioł”; centralny kocioł VT
+  decyduje razem z wtyczką (I12), więc Auto-TPI się uczy. `set_auto_tpi_mode` nie jest czystym
+  wstrzymaniem (domyślnie kasuje naukę i przepisuje wpis); wtyczka go nie wywołuje i nie czyta
+  Auto-TPI.
 - Menedżer funkcji VT (badanie F4): rejestrowany, gdy tylko istnieje API VT; działający już
   termostat przejmuje go przy następnym przeładowaniu VT, którego wtyczka nigdy nie wywołuje.
 - Decyzje użytkownika z 2026-09-25: VT decyduje, czy grzać, nic, co wtyczka liczy lub odmierza w
@@ -1724,8 +1707,6 @@ liczone po godzinach, w których było ogrzewanie.
   wpisane obciążenie projektowe zawsze wygrywa; 19 — wybór strefy przyjmuje tylko klimaty VT,
   sprawdzane po stronie serwera (ostrzeżenie o strefach, których kocioł nie zasila, przyjdzie w
   0.3); 20 — diagnostyka działa dla wpisu z błędem konfiguracji.
-- Wstrzymania nauki (SmartPI) tylko wtedy, gdy sterowanie działa; sprawdzanie wahań wody idzie za
-  nastawą grzania, a nie za niską wartością „wyłączone” (K4).
 
 ## 12. Wydanie
 

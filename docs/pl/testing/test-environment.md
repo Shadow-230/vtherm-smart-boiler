@@ -156,7 +156,7 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
 2. **Jeden termostat VT na każdą symulowaną strefę** (`zone_living`, `zone_bedroom`, `zone_bath`):
    typ „over switch”; przełącznik bazowy `switch.boiler_sim_<zone>_valve`; temperatura pokojowa
    `sensor.boiler_sim_<zone>_temperature`; temperatura zewnętrzna `sensor.boiler_sim_outdoor`. W
-   sypialni użyj SmartPI, żeby sprawdzić wstrzymania nauki. W ustawieniach zaawansowanych każdej strefy
+   sypialni użyj SmartPI, czyli algorytmu strefy, który się uczy. W ustawieniach zaawansowanych każdej strefy
    ustaw jej własne opóźnienie bezpieczeństwa 1440 min: VT uznaje za martwy czujnik, którego stan nie był
    zapisany przez czas tego opóźnienia (domyślnie 60 min), i przełącza strefę w tryb bezpieczeństwa,
    a ustabilizowane pokoje symulatora albo stała temperatura zewnętrzna trzymają jedną wartość dłużej.
@@ -220,7 +220,6 @@ lekka i ma grzejnik 2.5 raza większy od jej obliczeniowego zapotrzebowania (`zo
 radiators_light_bedroom`). Nauka SmartPI od zera kończy się w niej po około 11 h w modelu
 symulatora. Sypialnia w tempie reszty domu zatrzymuje się na około 20.0 °C, na górnej granicy
 pasma nauki SmartPI, i nie kończy żadnej fazy (L15). Q5 ma wynik NOT RUN, dopóki ta nauka trwa.
-Q1 zaczyna ją od nowa: Q5 uruchamiaj przed Q1 albo pół dnia po nim.
 
 ## 5. Co działa w J4
 
