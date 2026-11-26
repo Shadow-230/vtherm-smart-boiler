@@ -81,7 +81,6 @@
           "circuit_3": "Circuit: {circuit_3}",
           "circuit_4": "Circuit: {circuit_4}",
           "add_circuit": "Add circuit",
-          "zones": "VT zones",
           "building": "Building",
           "monitor": "Monitor thresholds",
           "control": "Control device (experimental)",
@@ -172,13 +171,13 @@
       },
       "circuit": {
         "title": "Heating circuit: {name}",
-        "description": "How this circuit's water temperature is set.",
+        "description": "How this circuit's water temperature is set. The rooms are the thermostats Versatile Thermostat counts for its central boiler: with one circuit, all of them are on it.",
         "data": {
           "name": "Name",
           "control": "Circuit type",
-          "zones": "VT zones it feeds",
-          "area": "Add an area's zones",
-          "devices": "Single devices of a zone",
+          "zones": "Rooms it feeds",
+          "area": "Add an area's rooms",
+          "devices": "Single devices of a room",
           "underfloor": "Of them, underfloor",
           "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
@@ -192,13 +191,13 @@
           "remove_circuit": "Remove this circuit"
         },
         "data_description": {
-          "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
+          "name": "Shown in the menu. Pick a Home Assistant area or a room's name, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Straight from the boiler (unmixed); mixed by the boiler (a second circuit); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one straight circuit and none the boiler mixes.",
-          "zones": "The Versatile Thermostat zones this circuit heats. A zone in no circuit does not ask for heat; a zone is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
-          "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
-          "devices": "Optional: for a room this circuit feeds only in part — a radiator here, a floor loop on another circuit — its own devices instead of the whole zone. In a circuit run by other automation it then asks only while one of them is on.",
-          "underfloor": "This circuit's zones with underfloor heating: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
-          "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
+          "zones": "With several circuits: the rooms this circuit heats, among the thermostats Versatile Thermostat hands to the plugin and counts for its central boiler. A room in no circuit still counts for how many rooms call, but for no circuit's water. A room is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
+          "area": "A shortcut: the rooms in this Home Assistant area are added to the list at the save.",
+          "devices": "Optional: for a room this circuit feeds only in part — a radiator here, a floor loop on another circuit — its own devices instead of the whole room. In a circuit run by other automation it then asks only while one of them is on.",
+          "underfloor": "The rooms on this circuit with underfloor heating — with one circuit, of every room: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
+          "convectors": "The rooms on this circuit with convectors (fan coils) — with one circuit, of every room. The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C (70 where empty); with control no setpoint goes above it. Needed for unmixed underfloor. Too high overheats emitters or a floor; too low: rooms stay cold in frost. After a hand-back the boiler's or thermostat's own maximum is the only one.",
           "fixed_temperature": "A thermostatic mixing valve's setting, in °C; required for that type. It tells the zones what water they get (the lower of the boiler's flow and this setting); the boiler follows its curve, and the valve stands open while the water is at or below its setting.",
           "request_entity": "Optional: an entity on while the circuit's own controller (a mixer, a pump) wants heat; the boiler heats for it as for a zone. Unreadable, it asks nothing and the control state says so.",
@@ -207,17 +206,7 @@
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
-          "remove_circuit": "Removes the circuit at the save, and its zones with it: they are no longer watched. Not offered for the only one."
-        }
-      },
-      "zones": {
-        "title": "VT zones",
-        "description": "The Versatile Thermostat zones the circuits feed: {zones}. They are picked in each circuit's form; a zone in no circuit is neither watched nor asked for heat.",
-        "data": {
-          "closes_when_off": "Valves close when the zone is off"
-        },
-        "data_description": {
-          "closes_when_off": "Zones whose valves close while VT has them off, where VT does not publish the valve state. Off unless ticked: a wrong tick lets the plugin take a closed zone for an open one."
+          "remove_circuit": "Removes the circuit at the save, and its list of rooms with it. One circuit left takes every room. Not offered for the only one."
         }
       },
       "building": {
@@ -406,7 +395,6 @@
       "missing_signal": "A required signal is missing.",
       "implausible_parameter": "A parameter is outside its plausible range.",
       "unknown_circuit": "A zone refers to a circuit that does not exist.",
-      "zone_without_circuit": "A zone has no circuit.",
       "duplicate_circuit": "Two circuits have the same name.",
       "duplicate_zone": "A zone is listed twice: in two circuits it may be listed only by its devices.",
       "duplicate_device": "A device of a zone is listed in two circuits.",
@@ -416,12 +404,11 @@
       "modulation_not_percent": "Modulation is a percentage of the boiler's range: pick a sensor in %.",
       "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum.",
       "entity_not_suitable": "This entity is not of a kind this field takes.",
-      "zone_not_vt": "Only Versatile Thermostat thermostats can be zones.",
+      "zone_not_room": "{zone}: not a room. The rooms are the thermostats Versatile Thermostat hands to the plugin and counts for its central boiler (“Used by central boiler” ticked in VT).",
       "entity_for_two_signals": "One entity can feed only one signal: pick another entity, or leave this field empty.",
       "zone_on_boiler_thermostat": "The Versatile Thermostat zone {zone} is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead.",
       "invalid_boiler": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_circuit": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
-      "invalid_zone": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_monitor": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_building": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_freshness": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
@@ -442,7 +429,6 @@
       "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to, the read-backs and write types that judge the hand-back, the device's timeout and the lowest water temperature cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
       "control_holds_boiler": "Control has the boiler: switch control off first (Control mode, Control on), so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
-      "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
       "off_setpoint_not_below_hard_min": "\"Off\" must be at least 1 °C below the lowest water temperature, or the boiler would not see a change.",
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "confirmed_entity_missing": "Control checks every write against the setpoint the boiler received: map it as \"Heating setpoint the boiler received\" in Boiler signals.",
@@ -509,7 +495,6 @@
           "circuit_3": "Circuit: {circuit_3}",
           "circuit_4": "Circuit: {circuit_4}",
           "add_circuit": "Add circuit",
-          "zones": "VT zones",
           "building": "Building",
           "monitor": "Monitor thresholds",
           "level": "Level of detail",
@@ -713,13 +698,13 @@
       },
       "circuit": {
         "title": "Heating circuit: {name}",
-        "description": "How this circuit's water temperature is set.",
+        "description": "How this circuit's water temperature is set. The rooms are the thermostats Versatile Thermostat counts for its central boiler: with one circuit, all of them are on it.",
         "data": {
           "name": "Name",
           "control": "Circuit type",
-          "zones": "VT zones it feeds",
-          "area": "Add an area's zones",
-          "devices": "Single devices of a zone",
+          "zones": "Rooms it feeds",
+          "area": "Add an area's rooms",
+          "devices": "Single devices of a room",
           "underfloor": "Of them, underfloor",
           "convectors": "Of them, convectors",
           "max_flow": "Highest water temperature",
@@ -733,13 +718,13 @@
           "remove_circuit": "Remove this circuit"
         },
         "data_description": {
-          "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
+          "name": "Shown in the menu. Pick a Home Assistant area or a room's name, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Straight from the boiler (unmixed); mixed by the boiler (a second circuit); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one straight circuit and none the boiler mixes.",
-          "zones": "The Versatile Thermostat zones this circuit heats. A zone in no circuit does not ask for heat; a zone is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
-          "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
-          "devices": "Optional: for a room this circuit feeds only in part — a radiator here, a floor loop on another circuit — its own devices instead of the whole zone. In a circuit run by other automation it then asks only while one of them is on.",
-          "underfloor": "This circuit's zones with underfloor heating: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
-          "convectors": "The zones of this circuit with convectors (fan coils). The rest are radiators unless listed as underfloor.",
+          "zones": "With several circuits: the rooms this circuit heats, among the thermostats Versatile Thermostat hands to the plugin and counts for its central boiler. A room in no circuit still counts for how many rooms call, but for no circuit's water. A room is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
+          "area": "A shortcut: the rooms in this Home Assistant area are added to the list at the save.",
+          "devices": "Optional: for a room this circuit feeds only in part — a radiator here, a floor loop on another circuit — its own devices instead of the whole room. In a circuit run by other automation it then asks only while one of them is on.",
+          "underfloor": "The rooms on this circuit with underfloor heating — with one circuit, of every room: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
+          "convectors": "The rooms on this circuit with convectors (fan coils) — with one circuit, of every room. The rest are radiators unless listed as underfloor.",
           "max_flow": "The most this circuit may receive, in °C (70 where empty); with control no setpoint goes above it. Needed for unmixed underfloor. Too high overheats emitters or a floor; too low: rooms stay cold in frost. After a hand-back the boiler's or thermostat's own maximum is the only one.",
           "fixed_temperature": "A thermostatic mixing valve's setting, in °C; required for that type. It tells the zones what water they get (the lower of the boiler's flow and this setting); the boiler follows its curve, and the valve stands open while the water is at or below its setting.",
           "request_entity": "Optional: an entity on while the circuit's own controller (a mixer, a pump) wants heat; the boiler heats for it as for a zone. Unreadable, it asks nothing and the control state says so.",
@@ -748,17 +733,7 @@
           "max_flow_alarm": "Information alarm when the measured flow stays above this, in °C. Starts at the maximum + 5 °C. Needs a flow reading. Too high lets a real overshoot pass unreported.",
           "max_flow_alarm_min": "How long, in minutes, before the alarm rises. Starts at 10. Too short reports every overshoot of the boiler's hysteresis.",
           "flow_entity": "A mixed circuit's own flow temperature. Without it the heat reaching that circuit cannot be told.",
-          "remove_circuit": "Removes the circuit at the save, and its zones with it: they are no longer watched. Not offered for the only one."
-        }
-      },
-      "zones": {
-        "title": "VT zones",
-        "description": "The Versatile Thermostat zones the circuits feed: {zones}. They are picked in each circuit's form; a zone in no circuit is neither watched nor asked for heat.",
-        "data": {
-          "closes_when_off": "Valves close when the zone is off"
-        },
-        "data_description": {
-          "closes_when_off": "Zones whose valves close while VT has them off, where VT does not publish the valve state. Off unless ticked: a wrong tick lets the plugin take a closed zone for an open one."
+          "remove_circuit": "Removes the circuit at the save, and its list of rooms with it. One circuit left takes every room. Not offered for the only one."
         }
       },
       "building": {
@@ -970,13 +945,11 @@
       "own_room_controller_but_heating_stops": "A hand-back value that stops heating leaves nothing for the boiler's own room controller to take over: untick the box or change what the hand-back value does.",
       "hand_back_pending": "A hand-back has not reached the boiler yet: the write path, what control writes to, the read-backs and write types that judge the hand-back, the device's timeout and the lowest water temperature cannot change until it does. Bring the target back, or choose \"No control\": the hand-back is still retried.",
       "control_holds_boiler": "Control has the boiler: switch control off first (Control mode, Control on), so the boiler is given back through the device that has it; then change what control writes to, the read-backs, the write types or the device's timeout.",
-      "no_zones": "Add at least one Versatile Thermostat zone before setting up control.",
       "off_setpoint_not_below_hard_min": "\"Off\" must be at least 1 °C below the lowest water temperature, or the boiler would not see a change.",
       "setpoint_unit_not_supported": "The setpoint entity's unit is not a temperature unit (°C, °F or K): a value written would mean something else to it. Pick the boiler's flow setpoint entity.",
       "missing_signal": "A required signal is missing.",
       "implausible_parameter": "A parameter is outside its plausible range.",
       "unknown_circuit": "A zone refers to a circuit that does not exist.",
-      "zone_without_circuit": "A zone has no circuit.",
       "duplicate_circuit": "Two circuits have the same name.",
       "duplicate_zone": "A zone is listed twice: in two circuits it may be listed only by its devices.",
       "duplicate_device": "A device of a zone is listed in two circuits.",
@@ -997,12 +970,11 @@
       "setpoint_step_too_coarse": "This entity takes values in steps above 1 °C: a rounded value would read back as ignored. Pick an entity with a finer step.",
       "max_flow_alarm_not_above_max": "The alarm temperature must be above the circuit's maximum.",
       "entity_not_suitable": "This entity is not of a kind this field takes.",
-      "zone_not_vt": "Only Versatile Thermostat thermostats can be zones.",
+      "zone_not_room": "{zone}: not a room. The rooms are the thermostats Versatile Thermostat hands to the plugin and counts for its central boiler (“Used by central boiler” ticked in VT).",
       "entity_for_two_signals": "One entity can feed only one signal: pick another entity, or leave this field empty.",
       "zone_on_boiler_thermostat": "The Versatile Thermostat zone {zone} is built on the boiler's or gateway's own thermostat entity: it would ask for heat whenever the flame burns. Build the zone on a room sensor and its valves or radiator thermostats instead.",
       "invalid_boiler": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_circuit": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
-      "invalid_zone": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_monitor": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_building": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
       "invalid_freshness": "A value saved here cannot be used: this version does not know it, it lies outside the form's range, or the section has another shape. Enter it again.",
@@ -1211,7 +1183,8 @@
         "fix": "To fix before creating:",
         "ready": "Every section is confirmed: choose “Create”.",
         "changed": "Unsaved changes:",
-        "unchanged": "No unsaved changes."
+        "unchanged": "No unsaved changes.",
+        "reload_vt": "Versatile Thermostat runs now, so it hands its thermostats to the plugin only once restarted: after “Create”, restart Home Assistant, or reload Versatile Thermostat's entries in Settings → Devices & services. Until then the plugin knows no room."
       }
     },
     "freshness_note": {
@@ -1605,7 +1578,6 @@
               "curve_not_entered": "The heating curve is not entered",
               "one_direct_circuit_only": "At most one circuit fed straight from the boiler and none the boiler mixes can be controlled",
               "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
-              "no_zones": "No Versatile Thermostat zone",
               "no_vt_boiler_helper": "No helper picked for VT's central boiler",
               "off_setpoint_not_below_hard_min": "\"Off\" is not below the lowest water temperature",
               "hand_back_switch_not_writable": "The external control switch's write type cannot be used",
@@ -1647,7 +1619,6 @@
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
               "write_through_cloud": "Control would write through a cloud service: monitoring only",
-              "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
               "vt_too_old": "Versatile Thermostat older than 10.6.5",
               "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
               "relay_used_by_zone": "A zone already switches the relay",
@@ -2224,7 +2195,6 @@
               "curve_not_entered": "The heating curve is not entered",
               "one_direct_circuit_only": "At most one circuit fed straight from the boiler and none the boiler mixes can be controlled",
               "underfloor_without_max_flow": "Underfloor heating on an unmixed circuit without its maximum",
-              "no_zones": "No Versatile Thermostat zone",
               "no_vt_boiler_helper": "No helper picked for VT's central boiler",
               "off_setpoint_not_below_hard_min": "\"Off\" is not below the lowest water temperature",
               "hand_back_switch_not_writable": "The external control switch's write type cannot be used",
@@ -2266,7 +2236,6 @@
               "gateway_not_set_up": "The gateway's integration is removed or disabled",
               "mqtt_not_set_up": "The MQTT integration is removed or disabled",
               "write_through_cloud": "Control would write through a cloud service: monitoring only",
-              "zone_not_vt": "A zone is not a Versatile Thermostat thermostat",
               "vt_too_old": "Versatile Thermostat older than 10.6.5",
               "zone_on_boiler_thermostat": "A zone is built on the boiler's own thermostat",
               "relay_used_by_zone": "A zone already switches the relay",
@@ -2754,9 +2723,6 @@
     "blocked_underfloor_without_max_flow": {
       "message": "Underfloor heating on an unmixed circuit needs a maximum flow temperature for that circuit. Other reasons: {count} (all are listed on the control state)."
     },
-    "blocked_no_zones": {
-      "message": "Control needs at least one Versatile Thermostat zone: add them in the options. Other reasons: {count} (all are listed on the control state)."
-    },
     "blocked_ha_starting": {
       "message": "Home Assistant is still starting. Other reasons: {count} (all are listed on the control state)."
     },
@@ -2828,9 +2794,6 @@
     },
     "blocked_write_through_cloud": {
       "message": "This entity works through a cloud service. Control needs a local connection: without internet the plugin could not hand the boiler back, and cloud services limit how often it may write. Use it for monitoring. Other reasons: {count} (all are listed on the control state)."
-    },
-    "blocked_zone_not_vt": {
-      "message": "A zone is not a Versatile Thermostat thermostat, and only those can be zones: remove it in the options. Other reasons: {count} (all are listed on the control state)."
     },
     "blocked_vt_too_old": {
       "message": "Versatile Thermostat is older than 10.6.5, the oldest the plugin supports: update it. Other reasons: {count} (all are listed on the control state)."
@@ -2979,9 +2942,23 @@
       "title": "Versatile Thermostat is too old for the plugin",
       "description": "The Versatile Thermostat installed here is older than {version}, the oldest the plugin supports (it is tested with VT 10.6.5), or it cannot load the plugin's feature manager: VT cannot hand the plugin its thermostats. Update Versatile Thermostat; control is blocked while it is older than {version}."
     },
-    "vt_reload_needed": {
-      "title": "Some VT thermostats need a reload to be handed to the plugin",
-      "description": "These thermostats were already running when the plugin registered with Versatile Thermostat, and are handed to it only when VT reloads: {zones}. Until then the plugin does not know these rooms: they count for nothing. Reload Versatile Thermostat."
+    "vt_reload_once": {
+      "title": "Reload Versatile Thermostat once",
+      "fix_flow": {
+        "step": {
+          "done": {
+            "title": "Reload Versatile Thermostat once",
+            "description": "1. Restart Home Assistant (Settings → System → Restart), or open Settings → Devices & services → Versatile Thermostat and reload its entries (⋮ → Reload).\n2. Wait a minute, come back here and submit: the plugin checks that the thermostats have come, and only then closes this notice. It also goes by itself as soon as one comes."
+          }
+        },
+        "error": {
+          "no_thermostats_yet": "No thermostat has come yet. Restart Home Assistant or reload Versatile Thermostat's entries, wait a minute, and submit again."
+        }
+      }
+    },
+    "vt_thermostats_not_counted": {
+      "title": "Versatile Thermostat's central boiler does not count some thermostats",
+      "description": "{zones}: Versatile Thermostat hands these thermostats to the plugin, but its central boiler does not count them, so they are no rooms of the plugin's and never make the boiler heat. If the boiler heats their rooms, tick “Used by central boiler” in each one's settings in VT. A circuit that lists one of them gets nothing from it until then."
     },
     "entity_removed": {
       "title": "An entity the plugin uses is gone",

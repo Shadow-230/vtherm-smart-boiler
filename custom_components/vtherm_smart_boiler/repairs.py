@@ -42,6 +42,27 @@ class ReturnedByHandFlow(RepairsFlow):
         return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}))
 
 
+class ReloadVtFlow(RepairsFlow):
+    """I12.11 (gap 18): the first installation's "reload Versatile Thermostat once". The form
+    says how — reload VT's integration once, or restart Home Assistant — and its "done" checks
+    again: the issue closes only once VT has handed a thermostat over; until then the form
+    stays, saying none has come yet. The issue also goes by itself as soon as one is handed
+    over."""
+
+    async def async_step_init(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
+        return await self.async_step_done()
+
+    async def async_step_done(self, user_input: dict[str, str] | None = None) -> RepairsFlowResult:
+        from .vtherm_link import any_handed_over
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if any_handed_over(self.hass):
+                return self.async_create_entry(data={})
+            errors["base"] = "no_thermostats_yet"
+        return self.async_show_form(step_id="done", data_schema=vol.Schema({}), errors=errors)
+
+
 def entry_busy(hass: HomeAssistant, entry_id: str) -> bool:
     """The entry is being set up, unloaded or reloaded — Home Assistant holds its setup lock
     for all of these — so its stores are about to be written by the entry itself."""
@@ -108,4 +129,6 @@ async def async_create_fix_flow(
     entry_id = (data or {}).get("entry_id")
     if issue_id.startswith("hand_back_owed_") and isinstance(entry_id, str):
         return ReturnedByHandFlow(entry_id)
+    if issue_id.startswith("vt_reload_once_"):
+        return ReloadVtFlow()
     return ConfirmRepairFlow()

@@ -338,7 +338,6 @@ def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
     return {
         "signals": {s.value: BOILER_ENTITIES[s] for s in SIGNALS},
         "boiler": {"class": "flow_setpoint", "dhw": "combi"},
-        "zones": [{"entity_id": e} for e in zones.entities.values()],
         "monitor": {"monitoring_days": 0},
         "control": control_options,
     }
@@ -1653,6 +1652,13 @@ async def test_a_short_vt_cycle_is_not_named_without_control_and_goes_once_lengt
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is not None
     rig.zones.configure("living", cycle_min=15)
     rig.zones.hand("living")
+    rig.entry.runtime_data.check_zone_cycles()
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is None
+    # I12.11: a room no longer counted by VT's central boiler is no room: nothing of it stands.
+    rig.zones.configure("living", cycle_min=5)
+    rig.entry.runtime_data.check_zone_cycles()
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is not None
+    rig.zones.configure("living", used_by_controls_central_boiler=False)
     rig.entry.runtime_data.check_zone_cycles()
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, issue_id) is None
 
@@ -9542,21 +9548,33 @@ def started(rig: Rig, zone_id: str = "living") -> None:
 async def test_a_renamed_entity_carries_what_control_stored_for_it(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """P-19: a VT climate — a zone — renamed while control runs: the options follow it, and the
-    options the boiler was taken with stay in the store as control runs them."""
+    """P-19: a VT climate — a room the only circuit lists with convectors — renamed while
+    control runs: the options follow it, and the options the boiler was taken with stay in the
+    store as control runs them."""
     hass = rig.hass
     living = rig.zones.entities["living"]
     rig.zones.set("living", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
     registry = er.async_get(hass)
     stored = restorable(rig, controlling=False, taken_with=taken_with(rig))
-    await start_with_stored(rig, hass_storage, stored, "0.2.2")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Boiler",
+        data={},
+        options=with_circuit(rig, {"convectors": [living]}),
+    )
+    entry.add_to_hass(hass)
+    seed_stores(hass_storage, entry, stored, "0.2.2")
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    rig.entry = entry
     await rig.advance(10)
     assert rig.gateway.setpoints()  # control holds the boiler: what it was taken with is kept
     rig.gateway.calls.clear()
     registry.async_update_entity(living, new_entity_id="climate.lounge")
     await hass.async_block_till_done()
     assert rig.entry is not None
-    assert rig.entry.options["circuits"][0]["zones"] == ["climate.lounge"]  # I8 (F4)
+    # I12.11: the only circuit lists no room — only its emitter lists, which follow the rename.
+    assert rig.entry.options["circuits"][0]["convectors"] == ["climate.lounge"]
     control = rig.entry.options["control"]
     kept = stored_control(hass_storage, rig)
     # The curve as control runs it: with the building's design outdoor temperature (I6).
@@ -9869,10 +9887,12 @@ async def test_a_restore_at_a_start_waits_for_neither_the_helper_nor_vts_setting
 async def test_vts_settings_still_unknown_after_the_recognition_hand_back(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """Negative: the zones have reported and VT's settings are still not known — their
-    thermostats' ``entry_infos`` cannot be read (I12.7: a zone reports only through its
-    thermostat) — the blocker counts once the recognition period is over: the restored session
-    hands back, and control waits for VT."""
+    """Negative: VT's settings still not known — its thermostats' ``entry_infos`` cannot be
+    read, so no room is known either (I12.11: a room is a thermostat VT's central boiler counts,
+    as its ``entry_infos`` say) — the blocker counts once the recognition period is over, its
+    ten minutes: the restored session hands back, and control waits for VT."""
+    from custom_components.vtherm_smart_boiler.core.zone_watch import RECOGNITION_S
+
     rig.zones.stand_in.entry_infos = None  # type: ignore[assignment]
     not_started(rig)
     await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
@@ -9880,6 +9900,8 @@ async def test_vts_settings_still_unknown_after_the_recognition_hand_back(
     assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
     started(rig)
     await rig.advance(30)
+    assert rig.gateway.setpoints()[-1] == RESTORED  # kept through the recognition period
+    await rig.advance(RECOGNITION_S, step=30.0)
     assert "vt_central_boiler_unknown" in blockers(rig)
     assert rig.gateway.setpoints()[-1] == 0.0
 
@@ -10023,17 +10045,34 @@ async def test_no_zone_known_with_control_switched_off_is_the_monitors_issue(rig
     assert found.translation_key == "no_zone_known_monitor"
 
 
-async def test_no_zones_configured_raises_no_issue_and_blocks_control(rig: Rig) -> None:
-    """S-04: control needs at least one zone — a blocker the switch names; nothing is unknown,
-    so no issue."""
-    entry = add_entry(rig, options(rig.zones) | {"zones": []})
-    await set_up(rig, entry)
+async def test_no_room_vt_counts_raises_the_information_issue_and_heats_nothing(
+    rig: Rig,
+) -> None:
+    """I12.11: the rooms are the thermostats VT's central boiler counts. With none ticked "used
+    by central boiler" in VT, control is not blocked by the options — the S-04 blocker went —
+    but nothing can ask for heat, whatever VT's helper shows (decision 3); nothing is unknown, so
+    no "no zone known" issue (TB-29); the information issue names the thermostats VT hands over
+    and does not count. Ticking one in VT makes it a room, and the issue goes."""
+    for zone_id in rig.zones.entities:
+        rig.zones.configure(zone_id, used_by_controls_central_boiler=False)
+    rig.zones.set_helper("on")
+    await start(rig)
+    await rig.switch(True)
     await rig.advance(700, step=30.0)
+    assert "no_zones" not in blockers(rig)
     assert no_zone_issue(rig) is None
-    assert "no_zones" in blockers(rig)
-    with pytest.raises(ServiceValidationError) as raised:
-        await rig.switch(True)
-    assert raised.value.translation_key == "blocked_no_zones"
+    assert rig.state("sensor", "control_state").attributes["reasons"] == ["zones_unknown"]
+    assert ("ch", True) not in rig.gateway.calls
+    counted = issue(rig, "vt_thermostats_not_counted")
+    assert counted is not None
+    assert counted.translation_key == "vt_thermostats_not_counted"
+    assert "fake living" in counted.translation_placeholders["zones"]
+    for zone_id in rig.zones.entities:
+        rig.zones.configure(zone_id, used_by_controls_central_boiler=True)
+    rig.zones.stand_in.entry_infos |= {"used_by_controls_central_boiler": True}
+    await rig.advance(60, step=30.0)
+    assert issue(rig, "vt_thermostats_not_counted") is None
+    assert "demand" in rig.state("sensor", "control_state").attributes["reasons"]
 
 
 async def test_a_transient_loss_of_every_zone_does_not_start_the_boiler(rig: Rig) -> None:
@@ -10819,32 +10858,26 @@ async def test_a_zone_reconfigured_onto_the_boilers_thermostat_blocks_control(ri
     )
 
 
-async def test_a_zone_that_is_not_a_vt_climate_blocks_control(rig: Rig) -> None:
-    """X5.7: a hand-edited zone of another integration blocks control (``zone_not_vt``).
-    Negative: a zone neither registered nor reported is unknown (VT away), not of another
-    kind."""
+async def test_a_hand_edited_room_of_another_kind_is_no_room(rig: Rig) -> None:
+    """X5.7, I12.11: the rooms are the thermostats VT hands over — a climate of another
+    integration a circuit lists (a hand edit) is never a room nor read, and blocks nothing; the
+    rooms on the circuit are those VT counts."""
     other = (
         er.async_get(rig.hass)
         .async_get_or_create("climate", "generic_thermostat", "hall", suggested_object_id="hall")
         .entity_id
     )
     rig.hass.states.async_set(other, "heat")
-    entry_options = options(rig.zones)
-    entry_options["zones"].append({"entity_id": other})
-    entry = add_entry(rig, entry_options)
-    assert await rig.hass.config_entries.async_setup(entry.entry_id)
-    await rig.hass.async_block_till_done()
-    rig.entry = entry
+    living = rig.zones.entities["living"]
+    floor = {"id": "floor", "control": "separate", "zones": [other]}
+    entry_options = with_circuit(rig, {"zones": [living]})
+    entry_options["circuits"].append(floor)
+    await set_up(rig, add_entry(rig, entry_options))
     await rig.advance(10)
-    assert "zone_not_vt" in rig.state("binary_sensor", "control").attributes["blockers"]
-    with pytest.raises(ServiceValidationError):
-        await rig.switch(True)
-    ghost = options(rig.zones)
-    ghost["zones"].append({"entity_id": "climate.not_there_yet"})
-    rig.hass.config_entries.async_update_entry(entry, options=ghost)
-    await rig.hass.async_block_till_done()
-    await rig.advance(10)
-    assert "zone_not_vt" not in rig.state("binary_sensor", "control").attributes["blockers"]
+    assert "zone_not_vt" not in blockers(rig)
+    assert other not in rig.entry.runtime_data.link.rooms()
+    assert set(rig.entry.runtime_data.data.zones) == set(rig.zones.entities.values())
+    assert rig.entry.runtime_data.data.zones[living].circuit_ids == ("main",)
 
 
 async def test_a_vt_older_than_the_oldest_supported_blocks_control(
@@ -11509,7 +11542,6 @@ def relay_options(
     return {
         "signals": {s.value: BOILER_ENTITIES[s] for s in signals},
         "boiler": {"class": "on_off", "dhw": "combi"},
-        "zones": [{"entity_id": e} for e in zones.entities.values()],
         "monitor": {"monitoring_days": 0},
         "control": {
             "write_path": "relay",

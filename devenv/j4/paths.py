@@ -890,7 +890,8 @@ async def U1(r: Run, outdoor: float = -5.0, emitters: tuple[str, ...] = ("underf
         if e == "underfloor"
     ]
     try:
-        # The circuit lists its underfloor zones (I8 F2): the zones' own question is gone.
+        # The circuit lists its underfloor rooms (I8 F2); the only circuit's list offers every
+        # room VT counts for its central boiler (I12.11).
         await options_walk(r, {"circuit": {"max_flow": 40, "underfloor": underfloor}})
         await r.sim("set_outdoor", temperature=outdoor)
         await rooms_call(r, True)

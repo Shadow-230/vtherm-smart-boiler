@@ -72,7 +72,6 @@ def test_every_form_field_and_select_option_is_translated() -> None:
     options = {
         "level": "advanced",
         "circuits": [{"id": "main"}, {"id": "second"}],
-        "zones": [{"entity_id": "climate.a"}],
         # I6.1: a boiler that burns fuel and heats hot water shows every field of the panels.
         "boiler": {"connection": "opentherm_gw", "heat_source": "gas", "type": "combi"},
     }
@@ -85,7 +84,6 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "circuit": flow.circuit_schema(
             options, {}, {"control": "passive_fixed", "zones": ["c.a"]}, removable=True
         ),
-        "zones": flow.zones_schema(options | {"circuits": [{"id": "a", "zones": ["c.a"]}]}),
         "building": flow.building_schema(options),
         "monitor": flow.monitor_schema(options),
     }
@@ -139,7 +137,6 @@ def test_every_config_error_code_can_be_shown() -> None:
     codes = {
         "missing_signal",
         "implausible_parameter",
-        "zone_without_circuit",
     } | {
         code.value
         for code in IssueCode
@@ -151,13 +148,12 @@ def test_every_config_error_code_can_be_shown() -> None:
     codes |= {
         "invalid_boiler",
         "invalid_circuit",
-        "invalid_zone",
         "invalid_monitor",
         "invalid_building",
         "invalid_freshness",
         "unreadable_options",
         "entity_not_suitable",
-        "zone_not_vt",
+        "zone_not_room",  # I12.11: a room is a thermostat VT hands over and counts
         "entity_for_two_signals",
         "zone_on_boiler_thermostat",
         "zone_in_another_circuit",  # I8 (F4): a zone belongs to one circuit
@@ -227,6 +223,17 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
     for key in ("control_stopped_heating", "control_latched"):  # V7's two repair issues
         assert SOURCE["issues"][key]["title"], key
         assert SOURCE["issues"][key]["description"], key
+    # I12.11: the first installation's "reload VT once", with its "done" step and the error it
+    # shows while no thermostat has come; the thermostats VT's central boiler does not count.
+    reload = SOURCE["issues"]["vt_reload_once"]
+    assert reload["title"]
+    assert reload["fix_flow"]["step"]["done"]["description"]
+    assert reload["fix_flow"]["error"]["no_thermostats_yet"]
+    assert "vt_reload_needed" not in SOURCE["issues"]
+    counted = SOURCE["issues"]["vt_thermostats_not_counted"]
+    assert set(PLACEHOLDER.findall(counted["description"])) == {"zones"}
+    assert "Used by central boiler" in counted["description"]  # VT's own label
+    assert "reload" in SOURCE["selector"]["menu_state"]["options"]["reload_vt"]
     for kind in ("off", "handed_back", "monitor"):  # decision 3's repair issue (X3)
         no_zone = SOURCE["issues"][f"no_zone_known_{kind}"]
         assert no_zone["title"], kind
@@ -681,7 +688,6 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     and the options each translated selector offers."""
     from custom_components.vtherm_smart_boiler import config_flow as flow
 
-    zones = {"zones": [{"entity_id": "climate.a"}, {"entity_id": "climate.b"}]}
     circuits = {"circuits": [{"id": "main", "max_flow": 45}, {"id": "second"}]}
     signals = {"signals": dict.fromkeys(flow.SIGNAL_FIELDS, "sensor.x"), "weather": "weather.x"}
     controls = [
@@ -710,7 +716,7 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "heat_source": "gas",
                 "type": "combi",
             }
-            options = {"level": level, **zones, **circuits, **signals, "boiler": boiler}
+            options = {"level": level, **circuits, **signals, "boiler": boiler}
             options["control"] = control
             schemas = {
                 "connection": flow.connection_schema(options),
@@ -721,7 +727,6 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "freshness": flow.freshness_schema(options),
                 "boiler": flow.boiler_schema(options),
                 "circuit": flow.circuit_schema(options, {}, removable=True),
-                "zones": flow.zones_schema(options),
                 "building": flow.building_schema(options),
                 "monitor": flow.monitor_schema(options),
                 "control": flow.control_schema(options),
@@ -788,9 +793,10 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     selectors.setdefault(flow.FRESHNESS_NOTE, set()).update(("water", "relay"))
     # I6.3: and the heat source's, where it changes what to pick.
     selectors.setdefault(flow.SOURCE_HINT, set()).update(("electric", "oil"))
-    # I7: the menus read what is left, what to fix and what changed into their descriptions.
+    # I7: the menus read what is left, what to fix and what changed into their descriptions;
+    # I12.11: the setup's last step, VT's reload where it applies.
     selectors.setdefault(flow.MENU_STATE, set()).update(
-        ("left", "fix", "ready", "changed", "unchanged")
+        ("left", "fix", "ready", "changed", "unchanged", "reload_vt")
     )
     return fields, selectors
 

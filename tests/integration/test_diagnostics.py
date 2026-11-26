@@ -31,7 +31,6 @@ async def test_diagnostics_are_redacted(
         options={
             "signals": boiler.mapping(),
             "weather": WEATHER_ENTITY,
-            "zones": [{"entity_id": living}],
             "parameters": {"boiler_min_power": 4.0},
         },
     )
@@ -50,7 +49,12 @@ async def test_diagnostics_are_redacted(
     assert zone["state"]["valve_open"] == pytest.approx(0.4)
     for gone in ("devices_active", "power", "mean_power", "shedding", "ready", "reported"):
         assert gone not in zone["state"], gone
-    assert result["zones_through_vtherm_api"] == [zone["state"]["zone_id"]]
+    # I12.11: the rooms, and the thermostats VT hands over that its central boiler does not
+    # count; VT's central mode is not read.
+    assert result["rooms"] == [zone["state"]["zone_id"]]
+    assert result["thermostats_not_counted"] == [zones.stand_in.entity_id]
+    assert "central_mode" not in result
+    assert "zones_through_vtherm_api" not in result
     assert result["options"]["signals"]["flame"].startswith("entity_")
     assert result["signals"]["flow"]["status"] == "ok"
     assert result["parameters"]["boiler_min_power"]["effective"] == 4.0

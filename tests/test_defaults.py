@@ -80,7 +80,6 @@ BARE_ENTITY = parse_control({"write_path": WritePath.ENTITY.value}, INSTALLATION
 BARE_RELAY = parse_control({"write_path": WritePath.RELAY.value}, ON_OFF, None)
 MINIMAL_OPTIONS: dict[str, Any] = {
     "signals": {Signal.FLAME.value: "binary_sensor.flame", Signal.FLOW.value: "sensor.flow"},
-    "zones": [{"entity_id": "climate.a"}],
 }
 
 
@@ -106,8 +105,6 @@ OWN_CONTROL_FORM = form_defaults(
     config_flow.control_entity_schema({"control": {"write_path": "entity", "topology": "virtual"}})
 )
 RELAY_FORM = form_defaults(config_flow.control_relay_schema({}))
-# I8 (decision F5): the zones' one question, over the zones a circuit feeds.
-ZONE_FORM = form_defaults(config_flow.zones_schema({"circuits": [{"id": "a", "zones": ["c.a"]}]}))
 CIRCUIT_FORM = form_defaults(config_flow.circuit_schema({}, {"zones": ["c.a"]}))
 BEHAVIOUR_FORM = form_defaults(config_flow.control_behaviour_schema(ADVANCED))
 SIGNALS_FORM = form_defaults(config_flow.signals_schema({}))

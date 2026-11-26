@@ -215,10 +215,16 @@ def test_a_clock_set_back_restarts_the_waits_now() -> None:
     assert [in_recognition(w) for w in recognition] == [True, True, True, False]
 
 
-def test_with_no_zone_configured_the_recognition_has_nothing_to_wait_for() -> None:
-    [watch] = run([(0.0, ())])
-    assert not in_recognition(watch)
-    assert watch.unknown_since is None
+def test_with_no_room_known_yet_only_time_ends_the_recognition() -> None:
+    """I12.11: the rooms are VT's — none known at a start is VT not having handed its
+    thermostats over yet, not "nothing to wait for": the recognition period runs its time, unless
+    the rooms come and report; nothing is unknown meanwhile (no room, no issue)."""
+    waiting, ended = run([(0.0, ()), (RECOGNITION_S, ())])
+    assert in_recognition(waiting)
+    assert waiting.unknown_since is None
+    assert not in_recognition(ended)
+    _, came = run([(0.0, ()), (30.0, (zone("a", 30.0),))])
+    assert not in_recognition(came)
 
 
 @pytest.mark.parametrize(

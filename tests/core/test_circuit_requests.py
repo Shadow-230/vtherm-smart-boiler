@@ -31,6 +31,16 @@ def test_a_circuit_asks_through_its_zones_too() -> None:
     assert found.floor == 35.0
 
 
+def test_the_only_circuit_asks_through_every_room() -> None:
+    """I12.11: the only circuit takes every room VT hands over — any of them wanting heat makes
+    it ask; none, it asks through its entity alone."""
+    only = OtherAutomation("main", requests=True, needed=35.0, every_room=True)
+    assert circuits_asking((only,), {"main": False}, {}, frozenset({"climate.any"})).asking == (
+        "main",
+    )
+    assert circuits_asking((only,), {"main": False}, {}, frozenset()).asking == ()
+
+
 @pytest.mark.parametrize("reading", [None, False])
 def test_an_unknown_or_quiet_request_does_not_ask(reading: bool | None) -> None:
     """The user's answer of 2026-10-12: an entity that cannot be read does not ask — named, so

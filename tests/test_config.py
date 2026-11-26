@@ -15,6 +15,7 @@ from custom_components.vtherm_smart_boiler.core.installation import (
     BoilerClass,
     CircuitControl,
     EmitterType,
+    Zone,
 )
 from custom_components.vtherm_smart_boiler.core.metrics import ModulationScale
 from custom_components.vtherm_smart_boiler.core.parameters import ParameterKey, Source
@@ -65,9 +66,9 @@ SPLIT = MINIMAL | {
 
 
 def test_a_zone_split_by_its_devices_is_read_in_each_of_its_circuits() -> None:
-    """I8.8b (decision F2): a circuit lists the zones it feeds, and of a zone it feeds only in
-    part, those devices; the zone is watched once; the devices are followed in a rename and
-    named in a removal, as devices."""
+    """I8.8b (decision F2): with several circuits each lists the rooms it feeds, and of a room it
+    feeds only in part, those devices; the devices are followed in a rename and named in a
+    removal, as devices. No room is watched: the rooms are VT's (I12.11)."""
     from custom_components.vtherm_smart_boiler.config import rename_entity
     from custom_components.vtherm_smart_boiler.core.installation import EmitterType, Zone
 
@@ -77,13 +78,16 @@ def test_a_zone_split_by_its_devices_is_read_in_each_of_its_circuits() -> None:
         Zone("climate.bath", "main"),
         Zone("climate.living", "floor", EmitterType.UNDERFLOOR, devices=frozenset({"switch.loop"})),
     )
-    assert config.zone_entities == ("climate.living", "climate.bath")
+    assert "climate.living" not in config.watched_entities
     assert named_entities(SPLIT)["switch.loop"] == ("devices",)
     renamed = rename_entity(SPLIT, "switch.loop", "switch.floor_loop")
     assert renamed["circuits"][1]["devices"] == {"climate.living": ["switch.floor_loop"]}
     moved = rename_entity(SPLIT, "climate.living", "climate.lounge")
     assert moved["circuits"][0]["devices"] == {"climate.lounge": ["switch.radiator"]}
-    assert EntryConfig.from_options(moved).zone_entities == ("climate.lounge", "climate.bath")
+    assert EntryConfig.from_options(moved).installation.zone_ids == (
+        "climate.lounge",
+        "climate.bath",
+    )
 
 
 @pytest.mark.parametrize(
@@ -98,10 +102,10 @@ def test_a_zone_split_by_its_devices_is_read_in_each_of_its_circuits() -> None:
     ids=["not_a_mapping", "zone_not_listed", "empty", "text", "foreign"],
 )
 def test_a_circuits_devices_of_another_shape_are_refused(devices: object) -> None:
-    """Devices only for a zone the circuit lists, as a list of entities — a hand edit of another
-    shape is refused, as a circuit's zones are."""
+    """Devices only for a room the circuit lists, as a list of entities — a hand edit of another
+    shape is refused, as a circuit's rooms are (several circuits: one alone lists none)."""
     circuit = {"id": "main", "zones": ["climate.living"], "devices": devices}
-    options = MINIMAL | {"circuits": [circuit]}
+    options = MINIMAL | {"circuits": [circuit, {"id": "floor", "control": "separate"}]}
     with pytest.raises(ConfigError) as raised:
         EntryConfig.from_options(options)
     assert raised.value.code == "invalid_circuit"
@@ -113,7 +117,8 @@ def test_minimal_options_get_cautious_defaults() -> None:
     assert config.signals == {Signal.FLAME: "binary_sensor.flame", Signal.FLOW: "sensor.flow"}
     assert config.installation.boiler.boiler_class is BoilerClass.READ_ONLY
     assert [c.circuit_id for c in config.installation.circuits] == ["main"]
-    assert config.zones == ()
+    assert config.installation.zones == ()
+    assert config.installation.every_room
     assert config.weather is None
     assert config.weather_max_age_s is None  # no age limit: availability only
     assert config.monitor.monitoring_days == 7.0
@@ -185,16 +190,19 @@ def test_full_options() -> None:
         "boiler": {"class": "flow_setpoint", "dhw": "storage", "modulation_scale": "capacity"},
         "parameters": {"boiler_min_power": 4, "boiler_max_power": 24, "design_outdoor": 0.0},
         "circuits": [
-            {"id": "c1", "control": "unmixed_shared", "max_flow": 45},
-            {"id": "c2", "control": "separate", "flow_entity": "sensor.mixed_flow"},
-        ],
-        "zones": [
             {
-                "entity_id": "climate.a",
-                "circuit": "c1",
-                "emitter": "underfloor",
+                "id": "c1",
+                "control": "unmixed_shared",
+                "max_flow": 45,
+                "zones": ["climate.a"],
+                "underfloor": ["climate.a"],
             },
-            {"entity_id": "climate.b", "circuit": "c2"},
+            {
+                "id": "c2",
+                "control": "separate",
+                "flow_entity": "sensor.mixed_flow",
+                "zones": ["climate.b"],
+            },
         ],
         "building": {"design_load_kw": 8.0},
         "monitor": {"condensing_return": 52, "short_burn_min": 8, "monitoring_days": 10},
@@ -260,11 +268,9 @@ def test_the_heat_loss_is_entered_as_the_design_load_only() -> None:
     ("options", "code"),
     [
         (MINIMAL | {"parameters": {"boiler_min_power": 0.0}}, "implausible_parameter"),
-        (MINIMAL | {"zones": [{"entity_id": "climate.a", "circuit": "ghost"}]}, "unknown_circuit"),
         (
-            MINIMAL
-            | {"circuits": [{"id": "a"}, {"id": "b"}], "zones": [{"entity_id": "climate.x"}]},
-            "zone_without_circuit",
+            MINIMAL | {"circuits": [{"id": "a", "zones": ["c.x"]}, {"id": "b", "zones": ["c.x"]}]},
+            "duplicate_zone",
         ),
         (
             MINIMAL | {"circuits": [{"id": "t", "control": "passive_fixed"}]},
@@ -432,15 +438,52 @@ def test_a_circuit_with_a_maximum_gets_its_alarm_temperature_and_time() -> None:
     assert circuit.max_flow_alarm is None
 
 
-def test_the_zone_option_closes_when_off_is_read_from_the_zone_item() -> None:
-    """Decision 4: off unless stored as a clear true (the form shows it from X5)."""
-    zones = [
-        {"entity_id": "climate.a", "closes_when_off": True},
-        {"entity_id": "climate.b", "closes_when_off": "yes"},
-        {"entity_id": "climate.c"},
+def test_the_rooms_are_vts_and_the_options_keep_only_the_mapping() -> None:
+    """I12.11: no zone list of the plugin's — a zones' section left by a hand edit is not read,
+    whatever its shape; the only circuit takes every room, its emitter lists kept and a room or
+    device list beside them not read; several circuits each keep their list."""
+    zones = [{"entity_id": "climate.a", "closes_when_off": True}, "climate.b"]
+    one = {
+        "id": "main",
+        "zones": ["climate.x"],
+        "devices": "not read",
+        "underfloor": ["climate.a"],
+        "convectors": ["climate.b", "climate.a"],
+    }
+    installation = EntryConfig.from_options(
+        MINIMAL | {"zones": zones, "circuits": [one]}
+    ).installation
+    assert installation.zones == (
+        Zone("climate.a", "main", EmitterType.UNDERFLOOR),
+        Zone("climate.b", "main", EmitterType.CONVECTOR),
+    )
+    assert installation.with_rooms(["climate.a", "climate.c"]).zones == (
+        Zone("climate.a", "main", EmitterType.UNDERFLOOR),
+        Zone("climate.c", "main"),
+    )
+    several = [{"id": "main", "zones": ["climate.a"]}, {"id": "floor", "zones": ["climate.b"]}]
+    installation = EntryConfig.from_options(MINIMAL | {"circuits": several}).installation
+    assert [(z.zone_id, z.circuit_id) for z in installation.zones] == [
+        ("climate.a", "main"),
+        ("climate.b", "floor"),
     ]
-    installation = EntryConfig.from_options(MINIMAL | {"zones": zones}).installation
-    assert [z.closes_when_off for z in installation.zones] == [True, False, False]
+
+
+def test_the_migration_drops_the_zones_and_the_only_circuits_list() -> None:
+    """I12.11 (minor version 25): the zones' section goes; the only circuit's room and device
+    lists go, its emitter lists stay; several circuits keep theirs; a circuit list of another
+    shape is left for the check."""
+    from custom_components.vtherm_smart_boiler.config import rooms_from_vt
+
+    one = {"id": "main", "zones": ["c.a"], "devices": {"c.a": ["s.a"]}, "underfloor": ["c.a"]}
+    options = MINIMAL | {"zones": [{"entity_id": "c.a", "closes_when_off": True}]}
+    moved = rooms_from_vt(options | {"circuits": [one]})
+    assert moved == MINIMAL | {"circuits": [{"id": "main", "underfloor": ["c.a"]}]}
+    several = [{"id": "main", "zones": ["c.a"]}, {"id": "floor", "zones": ["c.b"]}]
+    assert rooms_from_vt(options | {"circuits": several}) == MINIMAL | {"circuits": several}
+    assert rooms_from_vt(MINIMAL | {"circuits": "odd"}) == MINIMAL | {"circuits": "odd"}
+    assert rooms_from_vt(MINIMAL | {"circuits": ["odd"]}) == MINIMAL | {"circuits": ["odd"]}
+    assert rooms_from_vt(MINIMAL) == MINIMAL
 
 
 # --- X5: one entity, one signal (P-16, T-32); unknown stored values (P-70) -----------------------
@@ -470,7 +513,6 @@ def test_one_entity_for_two_signals_drops_the_later_one(stored: dict) -> None:
     options = {
         "signals": stored,
         "boiler": {"class": "flow_setpoint"},
-        "zones": [{"entity_id": "climate.a"}],
         "control": {
             "write_path": "opentherm_gw",
             "gateway_id": "gw",
@@ -494,12 +536,7 @@ def test_one_entity_for_two_signals_drops_the_later_one(stored: dict) -> None:
     blockers = config_blockers(config.control, config.installation, config.shared_signals)
     assert blockers == ["entity_for_two_signals"]
     # The control's setpoint read-back is watched too, without a CH setpoint signal (X6).
-    assert config.watched_entities == (
-        "binary_sensor.flame",
-        "sensor.flow",
-        "climate.a",
-        "sensor.setpoint",
-    )
+    assert config.watched_entities == ("binary_sensor.flame", "sensor.flow", "sensor.setpoint")
 
 
 @pytest.mark.parametrize(
@@ -545,11 +582,10 @@ def test_the_form_lists_the_signals_in_their_precedence() -> None:
         ),
         (MINIMAL | {"circuits": [{"control": "unmixed_shared"}]}, "invalid_circuit", "id"),
         (
-            MINIMAL | {"zones": [{"entity_id": "climate.a", "emitter": "fireplace"}]},
-            "invalid_zone",
-            "emitter",
+            MINIMAL | {"circuits": [{"id": "main", "underfloor": "climate.a"}]},
+            "invalid_circuit",
+            "main",
         ),
-        (MINIMAL | {"zones": [{"emitter": "radiator"}]}, "invalid_zone", "entity_id"),
         (
             MINIMAL | {"monitor": {"monitoring_days": "a week"}},
             "invalid_monitor",
@@ -690,8 +726,6 @@ SECTIONS_OF_ANOTHER_SHAPE = [
     ("boiler", "flow_setpoint", "invalid_boiler"),
     ("circuits", {"id": "main"}, "invalid_circuit"),
     ("circuits", ["main"], "invalid_circuit"),
-    ("zones", "climate.a", "invalid_zone"),
-    ("zones", [["climate.a"]], "invalid_zone"),
     ("parameters", [], "invalid_parameters"),
     ("building", "big", "invalid_building"),
     ("monitor", [], "invalid_monitor"),
@@ -755,10 +789,13 @@ NAMING = {
     "signals": {"flame": "binary_sensor.flame", "flow": "sensor.flow", "outdoor": "sensor.out"},
     "weather": "weather.home",
     "boiler": {"class": "flow_setpoint"},
-    "circuits": [{"id": "main", "flow_entity": "sensor.circuit_flow"}],
-    "zones": [
-        {"entity_id": "climate.living", "circuit": "main"},
-        {"entity_id": "climate.bedroom", "circuit": "main"},
+    "circuits": [
+        {
+            "id": "main",
+            "flow_entity": "sensor.circuit_flow",
+            "underfloor": ["climate.living"],
+            "convectors": ["climate.bedroom"],
+        }
     ],
     "freshness": {"flow": 600},
     "control": {
@@ -800,8 +837,8 @@ def test_every_entity_the_options_name_is_found_with_its_fields() -> None:
 @pytest.mark.parametrize(
     ("old", "new", "changed"),
     [
-        ("climate.living", "climate.lounge", ("zones",)),
-        ("climate.bedroom", "climate.guest_room", ("zones",)),
+        ("climate.living", "climate.lounge", ("circuits",)),
+        ("climate.bedroom", "climate.guest_room", ("circuits",)),
         ("sensor.flow", "sensor.boiler_flow", ("signals",)),
         ("sensor.circuit_flow", "sensor.radiator_flow", ("circuits",)),
         ("weather.home", "weather.house", ("weather",)),

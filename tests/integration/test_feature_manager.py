@@ -60,13 +60,7 @@ async def setup(hass: HomeAssistant, zones: FakeZones) -> MockConfigEntry:
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
     entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Boiler",
-        data={},
-        options={
-            "signals": boiler.mapping(),
-            "zones": [{"entity_id": e} for e in zones.entities.values()],
-        },
+        domain=DOMAIN, title="Boiler", data={}, options={"signals": boiler.mapping()}
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -238,26 +232,70 @@ async def test_a_vt_without_feature_managers_is_reported(
     hass.data.pop(VT_DOMAIN)  # the stand-in API cannot be reset
 
 
-async def test_thermostats_started_before_the_registration_are_reported(
+def first_installation(hass: HomeAssistant, zones: FakeZones) -> VThermAPI:
+    """A first installation while VT runs (I12.11, gap 18): VT set up, its entry loaded, and
+    nothing handed over in this Home Assistant run — the harness's stand-in taken back."""
+    api = vt_is_set_up(hass)
+    vt_entry = MockConfigEntry(domain=VT_DOMAIN)
+    vt_entry.add_to_hass(hass)
+    vt_entry.mock_state(hass, ConfigEntryState.LOADED)
+    zones.withdraw()
+    hass.data.pop(vtherm_link.HANDED_OVER_KEY)
+    return api
+
+
+async def test_the_first_installation_asks_to_reload_vt_once(
     hass: HomeAssistant, zones: FakeZones, freezer
 ) -> None:
-    """P107: a thermostat already running is handed over only at VT's next reload; once it is,
-    the issue goes."""
-    api = vt_is_set_up(hass)
+    """I12.11 (gap 18): VT hands its thermostats over only when it starts them — at a first
+    installation while VT runs, none comes until VT is reloaded. Once VT is loaded, Home
+    Assistant's registry lists VT climates and none has been handed over, some time after the
+    registration, one fixable issue asks to reload VT once; it goes by itself as soon as one is
+    handed over, and does not come back while VT reloads its thermostats."""
+    api = first_installation(hass, zones)
     living = zones.add("living", handed_over=False, hvac_action="heating", valve_open_percent=60)
     entry = await setup(hass, zones)
-    issue_id = f"vt_reload_needed_{entry.entry_id}"
+    issue_id = f"vt_reload_once_{entry.entry_id}"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None  # give VT time
     freezer.tick(20 * 60)
-    zones.set("living", hvac_action="heating", valve_open_percent=60)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     await entry.runtime_data.async_refresh()
-    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.is_fixable
+    assert issue.translation_key == "vt_reload_once"
+    assert issue.data == {"entry_id": entry.entry_id}
     api.get_feature_manager(DOMAIN).create(Runtime(living))  # VT reloaded
     await entry.runtime_data.async_refresh()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
-    assert living
+    zones.withdraw()  # VT reloads its thermostats: handed over in this run already
+    await entry.runtime_data.async_refresh()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+@pytest.mark.parametrize("missing", ["vt_entry", "vt_climates", "running"])
+async def test_the_reload_repair_needs_vt_loaded_with_climates_while_home_assistant_runs(
+    hass: HomeAssistant, zones: FakeZones, freezer, missing: str
+) -> None:
+    """Negative: no issue while VT has no loaded entry, while Home Assistant's registry lists no
+    VT climate (VT without thermostats), or while Home Assistant starts."""
+    from homeassistant.core import CoreState
+
+    first_installation(hass, zones)
+    if missing == "vt_entry":
+        for vt_entry in hass.config_entries.async_entries(VT_DOMAIN):
+            vt_entry.mock_state(hass, ConfigEntryState.SETUP_ERROR)
+    if missing != "vt_climates":
+        zones.add("living", handed_over=False)
+    entry = await setup(hass, zones)
+    freezer.tick(20 * 60)
+    if missing == "running":
+        hass.set_state(CoreState.starting)
+    await entry.runtime_data.async_refresh()
+    assert not feature_manager.reload_needed(hass, entry.runtime_data)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"vt_reload_once_{entry.entry_id}") is None
+    hass.set_state(CoreState.running)
 
 
 # --- X7: errors never reach VT (T-53), the reload repair (P-59), an old VT (P-60), the public
@@ -347,35 +385,6 @@ async def test_registration_errors_never_reach_vt(
     await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, "vt_feature_manager_unsupported") is None
     hass.data.pop(VT_DOMAIN)  # the stand-in API cannot be reset
-
-
-async def test_the_reload_repair_skips_zones_that_are_away_or_not_ready(
-    hass: HomeAssistant, zones: FakeZones, freezer
-) -> None:
-    """P-59: only a thermostat VT shows running — reported, ready, its mode known — and still
-    not handed over some time after the registration needs VT's reload; one unavailable,
-    not ready, of unknown mode or away is not listed. Negative: none of them known, no
-    issue."""
-    vt_is_set_up(hass)
-    zones.add("living", handed_over=False, hvac_action="heating")
-    zones.add("away", handed_over=False)
-    zones.add("unavailable", handed_over=False, state="unavailable")
-    zones.add("starting", handed_over=False, state="off", is_ready=False)
-    zones.add("placeholder", handed_over=False, state="off", is_ready=None, specific_states=None)
-    entry = await setup(hass, zones)
-    hass.states.async_remove(zones.entities["away"])
-    issue_id = f"vt_reload_needed_{entry.entry_id}"
-    freezer.tick(20 * 60)
-    zones.set("living", hvac_action="heating")
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-    await entry.runtime_data.async_refresh()
-    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
-    assert issue is not None
-    assert issue.translation_placeholders == {"zones": "fake living"}  # the one running
-    zones.set("living", state="unavailable")
-    await entry.runtime_data.async_refresh()
-    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
 @pytest.mark.parametrize(
@@ -682,7 +691,7 @@ async def test_vt_tells_the_manager_its_thermostat_started_and_its_power(
     assert isinstance(manager, InterfaceUnderlyingPowerHook)
     assert inspect.iscoroutinefunction(manager.async_on_underlying_power)
     assert manager.is_configured
-    link = vtherm_link.VThermLink(hass, [living])
+    link = vtherm_link.VThermLink(hass)
     assert (link.zone(living).started, link.zone(living).on_percent) == (False, None)
     await manager.refresh_state()
     await manager.async_on_underlying_power(power_command("switch.heater", "switch", 0.6))

@@ -447,13 +447,12 @@ RUNTIME_BLOCKERS = (
     HEATING_OFF_IGNORED,
     HEATING_ON_IGNORED,  # decision 4 of 0.2.3: "heating on" ignored from the start
     RELAY_OFF_NOT_TAKEN,  # decision 6 of 0.2.3: a relay's "off" no longer taken in the session
-    # X5: the gateway's or MQTT's integration gone or disabled (X5.5); a zone that is not a VT
-    # climate (X5.7); a zone VT built on the boiler's own thermostat (X5.19).
+    # X5: the gateway's or MQTT's integration gone or disabled (X5.5); a room VT built on the
+    # boiler's own thermostat (X5.19). The rooms are VT's own (I12.11): none of another kind.
     "gateway_not_set_up",
     "mqtt_not_set_up",
     # A write target of an integration that works through a cloud service: monitoring only.
     "write_through_cloud",
-    "zone_not_vt",
     "zone_on_boiler_thermostat",
     # I12.6: VT older than the oldest the plugin supports (``vtherm_link.VT_OLDEST``).
     "vt_too_old",
@@ -1512,15 +1511,14 @@ class ControlUnit:
         return tuple(found)
 
     def _vt_blockers(self, now: float) -> list[str]:
-        """What VT and Home Assistant say now: zones that are not VT's or sit on the boiler's
-        thermostat, Home Assistant starting, VT's central boiler and its helper (I12). The
-        monitoring period holds nothing back: control may be switched on from the first day (the
-        user's decision of 2026-10-08); the monitor's verdict is advice shown beside it."""
+        """What VT and Home Assistant say now: VT too old, rooms that sit on the boiler's
+        thermostat, Home Assistant starting, VT's central boiler and its helper (I12). The rooms
+        are VT's own (I12.11), so none can be of another kind. The monitoring period holds
+        nothing back: control may be switched on from the first day (the user's decision of
+        2026-10-08); the monitor's verdict is advice shown beside it."""
         config = self._coordinator.config
         found: list[str] = []
         link = self._coordinator.link
-        if link.zones_of_another_kind():
-            found.append("zone_not_vt")  # a hand edit: only VT climates are zones (X5.7)
         if link.vt_too_old():
             found.append("vt_too_old")  # I12.6: update VT
         if link.zones_on_boiler_thermostat([*config.signals.values(), *self.options.entities]):
