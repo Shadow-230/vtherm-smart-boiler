@@ -93,8 +93,9 @@ a heat pump controller (excluded), or anything that sends data outside.
     decides whether to heat (principle 12). A relay that reports no state of its own is
     controlled with blind repeats and shown as "controlled without confirmation"; freshness then
     applies to the inputs of the decision — the zones and the outdoor temperature.
-12. **VT decides whether to heat** — the plugin replaces VT's central boiler: heating goes on
-    and off with the zones' demand, at once and in both directions; the plugin decides only how
+12. **VT decides whether to heat** — VT's central boiler, with its own thresholds and activation
+    delay, switches a helper the plugin follows (I12): heating goes on and off as VT decides, at
+    once and in both directions; the plugin decides only how
     warm the water is — the curve, the limits and the ramp. Nothing the plugin counts or times
     holds heating off, or on, against VT: an old boiler with a high minimum output cycles a lot
     on its own, and blocking it would leave the house cold. Frequent starts are information — an

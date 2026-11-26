@@ -77,7 +77,6 @@ from .test_control import (  # the rig fixture comes with them
     start_with_stored,
     stored_control,
     unit_of,
-    vt_central_unknown,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -86,6 +85,14 @@ LINK_ISSUE = "hand_back_boiler_link_lost"
 STORE_ISSUE = "control_state_not_saved"
 OWED = "hand_back_owed"
 NO_DEMAND = {"hvac_action": "idle", "valve_open_percent": 0, "on_percent": 0.0}
+
+
+def vt_settings_unknown(rig: Rig) -> None:
+    """VT has handed no thermostat over: its central boiler's settings are not known (I12) — a
+    blocker that passes on its own."""
+    from custom_components.vtherm_smart_boiler.vtherm_link import unregister_thermostat
+
+    unregister_thermostat(rig.hass, rig.zones.stand_in)
 
 
 def broken(self: Any, *args: Any) -> None:
@@ -206,14 +213,14 @@ async def test_the_restored_wish_is_stored_before_any_write(
     rig: Rig, hass_storage: dict[str, Any], held_by: str
 ) -> None:
     """PB-02: the switch gives the stored wish "on" back at a start while control writes nothing
-    yet — a blocker holds it (VT's central boiler cannot be ruled out), or decision 3's restore
+    yet — a blocker holds it (VT's central boiler's settings not known yet), or decision 3's restore
     waits for the boiler link (after a power cut). The control store says "on" at once and still,
     nothing written, a minute and ten minutes on (within the recognition period, for the
     restore): a crash in that window brings control back on, and decision 3's restore runs, with
     no hand-back first. Before the fix the restore stored the old "off" until control's first
     write."""
     if held_by == "blocker":
-        vt_central_unknown(rig)
+        vt_settings_unknown(rig)
         stored: dict[str, Any] = {"enabled": True}
         marks = (0, 10, 60, 600)
     else:
@@ -251,7 +258,7 @@ async def test_without_a_stored_wish_control_is_off_and_stored_at_once(
     the store says off at once, though a blocker keeps control from writing."""
     if restored is not None:
         mock_restore_cache(rig.hass, [State(SWITCH, restored)])
-    vt_central_unknown(rig)
+    vt_settings_unknown(rig)
     await start_with_stored(rig, hass_storage, {}, "0.2.2")
     on = False
     assert rig.state("binary_sensor", "control").state == ("on" if on else "off")
@@ -940,13 +947,12 @@ async def test_a_control_store_failing_while_control_holds_the_boiler_hands_back
     await rig.switch(True)
     await rig.advance(20)
     with control_writes_failing(rig) as failed:
+        # VT's helper goes off with the room (I12): a step at once, and the clock's after it —
+        # heating off, stored at once: the write fails; then the blocker: the safe hand-back.
         rig.zones.set("living", **NO_DEMAND)
-        await rig.advance(10)  # heating off, stored at once: the write fails
-        tries = len(failed)
-        assert tries >= 1
-        await rig.advance(10)  # the blocker: the safe hand-back
+        await rig.advance(10)
         assert rig.gateway.calls[-3:] == HAND_BACK
-        assert len(failed) > tries  # the debt's own save, made first, failed too: made anyway
+        assert len(failed) >= 2  # the debt's own save, made first, failed too: made anyway
         assert "control_state_not_saved" in blockers(rig)
         assert issue(rig, STORE_ISSUE) is not None
         assert _logged(caplog, logging.ERROR, "The control state could not be written") == 1

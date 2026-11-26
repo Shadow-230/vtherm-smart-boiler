@@ -9,8 +9,9 @@ low setpoint). The hand-back value is bound by the highest water temperature, ne
 lowest water temperature, or the boiler would not see a change (P-43). Provisional
 decisions of phase F (to be confirmed at the review, `docs/en/development/plans/plan-0.2.md` K4):
 control only for an installation with one circuit fed by the boiler flow (unmixed, or passive
-fixed); the curve must be entered, never silently defaulted; VT's central boiler must not run
-alongside.
+fixed); the curve must be entered, never silently defaulted. VT's central boiler decides whether
+the boiler heats (I12): its command switches a helper (an ``input_boolean``) the user picks here,
+never the boiler; without the helper control does not start.
 
 What the form refuses is a blocker too, for options that reach the plugin without it (a hand
 edit, an older version's options — X5): one entity in two roles (P-03), one entity for two
@@ -30,8 +31,8 @@ entity set to heat or off — never a helper, which confirms nothing. The relay'
 the user's declaration, each unanswered one read cautiously (``core.relay``); without the tick
 "this is a separate relay contact, not a setting stored in the boiler's memory" control does not
 start (answer G). The water-temperature parts — curve, limits, ramp, comfort correction, the
-circuit rules, the topology and the read-back — do not apply there; the demand thresholds do,
-and the hand-back's effect is the relay's rest state. Water-temperature control needs flame and
+circuit rules, the topology and the read-back — do not apply there; VT's decision does, and the
+hand-back's effect is the relay's rest state. Water-temperature control needs flame and
 flow mapped, which the entry itself no longer requires.
 """
 
@@ -53,7 +54,6 @@ from .core.curve import (
     DESIGN_OUTDOOR_UNDER_ROOM_K,
     HeatingCurve,
 )
-from .core.demand import CountBy, DemandConfig
 from .core.guards import HELD_REFRESH_S, GuardConfig, WriteType
 from .core.hand_back import DEVICE_TIMEOUT_BOUNDS_S, DEVICE_TIMEOUT_DEFAULT_S
 from .core.installation import Boiler, BoilerClass, CircuitControl, EmitterType, Installation
@@ -94,10 +94,6 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "hard_max": 70.0,
         "frost_limit": 5.0,
         "frost_release": 7.0,
-        "count_threshold": 1,
-        # What the count counts (the user's decision of 2026-10-14): VT's heads, as VT's central
-        # boiler; an entry from before keeps zones, written by the entry migration (21).
-        "count_by": CountBy.DEVICES.value,
         "ramp_k_per_min": 1.0,
         "decision_interval_min": 5.0,
         "off_setpoint": DEFAULT_OFF_SETPOINT,
@@ -112,8 +108,6 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "comfort_correction_max_k": 3.0,
         # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
         "own_room_controller": False,
-        # VT's activation delay (decision 5): 0 s, VT's own default — heating starts at once.
-        "activation_delay_s": 0,
     }
 )
 CURVE_DEFAULTS: Mapping[str, float] = MappingProxyType(
@@ -129,14 +123,10 @@ CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "comfort_correction_max_k": (0.5, 10.0),
         "frost_limit": (3.0, 10.0),
         "frost_release": (4.0, 12.0),
-        "count_threshold": (0.0, 20.0),
-        "power_threshold_kw": (0.1, 100.0),
-        "opening_threshold": (1.0, 100.0),
         "fallback_setpoint": (25.0, 80.0),
         "ramp_k_per_min": (0.1, 10.0),
         "decision_interval_min": (1.0, 30.0),
         "off_setpoint": (0.0, 30.0),
-        "activation_delay_s": (0.0, 600.0),
         "hand_back_value": (0.0, 90.0),
     }
 )
@@ -154,6 +144,19 @@ CURVE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
 # section stored without one: 0.2.1's default, so no installation's floor drops silently
 # (provisional, K4).
 MIGRATED_HARD_MIN = 25.0
+# I12 (the user's decision of 2026-11-25): the helper VT's central boiler switches — VT's decision
+# whether the boiler heats. An ``input_boolean`` the user creates; none by default.
+VT_HELPER = "vt_boiler_helper"
+VT_HELPER_DOMAIN = "input_boolean"
+# The plugin's own demand settings, gone with I12 (minor version 22): VT's central boiler has its
+# own thresholds and activation delay.
+VT_SETTINGS_MOVED = (
+    "count_threshold",
+    "count_by",
+    "power_threshold_kw",
+    "opening_threshold",
+    "activation_delay_s",
+)
 
 
 class WritePath(StrEnum):
@@ -328,7 +331,8 @@ CONFIG_BLOCKERS = (
     "one_direct_circuit_only",
     "underfloor_without_max_flow",
     "no_zones",
-    "count_threshold_above_zones",
+    # I12: no helper for VT's central boiler picked, or one that is no input_boolean.
+    "no_vt_boiler_helper",
     "off_setpoint_not_below_hard_min",
     "hand_back_switch_not_writable",
     "hand_back_value_above_max",
@@ -413,7 +417,7 @@ MQTT_TOPIC_KEYS = ("mqtt_top", "mqtt_node")
 # told).
 ENTITY_KEYS = (
     "setpoint_entity", "ch_entity", "hand_back_entity", "confirmed_entity", "ch_confirmed_entity",
-    "thermostat_setpoint_entity", "restart_entity", "frost_zone", "relay_entity",
+    "thermostat_setpoint_entity", "restart_entity", "frost_zone", "relay_entity", VT_HELPER,
 )  # fmt: skip
 # What a hand-back goes through: fixed while one is owed — for a relay, the relay and its rest
 # state.
@@ -597,6 +601,8 @@ class ControlOptions:
     # Decision 3: the user's tick that the ESP's start values are safe and its API
     # reboot_timeout short; control on ESPHome does not start without it.
     esphome_safe_start: bool = False
+    # I12: the helper VT's central boiler switches — its state is VT's decision.
+    vt_boiler_helper: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -736,12 +742,41 @@ def with_correction_answer(section: Any) -> Any:
     return section
 
 
-def with_count_by(section: Any) -> Any:
-    """Minor version 21 (2026-10-14): the count criterion "zones" where a section stored no
-    answer — what it ran with, before VT's devices became the default."""
-    if isinstance(section, Mapping) and section.get("write_path") and "count_by" not in section:
-        return {**section, "count_by": CountBy.ZONES.value}
+def without_vt_settings(section: Any) -> Any:
+    """I12 (minor version 22): the plugin's own demand settings are gone — VT's central boiler
+    has its own thresholds and activation delay."""
+    if isinstance(section, Mapping) and any(key in section for key in VT_SETTINGS_MOVED):
+        return {key: value for key, value in section.items() if key not in VT_SETTINGS_MOVED}
     return section
+
+
+def vt_settings_set(section: Any) -> dict[str, str]:
+    """I12: the demand settings a section held that VT's central boiler must now be given — a
+    power or opening threshold, a count above 1, an activation delay above 0 — each as stored,
+    for the repair issue that says so; the others "-". Empty where none was set."""
+    if not isinstance(section, Mapping):
+        return {}
+    count = _number(section.get("count_threshold"))
+    power = _number(section.get("power_threshold_kw"))
+    opening = _number(section.get("opening_threshold"))
+    delay = _number(section.get("activation_delay_s"))
+    found = {
+        "count": count if count is not None and count > 1 else None,
+        "power": power if power is not None and power > 0 else None,
+        "opening": opening if opening is not None and opening > 0 else None,
+        "delay": delay if delay is not None and delay > 0 else None,
+    }
+    if all(value is None for value in found.values()):
+        return {}
+    return {key: "-" if value is None else f"{value:g}" for key, value in found.items()}
+
+
+def vt_helper_valid(entity: object) -> bool:
+    """I12: a helper for VT's central boiler is picked and is an ``input_boolean``."""
+    if not isinstance(entity, str):
+        return False
+    domain, _, name = entity.partition(".")
+    return domain == VT_HELPER_DOMAIN and bool(name)
 
 
 def with_room_mode(section: Any) -> Any:
@@ -837,13 +872,13 @@ def with_boiler_inputs(section: Any, boiler: Any, signals: Any) -> Any:
 
 def section_as_migrated(section: Any) -> Any:
     """A control section as this version's entry migrations leave one (G11 B and D, I8 B6, F2,
-    the count by zones of 21).
+    I12's demand settings gone).
     The entry migration writes each into the options; the options a stored session took the
     boiler with (``taken_with``), which no migration reaches, are read through them, so a
     restart after the update compares like with like. The highest water temperature left the
     section for the circuit's, which the restore's limits apply as they are now (PB-11)."""
     section = without_correction_range(with_room_mode(with_correction_answer(section)))
-    section = with_count_by(section)
+    section = without_vt_settings(section)
     if isinstance(section, Mapping) and HARD_MAX_FROM_BEFORE in section:
         return {key: value for key, value in section.items() if key != HARD_MAX_FROM_BEFORE}
     return section
@@ -1025,16 +1060,6 @@ def parse_control(
             zone=frost_zone if frost_zone in {z.zone_id for z in installation.zones} else None,
             closes_when_off=frozenset(z.zone_id for z in installation.zones if z.closes_when_off),
         ),
-        demand=DemandConfig(
-            count_threshold=int(_required(value, "count_threshold")),
-            count_by=CountBy(value["count_by"]),
-            power_threshold_kw=_checked(data, "power_threshold_kw"),
-            opening_threshold=(
-                None
-                if (opening := _checked(data, "opening_threshold")) is None
-                else opening / 100.0
-            ),
-        ),
         fallback_setpoint=_checked(data, "fallback_setpoint"),
         ramp_k_per_min=None if on_off else ramp,
         decision_interval_s=_required(value, "decision_interval_min") * MINUTE,
@@ -1044,8 +1069,6 @@ def parse_control(
         # G11 D: Auto by default for a curve entered now; an entry from before runs Manual.
         room_auto=RoomMode(curve_data.get(ROOM_MODE, RoomMode.AUTO)) is RoomMode.AUTO,
         room_excluded=_room_excluded(curve_data, {z.zone_id for z in installation.zones}),
-        # Only what the user saved: VT's own value is a pre-fill in the form, never taken here.
-        activation_delay_s=_required(value, "activation_delay_s"),
         # The relay path (R5, R6): heating on and off only, and its link is the relay itself —
         # never a hand-back for the boiler's signals, which never gate it.
         on_off=on_off,
@@ -1121,6 +1144,7 @@ def parse_control(
         connection=connection,
         control_mode=control_mode,
         esphome_safe_start=data.get(ESPHOME_SAFE_START) is True,
+        vt_boiler_helper=data.get(VT_HELPER) or None,
     )
     working = replace(loop.control, working_thermostat=working_thermostat(options))
     return replace(options, loop=replace(loop, control=working))
@@ -1613,14 +1637,12 @@ def relay_blockers(
 
 
 def _zone_blockers(control: ControlOptions, installation: Installation) -> list[str]:
-    if not installation.zones:
-        return ["no_zones"]  # nothing could ever ask for heat (S-04)
-    demand = control.loop.control.demand
-    # Counting devices, the zones' devices are VT's to tell: the form checks them, and the count
-    # never asks more than the known zones have (``core.demand``).
-    if demand.count_by is CountBy.ZONES and demand.count_threshold > len(installation.zone_ids):
-        return ["count_threshold_above_zones"]  # heating would never be asked for
-    return []
+    """No zone (S-04); no helper for VT's central boiler, which decides whether the boiler heats
+    (I12) — or one that is no ``input_boolean``."""
+    found = [] if installation.zones else ["no_zones"]  # nothing could ever ask for heat
+    if not vt_helper_valid(control.vt_boiler_helper):
+        found.append("no_vt_boiler_helper")
+    return found
 
 
 def config_blockers(
@@ -1649,7 +1671,7 @@ def config_blockers(
     ]
     if control.write_path is WritePath.RELAY:
         # The relay sets no water temperature: the setpoint, topology, read-back, curve and
-        # circuit rules do not apply; the demand thresholds do (R1).
+        # circuit rules do not apply; VT's decision does (R1, I12).
         return [
             *found,
             *relay_blockers(control, signals, others),

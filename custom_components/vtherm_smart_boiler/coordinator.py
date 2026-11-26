@@ -199,7 +199,6 @@ DAY = 86400.0
 # monitor only included; its text follows what control does then (translation keys
 # ``no_zone_known_off``, ``_handed_back``, ``_monitor``).
 NO_ZONE_KNOWN_ISSUE = "no_zone_known"
-NO_CRITERION_ISSUE = "no_criterion_judged"  # its text where the zones are known (PB-03)
 # X6: the wall thermostat on a gateway would keep the house cool after a hand-back (``_unknown``:
 # it reports no setpoint); the lowest water temperature's suggestion (``_boiler``: worded for the
 # device that sets the water). Warnings, not fixable.
@@ -464,7 +463,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         # Decision 3's repair issue: every zone unknown since, for the monitor only; the kind
         # raised now.
         self._zones_unknown_since: float | None = None
-        self._no_zone_issue: tuple[str, tuple[str, ...]] | None = None
+        self._no_zone_issue: str | None = None
         # X6: the suggestion the last analysis gave; the wall thermostat's warning since, and
         # the issues raised now (their translation key and placeholders).
         self.lowest_water: LowestWaterSuggestion | None = None
@@ -507,7 +506,6 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._started_at = now
         if await self.reports.async_start(self.hass, self._report_topics()):
             self._unsubs.append(self.reports.stop)
-        self.link.watch_vt_central()  # first: a change to VT made unwatched latches (decision 9)
         await self.link.async_detect()
         self._restore_notices()
         self.report_installation()
@@ -579,14 +577,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
     async def async_stop(self) -> None:
         """Stop every listener and timer and write what is pending."""
         self._stopped = True
-        self.link.stop_watching_vt_central()
         while self._unsubs:
             self._unsubs.pop()()
         if self._alive_stop_unsub is not None:  # not from the shutdown job, which keeps it
             self._alive_stop_unsub()
             self._alive_stop_unsub = None
         for key in (
-            "auto_tpi_blocked",
             "learning_not_paused",
             ZONE_CYCLE_ISSUE,
             NO_ZONE_KNOWN_ISSUE,
@@ -1943,20 +1939,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     def check_learning(self) -> None:
         """Warn about zone learning the plugin affects but cannot protect, each warning with
-        what its advice costs: Auto-TPI that cannot learn — flagged as used by VT's central
-        boiler while that feature is off, which is how the plugin replaces it (research F2) —
-        and, while control runs with learning pauses, learning it cannot pause: Auto-TPI (only a
-        reset would pause it) and SmartPI without its learning flag. VT's central boiler unknown
-        says nothing about Auto-TPI's learning in the zones VT's central boiler uses: the first
-        issue is left as it is, and those zones are in neither (P-54). A zone whose algorithm
-        cannot be read — VT not started, the zone unknown — keeps its last answer (PB-47), so
-        an issue the user ignored is not deleted and raised anew. With control configured, also
-        the zones VT switches on and off in cycles under ``SHORT_CYCLE_MIN`` (K4): their gaps
-        stop the burner."""
-        central = self.link.vt_central_boiler_configured()
+        what its advice costs: while control runs with learning pauses, learning it cannot
+        pause — Auto-TPI (only a reset would pause it) and SmartPI without its learning flag. A
+        zone whose algorithm cannot be read — VT not started, the zone unknown — keeps its last
+        answer (PB-47), so an issue the user ignored is not deleted and raised anew. With
+        control configured, also the zones VT switches on and off in cycles under
+        ``SHORT_CYCLE_MIN`` (K4): their gaps stop the burner."""
         control = self.config.control
         pauses = control.configured and control.learning_pauses
-        blocked: list[str] = []
         unpaused: list[str] = []
         short_cycles: list[str] = []
         for zone_id in self.config.zone_entities:
@@ -1968,12 +1958,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             flagless_smartpi = (
                 algorithm.proportional_function == "smartpi" and algorithm.smartpi_learning is None
             )
-            depends = algorithm.auto_tpi and algorithm.used_by_central_boiler
-            if depends and central is None:
-                continue  # whether it learns is not known either way
-            if depends and central is False:
-                blocked.append(self.link.zone_name(zone_id))
-            elif pauses and (algorithm.auto_tpi or flagless_smartpi):
+            if pauses and (algorithm.auto_tpi or flagless_smartpi):
                 unpaused.append(self.link.zone_name(zone_id))
             if (
                 control.configured
@@ -1982,34 +1967,34 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 and algorithm.cycle_min < SHORT_CYCLE_MIN
             ):
                 short_cycles.append(f"{self.link.zone_name(zone_id)} ({algorithm.cycle_min:g} min)")
-        if central is not None:
-            self._issue("auto_tpi_blocked", blocked)
         self._issue("learning_not_paused", unpaused)
         self._issue(ZONE_CYCLE_ISSUE, short_cycles)
 
-    def report_no_zone_known(self, kind: str | None, criteria: Sequence[str] = ()) -> None:
+    def report_no_zone_known(self, kind: str | None) -> None:
         """Decision 3's repair issue: ``kind`` — "off", "handed_back" or "monitor" — while every
-        configured zone has been unknown for ten minutes, or, with ``criteria``, while the zones
-        are known but none of the configured criteria — those named — could be judged for as
-        long (PB-03); ``None`` deletes it. An error where heating stops, else a warning
-        (provisional, K4). Raised anew when its kind or its criteria change."""
-        wanted = None if kind is None else (kind, tuple(criteria))
-        if wanted == self._no_zone_issue:
+        configured zone has been unknown for ten minutes, or — "vt_off", "vt_handed_back" — while
+        the zones are known but VT's decision has been unknown for as long (PB-03, I12); ``None``
+        deletes it. An error where heating stops, else a warning (provisional, K4). Raised anew
+        when its kind changes."""
+        if kind == self._no_zone_issue:
             return
         issue_id = f"{NO_ZONE_KNOWN_ISSUE}_{self.config_entry.entry_id}"
         ir.async_delete_issue(self.hass, DOMAIN, issue_id)
-        self._no_zone_issue = wanted
+        self._no_zone_issue = kind
         if kind is None:
             return
         effects = {"off": "heating is off", "handed_back": "the boiler is handed back"}
-        if criteria:
+        helper = self.config.control.vt_boiler_helper or "-"
+        if kind.startswith("vt_"):
+            effect = kind.removeprefix("vt_")
             _LOGGER.warning(
-                "No demand criterion could be judged for ten minutes: %s has no data (%s)",
-                ", ".join(criteria),
-                effects.get(kind, "control does not decide now"),
+                "Versatile Thermostat's decision has been unknown for ten minutes: the helper %s "
+                "is neither on nor off (%s)",
+                helper,
+                effects.get(effect, effect),
             )
-            key = f"{NO_CRITERION_ISSUE}_{kind}"
-            placeholders = {"criteria": ", ".join(criteria)}
+            key = f"vt_decision_unknown_{effect}"
+            placeholders = {"helper": helper}
         else:
             _LOGGER.warning(
                 "No Versatile Thermostat zone has answered for ten minutes (%s)",
@@ -2023,7 +2008,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             issue_id,
             is_fixable=False,
             is_persistent=False,
-            severity=ir.IssueSeverity.ERROR if kind == "off" else ir.IssueSeverity.WARNING,
+            severity=ir.IssueSeverity.ERROR
+            if kind in ("off", "vt_off")
+            else ir.IssueSeverity.WARNING,
             translation_key=key,
             translation_placeholders=placeholders,
         )

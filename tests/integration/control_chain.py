@@ -12,16 +12,18 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.vtherm_smart_boiler.config_flow import CONTROL_ITEMS, section_of
 
+from .harness import VT_HELPER
+
 # What a flow's control forms were given that their form no longer asks, kept for the form
 # that asks it now — by flow; and each flow's last control answer.
 _KEPT: dict[str, dict[str, Any]] = {}
 _LAST: dict[str, dict[str, Any]] = {}
 # The item that asks each key that moved (I8.9a): the comfort correction to the curve, VT's
-# activation delay to the behaviour, frost protection to its own item.
+# central boiler's helper (I12) to the behaviour, frost protection to its own item.
 _HOME = {
     "comfort_correction": "control_curve",
     "comfort_correction_max_k": "control_curve",
-    "activation_delay_s": "control_behaviour",
+    "vt_boiler_helper": "control_behaviour",
     "frost_limit": "control_frost",
     "frost_release": "control_frost",
     "frost_zone": "control_frost",
@@ -38,6 +40,14 @@ def _fields(result: dict[str, Any]) -> set[str]:
     return {str(marker) for marker in result["data_schema"].schema}
 
 
+def _with_helper(result: dict[str, Any], sent: dict[str, Any]) -> dict[str, Any]:
+    """I12: the behaviour's form asks the helper VT's central boiler switches; a test written
+    before it, which does not give one, answers the harness's (``FakeZones``)."""
+    if "vt_boiler_helper" in _fields(result) and "vt_boiler_helper" not in sent:
+        return sent | {"vt_boiler_helper": VT_HELPER}
+    return sent
+
+
 def answer(result: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     """A control form's answer: the keys it asks, with those kept for it; the others kept for
     the form that asks them now."""
@@ -48,6 +58,8 @@ def answer(result: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     given = {k: kept.pop(k) for k in list(kept) if k in asked and k not in data}
     kept.update({k: v for k, v in data.items() if k not in asked and k != "next_step_id"})
     sent = given | {k: v for k, v in data.items() if k in asked or k == "next_step_id"}
+    if "next_step_id" not in sent:
+        sent = _with_helper(result, sent)
     _LAST[result["flow_id"]] = sent
     return sent
 
@@ -87,20 +99,21 @@ def _taken(result: dict[str, Any]) -> dict[str, Any]:
 def no_step_of_its_own(result: dict[str, Any], menu: list[str]) -> bool:
     """A form the chain had no step for, its fields another form's: frost protection (the
     curve's or the relay behaviour's), and the behaviour of full control at the simple level
-    (the curve's activation delay)."""
+    (VT's central boiler's helper, I12)."""
     step = result["step_id"]
     if step == "control_frost":
         return True
     return (
         step == "control_behaviour"
-        and _fields(result) == {"activation_delay_s"}
+        and _fields(result) == {"vt_boiler_helper"}
         and "control_curve" in menu
     )
 
 
 async def answer_shown(manager: Any, result: dict[str, Any]) -> dict[str, Any]:
     """A control form answered with what it shows and what was kept for it."""
-    return await manager.async_configure(result["flow_id"], form_values(result) | _taken(result))
+    sent = _with_helper(result, form_values(result) | _taken(result))
+    return await manager.async_configure(result["flow_id"], sent)
 
 
 async def after(manager: Any, result: dict[str, Any], answered: str) -> dict[str, Any]:

@@ -60,7 +60,9 @@ opisuje [dokumentacja techniczna](../technical/technical.md).
   (temperatura powrotu, ciśnienie wody, modulacja, temperatura zewnętrzna, gazomierz i inne)
   włącza kolejne funkcje monitora.
 - **Do sterowania:** sposób zapisu do kotła i sposób jego oddania (zobacz
-  [Podłączenie kotła](#5-podłączenie-kotła)) oraz wyłączony własny kocioł centralny VT.
+  [Podłączenie kotła](#5-podłączenie-kotła)) oraz kocioł centralny VT ustawiony tak, by
+  przełączał pomocnika, za którym idzie wtyczka (zobacz
+  [Kiedy grzanie się włącza i wyłącza](#43-kiedy-grzanie-się-włącza-i-wyłącza)).
 
 SmartPI i Auto-TPI z VT (samouczący się algorytm VT, sterujący proporcjonalnie do czasu) są
 opcjonalne; wtyczka działa z każdym algorytmem stref VT.
@@ -94,11 +96,12 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
 
 ## 3. Szybki start
 
-1. **Przygotuj VT.** Ustaw termostaty VT dla pomieszczeń. Jeśli kocioł centralny VT jest
-   skonfigurowany, odznacz go w konfiguracji centralnej VT i uruchom ponownie Home Assistant: dwa
-   sterowniki nigdy nie mogą sterować tym samym kotłem. Monitorowanie działa i bez tego;
-   sterowanie na to czeka. Konfiguracja centralna VT utworzona albo zmieniona po starcie Home
-   Assistant też wymaga tego jednego ponownego uruchomienia.
+1. **Przygotuj VT.** Ustaw termostaty VT dla pomieszczeń. Do sterowania utwórz pomocnika wł./wył.
+   (Ustawienia → Urządzenia i usługi → Pomocnicy → Przełącznik) i ustaw kocioł centralny VT w
+   konfiguracji centralnej VT: jego progi i opóźnienie włączenia oraz oba polecenia na pomocniku
+   (`input_boolean.twoj_pomocnik/input_boolean.turn_on` i `…/input_boolean.turn_off`). Nigdy nie
+   kieruj poleceń VT na sam kocioł: dwa sterowniki nigdy nie mogą sterować tym samym kotłem.
+   Monitorowanie działa i bez tego; sterowanie na to czeka.
 2. **Utwórz wpis.** Ustawienia → Urządzenia i usługi → Dodaj integrację → **Smart Boiler for
    Versatile Thermostat**. Pierwsze panele pytają, jak kocioł jest podłączony, o źródło ciepła i
    rodzaj kotła oraz o tryb sterowania — pełne sterowanie, wł./wył. albo tylko monitorowanie. Nic
@@ -208,33 +211,35 @@ wymagane ustawienia, na przykład:
 - najwyżej jeden obieg grzewczy zasilany wprost z kotła; obok niego obiegi za stałym
   termostatycznym zaworem mieszającym albo sterowane przez inną automatykę. Obiegu mieszanego
   przez sam kocioł (drugiego obiegu grzewczego kotła) sterowanie jeszcze nie obsługuje;
-- własny kocioł centralny VT wyłączony w VT, a po tym ponowne uruchomienie Home Assistant, żeby
-  tym samym kotłem nigdy nie sterowały dwa sterowniki. Centralna konfiguracja VT utworzona lub
-  zmieniona po uruchomieniu Home Assistant, nawet bez kotła centralnego, też wymaga tego jednego
-  ponownego uruchomienia.
+- kocioł centralny VT ustawiony z oboma poleceniami na pomocniku wł./wył., a ten pomocnik wybrany
+  w **Zachowaniu sterowania** (zobacz
+  [Kiedy grzanie się włącza i wyłącza](#43-kiedy-grzanie-się-włącza-i-wyłącza)).
 
 Gdy czegoś brakuje, **Sterowanie (eksperymentalne)** mówi czego. Monitor dalej działa, a kocioł zostaje
 przy własnym sterowaniu albo przy swoim termostacie.
 
 ### 4.3 Kiedy grzanie się włącza i wyłącza
 
-Wtyczka zastępuje kocioł centralny VT. O włączeniu lub wyłączeniu grzania decyduje na podstawie
-stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych kryteriów:
+O tym, czy kocioł grzeje, decyduje kocioł centralny Versatile Thermostat. Ustaw go w konfiguracji
+centralnej VT, tak jak opisuje dokumentacja VT: jego progi (ile urządzeń woła albo ile mocy),
+opóźnienie włączenia i oba polecenia na pomocniku wł./wył. (`input_boolean`), którego tworzysz —
+nigdy na samym kotle. Potem wybierz tego pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
+idzie za pomocnikiem: włączony — kocioł grzeje; wyłączony — nie. Dokłada temperaturę wody i swoje
+zasady bezpieczeństwa.
 
-| Kryterium | Grzanie jest włączone, gdy |
-|---|---|
-| Wołające | ciepła potrzebuje co najmniej ustawiona liczba urządzeń — albo stref (domyślnie 1) |
-| Łączna moc | łączna moc stref osiąga ustawiony próg |
-| Otwarcie zaworów | otwarcie zaworów stref potrzebujących ciepła osiąga ustawiony próg |
-
-- Decyzja jest sprawdzana co 10 sekund i działa od razu, w obie strony.
-- **Co liczyć** (poziom zaawansowany): **Urządzenia** liczy głowice, zawory i przełączniki VT tak
-  jak kocioł centralny VT — domyślnie w nowej instalacji, a liczba z VT przechodzi bez zmian;
-  **Strefy** liczy każdą strefę raz, ile by nie miała urządzeń — tak zostaje instalacja sprzed
-  zmiany. Przy domyślnej liczbie 1 jedno i drugie działa tak samo.
-- Gdy VT nie podaje stanu urządzenia, strefa woła, gdy jej zawór jest choć trochę otwarty, a bez
-  zaworu — gdy jej cykl pracy jest powyżej 0 — tak jak w VT; otwarcie zaworu i cykl pracy strefy
-  są oceniane osobno.
+- Wtyczka sprawdza co 10 sekund i od razu, gdy pomocnik się zmieni, w obie strony.
+- Sterowanie jest zablokowane bez pomocnika, dopóki kocioł centralny VT nie jest ustawiony
+  (zaznaczony, z oboma poleceniami), i dopóki jego polecenia przełączają coś innego niż pomocnika;
+  zgłoszenie w Naprawach podaje wtedy, co przełączają. Jeśli dziś VT przełącza przekaźnik twojego
+  kotła, wybierz ten przekaźnik we wtyczce (ścieżka przez przekaźnik) i skieruj polecenia VT na
+  pomocnika.
+- VT liczy tylko pokoje oznaczone w VT jako „używany przez kocioł centralny”: oznacz każdy pokój,
+  który ma wołać kocioł.
+- Jeśli pomocnik nie jest ani włączony, ani wyłączony, nic nie może poprosić o ciepło (zobacz
+  [Po ponownym uruchomieniu](#47-po-ponownym-uruchomieniu)).
+- Wtyczka liczy pokoje, które wołają, do pokazania. Gdy VT nie podaje stanu urządzenia, pokój
+  woła, gdy jego zawór jest choć trochę otwarty, a bez zaworu — gdy jego cykl pracy jest powyżej 0
+  — tak jak w VT.
 - Strefa się liczy tylko wtedy, gdy VT podaje jej stan jednoznacznie. Strefa niedostępna albo
   taka, której VT jeszcze nie uruchomił, ma stan „nieznany” — nigdy „brak zapotrzebowania”.
 - Tryb centralny VT (Auto, Zatrzymany, Tylko grzanie, Tylko chłodzenie, Ochrona przed mrozem)
@@ -250,23 +255,20 @@ stref VT, tak samo jak kocioł centralny VT. Wybierasz jedno lub więcej z tych 
   wymienia pokoje, które VT przełącza w cyklach krótszych niż 10 minut („Krótkie cykle w VT”).
 - Obieg sterowany przez inną automatykę prosi o ciepło, gdy jego encja **Obieg prosi o ciepło**
   jest włączona albo gdy potrzebuje ciepła któraś z jego stref: grzanie włącza się wtedy dla
-  niego samego, bez względu na ustawioną liczbę stref — jego mieszacz potrzebuje wody. Gdy tej
+  niego, bez względu na kocioł centralny VT — jego mieszacz potrzebuje wody. Gdy tej
   encji nie da się odczytać (niedostępna, nieznana), obieg o nic nie prosi (jego strefy dalej
   mogą, a ochrona przed mrozem dalej czuwa), a stan sterowania pokazuje powód
   `circuit_request_unknown`.
-- **To, co pokazywał kocioł centralny VT, pokazuje wtyczka** (gdy sterowanie jest ustawione):
+- **Co pokazuje wtyczka** (gdy sterowanie jest ustawione):
   - **Wezwanie do grzania** — włączone, gdy wtyczka wzywa kocioł do grzania (także ochrona przed
-    mrozem); wyłączone, gdy steruje kotłem i go nie wzywa, z powodem: nic nie woła, strefy wołają
-    poniżej progów, start czeka na opóźnienie włączenia VT, kocioł zgłasza usterkę; nieznane, gdy
-    nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany) albo jeszcze nie wie.
-    Jego atrybuty pokazują zapotrzebowanie wobec progów.
-  - **Wołające o ciepło** — urządzenia (albo strefy, zależnie od liczenia) wołające teraz, z
-    wołającymi strefami i urządzeniami, które VT podaje jako aktywne; **Moc wołających** —
-    zsumowana średnia moc stref, tak jak pokazuje ją VT. Moc liczy się do progu tylko wtedy, gdy
-    zawór wołającej strefy jest otwarty albo jej urządzenie włączone, więc kocioł nigdy nie grzeje
-    na zamknięte zawory.
-  - Zdarzenie `vtherm_smart_boiler_boiler_call`, wysyłane przy zmianie wezwania i gdy start
-    zaczyna czekać na opóźnienie włączenia VT, do twoich automatyzacji (`boiler_called`,
+    mrozem); wyłączone, gdy steruje kotłem i go nie wzywa, z powodem: nic nie woła, pokoje wołają,
+    a kocioł centralny VT nie, kocioł centralny VT czeka na opóźnienie włączenia, kocioł zgłasza
+    usterkę; nieznane, gdy nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany)
+    albo jeszcze nie wie. Jego atrybuty pokazują wołające pokoje i to, kiedy kończy się
+    opóźnienie włączenia VT.
+  - **Wołające o ciepło** — pokoje wołające teraz i które to są.
+  - Zdarzenie `vtherm_smart_boiler_boiler_call`, wysyłane przy zmianie wezwania i gdy kocioł
+    centralny VT zaczyna czekać na opóźnienie włączenia, do twoich automatyzacji (`boiler_called`,
     `call_reason`, `activation_at`).
 
 ### 4.4 Temperatura wody
@@ -351,40 +353,37 @@ Ochrona przed mrozem grzeje nawet wtedy, gdy żadna strefa nie potrzebuje ciepł
 
 ### 4.6 Opóźnienie włączenia z VT
 
-Wtyczka zachowuje opóźnienie włączenia z VT: od 0 do 600 sekund, domyślnie 0. Jest dla wolnych
+Opóźnienie włączenia ustawia się w kotle centralnym VT (od 0 do 600 sekund). Jest dla wolnych
 zaworów (na przykład głowic termoelektrycznych w ogrzewaniu podłogowym), żeby otworzyły się
-przed startem kotła i jego pompy.
+przed startem kotła i jego pompy. Wtyczka nie ma własnego opóźnienia.
 
-- Opóźnia tylko **włączenie**. Wyłączenie nigdy nie jest opóźniane.
-- Odliczanie zaczyna się przy pierwszej prawdziwej potrzebie ciepła. Jeśli potrzeba zniknie i
-  wróci w trakcie odliczania, odliczanie trwa dalej; na jego koniec kocioł startuje tylko wtedy,
-  gdy zapotrzebowanie wciąż jest.
-- Grzanie przeciwmrozowe też na nie czeka.
-- Przy przejściu z VT wartość jest wstępnie wypełniona ustawieniem z VT, do twojego
-  potwierdzenia.
+- Gdy VT odlicza opóźnienie, wtyczka pokazuje „wyłączone” z powodem `activation_delay` i to, kiedy
+  opóźnienie się kończy. Kocioł startuje, gdy VT włączy pomocnika.
+- Grzanie przeciwmrozowe na nie nie czeka.
 
 ### 4.7 Po ponownym uruchomieniu
 
 **Okres rozpoznania.** Po starcie Home Assistant albo przeładowaniu VT wtyczka czeka, aż każda
 strefa poda swój stan, najwyżej 10 minut. W tym czasie nie podejmuje nowych decyzji. Jeśli przed
 ponownym uruchomieniem sterowała kotłem i nic się nie zmieniło, co by tego zabraniało,
-zachowuje albo od razu przywraca swoje ostatnie polecenie (bez opóźnienia włączenia). Jeśli coś
+zachowuje albo od razu przywraca swoje ostatnie polecenie. Jeśli coś
 się zmieniło, najpierw oddaje kocioł.
 
 **Okres przejściowy.** Jeśli strefa staje się nieznana, gdy VT działa, jej ostatnia odpowiedź
 jest zachowywana przez 10 minut. Potem strefa wypada, a decydują pozostałe. Strefa nieznana
 przez 30 minut wywołuje alarm, bo ochrona przed mrozem jej nie widzi.
 
-**Żadna strefa nie odpowiada.** Jeśli po tych okresach wszystkie strefy są nieznane albo żadne z
-twoich kryteriów zapotrzebowania nie dostaje danych, nic nie może poprosić o ciepło:
+**Żadna strefa nie odpowiada.** Jeśli po tych okresach wszystkie strefy są nieznane albo pomocnik
+VT nie jest ani włączony, ani wyłączony, nic nie może poprosić o ciepło:
 
 | Twoja instalacja | Co się dzieje |
 |---|---|
 | Działający termostat albo regulator pokojowy (zobacz niżej) | kocioł jest mu oddawany |
 | Brak działającego termostatu | wtyczka trzyma grzanie wyłączone; **nie** oddaje kotła |
 
-W obu przypadkach od razu pojawiają się alarm („Sterowanie: żadna strefa nie odpowiada”) i
-zgłoszenie w Naprawach. Sterowanie wraca samo, gdy strefa znów odpowie.
+W obu przypadkach pojawiają się alarm („Sterowanie: żadna strefa nie odpowiada” albo
+„Sterowanie: decyzja VT nieznana”) i zgłoszenie w Naprawach. Sterowanie wraca samo, gdy strefa
+albo pomocnik znów odpowie.
 
 **Działający termostat** to jedno z:
 
@@ -922,10 +921,9 @@ Oba znikają przy pierwszej oznace ciepła albo gdy wyłączysz sterowanie.
 | Własny monitor wtyczki zawodzi | samo, gdy znów działa |
 | Blokada: brakujące ustawienie, start Home Assistant | samo, gdy zniknie |
 
-Wciąż skonfigurowany kocioł centralny VT też jest blokadą: sterowanie czeka, aż odznaczysz go w
-VT i uruchomisz ponownie Home Assistant. Tak samo centralna konfiguracja VT utworzona lub zmieniona
-po uruchomieniu Home Assistant (np. VT ustawiony już po starcie), nawet bez kotła centralnego:
-wystarczy jedno ponowne uruchomienie Home Assistant.
+Kocioł centralny VT nieustawiony albo jego polecenia przełączające coś innego niż pomocnika też są
+blokadą: sterowanie czeka, aż poprawisz to w VT. Po starcie sterowanie czeka też, aż VT przekaże
+wtyczce swoje termostaty.
 
 Zatrzask przetrwa ponowne uruchomienie i jest wymieniony w jednym zgłoszeniu w Naprawach. Alarm
 z reakcją „oddaj kocioł”, który jest już aktywny, gdy włączasz sterowanie, od razu blokuje
@@ -1061,16 +1059,17 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Sterowanie: grzanie przeciwmrozowe nie ogrzewa pomieszczenia | grzanie przeciwmrozowe przez 2 godziny bez ogrzania |
 | Sterowanie: oddane, a w pomieszczeniu grozi mróz | ochrona przed mrozem zależy od kotła |
 | Sterowanie: żadna strefa nie odpowiada | żadna strefa nie jest znana: nic nie może poprosić o ciepło |
-| Sterowanie: kryterium zapotrzebowania bez danych | strefa potrzebująca ciepła nie zasila żadnego z kryteriów |
+| Sterowanie: decyzja VT nieznana | pomocnik VT nie jest ani włączony, ani wyłączony: nic nie może poprosić o ciepło |
 
 | Zgłoszenie | Znaczenie i co zrobić |
 |---|---|
 | Versatile Thermostat nie odpowiada (3 warianty) | sprawdź, czy VT działa, a termostaty są włączone |
-| Żadnego kryterium zapotrzebowania nie da się ocenić (3 warianty) | ustaw moc urządzenia w VT albo inne kryterium |
+| Decyzja VT nie jest znana (2 warianty) | sprawdź pomocnika i to, czy kocioł centralny VT go przełącza |
+| Kocioł centralny VT przełącza coś innego niż pomocnika | skieruj polecenia VT na pomocnika |
+| Ustaw progi wezwania ciepła w kotle centralnym VT | po aktualizacji: ustaw swoje dawne wartości w VT |
 | Pokój poniżej progu mrozu nie może dostać ciepła (6 wariantów) | VT trzyma go zamkniętym; zobacz tekst |
 | Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
-| Auto-TPI nie może się uczyć w części stref | odznacz w VT „używany przez kocioł centralny” |
 | Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
 | Wtyczka nie może wstrzymać nauki w części stref | informacja |
 | Wtyczka nie mogła ponownie włączyć nauki w części stref | włącz naukę SmartPI |
@@ -1150,11 +1149,11 @@ stateDiagram-v2
         state "Grzanie" as Heating
         state "Grzanie przeciwmrozowe" as Frost
         [*] --> Idle
-        Idle --> Heating: strefy lub obiegi potrzebują ciepła, po opóźnieniu włączenia
+        Idle --> Heating: pomocnik VT włączony albo obieg prosi o ciepło
         Heating --> Idle: zapotrzebowanie zniknęło
         Idle --> Frost: pilnowana strefa poniżej progu mrozu
         Frost --> Idle: każda pilnowana strefa znów ciepła
-        Frost --> Heating: strefy potrzebują ciepła
+        Frost --> Heating: pomocnik VT włączony
     }
 
     Controlling --> HandedBack: utrata łączności, brak odpowiedzi stref, monitor zawodzi, blokada
@@ -1170,8 +1169,8 @@ stateDiagram-v2
 
 Uwagi do diagramu:
 
-- **Czeka** obejmuje każdą blokadę (brakujące ustawienie, wciąż skonfigurowany kocioł
-  centralny VT, start Home Assistant) i okres rozpoznania po starcie.
+- **Czeka** obejmuje każdą blokadę (brakujące ustawienie, kocioł centralny VT nieustawiony albo
+  przełączający sam kocioł, start Home Assistant) i okres rozpoznania po starcie.
   Polecenie, które wtyczka trzymała przed ponownym uruchomieniem, jest zachowywane albo od razu
   przywracane, bez czekania.
 - **Żadna strefa nie odpowiada** oddaje kocioł tylko tam, gdzie przejmuje działający termostat
@@ -1223,8 +1222,8 @@ domyślnie wyłączone.
 | Sterowanie (eksperymentalne) | włącza i wyłącza sterowanie; jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
 | Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
-| Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie — w miejsce czujnika kotła centralnego VT; przy zmianie wysyłane jest zdarzenie |
-| Wołające o ciepło, Moc wołających | wołające urządzenia (albo strefy) i zsumowana moc stref, każde obok swojego progu, tak jak pokazuje je kocioł centralny VT |
+| Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
+| Wołające o ciepło | pokoje wołające teraz i które to są |
 | Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, nieznana strefa, mróz bez nagrzewania i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
 | Wyzeruj zmierzone straty ciepła, Wyzeruj zmierzony próg grzania | zapominają zmierzone wartości budynku |
@@ -1269,7 +1268,7 @@ Najważniejsze — opisane, nie doradzane:
 | Najwyższa temperatura wody obiegu | 70 °C, gdy pole puste | ogranicza każdą nastawę w obiegach zasilanych prosto z kotła; kocioł może ją przekroczyć o własną histerezę |
 | Jej alarm za gorącej wody | maksimum + 5 K przez 10 min | tylko informacja; za wysoki przepuszcza prawdziwe przekroczenie bez słowa |
 | Korekta komfortu | wyłączona; po włączeniu do 3 K (najwyżej 10 K), rośnie najwyżej o 3 K na dobę | podnosi wodę dla pomieszczenia, które nie dochodzi do nastawy; ze strefami TPI może trzymać wodę wyżej i mnożyć starty palnika |
-| Opóźnienie włączenia | 0 s | czeka przed włączeniem grzania, dla wolnych zaworów; w tym czasie pomieszczenia nie dostają ciepła |
+| Pomocnik przełączany przez kocioł centralny VT | brak — wybierasz go | kocioł centralny VT decyduje przez niego; skierowany zamiast tego na kocioł dałby dwa kłócące się sterowniki |
 | Typ zapisu wybranego celu | nieznany — bez zapisu | trzeba zadeklarować „wygasa” albo „trzymany”; zła deklaracja zużywa pamięć kotła albo pozwala wartości wygasnąć |
 | Wartość przy oddaniu sterowania | brak — wpisywana razem ze skutkiem | ta sama liczba na jednym urządzeniu znaczy „własne sterowanie”, na innym „bez ciepła” |
 | Ochrona przed mrozem | wł. przy 5 °C, wył. przy 7 °C, każda strefa | grzeje tylko strefy, których grzejniki mogą przyjąć ciepło; strefa trzymana przez VT zamknięta dostaje zgłoszenie w Naprawach |
@@ -1364,7 +1363,7 @@ target:
 - Jeden kocioł na Home Assistant (jeden wpis). Bez pomp ciepła, zaworów i sterowania ciepłą wodą.
 - Sterowanie temperaturą wody wymaga przełącznika grzania wł./wył. (poza EMS-ESP); bramka z
   termostatem wł./wył. na zaciskach to tylko monitor.
-- Własny kocioł centralny VT musi być wyłączony, a Home Assistant raz uruchomiony ponownie.
+- Kocioł centralny VT musi być ustawiony, z poleceniami na pomocniku, za którym idzie wtyczka.
 - Prognozy są zapisywane, ale sterowanie jeszcze z nich nie korzysta.
 - W instalacji Home Assistant poza jego kontenerem albo obrazem systemu Home Assistant instaluje
   razem z wtyczką biblioteki integracji MQTT i OpenTherm Gateway, nawet jeśli nie używasz żadnej z
@@ -1380,4 +1379,5 @@ target:
    stan, dziennik i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
    Naprawach: oddaj kocioł ręcznie.
 3. Usuń ją w HACS (albo usuń jej folder) i uruchom ponownie Home Assistant.
-4. Aby wrócić do kotła centralnego VT, zaznacz go z powrotem w centralnej konfiguracji VT.
+4. Aby kocioł centralny VT znów sterował kotłem, skieruj jego polecenia z powrotem na kocioł w
+   centralnej konfiguracji VT.

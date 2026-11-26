@@ -478,6 +478,7 @@ def test_one_entity_for_two_signals_drops_the_later_one(stored: dict) -> None:
             "topology": "gateway_with_thermostat",
             "thermostat_kind": "opentherm",
             "curve": {"design_outdoor": -15, "design_flow": 55},
+            "vt_boiler_helper": "input_boolean.vt_boiler",  # I12
         },
     }
     config = EntryConfig.from_options(options)

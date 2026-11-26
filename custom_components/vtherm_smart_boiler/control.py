@@ -76,12 +76,14 @@ back included — its last command is given again at once, with its keep-alives,
 owed hand-back first, when every condition holds: V3 stored a last command, the stored wish is
 "control on" and the control switch entity is not disabled, no latch or internal error holds, the
 control options are those the boiler was taken with, the store could be read, and no blocker
-but Home Assistant starting holds (VT's central boiler unknown only within its grace, P-105).
+holds but Home Assistant starting or VT's central boiler settings not known yet — VT hands its
+thermostats over only once it starts them (I12).
 Until the write target and the boiler link are there nothing is written and the restore waits,
 within the recognition period; a link not yet reported declares no loss meanwhile (X2). A
 restore still waiting when the recognition period ends, or whose conditions fail meanwhile,
 gives way to the owed hand-back. With every zone unknown, the alarm "no zone known" and a repair
-issue (the monitor's too) tell the user; a demand criterion no zone can feed has its own alarm.
+issue (the monitor's too) tell the user; VT's decision unknown — its central boiler's helper
+neither on nor off — has its own alarm and repair issue.
 
 Control never stops heating silently: where a hand-back stops heating, the control switch says
 that frost protection rests on the boiler's own, and a room near freezing while control does
@@ -92,8 +94,15 @@ and outside the recognition period (decision 4).
 
 The comfort correction is shown on the control state and in diagnostics, and the "Reset comfort
 correction" button sets it to 0 in the running session — nothing saved, reloaded or handed back
-(answer J). VT's activation delay shows as the reason ``activation_delay`` and when heating will
-start (decision 5).
+(answer J).
+
+VT's central boiler decides whether the boiler heats (I12): its command switches a helper the user
+picked, whose state is read at every step — a change of it, and VT's central boiler event, bring a
+step at once. VT's activation delay, which that event announces, shows as the reason
+``activation_delay`` and when heating will start, until the helper turns on, the event says the
+boiler's state, or the delay has passed. Control is blocked without the helper, while VT's central
+boiler is not set, and while its commands switch anything but the helper (two controllers) — a
+repair issue then names the entity they switch.
 
 The control switch and control's entities stay available whatever the monitor does (P-02).
 
@@ -128,6 +137,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import probatio as vol  # voluptuous's successor in Home Assistant (2026.9; typed from 2026.10)
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import (
     CALLBACK_TYPE,
     CoreState,
@@ -169,12 +179,14 @@ from .control_config import (
     map_control_entities,
     rename_in_control,
     section_as_migrated,
+    vt_helper_valid,
     working_thermostat,
 )
 from .core.alarms import UNKNOWN_HOLD_S, fault_stops, follow_fault
 from .core.boiler_call import CallReason, boiler_call
 from .core.controller import (
-    HA_STARTING,
+    KEPT_IN_RECOGNITION,
+    VT_SETTINGS_UNKNOWN,
     BoilerCommand,
     ControlDecision,
     ControlInputs,
@@ -185,7 +197,7 @@ from .core.controller import (
     clock_start,
     reset_correction,
 )
-from .core.demand import CountBy, zone_wants_heat
+from .core.demand import zone_wants_heat
 from .core.guards import (
     PREVIOUS_EXEMPT_S,
     TOLERANCE_K,
@@ -274,7 +286,7 @@ from .core.relay import (
 )
 from .core.signal_check import OutdoorStatus, curve_sensor
 from .core.signals import Signal
-from .core.zone_watch import criteria_issue_due, in_recognition, no_zone_issue_due
+from .core.zone_watch import in_recognition, no_zone_issue_due, vt_unknown_issue_due
 from .core.zones import plausible_room
 from .transport.entities import (
     read_bounds,
@@ -300,7 +312,14 @@ from .transport.writers import (
     writer_services,
 )
 from .units import parse_binary
-from .vtherm_link import SMARTPI_DOMAIN, VThermLink
+from .vtherm_link import (
+    SMARTPI_DOMAIN,
+    VtBoilerCheck,
+    VThermLink,
+    central_boiler_event,
+    read_central_boiler_event,
+    vt_central_boiler,
+)
 
 if TYPE_CHECKING:
     from .coordinator import SmartBoilerCoordinator
@@ -413,15 +432,12 @@ ZONE_UNKNOWN_ALARM_S = 30 * 60.0  # a zone unknown this long is reported
 # so a flapping target (a Wi-Fi device dropping out every minute) is one warning, not one a
 # minute (provisional, K4).
 WRITE_RECOVERED_S = 5 * 60.0
-# VT's central boiler unknown — its central entry reloading — does not block control for this long
-# where it was known to be off at the step before (P-105; provisional, K4). A restorable store
-# after a restart stands for "known off just before": a session cannot run while it is on.
-VT_BOILER_GRACE_S = 600.0
-# VT's central boiler unknown this long while control is switched on — its central entry stuck in
-# a failed setup, its setting unreadable — raises a repair issue saying why control waits (P-20;
-# provisional, K4). Control stays blocked meanwhile: VT's manager may still switch the boiler.
-VT_CENTRAL_UNKNOWN_ISSUE_S = 600.0
-VT_CENTRAL_ISSUE = "vt_central_entry_not_running"
+# I12: VT's central boiler commands switch anything but the helper — two controllers: a repair
+# issue names the entity, with the way out for a relay VT switches today.
+VT_COMMAND_ISSUE = "vt_command_not_helper"
+# VT sends no event when it cancels its activation delay (``vtherm_link.central_boiler_event``),
+# so the wait shown ends at the latest this long after its end.
+VT_DELAY_SLACK_S = 60.0
 # Control switched on but waiting this long for the gateway's setpoint read-back to hold a value
 # — it does not take the boiler until then (P-21) — raises a repair issue saying so and what to
 # check: an error where a hand-back stops heating, as nothing heats meanwhile (Z4-10;
@@ -463,8 +479,12 @@ SMARTPI_SERVICE = "set_smartpi_learning"
 # Blockers found while running, besides those of the configuration (translation keys).
 RUNTIME_BLOCKERS = (
     "ha_starting",
-    "vt_central_boiler_active",
-    "vt_central_boiler_unknown",
+    # I12: the helper picked does not exist; VT's central boiler not set, or its commands switch
+    # anything but the helper; its settings not known yet (no thermostat handed over: transient).
+    "vt_boiler_helper_missing",
+    "vt_central_boiler_not_set",
+    "vt_command_not_helper",
+    VT_SETTINGS_UNKNOWN,
     "setpoint_outside_entity_range",
     "setpoint_unit_not_supported",
     "setpoint_step_too_coarse",
@@ -725,10 +745,10 @@ class ControlAlarm(StrEnum):
     HANDED_BACK_IN_FROST = "handed_back_in_frost"
     COMMANDS_LOST = "commands_lost"  # three lost commands within a day: information only
     CONFIRMATION_MISSING = "confirmation_missing"  # the read-back unknown for five minutes
-    # Decision 3: every zone unknown after the recognition period and the graces — nothing can
-    # ask for heat; and a demand criterion no known zone can feed (P-14). Neither has a reaction.
+    # Decision 3: every zone unknown after the recognition period and the graces, or VT's
+    # decision unknown (I12) — nothing can ask for heat. Neither has a reaction.
     NO_ZONE_KNOWN = "no_zone_known"
-    DEMAND_CRITERION_NO_DATA = "demand_criterion_no_data"
+    VT_DECISION_UNKNOWN = "vt_decision_unknown"
     # X8, the relay path only: the relay out of reach for five minutes (never a hand-back, R6).
     # Every path: no sign the boiler heats for 30 minutes — of the relay on (information, R12);
     # on the water paths, of heating commanded while a zone calls (decision 2 of 0.2.3).
@@ -807,15 +827,11 @@ class ControlStatus:
     frost_protection_by: str | None = None  # who keeps frost protection now (FrostProtection)
     ignored_targets: tuple[str, ...] = ()  # targets ignored from the start ("write ignored")
     unconfirmed_targets: tuple[str, ...] = ()  # targets whose confirmation is missing
-    # Blockers that do not count yet: VT's central boiler unknown within its grace (P-105).
-    blockers_waiting: tuple[str, ...] = ()
-    criteria_without_data: tuple[str, ...] = ()  # demand criteria no zone that heats can feed
-    zones_without_data: tuple[str, ...] = ()  # calling zones that feed no criterion (PB-23)
     correction: float = 0.0  # the comfort correction now, K (P-38)
     curve_room: float | None = None  # the curve's room temperature now, °C (G11 D)
     # The outdoor temperature the water was decided with, as the curve reads it (I10.3c), °C.
     curve_outdoor: float | None = None
-    activation_at: float | None = None  # when a start waiting VT's activation delay is due
+    activation_at: float | None = None  # when VT's central boiler's activation delay ends
     frost_closed_zones: tuple[str, ...] = ()  # watched rooms below the frost limit VT keeps closed
     # X8, the relay path (R15): the relay as seen ("on", "off", "other", "unreachable"), where
     # the command stands with it (``core.relay.RelayCheck``), whether the boiler shows it heats
@@ -832,21 +848,12 @@ class ControlStatus:
     unknown_alarms: frozenset[ControlAlarm] = frozenset()
     # Y4: SmartPI zones whose learning could not be switched back on for a day: no longer tried.
     learning_not_resumed: tuple[str, ...] = ()
-    # Whether the boiler is called for heat and why not, and the demand judged against its
-    # thresholds — what VT's central boiler shows (the user's decisions of 2026-10-14;
-    # ``core.boiler_call``). The count is of devices or zones, as ``count_by`` says; both it and
-    # the threshold are ``None`` with the count off.
+    # Whether the boiler is called for heat and why not (the user's decisions of 2026-10-14;
+    # ``core.boiler_call``), and the rooms that call — ``None`` with no zone known.
     boiler_called: bool | None = None
     call_reason: str | None = CallReason.NOT_CONTROLLING.value
     demand_count: int | None = None
-    count_threshold: int | None = None
-    count_by: str | None = None
-    demand_power_kw: float | None = None
-    power_threshold_kw: float | None = None
-    demand_opening: float | None = None
-    opening_threshold: float | None = None
     calling_zones: tuple[str, ...] = ()
-    active_devices: tuple[str, ...] = ()
 
     @property
     def confirmed_setpoint(self) -> float | None:
@@ -1026,14 +1033,11 @@ class ControlUnit:
         self._restore_pending = False
         self._taken_with: object = None
         self._link_seen = False
-        # P-105: VT's central boiler was known to be off at the last step, and since when it has
-        # been unknown after that.
-        self._vt_boiler_off = False
-        self._vt_boiler_unknown_since: float | None = None
-        # P-20: since when VT's central boiler has been unknown, whatever came before, and
-        # whether the repair issue telling of it is up.
-        self._vt_central_unknown_since: float | None = None
-        self._vt_central_issue = False
+        # I12: VT's activation delay as its event announced it — when, and how long — until the
+        # helper turns on, the event says the boiler's state, or it has passed; the entity VT's
+        # commands switch instead of the helper, named by the repair issue while it is up.
+        self._vt_delay: tuple[float, float] | None = None
+        self._vt_command_issue: str | None = None
         # Z4-10: since when control, switched on, has waited for the gateway's read-back, and
         # whether its repair issue is up.
         self._read_back_wait_since: float | None = None
@@ -1424,10 +1428,8 @@ class ControlUnit:
         if refused:
             _LOGGER.debug("The last command is not given again after the restart")
             return
-        self._vt_boiler_off = True  # a session cannot run while VT's central boiler is on
-        blockers = [blocker for blocker in self.blockers(now) if blocker != HA_STARTING]
+        blockers = [b for b in self.blockers(now) if b not in KEPT_IN_RECOGNITION]
         if blockers:
-            self._vt_boiler_off = False
             _LOGGER.info(
                 "The last command is not given again after the restart: %s", ", ".join(blockers)
             )
@@ -1511,6 +1513,7 @@ class ControlUnit:
                 self._hass, self._async_timer, timedelta(seconds=CONTROL_TICK_SECONDS)
             )
         )
+        self._follow_vt_boiler()
         # Hand back before Home Assistant stops its integrations: its shutdown jobs run before
         # the stop event (every supported version has them).
         self._stop_unsub = self._hass.async_add_shutdown_job(
@@ -1605,7 +1608,7 @@ class ControlUnit:
         self._show_frost_closed({})
         self._show_curve_too_low(())  # the next run tells again, after its own 3 hours
         self._show_store_issue(False)  # the next run tells again at its first write that fails
-        self._delete_vt_central_issue()  # the next run tells again, ten minutes on
+        self._show_vt_command_issue(None)  # the next run tells again at its first step
         self._delete_relay_issues()  # not during a planned stop; the next run tells again
         self._delete_read_back_issue()  # the next run tells again, once its wait has lasted
         self._delete_ignored_issue()  # the next session tries the command again
@@ -1688,9 +1691,9 @@ class ControlUnit:
 
     def _vt_blockers(self, now: float) -> list[str]:
         """What VT and Home Assistant say now: zones that are not VT's or sit on the boiler's
-        thermostat, Home Assistant starting, VT's central boiler. The monitoring period holds
-        nothing back: control may be switched on from the first day (the user's decision of
-        2026-10-08); the monitor's verdict is advice shown beside it."""
+        thermostat, Home Assistant starting, VT's central boiler and its helper (I12). The
+        monitoring period holds nothing back: control may be switched on from the first day (the
+        user's decision of 2026-10-08); the monitor's verdict is advice shown beside it."""
         config = self._coordinator.config
         found: list[str] = []
         link = self._coordinator.link
@@ -1706,13 +1709,136 @@ class ControlUnit:
             # VT starts its thermostats only once Home Assistant has started; `is_running` is
             # already true while it starts.
             found.append("ha_starting")
-        vt_boiler = self._coordinator.link.vt_central_boiler_configured()
-        if vt_boiler is None:
-            if not self._vt_boiler_in_grace(now):
-                found.append("vt_central_boiler_unknown")  # cannot be ruled out: wait
-        elif vt_boiler:
-            found.append("vt_central_boiler_active")
+        return found + self._vt_boiler_blockers()
+
+    def _vt_boiler_blockers(self) -> list[str]:
+        """I12: the helper picked exists — whether it is an ``input_boolean`` is the
+        configuration's own blocker; while Home Assistant starts, its helpers may not be set up
+        yet, which "Home Assistant is starting" covers; VT's central boiler is set, its commands
+        switching the helper alone (two controllers otherwise); its settings known — VT hands
+        them over with its thermostats, only once it starts them (transient)."""
+        helper = self.options.vt_boiler_helper
+        found: list[str] = []
+        running = self._hass.state is CoreState.running
+        if helper and running and self._hass.states.get(helper) is None:
+            found.append("vt_boiler_helper_missing")
+        settings = vt_central_boiler(self._hass)
+        if settings is None:
+            found.append(VT_SETTINGS_UNKNOWN)
+            return found
+        problem, _target = settings.check(helper)
+        # Without a helper picked, the configuration's own blocker says so; VT's commands are
+        # judged against one only once it is.
+        if problem is VtBoilerCheck.NOT_SET or (problem is not None and vt_helper_valid(helper)):
+            found.append(problem.value)
         return found
+
+    def _follow_vt_boiler(self) -> None:
+        """I12: a step at once when the helper changes state, or VT's central boiler event
+        arrives — heating follows VT's decision without waiting for the next tick."""
+        if self.hand_back_only:
+            return
+        helper = self.options.vt_boiler_helper
+        if helper:
+            self._unsubs.append(
+                async_track_state_change_event(self._hass, [helper], self._helper_changed)
+            )
+        self._unsubs.append(
+            self._hass.bus.async_listen(central_boiler_event(), self._vt_boiler_event)
+        )
+
+    @callback
+    def _helper_changed(self, event: Event[EventStateChangedData]) -> None:
+        old, new = event.data["old_state"], event.data["new_state"]
+        if (old.state if old is not None else None) == (new.state if new is not None else None):
+            return  # its attributes only
+        if new is not None and new.state == STATE_ON:
+            self._vt_delay = None  # VT's central boiler switched it on: its wait is over
+        self._request_step()
+
+    @callback
+    def _vt_boiler_event(self, event: Event) -> None:
+        """VT's central boiler event: its command went out (``central_boiler``), or its
+        activation delay starts (``delayed_activation_sec``), noted with when it came."""
+        said = read_central_boiler_event(event.data)
+        if said is None:
+            return  # nothing this version reads
+        if said.switched or said.delay_s is None:
+            self._vt_delay = None
+        else:
+            self._vt_delay = (dt_util.utcnow().timestamp(), said.delay_s)
+        self._request_step()
+
+    @callback
+    def _request_step(self) -> None:
+        """A step now, besides the clock's — in the event loop's next turn, not inside the state
+        change that asked for it; one waits while another runs (``_async_timer``)."""
+        if self._stopped or self._stopping:
+            return
+        self._coordinator.config_entry.async_create_background_task(
+            self._hass,
+            self._async_timer(dt_util.utcnow()),
+            "vtherm_smart_boiler step on VT",
+            eager_start=False,
+        )
+
+    def _vt_heat(self) -> bool | None:
+        """VT's decision: its central boiler's helper on, off, or neither — not known."""
+        helper = self.options.vt_boiler_helper
+        state = self._hass.states.get(helper) if helper else None
+        if state is None:
+            return None
+        return {STATE_ON: True, STATE_OFF: False}.get(state.state)
+
+    def _vt_delay_end(self, now: float) -> float | None:
+        """When VT's activation delay ends, while it runs: announced by VT's event, the helper
+        not on yet, and not passed — VT sends no event when it cancels a delay, so the wait
+        shown ends ``VT_DELAY_SLACK_S`` after its end at the latest (a clock set back ends it)."""
+        delay = self._vt_delay
+        if delay is None or self._vt_heat() is True:
+            return None
+        at, seconds = delay
+        end = at + seconds
+        if now < at or now > end + VT_DELAY_SLACK_S:
+            self._vt_delay = None
+            return None
+        return end
+
+    def _follow_vt_command_issue(self) -> None:
+        """I12: while VT's central boiler commands switch anything but the helper, a repair issue
+        names what they switch — for a relay VT switches today, the way out."""
+        settings = vt_central_boiler(self._hass)
+        helper = self.options.vt_boiler_helper
+        problem, target = (None, None)
+        if settings is not None and vt_helper_valid(helper):
+            problem, target = settings.check(helper)
+        self._show_vt_command_issue(target if problem is VtBoilerCheck.NOT_HELPER else None)
+
+    def _show_vt_command_issue(self, target: str | None) -> None:
+        if target == self._vt_command_issue:
+            return
+        issue_id = f"{VT_COMMAND_ISSUE}_{self._coordinator.config_entry.entry_id}"
+        ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+        self._vt_command_issue = target
+        if target is None:
+            return
+        helper = self.options.vt_boiler_helper or "-"
+        _LOGGER.warning(
+            "Versatile Thermostat's central boiler commands switch %s, not only the helper %s: "
+            "control waits, so two controllers never drive the boiler",
+            target,
+            helper,
+        )
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=VT_COMMAND_ISSUE,
+            translation_placeholders={"entity": target, "helper": helper},
+        )
 
     def _setpoint_entity_blockers(self) -> list[str]:
         """The setpoint entity's unit, grid and range (P-15)."""
@@ -1800,67 +1926,6 @@ class ControlUnit:
         ):
             return "mqtt_not_set_up"
         return None
-
-    def _vt_boiler_in_grace(self, now: float) -> bool:
-        """P-105: VT's central boiler unknown does not count as a blocker for
-        ``VT_BOILER_GRACE_S`` where it was known to be off at the step before — since X7 only
-        where VT's stored setting cannot settle it. Not while VT's central entry is stuck in a
-        failed setup: its manager may still switch the boiler (P-20)."""
-        if not self._vt_boiler_off:
-            return False
-        if self._coordinator.link.vt_central_entry_failed():
-            return False
-        since = self._vt_boiler_unknown_since
-        return since is None or now - clock_start(since, now) < VT_BOILER_GRACE_S
-
-    def _follow_vt_boiler(self, now: float) -> tuple[str, ...]:
-        """VT's central boiler at this step, for P-105's grace and P-20's issue; the blockers
-        that wait in the grace."""
-        configured = self._coordinator.link.vt_central_boiler_configured()
-        self._follow_vt_central_issue(now, configured)
-        if configured is not None:
-            self._vt_boiler_off = configured is False
-            self._vt_boiler_unknown_since = None
-            return ()
-        if self._vt_boiler_off and self._vt_boiler_unknown_since is None:
-            self._vt_boiler_unknown_since = now
-        return ("vt_central_boiler_unknown (grace)",) if self._vt_boiler_in_grace(now) else ()
-
-    def _follow_vt_central_issue(self, now: float, configured: bool | None) -> None:
-        """P-20: VT's central boiler unknown for ``VT_CENTRAL_UNKNOWN_ISSUE_S`` while control is
-        switched on raises a repair issue — a warning, not fixable — saying why control waits;
-        known again, or control switched off, it goes."""
-        if configured is not None:
-            self._vt_central_unknown_since = None
-        else:
-            self._vt_central_unknown_since = clock_start(self._vt_central_unknown_since, now)
-        since = self._vt_central_unknown_since
-        due = self.enabled and since is not None and now - since >= VT_CENTRAL_UNKNOWN_ISSUE_S
-        if due and not self._vt_central_issue:
-            _LOGGER.warning(
-                "Versatile Thermostat's central boiler cannot be ruled out: its central "
-                "configuration is not running and its settings do not say it is off, so control "
-                "waits"
-            )
-            ir.async_create_issue(
-                self._hass,
-                DOMAIN,
-                self._vt_central_issue_id(),
-                is_fixable=False,
-                is_persistent=False,
-                severity=ir.IssueSeverity.WARNING,
-                translation_key=VT_CENTRAL_ISSUE,
-            )
-            self._vt_central_issue = True
-        elif not due and self._vt_central_issue:
-            self._delete_vt_central_issue()
-
-    def _vt_central_issue_id(self) -> str:
-        return f"{VT_CENTRAL_ISSUE}_{self._coordinator.config_entry.entry_id}"
-
-    def _delete_vt_central_issue(self) -> None:
-        ir.async_delete_issue(self._hass, DOMAIN, self._vt_central_issue_id())
-        self._vt_central_issue = False
 
     def _grid(self) -> Grid | None:
         """The setpoint entity's grid (P-15), on the entity path; ``None`` elsewhere or without
@@ -2063,11 +2128,11 @@ class ControlUnit:
         the restore, the relay; then the issues and alarms that follow, and the status."""
         if not await self._async_ready_to_decide(now):
             return
-        waiting = self._follow_vt_boiler(now)
         blockers = self.blockers(now)
         monitor_failed = "monitor_failed" in blockers
-        # Home Assistant starting alone does not stop a command kept or restored (decision 3).
-        if self._enabled_now() and set(blockers) <= {HA_STARTING} and self._writer is None:
+        # Home Assistant starting, or VT's settings not known yet, alone does not stop a command
+        # kept or restored (decision 3).
+        if self._enabled_now() and set(blockers) <= KEPT_IN_RECOGNITION and self._writer is None:
             self._writer = self._writer_factory(self._hass, self.options)
         zones = self._coordinator.link.zones()
         snapshot = self._coordinator.transport.snapshot(now)
@@ -2091,6 +2156,7 @@ class ControlUnit:
             await self._async_follow_relay(now, out)
         self._follow_step_issues(now, out, monitor_failed)
         self._follow_stopped_heating(now, blockers)
+        self._follow_vt_command_issue()
         self._follow_frost(now, zones)
         self._follow_frost_closed(out.decision.frost_closed, zones)
         self._follow_curve_too_low(out.decision)
@@ -2145,13 +2211,10 @@ class ControlUnit:
             frost_protection_by=self._frost_protection_shown(),
             ignored_targets=ignored,
             unconfirmed_targets=out.unconfirmed,
-            blockers_waiting=waiting,
-            criteria_without_data=out.decision.criteria_without_data,
-            zones_without_data=out.decision.zones_without_data,
             correction=out.decision.correction,
             curve_room=out.decision.curve_room,
             curve_outdoor=out.decision.effective_outdoor,
-            activation_at=out.decision.activation_at,
+            activation_at=self._vt_delay_end(now),
             frost_closed_zones=tuple(self._frost_issue_shown),
             relay_state=relay_state,
             relay_check=relay_shown,
@@ -2272,17 +2335,14 @@ class ControlUnit:
         decision = out.decision
         for flagged, alarm in (
             # Decision 3: nothing can ask for heat — every zone unknown after the recognition
-            # period and the graces, or the zones known and no criterion judged (PB-03); a
-            # criterion no zone that heats can feed (P-14), or a calling zone that feeds none
-            # (PB-23).
-            (
-                self.enabled and (decision.zones_unknown or decision.no_criterion_judged),
-                ControlAlarm.NO_ZONE_KNOWN,
-            ),
+            # period and the graces, or the zones known and VT's decision unknown (PB-03, I12).
+            (self.enabled and decision.zones_unknown, ControlAlarm.NO_ZONE_KNOWN),
+            # Not while a blocker keeps control from deciding: the blocker says why.
             (
                 self.enabled
-                and bool(decision.criteria_without_data or decision.zones_without_data),
-                ControlAlarm.DEMAND_CRITERION_NO_DATA,
+                and decision.vt_unknown
+                and Reason.PRECONDITION not in decision.reasons,
+                ControlAlarm.VT_DECISION_UNKNOWN,
             ),
             # Every topology, whenever the switch is on and the link is lost — whatever a
             # blocker, a latch or a restart shows (P-08): control hands back if it held the
@@ -2356,7 +2416,7 @@ class ControlUnit:
         if not self._restore_pending:
             return
         control = self._session.loop.control
-        blocked = [blocker for blocker in blockers if blocker != HA_STARTING]
+        blocked = [blocker for blocker in blockers if blocker not in KEPT_IN_RECOGNITION]
         failed = not self._enabled_now() or control.latched or self._session.failed or bool(blocked)
         if control.controlling and not failed:
             return  # the core holds it: the first write that goes through completes it
@@ -2386,23 +2446,23 @@ class ControlUnit:
 
     def _follow_no_zone_known(self, now: float, decision: ControlDecision) -> None:
         """Decision 3's repair issue once every configured zone has been unknown for ten
-        minutes — or, the zones known, no configured criterion could be judged for as long,
-        the issue then naming the criteria (PB-03) — whatever control does: what it says follows
-        what control does then — the usual "off", the hand-back to a working thermostat, or only
-        the monitor. It goes the step a zone answers or a criterion has data again; a
-        recognition period (VT reloading) decides nothing new, so it leaves the issue as it is."""
+        minutes — whatever control does: what it says follows what control does then — the
+        usual "off", the hand-back to a working thermostat, or only the monitor — or, the zones
+        known, once VT's decision has been unknown for as long while control acts on it (PB-03,
+        I12: with control blocked, its blockers say why). It goes the step a zone or the helper
+        answers again; a recognition period (VT reloading) decides nothing new, so it leaves the
+        issue as it is."""
         watch = self._session.loop.control.zones
         if in_recognition(watch) and not no_zone_issue_due(watch, now):
             return
         kind: str | None = None
-        criteria: tuple[str, ...] = ()
-        if no_zone_issue_due(watch, now) or criteria_issue_due(watch, now):
-            kind = "monitor"
-            if Reason.ZONES_UNKNOWN in decision.reasons:
-                kind = "handed_back" if working_thermostat(self.options) else "off"
-            if not decision.zones_unknown:
-                criteria = decision.criteria_without_data
-        self._coordinator.report_no_zone_known(kind, criteria)
+        acting = Reason.ZONES_UNKNOWN in decision.reasons
+        effect = "handed_back" if working_thermostat(self.options) else "off"
+        if no_zone_issue_due(watch, now):
+            kind = effect if acting else "monitor"
+        elif vt_unknown_issue_due(watch, now) and acting:
+            kind = f"vt_{effect}"
+        self._coordinator.report_no_zone_known(kind)
 
     def _follow_read_back_wait(self, now: float, reasons: Sequence[Reason]) -> None:
         """Z4-10 (P-21): control switched on does not take the boiler until the gateway's setpoint
@@ -3287,6 +3347,9 @@ class ControlUnit:
             outdoor_sensor=sensor,
             outdoor_weather=weather,
             zones=tuple(zones),
+            # I12: VT's decision, and whether VT's central boiler waits its activation delay.
+            vt_heat=self._vt_heat(),
+            vt_delay=self._vt_delay_end(now) is not None,
             boiler_fault=self._boiler_fault(now, snapshot),
             starts=coordinator.heating_starts(now),
             # I8 (decision F3): circuits run by other automation — whether each asks (an
@@ -4527,38 +4590,24 @@ class ControlUnit:
     def _call_shown(
         self, now: float, zones: Sequence[ZoneState], decision: ControlDecision
     ) -> dict[str, Any]:
-        """Whether the boiler is called and why not, and the demand judged against the
-        thresholds, as VT's central boiler shows its own (2026-10-14): the count of devices or
-        zones as configured — ``None`` with no zone known —, the zones' mean power summed, the
-        widest opening; the zones calling and their devices VT lists active."""
+        """Whether the boiler is called and why not, and the rooms that call: their count —
+        ``None`` with no zone known — and which they are."""
         demand = decision.demand
-        config = self.options.loop.control.demand
         max_age = self.options.loop.control.zone_max_age_s
         calling = [z for z in zones if z.is_known(now, max_age) and zone_wants_heat(z)]
         call = boiler_call(decision.mode, decision.reasons, 0 if demand is None else len(calling))
-        counting = config.count_threshold > 0
-        count: int | None = None
-        if demand is not None and demand.fresh_zones > 0:
-            by_devices = config.count_by is CountBy.DEVICES
-            count = demand.devices_wanting if by_devices else demand.zones_wanting
+        known = demand is not None and demand.fresh_zones > 0
         return {
             "boiler_called": call.called,
             "call_reason": None if call.reason is None else call.reason.value,
-            "demand_count": count,
-            "count_threshold": config.count_threshold if counting else None,
-            "count_by": config.count_by.value if counting else None,
-            "demand_power_kw": None if demand is None else demand.summed_power_kw,
-            "power_threshold_kw": config.power_threshold_kw,
-            "demand_opening": None if demand is None else demand.widest_opening,
-            "opening_threshold": config.opening_threshold,
+            "demand_count": demand.zones_wanting if demand is not None and known else None,
             "calling_zones": tuple(z.zone_id for z in calling),
-            "active_devices": tuple(sorted({d for z in calling for d in z.devices_active or ()})),
         }
 
     def _fire_boiler_call(self, before: ControlStatus | None, now: ControlStatus) -> None:
-        """The event VT's central boiler fires (2026-10-14): when the boiler's call changes, and
-        when a start begins to wait VT's activation delay — with whether it is called, why not,
-        and when a pending start is due."""
+        """The plugin's own event (2026-10-14): when the boiler's call changes, and when VT's
+        central boiler begins to wait its activation delay — with whether it is called, why not,
+        and when the delay ends."""
         called = None if before is None else before.boiler_called
         waiting = CallReason.ACTIVATION_DELAY.value
         starts = now.call_reason == waiting and (before is None or before.call_reason != waiting)

@@ -68,7 +68,7 @@ async def async_setup_entry(
         entities.append(LongBurnSensor(coordinator))
     if coordinator.control is not None:
         entities.append(ControlStateSensor(coordinator))  # control removed: its state goes
-        entities.append(BoilerCalledSensor(coordinator))  # VT's central boiler sensor's place
+        entities.append(BoilerCalledSensor(coordinator))  # whether the boiler is called
         # Each path's own alarms (R15): the relay's only on the relay path, the boiler link's
         # and the missing confirmation not there; each only where its feature is not inactive.
         kinds = control_alarms_for(coordinator.control.options)
@@ -290,10 +290,10 @@ class OutdoorSensorProblem(SmartBoilerEntity, BinarySensorEntity):
 
 
 class BoilerCalledSensor(ControlEntity, BinarySensorEntity):
-    """On while the plugin calls the boiler for space heating, frost protection included — what
-    VT's central boiler sensor shows (the user's decisions of 2026-10-14); off while it controls
+    """On while the plugin calls the boiler for space heating, frost protection included (the
+    user's decisions of 2026-10-14); off while it controls
     the boiler and does not call it; unknown while it does not control it, or cannot tell yet.
-    Why not, and the demand against its thresholds, in its attributes."""
+    Why not, and the rooms calling, in its attributes."""
 
     _unrecorded_attributes = DEMAND_ATTRIBUTES
 
@@ -314,9 +314,8 @@ class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
     """A control alarm: a write failed or was ignored from the start, commands keep getting lost,
     the boiler's confirmation is missing, another controller changed a value, a hand-back failed,
     the boiler link was lost, control stopped on an internal error, a room is near freezing
-    while a hand-back that stops heating holds, no zone answers, or a demand criterion no zone
-    can feed. "Write ignored" and "confirmation missing" name their targets, the criterion
-    alarm its criteria."""
+    while a hand-back that stops heating holds, no zone answers, or VT's decision is unknown.
+    "Write ignored" and "confirmation missing" name their targets."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -338,16 +337,4 @@ class ControlAlarmSensor(ControlEntity, BinarySensorEntity):
             return {"targets": list(status.ignored_targets)}
         if self.kind is ControlAlarm.CONFIRMATION_MISSING:
             return {"targets": list(status.unconfirmed_targets)}
-        if self.kind is ControlAlarm.DEMAND_CRITERION_NO_DATA:
-            return {
-                "criteria": list(status.criteria_without_data),
-                "criteria_text": coded_text(
-                    self.coordinator,
-                    "binary_sensor",
-                    self.key,
-                    "criteria",
-                    status.criteria_without_data,
-                ),
-                "zones": list(status.zones_without_data),  # calling, seen by none (PB-23)
-            }
         return None

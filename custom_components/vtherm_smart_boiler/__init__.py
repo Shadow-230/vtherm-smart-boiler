@@ -29,6 +29,8 @@ KIND_ISSUE = "thermostat_kind_missing"
 REMOVED_ISSUE = "entity_removed"
 # Y1's migration: stored alarm reactions decision 7 no longer offers were removed (a warning).
 REACTIONS_REMOVED_ISSUE = "reactions_removed"
+# I12's migration: demand settings VT's central boiler must be given now were set (a warning).
+VT_SETTINGS_ISSUE = "vt_settings_moved"
 # The issues a control unit raises for a hand-back without a latch (decision 7, Y1).
 HAND_BACK_ISSUES = ("hand_back_boiler_link_lost", "hand_back_control_error")
 # SB-10 (decision 12): a setup that failed where the house goes unheated — one issue per entry,
@@ -65,14 +67,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SmartBoilerConfigEntry) 
     from .coordinator import SmartBoilerCoordinator
     from .journal import Journal
     from .panel import async_add_cards, async_remove_cards
-    from .vtherm_link import vt_run
     from .websocket_api import async_setup_websocket
 
     try:
         async_setup_websocket(hass)  # the Boiler page's commands (I10.2), once per run
     except Exception:  # the page's matter: the monitor, control and a hand-back owed go on
         logging.getLogger(__name__).exception("The Boiler page's commands could not be registered")
-    vt_run(hass)  # this run's record for VT's restart latch, begun at the first setup (decision 9)
     try:
         # A control section that cannot be used leaves control out, not the whole entry: the
         # monitor keeps running, and a hand-back still owed goes out.
@@ -334,7 +334,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.minor_version < 20:
         _migrate_circuit_zones(hass, entry)
     if entry.minor_version < 21:
-        _migrate_count_by(hass, entry)
+        # The count by zones written here once went with I12's demand settings (22).
+        hass.config_entries.async_update_entry(entry, minor_version=21)
+    if entry.minor_version < 22:
+        _migrate_vt_decides(hass, entry)
     return True
 
 
@@ -686,17 +689,33 @@ def _migrate_circuit_zones(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options=options, minor_version=20)
 
 
-def _migrate_count_by(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Minor version 21 (the user's decision of 2026-10-14): the count criterion counts VT's
-    devices by default, as VT's central boiler. A control section from before counted zones,
-    and keeps that: "zones" is written into it unless it holds an answer. An entry without
-    control gets the new default once control is set up."""
-    from .control_config import with_count_by
+def _migrate_vt_decides(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I12 (minor version 22, the user's decision of 2026-11-25): VT's central boiler decides
+    whether the boiler heats, with its own thresholds and activation delay; the plugin's demand
+    settings go from the control section. Where one was set that VT's central boiler must now be
+    given — a power or opening threshold, a count above 1, an activation delay above 0 — one
+    warning issue says so, with the values."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .control_config import vt_settings_set, without_vt_settings
 
     options = dict(entry.options)
-    if has_control_section(options):
-        options[CONTROL] = with_count_by(options[CONTROL])
-    hass.config_entries.async_update_entry(entry, options=options, minor_version=21)
+    control = options.get(CONTROL)
+    moved = vt_settings_set(control) if has_control_section(options) else {}
+    if isinstance(control, Mapping):
+        options[CONTROL] = without_vt_settings(control)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=22)
+    if moved:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"{VT_SETTINGS_ISSUE}_{entry.entry_id}",
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=VT_SETTINGS_ISSUE,
+            translation_placeholders=moved,
+        )
 
 
 def _stored_float(raw: Any, default: float) -> float:
@@ -879,11 +898,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "wall_thermostat_fallback",  # the wall thermostat on a gateway set low (X6)
         "lowest_water_suggestion",  # the lowest water temperature's suggestion (X6)
         "control_options_invalid",
-        "auto_tpi_blocked",
         "learning_not_paused",
         "zone_cycle_short",  # VT zones cycling under 10 min while controlling (K4)
         "learning_not_resumed",  # SmartPI resumes given up after a day (Y4)
-        "vt_central_entry_not_running",  # VT's central entry not running (X7)
+        "vt_command_not_helper",  # VT's central boiler commands switch anything else (I12)
         UNREADABLE_ISSUE,
         NOT_HEATED_ISSUE,  # a failed setup left the house unheated (SB-10)
         # Y1: the notifications (a reload keeps them), the hand-back issues, the migration's.
@@ -894,6 +912,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "boiler_fault",
         *HAND_BACK_ISSUES,
         REACTIONS_REMOVED_ISSUE,
+        VT_SETTINGS_ISSUE,
         # P-94: the installation's warnings (Y3).
         *(f"{INSTALLATION_ISSUE}_{code.value}" for code in INSTALLATION_WARNINGS),
     ):

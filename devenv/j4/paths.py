@@ -17,7 +17,7 @@ from itertools import pairwise
 from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from run import SCENARIOS, ZONES, Run, main
+from run import _NO_PLUGIN_DELAY, SCENARIOS, ZONES, NotRun, Run, main
 from walk import save_options
 
 RELAY = "switch.boiler_sim_relay"
@@ -243,6 +243,7 @@ async def R5(r: Run):
 
 async def R6(r: Run):
     """VT's activation delay of 120 s on the relay path"""
+    raise NotRun(_NO_PLUGIN_DELAY)
     d = await options_walk(r, {"control_behaviour": {"activation_delay_s": 120}})
     r.note(f"options {d.get('type')} {d.get('errors')}")
     try:
@@ -658,6 +659,7 @@ async def R17(r: Run):
 
 async def R18(r: Run):
     """VT's activation delay of 120 s on the relay path: a start waits for it"""
+    raise NotRun(_NO_PLUGIN_DELAY)
     try:
         d = await options_walk(r, {"control_behaviour": {"activation_delay_s": 120}})
         if d.get("errors"):

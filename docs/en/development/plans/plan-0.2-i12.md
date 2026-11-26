@@ -196,12 +196,15 @@ The zone matched by its declared `entity_id`; only what is still needed, from th
 the rooms read at each refresh and water decision; their details kept in the plugin's own store
 for about 8 days. The attribute fallback and parser go.
 
-#### I12.8 VT decides whether to heat
+#### I12.8 VT decides whether to heat ✅
 
 Decision 1: the helper setting, following its state and `CENTRAL_BOILER_EVENT`; the plugin's own
 demand, VT's delay carried over and their settings removed (a repair notice for a saved power or
 opening threshold); the blockers turned round; a hint for a relay VT commands today; a check that
 every room is marked "used by the central boiler"; the Auto-TPI notices removed.
+Done 2026-11-26, but for the check that every room is marked: it moves to I12.11, where the rooms
+come from VT. The relay pre-fill from VT's commands went; the repair issue for a command that
+switches anything but the helper names the relay's way out.
 
 #### I12.9 No learning pauses, no water interface
 

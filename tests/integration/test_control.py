@@ -36,6 +36,7 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     MockModule,
+    async_capture_events,
     async_fire_mqtt_message,
     async_fire_time_changed,
     mock_integration,
@@ -43,7 +44,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.vtherm_smart_boiler import control as control_module
-from custom_components.vtherm_smart_boiler.const import DOMAIN, SUMMARY_SECONDS
+from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.control_config import (
     CONTROL_DEFAULTS,
     MIGRATED_HARD_MIN,
@@ -52,19 +53,24 @@ from custom_components.vtherm_smart_boiler.core.alarms import AlarmKind
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.signal_check import Feature, FeatureStatus
 from custom_components.vtherm_smart_boiler.core.signals import Signal
-from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN
+from custom_components.vtherm_smart_boiler.vtherm_link import (
+    register_thermostat,
+    unregister_thermostat,
+)
 
 from . import control_chain
 from .harness import (
     BOILER_ENTITIES,
+    VT_HELPER,
     VT_PLATFORM,
     WEATHER_ENTITY,
     FakeBoiler,
     FakeForecasts,
+    FakeVtThermostat,
     FakeZones,
     ServiceSpy,
     analyse_now,
-    ha_started,
+    vt_central_settings,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -319,6 +325,8 @@ def options(zones: FakeZones, **control: Any) -> dict[str, Any]:
         # Manual, as an entry from before G11 D runs: the curve through 20 °C (Auto's own tests
         # give the mode).
         "curve": {"design_outdoor": -15, "design_flow": 55, "room_mode": "manual"},
+        # I12: the helper VT's central boiler switches (the harness's stand-in).
+        "vt_boiler_helper": zones.helper,
     } | control
     if "thermostat_kind" not in control:
         kind = FITTING_KIND.get(control_options["topology"])
@@ -1116,22 +1124,306 @@ async def test_a_failing_write_raises_an_alarm(rig: Rig) -> None:
     assert rig.state("binary_sensor", "alarm_write_failed").state == "on"
 
 
-async def test_vt_central_boiler_blocks_control(rig: Rig) -> None:
-    hass = rig.hass
+# --- I12: VT's central boiler decides whether the boiler heats ----------------------------------
+
+
+def heating_on(rig: Rig) -> bool | None:
+    return rig.state("sensor", "control_state").attributes["heating_on"]
+
+
+async def test_vts_helper_drives_heating_both_ways_at_once(rig: Rig) -> None:
+    """I12: VT's central boiler switches its helper; heating follows it at once — a step without
+    waiting for the clock (writes at least 5 s apart, MIN_WRITE_INTERVAL_S) — whatever the rooms
+    show: off with a room calling ("rooms call, VT's central boiler does not"), on with none
+    (VT's own thresholds count what the plugin does not see)."""
     await start(rig)
     await rig.switch(True)
-    boiler = er.async_get(hass).async_get_or_create(
-        "binary_sensor", VT_PLATFORM, "central_boiler_state"
-    )
-    hass.states.async_set(boiler.entity_id, "off", {"is_central_boiler_configured": True})
     await rig.advance(10)
-    assert rig.gateway.calls[-1] == ("setpoint", 0.0)
-    blockers = rig.state("binary_sensor", "control").attributes["blockers"]
-    assert "vt_central_boiler_active" in blockers
-    await rig.switch(False)
+    assert heating_on(rig) is True  # the room calls; the helper follows it (the harness)
+    rig.freezer.tick(6)
+    rig.zones.set_helper("off")
+    await rig.hass.async_block_till_done(wait_background_tasks=True)  # no tick
+    state = rig.state("sensor", "control_state")
+    assert state.attributes["heating_on"] is False
+    assert "no_demand" in state.attributes["reasons"]
+    called = rig.state("binary_sensor", "boiler_called")
+    assert called.state == "off"
+    assert called.attributes["call_reason"] == "below_threshold"
+    assert called.attributes["demand_count"] == 1
+    rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
+    rig.freezer.tick(6)
+    rig.zones.set_helper("on")
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    assert heating_on(rig) is True
+    assert rig.state("binary_sensor", "boiler_called").state == "on"
+    assert rig.state("sensor", "demand_count").state == "0"
+
+
+@pytest.mark.parametrize("helper", ["unknown", "unavailable"])
+@pytest.mark.parametrize(
+    ("topology", "effect"), [("gateway_standalone", "off"), ("gateway_with_thermostat", "back")]
+)
+async def test_vts_decision_unknown_is_decision_3s_end_state(
+    rig: Rig, helper: str, topology: str, effect: str
+) -> None:
+    """Decision 3 (I12): the helper neither on nor off while the rooms are known — nothing can
+    ask for heat: stand-alone the usual "off", with a thermostat on the gateway the boiler is
+    handed to it; the alarm "VT's decision unknown" at once, its repair issue after ten minutes.
+    Both go the step the helper reads on or off again."""
+    await start(rig, topology=topology)
+    await rig.switch(True)
+    await rig.advance(30)
+    rig.zones.set_helper(helper)
+    await rig.advance(30)
+    state = rig.state("sensor", "control_state")
+    assert "zones_unknown" in state.attributes["reasons"]
+    if effect == "off":
+        assert state.state == "idle"
+        assert state.attributes["heating_on"] is False
+    else:
+        assert state.state == "handed_back"
+    assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "on"
+    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
+    reason = "waiting_data" if effect == "off" else "not_controlling"
+    assert rig.state("binary_sensor", "boiler_called").attributes["call_reason"] == reason
+    assert issue(rig, "no_zone_known") is None
+    await rig.advance(600)
+    found = issue(rig, "no_zone_known")
+    assert found is not None
+    kind = "off" if effect == "off" else "handed_back"
+    assert found.translation_key == f"vt_decision_unknown_{kind}"
+    assert found.translation_placeholders == {"helper": rig.zones.helper}
+    severity = ir.IssueSeverity.ERROR if effect == "off" else ir.IssueSeverity.WARNING
+    assert found.severity is severity
+    rig.zones.set_helper("on")
+    await rig.advance(20)
+    assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "off"
+    assert issue(rig, "no_zone_known") is None
+    assert heating_on(rig) is True
+
+
+async def test_vts_decision_unknown_with_control_off_raises_no_issue(rig: Rig) -> None:
+    """Negative: with control switched off the helper unknown raises neither the alarm nor the
+    issue — nothing acts on it."""
+    await start(rig)
+    rig.zones.set_helper("unknown")
+    await rig.advance(700)
+    assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "off"
+    assert issue(rig, "no_zone_known") is None
+
+
+@pytest.mark.parametrize("path", ["water", "relay"])
+async def test_vts_activation_delay_is_shown_from_its_event(rig: Rig, path: str) -> None:
+    """I12: VT's event announcing its activation delay, the helper still off: "off", with the
+    reason ``activation_delay`` and when the delay ends — on the control state, the heat-call
+    sensor and the plugin's own event. It ends when the helper turns on, when VT's event says
+    its command went out, or a minute after its end (VT says nothing when it cancels it)."""
+    from custom_components.vtherm_smart_boiler.const import BOILER_CALL_EVENT
+
+    if path == "relay":
+        await start_relay(rig)
+    else:
+        await start(rig)
+    events = async_capture_events(rig.hass, BOILER_CALL_EVENT)
+    await rig.switch(True)
+    rig.zones.set_helper("off")
+    await rig.advance(20)
+    sent = dt_util.utcnow().timestamp()
+    rig.hass.bus.async_fire(
+        "versatile_thermostat_central_boiler_event", {"delayed_activation_sec": 120}
+    )
+    await rig.hass.async_block_till_done(wait_background_tasks=True)
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" in state.attributes["reasons"]
+    due = datetime.fromisoformat(state.attributes["activation_at"]).timestamp()
+    assert due == pytest.approx(sent + 120.0)
+    called = rig.state("binary_sensor", "boiler_called")
+    assert called.attributes["call_reason"] == "activation_delay"
+    assert events[-1].data["call_reason"] == "activation_delay"
+    assert events[-1].data["activation_at"] is not None
+    rig.hass.bus.async_fire("versatile_thermostat_central_boiler_event", {"central_boiler": False})
+    await rig.advance(10)
+    assert rig.state("sensor", "control_state").attributes["activation_at"] is None
+    rig.hass.bus.async_fire(
+        "versatile_thermostat_central_boiler_event", {"delayed_activation_sec": 60}
+    )
+    await rig.advance(10)
+    assert rig.state("sensor", "control_state").attributes["activation_at"] is not None
+    await rig.advance(130)  # its end and the minute after: VT cancelled it silently
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" not in state.attributes["reasons"]
+    assert state.attributes["activation_at"] is None
+    rig.hass.bus.async_fire(
+        "versatile_thermostat_central_boiler_event", {"delayed_activation_sec": 120}
+    )
+    await rig.advance(10)
+    rig.zones.set_helper("on")
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" not in state.attributes["reasons"]
+    assert state.attributes["activation_at"] is None
+    assert "demand" in state.attributes["reasons"]
+    assert rig.state("binary_sensor", "boiler_called").state == "on"
+
+
+@pytest.mark.parametrize(
+    "data", [{}, {"delayed_activation_sec": 0}, {"delayed_activation_sec": "x"}, {"other": 1}]
+)
+async def test_a_vt_event_this_version_does_not_read_changes_nothing(rig: Rig, data: dict) -> None:
+    """Negative: VT's event without its two keys, or with a delay that is no positive number of
+    seconds, shows no delay."""
+    await start(rig)
+    await rig.switch(True)
+    rig.zones.set_helper("off")
+    await rig.advance(20)
+    rig.hass.bus.async_fire("versatile_thermostat_central_boiler_event", data)
+    await rig.advance(10)
+    state = rig.state("sensor", "control_state")
+    assert "activation_delay" not in state.attributes["reasons"]
+    assert state.attributes["activation_at"] is None
+
+
+@pytest.mark.parametrize("helper", [None, "switch.boiler"])
+async def test_without_an_input_boolean_helper_control_is_blocked(
+    rig: Rig, helper: str | None
+) -> None:
+    """I12: no helper picked, or one of another kind — a blocker of the configuration's, and
+    switching on is refused with its text."""
+    await start(rig, vt_boiler_helper=helper)
+    await rig.advance(10)
+    assert "no_vt_boiler_helper" in blockers(rig)
+    assert "vt_command_not_helper" not in blockers(rig)  # named once a helper is picked
     with pytest.raises(ServiceValidationError) as err:
         await rig.switch(True)
-    assert err.value.translation_key == "blocked_vt_central_boiler_active"
+    assert err.value.translation_key == "blocked_no_vt_boiler_helper"
+
+
+async def test_a_helper_that_is_gone_blocks_control(rig: Rig) -> None:
+    """I12: the helper picked no longer exists — blocked, handed back if control held the
+    boiler; back, control resumes. Negative: with the harness's helper nothing blocks."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    assert not {b for b in blockers(rig) if "vt" in b}
+    rig.zones.set_helper(None)
+    await rig.advance(10)
+    assert "vt_boiler_helper_missing" in blockers(rig)
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)  # handed back
+    rig.zones.set_helper("on")
+    await rig.advance(20)
+    assert "vt_boiler_helper_missing" not in blockers(rig)
+    assert heating_on(rig) is True
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"use_central_boiler_feature": False},
+        {"central_boiler_activation_service": ""},
+        {"central_boiler_deactivation_service": None},
+    ],
+    ids=["unticked", "no_activation", "no_deactivation"],
+)
+async def test_vts_central_boiler_not_set_blocks_control(rig: Rig, changes: dict) -> None:
+    """I12: VT's central boiler unticked, or without one of its commands — with one only, VT
+    counts it as configured, but the helper would never turn back — blocks control, and
+    switching on is refused with its text."""
+    await start(rig)
+    vt_central_boiler(rig, True, **changes)
+    await rig.advance(10)
+    assert "vt_central_boiler_not_set" in blockers(rig)
+    with pytest.raises(ServiceValidationError) as err:
+        await rig.switch(True)
+    assert err.value.translation_key == "blocked_vt_central_boiler_not_set"
+    vt_central_boiler(rig, True)
+    await rig.advance(10)
+    assert "vt_central_boiler_not_set" not in blockers(rig)
+
+
+@pytest.mark.parametrize(
+    ("command", "named"),
+    [
+        ("switch.boiler_relay/switch.turn_on", "switch.boiler_relay"),
+        ("climate.boiler/climate.set_hvac_mode/hvac_mode:heat", "climate.boiler"),
+        (f"{VT_HELPER}/input_boolean.toggle", VT_HELPER),
+        (f"{VT_HELPER}/input_boolean.turn_off", VT_HELPER),
+        ("not a command", "not a command"),
+    ],
+    ids=["a_relay", "a_boiler_thermostat", "toggled", "reversed", "unreadable"],
+)
+async def test_vts_commands_on_anything_but_the_helper_block_and_name_it(
+    rig: Rig, command: str, named: str
+) -> None:
+    """I12: VT's activation command switching anything but the helper on — two controllers —
+    blocks control and raises a repair issue naming what it switches, with the way out for a
+    relay; set right, both go."""
+    await start(rig)
+    await rig.switch(True)
+    await rig.advance(10)
+    vt_central_boiler(rig, True, central_boiler_activation_service=command)
+    await rig.advance(10)
+    assert "vt_command_not_helper" in blockers(rig)
+    assert rig.gateway.calls[-1] == ("setpoint", 0.0)  # handed back
+    found = issue(rig, "vt_command_not_helper")
+    assert found is not None
+    assert found.translation_placeholders == {"entity": named, "helper": rig.zones.helper}
+    assert found.severity is ir.IssueSeverity.WARNING
+    vt_central_boiler(rig, True)
+    await rig.advance(20)
+    assert "vt_command_not_helper" not in blockers(rig)
+    assert issue(rig, "vt_command_not_helper") is None
+
+
+async def test_the_commands_issue_goes_with_the_unit(rig: Rig) -> None:
+    """The repair issue of VT's commands goes when the entry unloads; the next run tells again
+    at its first step."""
+    await start(rig)
+    vt_central_boiler(rig, True, central_boiler_deactivation_service="switch.x/switch.turn_off")
+    await rig.advance(10)
+    assert issue(rig, "vt_command_not_helper") is not None
+    assert rig.entry is not None
+    entry_id = rig.entry.entry_id
+    await rig.hass.config_entries.async_unload(entry_id)
+    await rig.hass.async_block_till_done()
+    found = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"vt_command_not_helper_{entry_id}")
+    assert found is None
+
+
+async def test_vts_settings_not_known_yet_are_waited_for(rig: Rig) -> None:
+    """I12: VT has handed no thermostat over yet — its central boiler's settings cannot be
+    checked: a blocker that passes on its own; switching on is not refused but waits, and
+    control takes the boiler once VT hands a thermostat over."""
+    unregister_thermostat(rig.hass, rig.zones.stand_in)
+    await start(rig)
+    await rig.advance(10)
+    assert "vt_central_boiler_unknown" in blockers(rig)
+    await rig.switch(True)  # waited for, not refused
+    await rig.advance(10)
+    assert ("setpoint", EXPECTED) not in rig.gateway.calls
+    register_thermostat(rig.hass, rig.zones.stand_in)
+    await rig.advance(20)
+    assert "vt_central_boiler_unknown" not in blockers(rig)
+    assert ("setpoint", EXPECTED) in rig.gateway.calls
+
+
+async def test_the_newest_thermostat_gives_vts_settings(rig: Rig) -> None:
+    """VT's central boiler settings are read from the newest thermostat VT handed over: one
+    handed over later with VT's central boiler unticked blocks; one whose ``entry_infos`` cannot
+    be read is passed over."""
+    await start(rig)
+    await rig.advance(10)
+    unreadable = FakeVtThermostat(entry_infos=None, unique_id="fake_unreadable")  # type: ignore[arg-type]
+    register_thermostat(rig.hass, unreadable)
+    await rig.advance(10)
+    assert not {b for b in blockers(rig) if b.startswith("vt_")}
+    unticked = FakeVtThermostat(
+        entry_infos=vt_central_settings(rig.zones.helper, use_central_boiler_feature=False),
+        unique_id="fake_unticked",
+    )
+    register_thermostat(rig.hass, unticked)
+    await rig.advance(10)
+    assert "vt_central_boiler_not_set" in blockers(rig)
 
 
 async def test_a_monitor_alarm_set_to_hand_back_no_longer_hands_back(rig: Rig) -> None:
@@ -1454,24 +1746,6 @@ async def test_control_comes_back_after_a_restart(
     assert ("setpoint", EXPECTED) in rig.gateway.calls
 
 
-async def test_auto_tpi_zones_that_cannot_learn_raise_a_repair_issue(rig: Rig) -> None:
-    rig.zones.set(
-        "living",
-        configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
-        specific_states={"auto_tpi_state": "on"},
-    )
-    await start(rig)
-    assert rig.entry is not None
-    issue = ir.async_get(rig.hass).async_get_issue(DOMAIN, f"auto_tpi_blocked_{rig.entry.entry_id}")
-    assert issue is not None
-    assert issue.translation_key == "auto_tpi_blocked"
-    # Blocked from learning: not also reported as learning without pauses.
-    assert (
-        ir.async_get(rig.hass).async_get_issue(DOMAIN, f"learning_not_paused_{rig.entry.entry_id}")
-        is None
-    )
-
-
 @pytest.mark.parametrize(
     ("kind", "cycle", "named"),
     [
@@ -1536,78 +1810,27 @@ async def test_an_ignored_learning_issue_outlives_a_zone_that_cannot_be_read(
     rig: Rig, state: str
 ) -> None:
     """PB-47: a zone whose VT state was unknown — or whose configuration VT had not published
-    yet — deleted the Auto-TPI issue, raised anew once the zone was back: the user's "ignore"
+    yet — deleted the learning issue, raised anew once the zone was back: the user's "ignore"
     was lost. The zone's last answer holds while it cannot be read. Negative: read again and
-    no longer blocked, the issue goes."""
-    configuration = {"proportional_function": "tpi", "is_used_by_central_boiler": True}
+    no longer learning, the issue goes."""
+    configuration = {"proportional_function": "tpi"}
     rig.zones.set("living", configuration=configuration, specific_states={"auto_tpi_state": "on"})
     await start(rig)
     assert rig.entry is not None
     hass, coordinator = rig.hass, rig.entry.runtime_data
-    blocked = f"auto_tpi_blocked_{rig.entry.entry_id}"
-    ir.async_ignore_issue(hass, DOMAIN, blocked, True)
+    unpaused = f"learning_not_paused_{rig.entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, unpaused) is not None
+    ir.async_ignore_issue(hass, DOMAIN, unpaused, True)
     rig.zones.set("living", state=state)  # no configuration: cannot be read
     coordinator.check_learning()
     rig.zones.set("living", configuration=configuration, specific_states={"auto_tpi_state": "on"})
     coordinator.check_learning()
-    issue = ir.async_get(hass).async_get_issue(DOMAIN, blocked)
-    assert issue is not None
-    assert issue.dismissed_version is not None  # still ignored
+    found = ir.async_get(hass).async_get_issue(DOMAIN, unpaused)
+    assert found is not None
+    assert found.dismissed_version is not None  # still ignored
     rig.zones.set("living", configuration=configuration, specific_states={"auto_tpi_state": "off"})
     coordinator.check_learning()
-    assert ir.async_get(hass).async_get_issue(DOMAIN, blocked) is None
-
-
-def vt_central_unknown(rig: Rig) -> MockConfigEntry:
-    """VT's central entry stuck in a failed setup with its central boiler on in its data: VT's
-    central boiler cannot be ruled out (X7, P-20)."""
-    central = MockConfigEntry(
-        domain="versatile_thermostat",
-        data={"thermostat_type": "thermostat_central_config", "use_central_boiler_feature": True},
-        state=ConfigEntryState.SETUP_ERROR,
-    )
-    central.add_to_hass(rig.hass)
-    registry = er.async_get(rig.hass)
-    sensor = registry.async_get_or_create(
-        "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
-    )
-    registry.async_get(sensor.entity_id).write_unavailable_state(rig.hass)
-    ha_started(rig.hass)  # all from before Home Assistant's start (decision 9)
-    return central
-
-
-@pytest.mark.parametrize("raised_before", [True, False])
-async def test_auto_tpi_issue_is_left_as_it_is_while_vt_boiler_is_unknown(
-    rig: Rig, raised_before: bool
-) -> None:
-    """P-54: VT's central boiler unknown says nothing about Auto-TPI's learning — the issue
-    raised stays, none is raised; and the zone is not reported as learning unpaused either.
-    Known again, it decides as before."""
-    rig.zones.set(
-        "living",
-        configuration={"proportional_function": "tpi", "is_used_by_central_boiler": True},
-        specific_states={"auto_tpi_state": "on"},
-    )
-    central = None if raised_before else vt_central_unknown(rig)
-    await start(rig)
-    assert rig.entry is not None
-    coordinator = rig.entry.runtime_data
-    blocked = f"auto_tpi_blocked_{rig.entry.entry_id}"
-    unpaused = f"learning_not_paused_{rig.entry.entry_id}"
-    assert (issue(rig, "auto_tpi_blocked") is not None) is raised_before
-    if central is None:
-        central = vt_central_unknown(rig)
-    assert coordinator.link.vt_central_boiler_configured() is None
-    coordinator.check_learning()
-    assert (ir.async_get(rig.hass).async_get_issue(DOMAIN, blocked) is not None) is raised_before
-    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, unpaused) is None
-    hass = rig.hass
-    hass.config_entries.async_update_entry(
-        central, data={**central.data, "use_central_boiler_feature": False}
-    )
-    assert coordinator.link.vt_central_boiler_configured() is False
-    coordinator.check_learning()
-    assert ir.async_get(hass).async_get_issue(DOMAIN, blocked) is not None  # known: decided
+    assert ir.async_get(hass).async_get_issue(DOMAIN, unpaused) is None
 
 
 @pytest.mark.parametrize(
@@ -3104,326 +3327,6 @@ async def test_a_switch_that_stays_on_is_no_hand_back(rig: Rig) -> None:
     await rig.advance(70)
     assert switch.writes.count(False) >= 2  # sent again
     assert rig.state("binary_sensor", "alarm_hand_back_failed").state == "on"
-
-
-def vt_central_entry(rig: Rig, feature: bool | None = False) -> MockConfigEntry:
-    """VT's central entry, loaded, with its central boiler switched off — ``feature``: its
-    stored setting, ``None`` for none — and its sensor a stand-in (T6), all from before Home
-    Assistant's start (decision 9)."""
-    data: dict[str, Any] = {"thermostat_type": "thermostat_central_config"}
-    if feature is not None:
-        data["use_central_boiler_feature"] = feature
-    central = MockConfigEntry(
-        domain="versatile_thermostat", data=data, state=ConfigEntryState.LOADED
-    )
-    central.add_to_hass(rig.hass)
-    registry = er.async_get(rig.hass)
-    sensor = registry.async_get_or_create(
-        "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
-    )
-    registry.async_get(sensor.entity_id).write_unavailable_state(rig.hass)
-    ha_started(rig.hass)
-    return central
-
-
-def vt_sensor(rig: Rig, state: str | None, configured: bool | None = None) -> None:
-    """VT's own central-boiler sensor: provided in ``state`` — ``"unavailable"`` says nothing,
-    which X7 leaves unknown (X3's grace), and ``configured`` is VT's attribute; ``None`` — the
-    stand-in again."""
-    registry = er.async_get(rig.hass)
-    entity_id = registry.async_get_entity_id("binary_sensor", VT_PLATFORM, "central_boiler_state")
-    assert entity_id is not None
-    if state is None:
-        registry.async_get(entity_id).write_unavailable_state(rig.hass)
-        return
-    attributes = {} if configured is None else {"is_central_boiler_configured": configured}
-    rig.hass.states.async_set(entity_id, state, attributes)
-
-
-@pytest.mark.parametrize("minutes", [2, 11])
-async def test_a_vt_central_boiler_unknown_does_not_hand_back_within_the_grace(
-    rig: Rig, minutes: int
-) -> None:
-    """P-105 (X3's part): VT's central boiler known off, then unknown — since X7, only where VT's
-    stored setting cannot settle it (here VT's own sensor, provided, says nothing): for ten
-    minutes it does not count as a blocker — control goes on, the status shows it waiting. Two
-    minutes of it change nothing; after eleven it blocks and hands back, and control takes the
-    boiler again once VT's central boiler is known off again."""
-    vt_central_entry(rig)
-    await start(rig)
-    await rig.switch(True)
-    await rig.advance(20)
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-    vt_sensor(rig, "unavailable")
-    await rig.advance(20)
-    attributes = rig.state("sensor", "control_state").attributes
-    assert attributes["blockers"] == []
-    assert attributes["blockers_waiting"] == ["vt_central_boiler_unknown (grace)"]
-    await rig.advance(minutes * 60 - 20)
-    attributes = rig.state("sensor", "control_state").attributes
-    if minutes < 10:
-        assert 0.0 not in rig.gateway.setpoints()  # never handed back
-        assert rig.state("sensor", "control_state").state == "heating"
-    else:
-        assert "vt_central_boiler_unknown" in attributes["blockers"]
-        assert attributes["blockers_waiting"] == []
-        assert rig.gateway.setpoints()[-1] == 0.0
-    vt_sensor(rig, "off", configured=False)  # a stand-in now would latch (decision 9)
-    await rig.advance(20)
-    attributes = rig.state("sensor", "control_state").attributes
-    assert "vt_central_boiler_unknown" not in attributes["blockers"]
-    assert attributes["blockers_waiting"] == []
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-
-
-async def test_vt_central_boiler_unknown_from_the_start_blocks_without_a_grace(rig: Rig) -> None:
-    """Negative: never known off before — from the start of a unit with nothing to restore —
-    VT's central boiler unknown blocks as before."""
-    vt_central_entry(rig)
-    vt_sensor(rig, "unavailable")
-    await start(rig)
-    await rig.switch(True)
-    await rig.advance(20)
-    attributes = rig.state("sensor", "control_state").attributes
-    assert "vt_central_boiler_unknown" in attributes["blockers"]
-    assert attributes["blockers_waiting"] == []
-    assert rig.gateway.setpoints() == []
-
-
-@pytest.mark.parametrize("state", ["unload_in_progress", "not_loaded", "setup_in_progress"])
-async def test_while_vt_reloads_its_central_entry_control_does_not_hand_back(
-    rig: Rig, state: str
-) -> None:
-    """P-105 (X7): VT sets its central entry up again — its sensor a stand-in or gone: its
-    stored setting "off" answers, so nothing blocks or waits, however long the reload takes,
-    and the boiler is never handed back. Negative: its setting "on" — VT's central boiler
-    there: blocked at once, and handed back."""
-    central = vt_central_entry(rig)
-    await start(rig)
-    await rig.switch(True)
-    await rig.advance(20)
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-    central.mock_state(rig.hass, ConfigEntryState(state))
-    await rig.advance(11 * 60)
-    attributes = rig.state("sensor", "control_state").attributes
-    assert attributes["blockers"] == []
-    assert attributes["blockers_waiting"] == []
-    assert 0.0 not in rig.gateway.setpoints()
-    assert rig.state("sensor", "control_state").state == "heating"
-    rig.hass.config_entries.async_update_entry(
-        central, data={**central.data, "use_central_boiler_feature": True}
-    )
-    await rig.advance(10)
-    assert "vt_central_boiler_active" in rig.state("sensor", "control_state").attributes["blockers"]
-    assert rig.gateway.setpoints()[-1] == 0.0
-
-
-async def test_a_vt_central_entry_in_a_failed_setup_gets_no_grace(rig: Rig) -> None:
-    """P-20 (the cautious reading, X7): VT's central boiler known off, then its central entry
-    stuck in a failed setup with the feature on in its data — VT's manager may run: blocked at
-    once, no grace, and handed back."""
-    central = vt_central_entry(rig)
-    await start(rig)
-    await rig.switch(True)
-    await rig.advance(20)
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-    rig.hass.config_entries.async_update_entry(
-        central, data={**central.data, "use_central_boiler_feature": True}
-    )
-    central.mock_state(rig.hass, ConfigEntryState.SETUP_ERROR)
-    await rig.advance(10)
-    attributes = rig.state("sensor", "control_state").attributes
-    assert "vt_central_boiler_unknown" in attributes["blockers"]
-    assert attributes["blockers_waiting"] == []
-    assert rig.gateway.setpoints()[-1] == 0.0
-
-
-def central_issue(rig: Rig) -> ir.IssueEntry | None:
-    return issue(rig, "vt_central_entry_not_running")
-
-
-async def test_a_vt_central_entry_in_setup_error_is_told_after_ten_minutes(rig: Rig) -> None:
-    """P-20: VT's central entry stuck in a failed setup with its central boiler on in its data:
-    unknown — control waits (VT's manager may still switch the boiler) — and after ten minutes
-    of it (provisional, K4) a repair issue says why: a warning, not fixable. It goes once the
-    state is known — here the feature switched off in VT's data — and control runs."""
-    central = MockConfigEntry(
-        domain="versatile_thermostat",
-        data={"thermostat_type": "thermostat_central_config", "use_central_boiler_feature": True},
-        state=ConfigEntryState.SETUP_ERROR,
-    )
-    central.add_to_hass(rig.hass)
-    er.async_get(rig.hass).async_get_or_create(
-        "binary_sensor", VT_PLATFORM, "central_boiler_state", config_entry=central
-    )
-    ha_started(rig.hass)
-    await start(rig)
-    assert rig.entry is not None
-    assert rig.entry.runtime_data.link.vt_central_boiler_configured() is None
-    await rig.switch(True)  # waits: the blocker passes on its own
-    await rig.advance(9 * 60)
-    assert "vt_central_boiler_unknown" in blockers(rig)
-    assert central_issue(rig) is None  # not ten minutes yet
-    await rig.advance(70)
-    found = central_issue(rig)
-    assert found is not None
-    assert found.translation_key == "vt_central_entry_not_running"
-    assert found.severity is ir.IssueSeverity.WARNING
-    assert not found.is_fixable
-    assert rig.gateway.setpoints() == []  # control waited all along
-    rig.hass.config_entries.async_update_entry(
-        central, data={**central.data, "use_central_boiler_feature": False}
-    )
-    await rig.advance(20)
-    assert central_issue(rig) is None
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-
-
-@pytest.mark.parametrize("case", ["feature_off", "switched_off", "unloaded"])
-async def test_no_vt_central_issue_without_a_wait_to_tell_of(rig: Rig, case: str) -> None:
-    """Negatives: VT's central entry in a failed setup with its central boiler off in its data
-    is no VT central boiler — nothing blocks, nothing is told; control switched off waits for
-    nothing, and the issue goes; the unit stopping takes it with it."""
-    central = MockConfigEntry(
-        domain="versatile_thermostat",
-        data={
-            "thermostat_type": "thermostat_central_config",
-            "use_central_boiler_feature": case != "feature_off",
-        },
-        state=ConfigEntryState.SETUP_ERROR,
-    )
-    central.add_to_hass(rig.hass)
-    ha_started(rig.hass)
-    await start(rig)
-    assert rig.entry is not None
-    await rig.switch(True)
-    await rig.advance(11 * 60)
-    if case == "feature_off":
-        assert "vt_central_boiler_unknown" not in blockers(rig)
-        assert central_issue(rig) is None
-        assert rig.gateway.setpoints()[-1] == EXPECTED
-        return
-    assert central_issue(rig) is not None
-    if case == "switched_off":
-        await rig.switch(False)
-        await rig.advance(10)
-    else:
-        assert await rig.hass.config_entries.async_unload(rig.entry.entry_id)
-        await rig.hass.async_block_till_done()
-    assert central_issue(rig) is None
-
-
-async def test_the_vt_boiler_blocker_waits_for_the_restart(rig: Rig) -> None:
-    """X7: VT's central boiler configured blocks control; unticked — VT sets its central entry
-    up again without its sensor — it keeps blocking in this run, whatever VT's keep-alive: VT's
-    manager may still switch the boiler until Home Assistant restarts, as the blocker's text
-    says. A reload of the plugin does not clear it; the restart does."""
-    central = vt_central_entry(rig, True)
-    vt_sensor(rig, "off", configured=True)  # VT runs its central boiler
-    await start(rig)
-    await rig.advance(10)
-    assert "vt_central_boiler_active" in blockers(rig)
-    rig.hass.config_entries.async_update_entry(
-        central, data={**central.data, "use_central_boiler_feature": False}
-    )
-    central.mock_state(rig.hass, ConfigEntryState.SETUP_IN_PROGRESS)
-    vt_sensor(rig, None)
-    central.mock_state(rig.hass, ConfigEntryState.LOADED)
-    await rig.advance(20)
-    assert "vt_central_boiler_active" in blockers(rig)
-    with pytest.raises(ServiceValidationError) as err:
-        await rig.switch(True)
-    assert err.value.translation_key == "blocked_vt_central_boiler_active"
-    assert rig.entry is not None
-    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
-    await rig.hass.async_block_till_done()
-    await rig.advance(20)
-    assert "vt_central_boiler_active" in blockers(rig)  # the plugin's reload changes nothing
-    assert rig.hass.data[VT_CENTRAL_SEEN] is True
-    ha_started(rig.hass)  # what the restart does to Home Assistant's data
-    await rig.advance(20)
-    assert "vt_central_boiler_active" not in blockers(rig)
-    await rig.switch(True)
-    await rig.advance(20)
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-
-
-@pytest.mark.parametrize("sensor", ["stand_in", "deleted"])
-async def test_an_untick_before_the_plugins_setup_blocks_until_the_restart(
-    rig: Rig, sensor: str
-) -> None:
-    """PB-08 (decision 9): VT's central boiler ticked and unticked again in this Home Assistant
-    run before the plugin's setup — its sensor's stand-in written in this run, or its registry
-    entry deleted and VT's central entry changed in this run: "VT central boiler active" until
-    the restart, as VT's manager may still switch the boiler. Negative: unchanged in this run,
-    nothing blocks (``vt_central_entry`` in the tests above)."""
-    central = vt_central_entry(rig)
-    rig.freezer.tick(60)
-    feature = "use_central_boiler_feature"
-    rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: True})
-    vt_sensor(rig, "off", configured=True)  # VT runs its central boiler; no plugin yet
-    rig.freezer.tick(60)
-    rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: False})
-    vt_sensor(rig, None)
-    if sensor == "deleted":
-        registry = er.async_get(rig.hass)
-        entity_id = registry.async_get_entity_id(
-            "binary_sensor", VT_PLATFORM, "central_boiler_state"
-        )
-        assert entity_id is not None
-        registry.async_remove(entity_id)
-        rig.hass.states.async_remove(entity_id)
-    rig.freezer.tick(60)
-    await start(rig)
-    await rig.advance(10)
-    assert "vt_central_boiler_active" in blockers(rig)
-    with pytest.raises(ServiceValidationError) as err:
-        await rig.switch(True)
-    assert err.value.translation_key == "blocked_vt_central_boiler_active"
-    assert rig.gateway.setpoints() == []
-    ha_started(rig.hass)  # the restart
-    await rig.advance(20)
-    assert "vt_central_boiler_active" not in blockers(rig)
-    await rig.switch(True)
-    await rig.advance(20)
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-
-
-@pytest.mark.parametrize("seen", ["setup", "analysis"])
-async def test_a_monitor_only_entry_latches_vt_central_boiler_for_control_added_later(
-    rig: Rig, seen: str
-) -> None:
-    """TB-08 (X7): a monitor-only entry runs while VT's central-boiler sensor shows it
-    configured — seen at its setup, or by an analysis tick; VT's central boiler is then
-    unticked and control added in the same Home Assistant run: control is blocked by "VT central
-    boiler active" until the restart."""
-    central = vt_central_entry(rig, seen == "setup")
-    if seen == "setup":
-        vt_sensor(rig, "off", configured=True)
-    await set_up(rig, add_entry(rig, without_control(options(rig.zones))))
-    assert rig.entry is not None
-    entry = rig.entry
-    assert entry.runtime_data.control is None
-    feature = "use_central_boiler_feature"
-    if seen == "analysis":
-        assert VT_CENTRAL_SEEN not in rig.hass.data
-        rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: True})
-        vt_sensor(rig, "off", configured=True)
-        await rig.advance(SUMMARY_SECONDS, step=60)
-    assert rig.hass.data[VT_CENTRAL_SEEN] is True  # the monitor-only entry's look
-    rig.hass.config_entries.async_update_entry(central, data={**central.data, feature: False})
-    vt_sensor(rig, None)
-    rig.hass.config_entries.async_update_entry(entry, options=options(rig.zones))
-    await rig.hass.async_block_till_done()
-    assert entry.runtime_data.control is not None
-    await rig.advance(10)
-    assert "vt_central_boiler_active" in blockers(rig)
-    with pytest.raises(ServiceValidationError) as err:
-        await rig.switch(True)
-    assert err.value.translation_key == "blocked_vt_central_boiler_active"
-    ha_started(rig.hass)  # the restart
-    await rig.advance(20)
-    assert "vt_central_boiler_active" not in blockers(rig)
 
 
 @pytest.mark.parametrize("unload", ["works", "raises"])
@@ -6056,10 +5959,7 @@ async def test_the_last_command_survives_only_the_stops_hand_back(
         monkeypatch.setattr(type(unit), "_async_step", broken)
         await rig.advance(10)
     elif ending == "blocker":
-        boiler = er.async_get(hass).async_get_or_create(
-            "binary_sensor", VT_PLATFORM, "central_boiler_state"
-        )
-        hass.states.async_set(boiler.entity_id, "off", {"is_central_boiler_configured": True})
+        vt_central_boiler(rig, False)  # VT's central boiler unticked: blocked (I12)
         await rig.advance(10)
     else:
         rig.flow = None
@@ -7911,9 +7811,10 @@ async def test_off_near_an_own_control_hand_back_value_is_refused(
     assert flow["step_id"] == "control_behaviour"
     assert flow["errors"] == {"base": "off_setpoint_near_hand_back_value"}
     assert "off_setpoint" in {str(marker) for marker in flow["data_schema"].schema}
-    flow = await configure(flow["flow_id"], {"activation_delay_s": 0, "off_setpoint": 10.5})
+    helper = {"vt_boiler_helper": rig.zones.helper}
+    flow = await configure(flow["flow_id"], helper | {"off_setpoint": 10.5})
     assert flow["errors"] == {"off_setpoint": "off_setpoint_near_hand_back_value"}
-    flow = await configure(flow["flow_id"], {"activation_delay_s": 0, "off_setpoint": 5})
+    flow = await configure(flow["flow_id"], helper | {"off_setpoint": 5})
     assert flow["step_id"] == "control_alarms"
     flow = await _through_alarms(rig, flow)
     assert flow["type"] == "create_entry"
@@ -8514,20 +8415,18 @@ async def test_removing_the_entry_deletes_the_monitor_issue(rig: Rig) -> None:
 # --- V7: stopping with an alarm (S-10, S-57, S-11; the user's answer H) --------------------------
 
 
-def vt_central_boiler(rig: Rig, configured: bool) -> None:
-    """VT's own central boiler as VT shows it: configured, it blocks control."""
-    boiler = er.async_get(rig.hass).async_get_or_create(
-        "binary_sensor", VT_PLATFORM, "central_boiler_state"
-    )
-    rig.hass.states.async_set(boiler.entity_id, "off", {"is_central_boiler_configured": configured})
+def vt_central_boiler(rig: Rig, configured: bool, **changes: Any) -> None:
+    """VT's central boiler as the thermostats VT handed over carry its settings (I12): set up
+    with its commands on the helper, or not (unticked) — then it blocks control
+    (``vt_central_boiler_not_set``); ``changes``: other settings."""
+    settings = vt_central_settings(rig.zones.helper, use_central_boiler_feature=configured)
+    rig.zones.stand_in.entry_infos = settings | changes
 
 
 def vt_central_boiler_gone(rig: Rig) -> None:
-    """VT's own central boiler removed, and — as X7 asks, since VT's manager may still switch
-    the boiler until then — Home Assistant restarted: the latch of this run cleared. For tests
+    """The blocker of ``vt_central_boiler`` gone: VT's central boiler set up again. For tests
     about a blocker's end, where which blocker it was does not matter."""
-    vt_central_boiler(rig, False)
-    rig.hass.data.pop(VT_CENTRAL_SEEN, None)
+    vt_central_boiler(rig, True)
 
 
 def stopped_heating(rig: Rig) -> ir.IssueEntry | None:
@@ -8561,13 +8460,13 @@ async def test_a_blocker_that_stops_a_stand_alone_session_raises_an_issue(
     writes = len(number.writes)
     count = len(rig.gateway.calls)
     caplog.clear()
-    vt_central_boiler(rig, True)
+    vt_central_boiler(rig, False)
     await rig.advance(10)
     if installation == "standalone":
         assert rig.gateway.calls[count:] == HAND_BACK
     else:
         assert number.writes[writes:] == [LOWEST, 50.0]
-    assert "vt_central_boiler_active" in blockers(rig)
+    assert "vt_central_boiler_not_set" in blockers(rig)
     await rig.advance(50)
     assert stopped_heating(rig) is None  # not a minute yet
     await rig.advance(10)
@@ -8578,7 +8477,7 @@ async def test_a_blocker_that_stops_a_stand_alone_session_raises_an_issue(
     assert not found.is_fixable
     assert not found.is_persistent
     await rig.advance(120)
-    assert _logged(caplog, logging.WARNING, "stays stopped by vt_central_boiler_active") == 1
+    assert _logged(caplog, logging.WARNING, "stays stopped by vt_central_boiler_not_set") == 1
     vt_central_boiler_gone(rig)
     await rig.advance(10)
     assert rig.state("sensor", "control_state").state == "heating"  # control resumed
@@ -8637,7 +8536,7 @@ async def test_no_stopped_heating_issue_where_the_blocker_has_its_own_or_heating
         await rig.advance(300)
         assert issue(rig, "monitor_failed") is not None  # V6's own
     else:
-        vt_central_boiler(rig, True)
+        vt_central_boiler(rig, False)
         await rig.advance(10)
     assert (
         rig.state("binary_sensor", "control").attributes["frost_protection_by"] != "plugin"
@@ -8662,7 +8561,7 @@ async def test_the_stopped_heating_issue_goes_when_control_is_switched_off_or_un
     """S-10: the user switching control off clears it for good — nothing comes back while the
     blocker holds; the unit stopping takes the issue with it."""
     await start_stopping_heating(rig, "standalone")
-    vt_central_boiler(rig, True)
+    vt_central_boiler(rig, False)
     await rig.advance(70)
     assert stopped_heating(rig) is not None
     assert rig.entry is not None
@@ -8687,7 +8586,7 @@ async def test_the_stopped_heating_issue_comes_back_after_a_restart_while_the_bl
     blocker has held for a minute; once control resumes, it is gone for good. Negative: after
     the user switched control off, nothing comes back."""
     await start_stopping_heating(rig, "standalone")
-    vt_central_boiler(rig, True)
+    vt_central_boiler(rig, False)
     await rig.advance(10)
     assert stored_control(hass_storage, rig)["stopped_heating"] is True
     if wish == "switched_off":
@@ -8720,7 +8619,7 @@ async def test_a_stored_stopped_heating_is_read_cautiously(
     control: dict[str, Any] = {"enabled": True}
     if stored is not None:
         control["stopped_heating"] = stored
-    vt_central_boiler(rig, True)
+    vt_central_boiler(rig, False)
     await start_with_stored(rig, hass_storage, control, "0.2.2", topology="gateway_standalone")
     await rig.advance(70)
     assert rig.gateway.calls == []
@@ -10517,7 +10416,7 @@ async def test_a_restore_whose_conditions_fail_hands_back_first(
     else:
         seed_stores(hass_storage, entry, restorable(rig, **changes), "0.2.2")
     if case == "blocker":
-        vt_central_boiler(rig, True)
+        vt_central_boiler(rig, False)
     await set_up(rig, entry)
     await rig.advance(10)
     calls = rig.gateway.calls
@@ -10566,45 +10465,69 @@ async def test_a_link_still_silent_when_the_recognition_ends_gives_way_to_the_ha
     assert rig.state("binary_sensor", "alarm_boiler_link_lost").state == "on"
 
 
-async def test_a_restore_passes_vt_central_boiler_unknown_within_the_grace(
+async def test_a_restore_goes_out_while_vts_settings_are_not_known_yet(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """P-105 after a restart (provisional, K4): a restorable store stands for VT's central
-    boiler known off just before; unknown at the start, the restore goes on within the grace;
-    still unknown after ten minutes, it blocks and hands back."""
-    vt_central_entry(rig)
-    vt_sensor(rig, "unavailable")  # unknown, X7's stored setting notwithstanding
+    """I12, decision 3 after a restart: VT hands its thermostats — and with them its central
+    boiler's settings — over only once it starts them. The restorable store's command goes out
+    at once meanwhile and is kept through the recognition period; once VT has handed them over,
+    control goes on, nothing handed back."""
+    unregister_thermostat(rig.hass, rig.zones.stand_in)
     not_started(rig)
     await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
     await rig.advance(10)
     assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
-    attributes = rig.state("sensor", "control_state").attributes
-    assert attributes["blockers_waiting"] == ["vt_central_boiler_unknown (grace)"]
+    assert "vt_central_boiler_unknown" in blockers(rig)
+    register_thermostat(rig.hass, rig.zones.stand_in)
     started(rig)
-    await rig.advance(570)
-    assert ("setpoint", 0.0) not in rig.gateway.calls
     await rig.advance(30)
-    assert (
-        "vt_central_boiler_unknown" in rig.state("sensor", "control_state").attributes["blockers"]
-    )
-    assert rig.gateway.setpoints()[-1] == 0.0
+    assert "vt_central_boiler_unknown" not in blockers(rig)
+    assert ("setpoint", 0.0) not in rig.gateway.calls
 
 
-async def test_a_restore_does_not_pass_a_failed_vt_central_entry(
+async def test_a_restore_at_a_start_waits_for_neither_the_helper_nor_vts_settings(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    """X7 (P-20), negative of the grace at the start: a restorable store stands for VT's central
-    boiler known off just before — not while VT's central entry is stuck in a failed setup with
-    its central boiler on in its data, as VT's manager may run: no restore, the owed hand-back
-    instead, and control waits."""
-    vt_central_unknown(rig)
+    """I12, decision 3 at a real start: Home Assistant starting, its helpers not set up yet and
+    VT's thermostats not handed over — the restore goes out at once all the same, no hand-back
+    first; once Home Assistant runs, the helper is there and VT has handed its thermostats
+    over, control decides anew."""
+    from homeassistant.core import CoreState
+
+    rig.hass.set_state(CoreState.starting)
+    unregister_thermostat(rig.hass, rig.zones.stand_in)
+    rig.zones.set_helper(None)
+    not_started(rig)
     await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
     await rig.advance(10)
-    assert ("setpoint", RESTORED) not in rig.gateway.calls
-    assert rig.gateway.calls[:3] == [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
-    attributes = rig.state("sensor", "control_state").attributes
-    assert "vt_central_boiler_unknown" in attributes["blockers"]
-    assert attributes["blockers_waiting"] == []
+    assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
+    assert {"ha_starting", "vt_central_boiler_unknown"} <= set(blockers(rig))
+    assert "vt_boiler_helper_missing" not in blockers(rig)
+    rig.hass.set_state(CoreState.running)
+    rig.zones.set_helper("off", follow=True)
+    register_thermostat(rig.hass, rig.zones.stand_in)
+    started(rig)
+    await rig.advance(10)
+    assert not {b for b in blockers(rig) if b.startswith("vt_") or b == "ha_starting"}
+    assert "demand" in rig.state("sensor", "control_state").attributes["reasons"]
+    assert ("setpoint", 0.0) not in rig.gateway.calls
+
+
+async def test_vts_settings_still_unknown_after_the_recognition_hand_back(
+    rig: Rig, hass_storage: dict[str, Any]
+) -> None:
+    """Negative: the zones have reported and VT's settings are still not known — the blocker
+    counts once the recognition period is over: the restored session hands back, and control
+    waits for VT."""
+    unregister_thermostat(rig.hass, rig.zones.stand_in)
+    not_started(rig)
+    await start_with_stored(rig, hass_storage, restorable(rig), "0.2.2")
+    await rig.advance(10)
+    assert rig.gateway.calls[:2] == [("setpoint", RESTORED), ("ch", True)]
+    started(rig)
+    await rig.advance(30)
+    assert "vt_central_boiler_unknown" in blockers(rig)
+    assert rig.gateway.setpoints()[-1] == 0.0
 
 
 @pytest.mark.parametrize("installation", ["standalone", "value_stops_heating"])
@@ -10622,7 +10545,7 @@ async def test_a_clean_restart_with_a_blocker_at_the_start_raises_the_stopped_he
         if installation == "standalone"
         else held_entity(number, hand_back_value_effect="heating_stops")
     )
-    vt_central_boiler(rig, True)
+    vt_central_boiler(rig, False)
     stored = restorable(rig, controlling=False, taken_with=taken_with(rig, **extra))
     await start_with_stored(rig, hass_storage, stored, "0.2.2", **extra)
     await rig.advance(50)
@@ -10636,7 +10559,7 @@ async def test_a_clean_restart_with_a_blocker_at_the_start_raises_the_stopped_he
 async def test_a_run_that_never_controlled_raises_no_stopped_heating_issue(
     rig: Rig, hass_storage: dict[str, Any]
 ) -> None:
-    vt_central_boiler(rig, True)
+    vt_central_boiler(rig, False)
     stored = restorable(rig, controlling=False, last_command=None)
     stored["taken_with"] = taken_with(rig, topology="gateway_standalone")
     await start_with_stored(rig, hass_storage, stored, "0.2.2", topology="gateway_standalone")
@@ -10760,20 +10683,19 @@ async def test_no_zones_configured_raises_no_issue_and_blocks_control(rig: Rig) 
 
 
 async def test_a_zone_unknown_for_long_raises_an_alarm(rig: Rig) -> None:
-    """One zone of two unavailable: after its grace the known zone decides; frost protection
-    cannot see the unknown one, so after half an hour the user is told."""
+    """One zone of two unavailable: VT counts it no more, and its central boiler's helper goes
+    off — VT decides (I12); frost protection cannot see the unknown zone, so after half an hour
+    the user is told."""
     rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     assert rig.gateway.calls[-1] == ("ch", True)  # the living room calls
     rig.zones.set("living", "unavailable")
-    await rig.advance(590)
-    assert rig.gateway.calls[-1] == ("ch", True)  # its last answer holds for ten minutes
     await rig.advance(20)
-    assert rig.gateway.calls[-1] == ("ch", False)  # dropped out: the bedroom decides
+    assert rig.gateway.calls[-1] == ("ch", False)
     assert rig.state("sensor", "control_state").state == "idle"
-    await rig.advance(20 * 60)
+    await rig.advance(30 * 60)
     assert rig.state("binary_sensor", "alarm_zone_unknown").state == "on"
     assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
     state = rig.state("sensor", "control_state")
@@ -10847,146 +10769,42 @@ async def test_a_zone_blind_to_frost_protection_for_long_raises_the_zone_alarm(
     assert rig.gateway.calls[-1] == ("ch", True)  # the living room still calls
 
 
-async def test_a_criterion_without_data_raises_its_alarm_and_ends_like_no_zone_known(
-    rig: Rig,
-) -> None:
-    """T-27 (P-14): a count of 0 and only a power threshold, and VT publishes no device power:
-    the criterion cannot be judged — its alarm names it, and with no other criterion decision
-    3's end state follows (the thermostat on the gateway takes the boiler)."""
-    rig.zones.set(
-        "living",
-        hvac_action="heating",
-        valve_open_percent=60,
-        on_percent=0.6,
-        power_manager={"device_power": 0.0, "mean_cycle_power": None, "power_unit": "kW"},
-    )
-    await start(rig, count_threshold=0, power_threshold_kw=1.0)
-    await rig.switch(True)
-    await rig.advance(20)
-    alarm = rig.state("binary_sensor", "alarm_demand_criterion_no_data")
-    assert alarm.state == "on"
-    assert alarm.attributes["criteria"] == ["power"]
-    assert alarm.attributes["zones"] == [rig.zones.entities["living"]]  # PB-23: it calls
-    state = rig.state("sensor", "control_state")
-    assert (state.state, state.attributes["reasons"]) == ("handed_back", ["zones_unknown"])
-    # PB-03 (decision 3 of 0.2.3): the zones are known, but nothing can be judged — the end
-    # state's own alarm rises too.
-    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
-    rig.zones.set(
-        "living",
-        hvac_action="heating",
-        valve_open_percent=60,
-        on_percent=0.6,
-        specific_states={"is_device_active": True},
-        power_manager={"device_power": 2.0, "mean_cycle_power": 1.2, "power_unit": "kW"},
-    )
-    await rig.advance(10)
-    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
-    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
-    assert rig.gateway.setpoints()[-1] == EXPECTED  # 1.2 kW ≥ 1.0: heating
-
-
-# PB-03: a calling zone whose VT device power is 0 (none set) — the power criterion cannot see
-# it; and the same zone once VT publishes a power again.
-BLIND = {
-    "hvac_action": "heating",
-    "valve_open_percent": 60,
-    "on_percent": 0.6,
-    "power_manager": {"device_power": 0.0, "mean_cycle_power": None, "power_unit": "kW"},
-}
-FED = BLIND | {
-    "specific_states": {"is_device_active": True},
-    "power_manager": {"device_power": 2.0, "mean_cycle_power": 1.2, "power_unit": "kW"},
-}
-
-
-@pytest.mark.parametrize(
-    ("topology", "kind", "severity"),
-    [
-        ("gateway_standalone", "off", ir.IssueSeverity.ERROR),
-        ("gateway_with_thermostat", "handed_back", ir.IssueSeverity.WARNING),
-    ],
-)
-async def test_no_criterion_judged_raises_the_no_zone_alarm_and_an_issue_naming_it(
-    rig: Rig, topology: str, kind: str, severity: ir.IssueSeverity
-) -> None:
-    """PB-03 (decision 3 of 0.2.3), the review's test: a count of 0, a 1-kW power threshold
-    and a calling zone whose VT device power is 0. The alarm "no zone known" rises at once; after
-    ten minutes a repair issue names the criterion — an error stand-alone, where heating stays
-    off; a warning where the thermostat on the gateway has the boiler. Both go the step VT
-    publishes a power again, and control heats."""
-    rig.zones.set("living", **BLIND)
-    await start(rig, topology=topology, count_threshold=0, power_threshold_kw=1.0)
-    await rig.switch(True)
-    await rig.advance(20)
-    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
-    assert no_zone_issue(rig) is None
-    await rig.advance(11 * 60)
-    found = no_zone_issue(rig)
-    assert found is not None
-    assert found.translation_key == f"no_criterion_judged_{kind}"
-    assert found.severity is severity
-    assert found.translation_placeholders == {"criteria": "power"}
-    assert ("ch", True) not in rig.gateway.calls  # nothing heats for a call it cannot see
-    rig.zones.set("living", **FED)
-    await rig.advance(10)
-    assert no_zone_issue(rig) is None
-    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
-    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
-    assert rig.gateway.setpoints()[-1] == EXPECTED
-
-
-async def test_no_criterion_judged_with_control_switched_off_is_the_monitors_issue(
-    rig: Rig,
-) -> None:
-    """PB-03 with the monitor only — control configured and switched off: no alarm, and after
-    ten minutes the repair issue as a warning, naming the criterion; it goes once a zone feeds
-    it. Negative: no control configured, no criterion — no issue."""
-    rig.zones.set("living", **BLIND)
-    await start(rig, count_threshold=0, power_threshold_kw=1.0)
-    await rig.advance(11 * 60)
-    assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"  # switched off
-    found = no_zone_issue(rig)
-    assert found is not None
-    assert found.translation_key == "no_criterion_judged_monitor"
-    assert found.severity is ir.IssueSeverity.WARNING
-    rig.zones.set("living", **FED)
-    await rig.advance(10)
-    assert no_zone_issue(rig) is None
-
-
-async def test_no_criterion_issue_without_control_configured(rig: Rig) -> None:
-    rig.zones.set("living", **BLIND)
+async def test_the_vt_issue_without_control_configured(rig: Rig) -> None:
+    """Negative: monitoring only — no helper is read, no issue raised."""
+    rig.zones.set_helper("unknown")
     entry = add_entry(rig, without_control(options(rig.zones)))
     await set_up(rig, entry)
     await rig.advance(11 * 60, step=30.0)
     assert no_zone_issue(rig) is None
 
 
-async def test_the_no_criterion_issue_gives_way_to_every_zone_unknown(rig: Rig) -> None:
-    """The calling zone without data then lost for good: the recognition period that follows
+async def test_the_vt_issue_gives_way_to_every_zone_unknown(rig: Rig) -> None:
+    """VT's decision unknown, then the zone lost for good: the recognition period that follows
     (every zone stopped answering at once) leaves the issue as it is; at its end every zone is
-    unknown, and the issue says that instead — the zones named, no criterion: an unknown zone
-    never makes a criterion "without data"."""
-    rig.zones.set("living", **BLIND)
-    await start(rig, topology="gateway_standalone", count_threshold=0, power_threshold_kw=1.0)
+    unknown, and the issue says that instead — the zones named."""
+    await start(rig, topology="gateway_standalone")
     await rig.switch(True)
+    rig.zones.set_helper("unknown")
     await rig.advance(11 * 60)
-    assert no_zone_issue(rig).translation_key == "no_criterion_judged_off"
+    assert no_zone_issue(rig).translation_key == "vt_decision_unknown_off"
     rig.zones.set("living", "unavailable")
     await rig.advance(9 * 60)
-    assert no_zone_issue(rig).translation_key == "no_criterion_judged_off"  # recognition
+    assert no_zone_issue(rig).translation_key == "vt_decision_unknown_off"  # recognition
     await rig.advance(2 * 60)
     found = no_zone_issue(rig)
     assert found.translation_key == "no_zone_known_off"
     assert set(found.translation_placeholders) == {"zones"}
-    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
+    assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "off"
     assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
 
 
-# Check C's F2 and F3: a switch zone without a VT device power whose calls start and stop with
-# VT's cycle — the power criterion cannot see it, whether it calls or not.
-CYCLE_ON = BLIND | {"specific_states": {"is_device_active": True}, "on_percent": 0.4}
+# Check C's F2 and F3: a switch zone whose calls start and stop with VT's cycle.
+CYCLE_ON = {
+    "hvac_action": "heating",
+    "valve_open_percent": 60,
+    "specific_states": {"is_device_active": True},
+    "on_percent": 0.4,
+}
 CYCLE_OFF = CYCLE_ON | {
     "hvac_action": "idle",
     "valve_open_percent": 0,
@@ -10998,17 +10816,17 @@ CYCLE_OFF = CYCLE_ON | {
     ("topology", "kind"),
     [("gateway_with_thermostat", "handed_back"), ("gateway_standalone", "off")],
 )
-async def test_no_criterion_judged_holds_while_calls_start_and_stop(
+async def test_vt_unknown_holds_while_calls_start_and_stop(
     rig: Rig, topology: str, kind: str
 ) -> None:
-    """Check C's F2 and F3: a count of 0, a 1-kW power threshold, and the zone's calls following
-    VT's 5-minute cycle (2 minutes on) for 40 minutes. Nothing can be judged whether it calls or
-    not, so decision 3's end state holds: the thermostat on the gateway keeps the boiler —
-    nothing is taken at a call's end (no CH=0 masking it) and handed back at the next start —
-    and stand-alone heating stays off; the alarm never flickers, and the repair issue rises
-    after ten minutes."""
+    """Check C's F2 and F3 with VT deciding: the helper unknown while the zone's calls follow
+    VT's 5-minute cycle (2 minutes on) for 40 minutes. Decision 3's end state holds: the
+    thermostat on the gateway keeps the boiler — nothing taken at a call's end and handed back
+    at the next start — and stand-alone heating stays off; the alarm never flickers, and the
+    repair issue rises after ten minutes."""
     rig.zones.set("living", **CYCLE_ON)
-    await start(rig, topology=topology, count_threshold=0, power_threshold_kw=1.0)
+    rig.zones.set_helper("unknown")
+    await start(rig, topology=topology)
     await rig.switch(True)
     await rig.advance(20)
     seen = len(rig.gateway.calls)
@@ -11020,13 +10838,13 @@ async def test_no_criterion_judged_holds_while_calls_start_and_stop(
             assert state.state == ("handed_back" if kind == "handed_back" else "idle")
             assert "zones_unknown" in state.attributes["reasons"]
             assert "no_demand" not in state.attributes["reasons"]
-            assert rig.state("binary_sensor", "alarm_no_zone_known").state == "on"
+            assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "on"
             found = no_zone_issue(rig)
             if cycle >= 2:  # 15 minutes on
                 assert found is not None
-                assert found.translation_key == f"no_criterion_judged_{kind}"
+                assert found.translation_key == f"vt_decision_unknown_{kind}"
     calls = rig.gateway.calls[seen:]
-    assert ("ch", True) not in calls  # heating never switched on for a call nothing can see
+    assert ("ch", True) not in calls  # heating never switched on without VT's word
     if kind == "handed_back":
         assert calls == []  # nothing taken, nothing handed back again
     else:
@@ -11037,17 +10855,11 @@ async def test_a_relay_with_its_own_control_is_not_switched_at_each_call_edge(
     rig: Rig, relay: FakeRelay
 ) -> None:
     """Check C's F2 on the relay path: the boiler's own room controller behind the relay (the
-    tick, rest "on"), a count of 0 and a power threshold, and the zone's calls starting and
-    stopping every 30 s. Nothing can be judged: the relay is handed back and stays so — never
-    switched at each edge."""
+    tick, rest "on"), VT's decision unknown, and the zone's calls starting and stopping every
+    30 s. The relay is handed back and stays so — never switched at each edge."""
     rig.zones.set("living", **CYCLE_OFF)
-    await start_relay(
-        rig,
-        relay_rest_state="on",
-        own_room_controller=True,
-        count_threshold=0,
-        power_threshold_kw=1.0,
-    )
+    rig.zones.set_helper("unknown")
+    await start_relay(rig, relay_rest_state="on", own_room_controller=True)
     await rig.switch(True)
     await rig.advance(START_TRACE_S)
     seen = len(relay.calls)
@@ -11059,11 +10871,13 @@ async def test_a_relay_with_its_own_control_is_not_switched_at_each_call_edge(
     assert relay.calls[seen:] == []
 
 
-async def test_every_zone_off_is_no_demand_without_an_alarm_or_an_issue(rig: Rig) -> None:
-    """Summer, negative: the only zone "off", without a VT device power, under a power-only
-    criterion — no demand: no end state, no alarm, no repair issue."""
+async def test_vt_off_and_every_zone_off_is_no_demand_without_an_alarm_or_an_issue(
+    rig: Rig,
+) -> None:
+    """Summer, negative: the only zone "off", VT's helper off — no demand: no end state, no
+    alarm, no repair issue."""
     rig.zones.set("living", "off", **(CYCLE_OFF | {"hvac_action": "off"}))
-    await start(rig, count_threshold=0, power_threshold_kw=1.0)
+    await start(rig)
     await rig.switch(True)
     await rig.advance(11 * 60)
     state = rig.state("sensor", "control_state")
@@ -11071,7 +10885,7 @@ async def test_every_zone_off_is_no_demand_without_an_alarm_or_an_issue(rig: Rig
     assert "no_demand" in state.attributes["reasons"]
     assert "zones_unknown" not in state.attributes["reasons"]
     assert rig.state("binary_sensor", "alarm_no_zone_known").state == "off"
-    assert rig.state("binary_sensor", "alarm_demand_criterion_no_data").state == "off"
+    assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "off"
     assert no_zone_issue(rig) is None
 
 
@@ -11147,7 +10961,7 @@ async def test_a_blocker_while_the_restore_waits_hands_back_and_tells_where_heat
     await start_with_stored(rig, hass_storage, stored, "0.2.2", **extra)
     await rig.advance(30)
     assert rig.gateway.calls == []
-    vt_central_boiler(rig, True)
+    vt_central_boiler(rig, False)
     await rig.advance(10)
     assert rig.gateway.calls[:3] == [("setpoint", LOWEST), ("ch", True), ("setpoint", 0.0)]
     rig.flow = 35.0
@@ -11662,39 +11476,6 @@ async def test_a_press_with_control_off_changes_nothing(rig: Rig) -> None:
     assert correction(rig) == 0.0
     assert rig.gateway.calls == []
     assert rig.state("binary_sensor", "control").state == "off"
-
-
-async def test_the_activation_delay_holds_a_new_start_and_says_when(rig: Rig) -> None:
-    """Decision 5: 120 s. The zones call when control is switched on: nothing is written while
-    the delay runs — idle, with the reason and when heating starts; then the setpoint and
-    heating on. Stopping is not delayed."""
-    await start(rig, activation_delay_s=120)
-    started = datetime.now(UTC).timestamp()
-    await rig.switch(True)
-    state = rig.state("sensor", "control_state")
-    assert state.state == "idle"
-    assert "activation_delay" in state.attributes["reasons"]
-    due = datetime.fromisoformat(state.attributes["activation_at"]).timestamp()
-    assert due == pytest.approx(started + 120.0, abs=1.0)
-    await rig.advance(110)
-    assert rig.gateway.calls == []  # nothing taken, nothing owed
-    await rig.advance(10)
-    assert rig.gateway.calls[:2] == [("setpoint", EXPECTED), ("ch", True)]
-    state = rig.state("sensor", "control_state")
-    assert state.state == "heating"
-    assert state.attributes["activation_at"] is None
-    satisfied_room(rig)
-    await rig.advance(10)
-    assert not heating(rig)  # at once
-
-
-async def test_switching_off_during_the_delay_owes_nothing(rig: Rig) -> None:
-    await start(rig, activation_delay_s=120)
-    await rig.switch(True)
-    await rig.advance(60)
-    await rig.switch(False)
-    assert rig.gateway.calls == []  # never taken: no hand-back
-    assert issue(rig, "hand_back_owed") is None
 
 
 def with_circuit(rig: Rig, circuit: dict[str, Any]) -> dict[str, Any]:
@@ -12790,6 +12571,7 @@ def relay_options(
             "relay_reports_state": "yes",
             "relay_power_on_state": "off",
             "relay_off_timer": "none",
+            "vt_boiler_helper": zones.helper,  # I12
         }
         | control,
     }
@@ -13040,8 +12822,8 @@ async def test_a_relay_that_keeps_restarting_steps_aside_on_the_fourth_time(
 
 async def test_a_planned_restart_rests_then_restores_at_once(rig: Rig, relay: FakeRelay) -> None:
     """R11: a planned stop sets the rest state; the next start gives the stored command at its
-    first step, with no activation delay (decision 5)."""
-    await start_relay(rig, activation_delay_s=120)
+    first step."""
+    await start_relay(rig)
     await rig.switch(True)
     await rig.advance(120)
     assert relay.calls == [True]
@@ -13051,7 +12833,7 @@ async def test_a_planned_restart_rests_then_restores_at_once(rig: Rig, relay: Fa
     assert relay.calls == [True, False]  # the rest state at the stop
     assert await rig.hass.config_entries.async_setup(rig.entry.entry_id)
     await rig.hass.async_block_till_done()
-    assert relay.calls == [True, False, True]  # at once: no delay, no hand-back first
+    assert relay.calls == [True, False, True]  # at once: no hand-back first
     await rig.advance(600)
     assert relay.calls == [True, False, True]
 
@@ -13121,7 +12903,7 @@ async def test_no_restore_when_the_wish_was_off_or_latched_or_blocked(
         "no_command": {"last_command": None},
     }.get(case, {})
     if case == "blocked":
-        vt_central_boiler(rig, True)
+        vt_central_boiler(rig, False)
     await start_relay_with_stored(rig, hass_storage, relay_restorable(rig, **changes))
     await rig.advance(20)
     assert relay.calls[:1] == [False]  # the rest state, never the stored "on" first
@@ -13185,7 +12967,7 @@ async def test_no_rest_state_notice_before_control_held_the_relay(
     the migration's monitoring week while VT's central boiler still drives the relay: no notice
     that the boiler does not heat while control is off."""
     if vt_heats:
-        vt_central_boiler(rig, True)
+        vt_central_boiler(rig, False)
     await start_relay(rig)  # control cannot be switched on while VT's central boiler is
     await rig.advance(30)
     assert issue(rig, "relay_rests_off") is None
@@ -14265,23 +14047,23 @@ async def test_blocked_switch_error_counts_the_others(rig: Rig) -> None:
     """P-74: switching on with two blockers is refused with the first blocker's own text and
     the count of the others — no raw code in the message; both are named, translated, on the
     switch and on the control state."""
-    await start(rig, curve={}, count_threshold=5)
+    await start(rig, curve={}, vt_boiler_helper=None)
     with pytest.raises(ServiceValidationError) as err:
         await rig.switch(True)
     assert err.value.translation_key == "blocked_curve_not_entered"
     assert err.value.translation_placeholders == {"count": "1"}
     await rig.advance(10)  # the next step shows them
     switch = rig.state("binary_sensor", "control")
-    assert switch.attributes["blockers"] == ["curve_not_entered", "count_threshold_above_zones"]
+    assert switch.attributes["blockers"] == ["curve_not_entered", "no_vt_boiler_helper"]
     expected = ", ".join(
         _attribute_text("binary_sensor", "control", "blockers", code)
-        for code in ("curve_not_entered", "count_threshold_above_zones")
+        for code in ("curve_not_entered", "no_vt_boiler_helper")
     )
     assert switch.attributes["blockers_text"] == expected
     state = rig.state("sensor", "control_state")
     assert state.attributes["blockers_text"] == ", ".join(
         _attribute_text("sensor", "control_state", "blockers", code)
-        for code in ("curve_not_entered", "count_threshold_above_zones")
+        for code in ("curve_not_entered", "no_vt_boiler_helper")
     )
 
 
@@ -14513,21 +14295,20 @@ async def test_the_precedence_of_a_control_step(
         assert rig.state("sensor", "control_state").state == shown
 
 
-# --- What VT's central boiler shows: the call, the demand against its thresholds (2026-10-14) --
+# --- The heat call and the rooms calling (2026-10-14; I12) -----------------------------------
 
 
 async def test_the_boiler_called_sensor_shows_the_call_and_why_not(rig: Rig) -> None:
-    """The user's decisions of 2026-10-14: what VT's central boiler sensor shows — on while the
-    plugin calls the boiler; off with the reason while it controls and does not (a zone calling
-    under a count of two); unknown while control is off. The demand against its thresholds
-    beside it, on the control state too, and the event VT fires when the call changes."""
-    from pytest_homeassistant_custom_component.common import async_capture_events
-
+    """The user's decisions of 2026-10-14: on while the plugin calls the boiler; off with the
+    reason while it controls and does not (a room calling, VT's central boiler not — its count
+    of two not reached, I12); unknown while control is off. The rooms calling beside it, on the
+    control state too, and the plugin's event when the call changes."""
     from custom_components.vtherm_smart_boiler.const import BOILER_CALL_EVENT
 
     events = async_capture_events(rig.hass, BOILER_CALL_EVENT)
     rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
-    await start(rig, count_threshold=2)
+    rig.zones.set_helper("off")  # VT's count of two: one room calls
+    await start(rig)
     await rig.advance(20)
     called = rig.state("binary_sensor", "boiler_called")
     assert (called.state, called.attributes["call_reason"]) == ("unknown", "not_controlling")
@@ -14535,14 +14316,15 @@ async def test_the_boiler_called_sensor_shows_the_call_and_why_not(rig: Rig) -> 
     await rig.advance(20)
     called = rig.state("binary_sensor", "boiler_called")
     assert (called.state, called.attributes["call_reason"]) == ("off", "below_threshold")
-    assert (called.attributes["demand_count"], called.attributes["count_threshold"]) == (1, 2)
-    assert called.attributes["count_by"] == "zones"  # an entry from before counts zones (21)
+    assert called.attributes["demand_count"] == 1
+    assert "count_threshold" not in called.attributes
     state = rig.state("sensor", "control_state")
     assert (state.attributes["boiler_called"], state.attributes["call_reason"]) == (
         False,
         "below_threshold",
     )
     rig.zones.set("bedroom", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    rig.zones.set_helper("on")
     await rig.advance(20)
     called = rig.state("binary_sensor", "boiler_called")
     assert (called.state, called.attributes["call_reason"]) == ("on", None)
@@ -14551,42 +14333,38 @@ async def test_the_boiler_called_sensor_shows_the_call_and_why_not(rig: Rig) -> 
     assert {event.data["entry_id"] for event in events} == {rig.entry.entry_id}
 
 
-async def test_the_demand_sensors_count_vts_devices_and_sum_the_power(rig: Rig) -> None:
-    """2026-10-14: counting devices as VT's central boiler does, a zone with two heads open
-    counts two and reaches a count of two alone; the zones' mean power summed beside its
-    threshold; the zones calling and the devices VT lists active."""
+async def test_the_rooms_calling_are_counted_and_named(rig: Rig) -> None:
+    """The rooms calling now, counted and named — a room with two heads open counts once; no
+    power sensor and no device list any more (I12: VT's central boiler counts its own)."""
     rig.zones.set(
         "living",
         hvac_action="heating",
         valve_open_percent=60,
         on_percent=0.6,
         specific_states={"is_device_active": True, "device_actives": ["switch.a", "switch.b"]},
-        power_manager={"device_power": 2.0, "mean_cycle_power": 1.2, "power_unit": "kW"},
     )
-    await start(rig, count_by="devices", count_threshold=2, power_threshold_kw=1.5)
+    await start(rig)
     await rig.switch(True)
     await rig.advance(20)
     count = rig.state("sensor", "demand_count")
-    assert count.state == "2"
-    assert (count.attributes["count_by"], count.attributes["count_threshold"]) == ("devices", 2)
-    assert count.attributes["active_devices"] == ["switch.a", "switch.b"]
+    assert count.state == "1"
     assert count.attributes["calling_zones"] == [rig.zones.entities["living"]]
-    power = rig.state("sensor", "demand_power")
-    assert float(power.state) == pytest.approx(1.2)
-    assert power.attributes["power_threshold_kw"] == 1.5
-    assert rig.state("binary_sensor", "boiler_called").state == "on"  # by the count
+    assert "active_devices" not in count.attributes
+    assert rig.hass.states.get("sensor.boiler_demand_power") is None
+    assert rig.state("binary_sensor", "boiler_called").state == "on"
 
 
 async def test_the_water_interface_tells_each_zone_whether_the_boiler_is_called(rig: Rig) -> None:
     """SmartPI's request (2026-10-14; water-interface.md §4.3): each zone's water data — what its
     manager shows through ``vtherm_api`` — says whether the boiler is called and why not, here a
-    zone calling under a count of two, the same for every zone of the installation, read live:
-    not controlling while control is off, called once the count is met. The demand against its
-    thresholds is the plugin's own entities' only (2026-11-24)."""
+    room calling while VT's central boiler does not, the same for every zone of the
+    installation, read live: not controlling while control is off, called once VT calls. The
+    rooms calling are the plugin's own entities' only (2026-11-24)."""
     from custom_components.vtherm_smart_boiler import feature_manager
 
     rig.zones.add("bedroom", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
-    await start(rig, count_threshold=2)
+    rig.zones.set_helper("off")  # VT's count of two: one room calls
+    await start(rig)
     assert rig.entry is not None
     living, bedroom = rig.zones.entities["living"], rig.zones.entities["bedroom"]
     coordinators = [rig.entry.runtime_data]
@@ -14610,5 +14388,6 @@ async def test_the_water_interface_tells_each_zone_whether_the_boiler_is_called(
             "below_threshold",
         )
     rig.zones.set("bedroom", hvac_action="heating", valve_open_percent=60, on_percent=0.6)
+    rig.zones.set_helper("on")
     await rig.advance(20)
     assert (water(living)["boiler_called"], water(living)["call_reason"]) == (True, None)

@@ -1,4 +1,5 @@
-"""Integration-test harness: fake boiler entities, fake VT zones, canned forecasts, replay.
+"""Integration-test harness: fake boiler entities, fake VT zones and VT's central boiler, canned
+forecasts, replay.
 
 Everything runs inside the test's Home Assistant; nothing connects anywhere.
 """
@@ -45,6 +46,32 @@ BOILER_ENTITIES: dict[Signal, str] = {
     Signal.GAS_METER: "sensor.fake_gas_meter",
 }
 WEATHER_ENTITY = "weather.fake_home"
+# I12: the helper VT's central boiler switches, as the user creates it and picks it in the plugin.
+VT_HELPER = "input_boolean.fake_vt_central_boiler"
+
+
+def vt_central_settings(helper: str = VT_HELPER, **changes: Any) -> dict[str, Any]:
+    """VT's central boiler settings as a thermostat's ``entry_infos`` carries them (VT 10.6.5):
+    ticked, its commands turning ``helper`` on and off."""
+    return {
+        "use_central_boiler_feature": True,
+        "central_boiler_activation_service": f"{helper}/input_boolean.turn_on",
+        "central_boiler_deactivation_service": f"{helper}/input_boolean.turn_off",
+        "central_boiler_activation_delay_sec": 0,
+    } | changes
+
+
+@dataclass
+class FakeVtThermostat:
+    """A thermostat VT handed to the plugin's feature manager, as ``vtherm_api`` declares it —
+    its entity, name, unique ID and ``entry_infos`` — standing in for VT's central boiler
+    settings; its unique ID matches no zone, so no zone is read through it."""
+
+    entry_infos: dict[str, Any] = field(default_factory=vt_central_settings)
+    entity_id: str = "climate.fake_vt_stand_in"
+    name: str = "VT stand-in"
+    unique_id: str = "fake_vt_stand_in"
+
 
 _UNITS: dict[SignalKind, dict[str, str]] = {
     SignalKind.TEMPERATURE: {"unit_of_measurement": "°C", "device_class": "temperature"},
@@ -92,10 +119,46 @@ class FakeBoiler:
 
 @dataclass
 class FakeZones:
-    """VT climate entities: a state plus VT's top-level attributes, registered as VT's."""
+    """VT climate entities: a state plus VT's top-level attributes, registered as VT's — and
+    VT's central boiler (I12): a thermostat handed over whose ``entry_infos`` say VT's central
+    boiler is on with its commands on the helper, and the helper itself, which follows the zones
+    as VT's count of 1 would — on while a known zone calls, off otherwise — each time a zone is
+    set, until a test takes it over (``set_helper``)."""
 
     hass: HomeAssistant
     entities: dict[str, str] = field(default_factory=dict)
+    helper: str = VT_HELPER
+    follow: bool = True
+    stand_in: FakeVtThermostat = field(default_factory=FakeVtThermostat)
+
+    def __post_init__(self) -> None:
+        from custom_components.vtherm_smart_boiler.vtherm_link import register_thermostat
+
+        register_thermostat(self.hass, self.stand_in)
+        self.hass.states.async_set(self.helper, "off")
+
+    def set_helper(self, state: str | None, *, follow: bool = False) -> None:
+        """The helper as VT's central boiler leaves it: "on", "off", any other state, or
+        ``None`` — removed. The test takes it over unless ``follow``."""
+        self.follow = follow
+        if state is None:
+            self.hass.states.async_remove(self.helper)
+            return
+        now = self.hass.states.get(self.helper)
+        if now is None or now.state != state:
+            self.hass.states.async_set(self.helper, state)
+
+    def follow_zones(self) -> None:
+        """VT's count of 1: the helper on while a known zone calls, as the plugin reads them."""
+        from homeassistant.util import dt as dt_util
+
+        from custom_components.vtherm_smart_boiler.core.demand import zone_wants_heat
+        from custom_components.vtherm_smart_boiler.vtherm_link import VThermLink
+
+        now = dt_util.utcnow().timestamp()
+        zones = VThermLink(self.hass, list(self.entities.values())).zones()
+        calling = any(z.is_known(now, None) and zone_wants_heat(z) for z in zones)
+        self.set_helper("on" if calling else "off", follow=True)
 
     def add(self, zone_id: str, **attributes: Any) -> str:
         registry = er.async_get(self.hass)
@@ -125,6 +188,8 @@ class FakeZones:
             if values.get(key, False) is None:
                 del values[key]
         self.hass.states.async_set(self.entities[zone_id], state, values)
+        if self.follow:
+            self.follow_zones()
 
 
 async def analysis_idle(coordinator: Any) -> None:
@@ -271,20 +336,6 @@ def apply_event(boiler: FakeBoiler, zones: FakeZones | None, changes: list) -> N
                 attributes["valve_open_percent"] = round(state.valve_open * 100)
                 attributes["on_percent"] = state.valve_open
             zones.set(key, "heat" if state.heating_enabled else "off", **attributes)
-
-
-def ha_started(hass: HomeAssistant) -> None:
-    """Home Assistant (re)started now, as the plugin's run record keeps it (decision 9 of plan
-    0.2.3): what VT's entries and sensor show was written before this run, and the restart latch
-    is gone — what a restart does to Home Assistant's data."""
-    from homeassistant.util import dt as dt_util
-
-    from custom_components.vtherm_smart_boiler.vtherm_link import VT_CENTRAL_SEEN, vt_run
-
-    run = vt_run(hass)
-    run.started = dt_util.utcnow()
-    run.unwatched_since = None
-    hass.data.pop(VT_CENTRAL_SEEN, None)
 
 
 async def left_control_store(hass: Any, entry: Any) -> None:

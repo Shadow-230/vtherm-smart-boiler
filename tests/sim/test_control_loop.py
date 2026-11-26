@@ -25,6 +25,7 @@ from custom_components.vtherm_smart_boiler.core.controller import (
 )
 from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
 from custom_components.vtherm_smart_boiler.core.cycles import find_burns
+from custom_components.vtherm_smart_boiler.core.demand import zone_wants_heat
 from custom_components.vtherm_smart_boiler.core.guards import GuardConfig, WriteType
 from custom_components.vtherm_smart_boiler.core.history import History
 from custom_components.vtherm_smart_boiler.core.installation import (
@@ -99,6 +100,7 @@ class LoopController:
 
     def __call__(self, t: float, view: SimView) -> SimCommand | None:
         link = self.link(t)
+        zones = tuple(zone_state(z, t) for z in view.zones)
         inputs = ControlInputs(
             now=t,
             enabled=self.enabled(t),
@@ -106,8 +108,10 @@ class LoopController:
             flame=view.flame if link else None,
             dhw=view.dhw if link else None,
             outdoor_sensor=view.outdoor if link else None,
-            zones=tuple(zone_state(z, t) for z in view.zones),
+            zones=zones,
             starts=self._starts(t, view, link),
+            # I12: VT's central boiler with its count of 1 switches the helper.
+            vt_heat=any(z.is_known(t, None) and zone_wants_heat(z) for z in zones),
         )
         confirmed = view.confirmed_setpoint if link else None
         self.state, out = loop_step(self.state, inputs, confirmed, self.config)

@@ -28,6 +28,10 @@ input_boolean:
   # switches control, the only caller the action vtherm_smart_boiler.set_control takes.
   j4_set_control:
     name: J4 set control
+  # I12.8: the helper VT's central boiler switches — VT decides whether the boiler heats; each
+  # instance's VT central boiler must point its two commands at it (to be set at I12.15).
+  j4_vt_central_boiler:
+    name: J4 VT central boiler
 
 automation:
   - id: j4_set_control
