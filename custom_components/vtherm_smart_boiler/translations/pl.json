@@ -1262,6 +1262,9 @@
           "days_left_out": {
             "name": "Dni pominięte (pod sterowaniem)"
           },
+          "sizing": {
+            "name": "Moc kotła wobec obciążenia projektowego domu"
+          },
           "reasons": {
             "name": "Powody",
             "state": {
@@ -1269,12 +1272,12 @@
               "heating_burns": "Policzone palenia c.o.",
               "frequent_starts": "Częste starty",
               "few_starts": "Mało startów",
-              "short_burns": "Głównie krótkie palenia — najczęściej kocioł za duży dla domu",
+              "short_burns": "Krótkie palenia są częste",
               "long_burns": "Palenia dość długie",
               "low_condensing": "Mało kondensacji",
               "good_condensing": "Dobra kondensacja",
               "condensing_unknown": "Kondensacja nieznana: brak temperatury powrotu albo za mało jej danych",
-              "load_often_below_min_power": "Obciążenie budynku często poniżej mocy minimalnej kotła: kocioł jest przewymiarowany — to główna przyczyna krótkich paleń",
+              "load_often_below_min_power": "Obciążenie budynku często poniżej najniższej mocy kotła — częsta przyczyna krótkich paleń",
               "load_rarely_below_min_power": "Obciążenie budynku rzadko poniżej mocy minimalnej kotła",
               "load_unknown": "Obciążenie budynku nieznane",
               "criteria_judged": "Za mało ocenionych kryteriów do uznania sterowania za niewarte włączenia",

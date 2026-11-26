@@ -123,7 +123,9 @@ class DaySummary:
         ):
             return None
         # A day of 23 or 25 hours (the clock change) counts as a whole day of heating.
-        return DayPoint(self.outdoor_mean, self.heat_kwh * DAY / (self.end - self.start))
+        return DayPoint(
+            self.outdoor_mean, self.heat_kwh * DAY / (self.end - self.start), self.start
+        )
 
     @property
     def has_data(self) -> bool:

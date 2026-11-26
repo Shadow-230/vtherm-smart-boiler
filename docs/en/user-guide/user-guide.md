@@ -192,14 +192,22 @@ pass without enough data, **Control (experimental)** says that control starts wi
 
 What the verdict and the building values mean:
 
-- **Short burns** most often come from a boiler too big for the house: its lowest output is more
-  than the house needs, so it starts and stops. The verdict says so when the building's load is
-  often below the boiler's minimum power.
+- **Short burns** are named when they are frequent. A boiler whose lowest output is more than
+  the house needs starts and stops: a common cause, and the verdict says so when the building's
+  load is often below the boiler's lowest output. It is not the only one: in a house whose rooms
+  VT switches, how long VT's cycles are counts too. Beside the reasons, the verdict shows the
+  boiler's lowest and highest output and what the house needs on the coldest day it is designed
+  for (the heat loss at the design outdoor temperature), each where it is known, so you can
+  compare them yourself.
 - **The building's heat loss**, measured from the boiler's use and the weather, counts only after
   about **3 weeks of heating** (21 heating days); before that it is shown, never used. It is
-  shown with a likely range of about ±20 % — the accuracy published methods reach. A measured
-  loss below the design load is common: it means the boiler is oversized, not that the
-  measurement is wrong.
+  shown with its likely range, from how closely the days follow the line. Days that follow each
+  other are alike (a cold spell, the building's mass), so they count for less, and the range is
+  wider. It is never narrower than ±15 %, the best published methods reach. A loss whose range
+  is wider than ±50 % is shown, never used. Once at least a week of days lies on each side of the
+  heating threshold, the threshold is found from the days themselves. A measured loss below the
+  design load is common: it means the boiler is oversized, not that the measurement is
+  wrong.
 - **Use against yesterday** compares two days; a day's use moves a lot on its own (the building
   still warm or cold from yesterday, sun, people). When the part no cause explains stays within
   15 % of the day before, it is marked as normal variation.
@@ -571,9 +579,9 @@ Only an administrator can change anything on it, and every change asks for confi
 | Overview | The status with its reasons and whether **Control** is on — an administrator gets **Change in settings**, which opens the plugin's page in Home Assistant's settings, where control is switched; its flame is filled while the burner burns, and outlined in the heating colour while the boiler is called for heat between burns. Tiles for the water the plugin asks, flow, return, outdoor, flame and how many rooms call, as the plugin counts them; an administrator also gets a link to Versatile Thermostat's page, where the rooms are. The installation drawn from the settings, with the circuits taking water now: those with a room calling, while the plugin calls the boiler or the burner burns for heating. In a narrow card the circuits are listed by name below the drawing. The heating curve with "where we are", the last 7 days' decisions and a preview of changes, drawn as boiler manuals draw it: warmer on the left, colder on the right. The last 24 h from the recorder: pick or play any moment, and the tiles, the schematic and the curve show it |
 | Burner | The burner's metrics; the monitor's burns of the last 24 h (heating, hot water, unknown); how long the heating burns lasted, the short ones marked |
 | Use | Gas per degree-day and the degree-days; the last 12 weeks' gas per degree-day; the change against yesterday, cause by cause. A value not known says why |
-| Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature. The burner's heating starts by hour over the last 4 weeks |
+| Analyses | The energy signature: each day's heating gas against its mean outdoor temperature, the days the plugin only watched and the days under control apart, each with its fitted line, and the two compared at the same temperature, each with its likely range; where the two ranges overlap, it says that no difference is shown. The burner's heating starts by hour over the last 4 weeks |
 | Journal | What the plugin decided and why, over the last 14 days. It shows its starts and stops, control taking the boiler and handing it back, the heat call, the water setpoint written (changes of 1 K or more), a circuit's need, the alarms and the settings saved. You see it as lanes that zoom by dragging across them, and as a list you can filter |
-| Status and alarms | The control verdict with its reasons; every alarm, the active ones first, each opening its history; the signals' health; the building values with where they come from; the suggested lowest water temperature with its evidence |
+| Status and alarms | The control verdict with its reasons, and the boiler's outputs against what the house needs; every alarm, the active ones first, each opening its history; the signals' health; the building values with where they come from; the suggested lowest water temperature with its evidence |
 
 **Changes from the page.** An administrator, after confirming:
 

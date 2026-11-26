@@ -5,10 +5,12 @@
 import { LitElement, css, html, nothing, svg, type TemplateResult } from "lit";
 import {
   axisTicks,
+  changeRange,
   hourMeans,
   hourRows,
   levelOf,
   signatureRanges,
+  type Comparison,
   type DaysAnswer,
   type Signature,
   type SignatureDay,
@@ -209,18 +211,28 @@ export class SmartBoilerAnalyses extends LitElement {
             <div class="fits">
               <p><i class="dot observing"></i><b>${this.t("analyses.observing")}:</b> ${this.fitText(signature.observing, unit)}</p>
               <p><i class="dot control"></i><b>${this.t("analyses.control")}:</b> ${this.fitText(signature.control, unit)}</p>
-              ${compared
-                ? html`<p class="compare">
-                    ${this.t(compared.change <= 0 ? "analyses.compare_less" : "analyses.compare_more", {
-                      outdoor: formatNumber(compared.outdoor, this.language, 1),
-                      observing: this.gas(compared.observing, unit),
-                      control: this.gas(compared.control, unit),
-                      percent: formatNumber(Math.abs(compared.change) * 100, this.language, 0),
-                    })}
-                  </p>`
-                : nothing}
+              ${compared ? html`<p class="compare">${this.compareText(compared, unit)}</p>` : nothing}
             </div>`}
     </section>`;
+  }
+
+  /** The two lines at one temperature; the change with its likely range where the ranges
+   * part, else that no difference is shown (I13.4). */
+  private compareText(compared: Comparison, unit: string): string {
+    const values = {
+      outdoor: formatNumber(compared.outdoor, this.language, 1),
+      observing: this.gas(compared.observing, unit),
+      control: this.gas(compared.control, unit),
+    };
+    const range = changeRange(compared);
+    if (!compared.shown || !range) return this.t("analyses.compare_none", values);
+    const percent = (v: number) => formatNumber(v * 100, this.language, 0);
+    return this.t(compared.change <= 0 ? "analyses.compare_less" : "analyses.compare_more", {
+      ...values,
+      percent: percent(Math.abs(compared.change)),
+      from: percent(range[0]),
+      to: percent(range[1]),
+    });
   }
 
   // ---------------------------------------------------------------------- the starts by hour

@@ -8,6 +8,12 @@ import pytest
 
 from custom_components.vtherm_smart_boiler.core.building import LoadModel
 from custom_components.vtherm_smart_boiler.core.metrics import CycleStats, Share
+from custom_components.vtherm_smart_boiler.core.parameters import (
+    Estimate,
+    ParameterKey,
+    ParameterSet,
+    Source,
+)
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.verdict import (
     ESTIMATE_ONLY,
@@ -15,6 +21,7 @@ from custom_components.vtherm_smart_boiler.core.verdict import (
     Reason,
     ReasonCode,
     ReasonKind,
+    Sizing,
     Verdict,
     VerdictOptions,
     assess,
@@ -680,3 +687,55 @@ def test_each_criterion_at_its_exact_limit(
     result = assess(10 * DAY, heating, Share(condensing, DAY), Share(load, DAY), RELAY)
     assert result.verdict is Verdict.NOT_WORTH_IT
     assert result.reasons == reasons
+
+
+# --- I13.4: the boiler's outputs against the house's design load -----------------------------
+
+
+def _with(**values: Estimate) -> ParameterSet:
+    parameters = ParameterSet()
+    for key, estimate in values.items():
+        parameters = parameters.with_estimate(ParameterKey(key), estimate)
+    return parameters
+
+
+def test_the_sizing_shows_both_outputs_and_the_design_load() -> None:
+    """The boiler's 4 and 25 kW against a design load of 0.25 kW/K over 20 − (−15) K: 8.75 kW
+    at −15 °C, the defaults of the design and indoor temperatures."""
+    sizing = Sizing.from_parameters(
+        _with(
+            boiler_min_power=Estimate(4.0, Source.ENTERED),
+            boiler_max_power=Estimate(25.0, Source.ENTERED),
+            loss_coefficient=Estimate(0.25, Source.ENTERED),
+        )
+    )
+    assert sizing == Sizing(4.0, 25.0, pytest.approx(8.75), -15.0)
+
+
+def test_the_design_load_takes_the_users_temperatures() -> None:
+    """An entered design outdoor (−20 °C) and indoor (21 °C): 0.2 · 41 = 8.2 kW at −20 °C."""
+    sizing = Sizing.from_parameters(
+        _with(
+            loss_coefficient=Estimate(0.2, Source.MEASURED, 0.8),
+            design_outdoor=Estimate(-20.0, Source.ENTERED),
+            indoor_reference=Estimate(21.0, Source.ENTERED),
+        )
+    )
+    assert sizing == Sizing(None, None, pytest.approx(8.2), -20.0)
+
+
+def test_an_untrusted_loss_gives_no_design_load() -> None:
+    """A measured loss without the confidence the plugin counts gives no design load (S-17); the
+    boiler's output is shown alone."""
+    sizing = Sizing.from_parameters(
+        _with(
+            boiler_min_power=Estimate(4.0, Source.ENTERED),
+            loss_coefficient=Estimate(0.25, Source.MEASURED, 0.3),
+        )
+    )
+    assert sizing == Sizing(4.0, None, None, None)
+
+
+def test_no_sizing_without_any_of_them() -> None:
+    assert Sizing.from_parameters(ParameterSet()) is None
+    assert assess(10 * DAY, stats(1.0, 0.1), None, None).sizing is None

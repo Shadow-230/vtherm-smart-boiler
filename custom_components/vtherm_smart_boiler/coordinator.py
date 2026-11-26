@@ -704,11 +704,13 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         measured = stored.get("measured")
         for key, data in measured.items() if isinstance(measured, dict) else ():
             try:
+                share = data.get("range_share")  # I13.4; none kept before
                 estimate = Estimate(
                     float(data["value"]),
                     Source.MEASURED,
                     float(data["confidence"]),
                     data.get("at"),
+                    None if share is None else float(share),
                 )
                 self.parameters = self.parameters.with_estimate(ParameterKey(key), estimate)
             except KeyError, TypeError, ValueError:
@@ -750,6 +752,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     "value": estimate.value,
                     "confidence": estimate.confidence,
                     "at": estimate.at,
+                    "range_share": estimate.range_share,
                 }
         control = self._stored_control()
         self._main_owed = _owed_flags(control)
@@ -2727,9 +2730,13 @@ def _moved(before: Estimate | None, after: Estimate) -> bool:
     """Whether a measured value moved enough to be saved again."""
     if before is None:
         return True
+    if (before.range_share is None) != (after.range_share is None):
+        return True  # I13.4: a range found for a value kept without one, or lost
+    shares = (before.range_share or 0.0, after.range_share or 0.0)
     return (
         abs(after.value - before.value) > FIT_MOVED * max(abs(before.value), 1e-9)
         or abs(after.confidence - before.confidence) > FIT_CONFIDENCE_MOVED
+        or abs(shares[1] - shares[0]) > FIT_CONFIDENCE_MOVED
     )
 
 

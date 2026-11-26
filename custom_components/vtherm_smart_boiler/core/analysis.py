@@ -7,7 +7,7 @@ boundaries come from the caller: the core knows no time zones.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from .alarms import (
@@ -40,7 +40,7 @@ from .report import ChangeReport, PeriodSummary, explain_change
 from .series import Series, duration_where, time_weighted_mean
 from .signal_check import OutdoorCheck, OutdoorStatus, check_outdoor
 from .signals import Signal
-from .verdict import LoadBasis, VerdictResult
+from .verdict import LoadBasis, Sizing, VerdictResult
 
 DAY = 86400.0
 HISTORY_DAYS = 8.0
@@ -119,13 +119,16 @@ def analyse(
         at=now,
         day=day,
         week=week,
-        verdict=verdict_over_days(
-            [*kept, *new_days, *waiting],
-            options.verdict,
-            options.verdict_window_days,
-            today,
-            load=LoadBasis.from_parameters(parameters),
-            burner_signal=history.is_mapped(Signal.FLAME),
+        verdict=replace(
+            verdict_over_days(
+                [*kept, *new_days, *waiting],
+                options.verdict,
+                options.verdict_window_days,
+                today,
+                load=LoadBasis.from_parameters(parameters),
+                burner_signal=history.is_mapped(Signal.FLAME),
+            ),
+            sizing=Sizing.from_parameters(parameters),
         ),
         trends=_trends(history, full, now, options.verdict.condensing_boiler, previous or {}),
         report=report,

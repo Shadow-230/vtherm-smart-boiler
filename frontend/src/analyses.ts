@@ -26,11 +26,28 @@ export interface SignatureFit {
   reason: string | null;
 }
 
+/** The two lines compared at one temperature: each with its likely (95 %) range, the change
+ * with its range (none where the watched range reaches zero), and whether the ranges part —
+ * `shown` false: no difference the days can show. */
+export interface Comparison {
+  outdoor: number;
+  observing: number;
+  control: number;
+  change: number;
+  observing_low: number;
+  observing_high: number;
+  control_low: number;
+  control_high: number;
+  change_low: number | null;
+  change_high: number | null;
+  shown: boolean;
+}
+
 export interface Signature {
   days: SignatureDay[];
   observing: SignatureFit;
   control: SignatureFit;
-  comparison: { outdoor: number; observing: number; control: number; change: number } | null;
+  comparison: Comparison | null;
   /** The fit's rules: the heating days and the spread of outdoor temperature a line needs. */
   min_days?: number;
   min_spread_k?: number;
@@ -50,6 +67,15 @@ export interface DaysAnswer {
 }
 
 /** "Nice" ends and steps for an axis over [low, high]: the ends rounded out to the step. */
+/** The change's likely range as two shares of the watched gas, smaller first, both on the
+ * side of the change (less: both the shares less); `null` where there is none to show — the
+ * ranges overlap, or the watched range reaches zero. */
+export function changeRange(compared: Comparison): [number, number] | null {
+  const { change_low: low, change_high: high } = compared;
+  if (!compared.shown || low == null || high == null) return null;
+  return compared.change <= 0 ? [Math.abs(high), Math.abs(low)] : [low, high];
+}
+
 export function niceAxis(low: number, high: number, ticks = 5): { low: number; high: number; step: number } {
   if (!(high > low)) {
     high = low + 1;

@@ -90,6 +90,14 @@ repository. Each line says what the plugin takes from the source.
   [GOV.UK](https://www.gov.uk/government/publications/smart-meter-enabled-thermal-efficiency-ratings-smeter-strategic-guide).
 - Hanmer, C. et al. (2026). *Buildings & Cities* 7(1), 176–195.
   [doi:10.5334/bc.670](https://doi.org/10.5334/bc.670).
+- IEA EBC Annex 71 (2021). *Building energy performance assessment based on in-situ
+  measurements*. About ±15 % at best for a measured heat loss: the range's floor.
+- Meng, Q., Mourshed, M., Wei, S. (2018). Change-point regression of a building's heating base
+  temperature (subject, not the title). *IEEE Access*. The heating threshold found from the days.
+- Gondian, Thiery (2026). The uncertainty of daily energy signatures with autocorrelated errors
+  (subject, not the title). arXiv:2607.25382, preprint. The comparison's ranges.
+- Lomas, K. J. et al. (2018). *Renewable and Sustainable Energy Reviews*. The independent evidence
+  of savings from heating controls is weak: no difference shown where the ranges overlap.
 
 ## Safety and data quality
 

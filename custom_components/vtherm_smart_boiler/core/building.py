@@ -10,8 +10,8 @@ went in I8 (decision B5).
 
 The building model feeds the monitor only — the verdict's load criterion, degree-days, the
 lowest water temperature's "about" estimate; control never reads it (review question 11). The
-measured values are shown with their source and confidence, and each can be reset: it is then
-fitted again from later days only (P-90).
+measured values are shown with their source and confidence — the loss with its likely range from
+the fit (I13.4) — and each can be reset: it is then fitted again from later days only (P-90).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 
 from .parameters import (
     MIN_CONFIDENCE,
@@ -28,8 +29,10 @@ from .parameters import (
     ParameterSet,
     Source,
 )
+from .regression import effective_n, fit_line, lag_one, t95, widening
 
 HOURS_PER_DAY = 24.0
+DAY_S = 86400.0
 
 
 ANNUAL_ENERGY_CONFIDENCE = 0.4
@@ -108,10 +111,14 @@ def trusted_load_model(parameters: ParameterSet) -> LoadModel | None:
 
 @dataclass(frozen=True, slots=True)
 class DayPoint:
-    """One day of heating: mean outdoor temperature and the heat delivered for space heating."""
+    """One day of heating: mean outdoor temperature and the heat delivered for space heating;
+    ``start``: when the day began (seconds since the Unix epoch), so the fit knows which days
+    follow each other — ``None``: the points are in time order, each the day after the one
+    before."""
 
     outdoor_mean: float
     energy_kwh: float
+    start: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,15 +145,78 @@ FULL_COVERAGE_DAYS = 30  # this many heating days give the fit its full weight
 CLAMPED_CONFIDENCE = 0.3  # a fit held at a bound, or too uncertain: shown, never used
 # K4 (the user's decision of 2026-11-17): a fit from fewer heating days is shown, never used —
 # published methods need about 3 weeks of heating-season data (IEA EBC Annex 71; the UK SMETER
-# trials), and reach about ±15 % at best, data choices alone moving them up to 27 % (Senave):
-# a measured loss is shown with a ±``MEASURED_RANGE_SHARE`` range.
+# trials).
 MIN_KNOWN_DAYS = 21
-MEASURED_RANGE_SHARE = 0.2
+# I13.4: a measured loss is shown with its likely range — 95 % from the fit itself, widened for
+# correlated days (``core.regression``) — and never narrower than ±``MIN_RANGE_SHARE``: the best
+# published methods reach about ±15 % (IEA EBC Annex 71), and the fit leaves out the sun and the
+# rooms' setpoints (Leiria et al. 2024). A range wider than ±``MAX_USED_RANGE_SHARE`` cannot
+# place the boiler's power against the house's load: such a loss is shown, never used
+# (provisional, K4).
+MIN_RANGE_SHARE = 0.15
+MAX_USED_RANGE_SHARE = 0.5
+# A range is held at ±100 % (nothing to twice the value): a wider one says nothing more.
+MAX_RANGE_SHARE = 1.0
+# I13.4: the heating threshold is found from the days themselves — the change point of
+# ``energy = 24 · H · max(0, threshold − outdoor)`` over every day — once at least
+# ``MIN_FIT_DAYS`` days lie on each side of the threshold in use; until then the days below the
+# threshold in use are taken as the heating days. Searched in steps of ``CHANGE_POINT_STEP_K``
+# within the threshold's plausible range (Meng, Mourshed, Wei 2018; Manfren et al. 2026).
+CHANGE_POINT_STEP_K = 0.1
+# Days at most this far apart follow each other: 23, 24 or 25 hours at a clock change.
+NEXT_DAY_S = 1.5 * DAY_S
 
 
-def measured_range(value: float) -> tuple[float, float]:
-    """The likely range of a measured loss: ±``MEASURED_RANGE_SHARE`` (K4)."""
-    return value * (1.0 - MEASURED_RANGE_SHARE), value * (1.0 + MEASURED_RANGE_SHARE)
+def measured_range(estimate: Estimate) -> tuple[float, float] | None:
+    """The likely range of a measured loss, from its fit (I13.4); ``None`` for a value kept
+    before ranges were (it gets one at the next analysis). Never below zero."""
+    share = estimate.range_share
+    if share is None:
+        return None
+    return max(0.0, estimate.value * (1.0 - share)), estimate.value * (1.0 + share)
+
+
+def change_point(days: Sequence[DayPoint], threshold: float) -> float | None:
+    """I13.4: the heating threshold the days themselves show — the change point of a load
+    ``24 · H · max(0, threshold − outdoor)`` fitted to every day, the one with the least
+    squared error — once ``MIN_FIT_DAYS`` days lie on each side of ``threshold`` (the one in
+    use) and of the point found; ``None`` otherwise, or where no point gives more energy, on
+    average, to the days colder than it."""
+    known = [d for d in days if d.energy_kwh >= 0]
+    below = sum(1 for d in known if d.outdoor_mean < threshold)
+    if below < MIN_FIT_DAYS or len(known) - below < MIN_FIT_DAYS:
+        return None
+    definition = PARAMETER_DEFS[ParameterKey.HEATING_THRESHOLD]
+    steps = round((definition.high - definition.low) / CHANGE_POINT_STEP_K)
+    best: tuple[float, float] | None = None  # (squared error, point)
+    for step in range(steps + 1):
+        point = round(definition.low + step * CHANGE_POINT_STEP_K, 6)
+        spans = [max(0.0, point - d.outdoor_mean) for d in known]
+        cold = [d.energy_kwh for d, s in zip(known, spans, strict=True) if s > 0]
+        warm = [d.energy_kwh for d, s in zip(known, spans, strict=True) if s <= 0]
+        if len(cold) < MIN_FIT_DAYS or len(warm) < MIN_FIT_DAYS:
+            continue
+        if sum(cold) / len(cold) <= sum(warm) / len(warm):
+            continue  # no more energy on the colder side: no heating threshold here
+        per_kelvin = sum(d.energy_kwh * s for d, s in zip(known, spans, strict=True)) / sum(
+            s * s for s in spans
+        )
+        error = sum((d.energy_kwh - per_kelvin * s) ** 2 for d, s in zip(known, spans, strict=True))
+        if best is None or error < best[0]:
+            best = (error, point)
+    return None if best is None else best[1]
+
+
+def _in_time_order(days: Sequence[DayPoint]) -> tuple[list[DayPoint], list[bool] | None]:
+    """The days in time order, and which follow each other; ``None``: no start known for one,
+    so each is taken as the day after the one before (the cautious side: correlated)."""
+    if any(d.start is None for d in days):
+        return list(days), None
+    ordered = sorted(days, key=lambda d: d.start or 0.0)
+    return ordered, [
+        (after.start or 0.0) - (before.start or 0.0) <= NEXT_DAY_S
+        for before, after in pairwise(ordered)
+    ]
 
 
 def fit_daily_load(
@@ -154,15 +224,23 @@ def fit_daily_load(
 ) -> LoadFit | None:
     """Fit ``energy = 24 · H · (threshold − outdoor)`` to recorded heating days.
 
-    Only days colder than ``threshold`` — the one in use, with its source — with positive energy
-    count. Over an outdoor spread of ``MIN_OUTDOOR_SPREAD_K`` or more, ``H`` and the threshold
-    are fitted together; the threshold gets its own confidence, weighed by the spread and capped
-    at ``CLAMPED_CONFIDENCE`` when its standard error exceeds ``MAX_THRESHOLD_ERROR_K`` (P-31).
-    Over a narrower spread only ``H`` is fitted, through ``threshold`` — and only when that is
-    the user's entry or trusted (P-32): through a rule of thumb, ``H`` would take its error.
+    The heating days are those colder than the change point the days show (``change_point``,
+    I13.4), or, until days lie on both sides of it, than ``threshold`` — the one in use, with
+    its source — with positive energy. Over an outdoor spread of ``MIN_OUTDOOR_SPREAD_K`` or
+    more, ``H`` and the threshold are fitted together; the threshold gets its own confidence,
+    weighed by the spread and capped at ``CLAMPED_CONFIDENCE`` when its standard error exceeds
+    ``MAX_THRESHOLD_ERROR_K`` (P-31). Over a narrower spread only ``H`` is fitted, through
+    ``threshold`` — and only when that is the user's entry or trusted (P-32): through a rule of
+    thumb, ``H`` would take its error. The loss carries its likely range (``range_share``):
+    95 % from the fit, widened for correlated days, at least ``MIN_RANGE_SHARE``; a loss whose
+    range is wider than ``MAX_USED_RANGE_SHARE`` is capped at ``CLAMPED_CONFIDENCE``.
     ``None`` when the data cannot support a fit.
     """
-    usable = [d for d in days if d.outdoor_mean < threshold.value and d.energy_kwh > 0]
+    split = change_point(days, threshold.value)
+    cut = threshold.value if split is None else split
+    usable, adjacent = _in_time_order(
+        [d for d in days if d.outdoor_mean < cut and d.energy_kwh > 0]
+    )
     if len(usable) < MIN_FIT_DAYS:
         return None
     xs = [d.outdoor_mean for d in usable]
@@ -171,48 +249,76 @@ def fit_daily_load(
     coverage = min(1.0, n / FULL_COVERAGE_DAYS)
     spread = max(xs) - min(xs)
     if spread >= MIN_OUTDOOR_SPREAD_K:
-        mean_x = sum(xs) / n
-        mean_y = sum(ys) / n
-        sxx = sum((x - mean_x) ** 2 for x in xs)
-        sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
-        slope = sxy / sxx
-        if slope >= 0:  # more energy on warmer days: not a heating load
+        line = fit_line(xs, ys, adjacent)
+        if line is None or line.slope >= 0:  # more energy on warmer days: not a heating load
             return None
-        intercept = mean_y - slope * mean_x
-        predicted = [intercept + slope * x for x in xs]
+        slope = line.slope
+        predicted = [line.at(x) for x in xs]
         r_squared = _r_squared(ys, predicted)
         if r_squared < MIN_QUALITY:
             return None
-        crossing = intercept / -slope
+        crossing = line.intercept / -slope
         loss, loss_clamped = _clamped(ParameterKey.LOSS_COEFFICIENT, -slope / HOURS_PER_DAY)
         fitted, threshold_clamped = _clamped(ParameterKey.HEATING_THRESHOLD, crossing)
+        share = _share(line.t * line.slope_error / -slope)
         confidence = min(MAX_FIT_CONFIDENCE, coverage * r_squared)
         own = min(MAX_FIT_CONFIDENCE, coverage * r_squared * min(1.0, spread / FULL_SPREAD_K))
         if loss_clamped or threshold_clamped or n < MIN_KNOWN_DAYS:
             confidence = min(confidence, CLAMPED_CONFIDENCE)
             own = min(own, CLAMPED_CONFIDENCE)
+        if share > MAX_USED_RANGE_SHARE:
+            confidence = min(confidence, CLAMPED_CONFIDENCE)
         if threshold_error(xs, ys, predicted, slope, crossing) > MAX_THRESHOLD_ERROR_K:
             own = min(own, CLAMPED_CONFIDENCE)
         return LoadFit(
-            Estimate(loss, Source.MEASURED, confidence, at),
+            Estimate(loss, Source.MEASURED, confidence, at, share),
             Estimate(fitted, Source.MEASURED, own, at),
             n,
             r_squared,
         )
     if not trusted(threshold):
         return None  # P-32: the loss alone only through a threshold that can be trusted
-    # Too little spread to fit the threshold: fit H alone through the given threshold. R² means
-    # little on such a narrow band, so quality is 1 − relative RMS error instead.
-    spans = [threshold.value - x for x in xs]
-    loss_per_day = sum(y * s for y, s in zip(ys, spans, strict=True)) / sum(s * s for s in spans)
+    # Too little spread to fit the threshold: the loss alone, through the threshold given.
+    return _alone(days, threshold, at)
+
+
+def _share(fitted: float) -> float:
+    """A range's share within ``MIN_RANGE_SHARE`` and ``MAX_RANGE_SHARE``; an error with no
+    degrees of freedom left (infinite, or zero times infinite) is the widest."""
+    if math.isnan(fitted):
+        return MAX_RANGE_SHARE
+    return min(MAX_RANGE_SHARE, max(MIN_RANGE_SHARE, fitted))
+
+
+def _alone(days: Sequence[DayPoint], threshold: Estimate, at: float | None) -> LoadFit | None:
+    """The loss alone through ``threshold`` over the days colder than it, the heating days
+    spreading too little to fit the threshold. R² means little on such a narrow band, so
+    quality is 1 − relative RMS error instead; the range from the slope through the origin,
+    as the line's."""
+    usable, adjacent = _in_time_order(
+        [d for d in days if d.outdoor_mean < threshold.value and d.energy_kwh > 0]
+    )
+    n = len(usable)
+    if n < MIN_FIT_DAYS:
+        return None
+    ys = [d.energy_kwh for d in usable]
+    spans = [threshold.value - d.outdoor_mean for d in usable]
+    squares = sum(s * s for s in spans)
+    loss_per_day = sum(y * s for y, s in zip(ys, spans, strict=True)) / squares
+    residuals = [y - loss_per_day * s for y, s in zip(ys, spans, strict=True)]
     quality = _relative_quality(ys, [loss_per_day * s for s in spans])
     if loss_per_day <= 0 or quality < MIN_QUALITY:
         return None
+    rho = lag_one(residuals, adjacent, max(ys))
+    deviation = math.sqrt(sum(r * r for r in residuals) / (n - 1))
+    error = deviation / math.sqrt(squares) * widening(rho)
+    share = _share(t95(effective_n(n, rho) - 1) * error / loss_per_day)
+    coverage = min(1.0, n / FULL_COVERAGE_DAYS)
     confidence = min(MAX_FIT_CONFIDENCE, coverage * quality * SINGLE_PARAMETER_PENALTY)
     loss, clamped = _clamped(ParameterKey.LOSS_COEFFICIENT, loss_per_day / HOURS_PER_DAY)
-    if clamped or n < MIN_KNOWN_DAYS:
+    if clamped or n < MIN_KNOWN_DAYS or share > MAX_USED_RANGE_SHARE:
         confidence = min(confidence, CLAMPED_CONFIDENCE)
-    return LoadFit(Estimate(loss, Source.MEASURED, confidence, at), None, n, quality)
+    return LoadFit(Estimate(loss, Source.MEASURED, confidence, at, share), None, n, quality)
 
 
 def threshold_error(

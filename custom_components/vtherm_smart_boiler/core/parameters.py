@@ -89,6 +89,9 @@ class Estimate:
     source: Source
     confidence: float = 1.0  # 0 to 1
     at: float | None = None  # seconds since the Unix epoch
+    # I13.4: a measured value's likely range, as a share of it either way (0.2: ±20 %);
+    # ``None`` where none is known.
+    range_share: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

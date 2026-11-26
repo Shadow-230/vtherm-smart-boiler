@@ -8,7 +8,10 @@ changes (the user's answer K, 2026-09-27); the others are shown as "not changed 
 "Not worth it" needs enough criteria judged — 3 of 4, 2 of 3 for a boiler not built to condense
 (S-32) — otherwise it is "not enough data" too. The load criterion counts only with a trusted
 building model (S-17), and without a burner signal there is no verdict (S-43). Every reason
-carries its value and limit so the user sees why.
+carries its value and limit so the user sees why. Beside the reasons, the boiler's lowest and
+highest output and the house's design load (``Sizing``, I13.4): short burns are named as
+frequent, never put down to an oversized boiler as their main cause — measured in UK houses
+without room zoning (Bennett and Elwell 2020), not in a house whose rooms VT switches.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from .building import LoadModel, trusted_load_model
+from .building import LoadModel, trusted, trusted_load_model
 from .metrics import CycleStats, Share
 from .parameters import ParameterKey, ParameterSet
 from .series import Series
@@ -103,12 +106,49 @@ class VerdictOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class Sizing:
+    """I13.4: the boiler's lowest and highest output against the house's design load — the
+    heat loss at the design outdoor temperature, ``H · (indoor − design outdoor)``, as the
+    user's own heat-load calculation gives it — each where known."""
+
+    min_power_kw: float | None
+    max_power_kw: float | None
+    design_load_kw: float | None
+    design_outdoor: float | None  # °C, where the design load is reckoned
+
+    @classmethod
+    def from_parameters(cls, parameters: ParameterSet) -> Sizing | None:
+        """The powers in use (entered or confirmed), and the design load from a trusted heat
+        loss — entered, or measured with confidence (S-17) — at the design outdoor and indoor
+        temperatures in use; ``None`` where none of them is known."""
+        loss = parameters.get(ParameterKey.LOSS_COEFFICIENT).effective()
+        outdoor = parameters.value(ParameterKey.DESIGN_OUTDOOR)
+        indoor = parameters.value(ParameterKey.INDOOR_REFERENCE)
+        load = (
+            loss.value * (indoor - outdoor)
+            if loss is not None and trusted(loss) and outdoor is not None and indoor is not None
+            else None
+        )
+        found = cls(
+            parameters.value(ParameterKey.BOILER_MIN_POWER),
+            parameters.value(ParameterKey.BOILER_MAX_POWER),
+            load,
+            None if load is None else outdoor,
+        )
+        if found.min_power_kw is None and found.max_power_kw is None and load is None:
+            return None
+        return found
+
+
+@dataclass(frozen=True, slots=True)
 class VerdictResult:
     verdict: Verdict
     reasons: tuple[Reason, ...] = field(default_factory=tuple)
     # P-96: days with data left out because the plugin controlled the boiler for an hour or
     # more of them — the verdict is the installation's own, without control.
     days_left_out: int = 0
+    # I13.4: the boiler's outputs against the house's design load, shown beside the reasons.
+    sizing: Sizing | None = None
 
 
 def load_below_min_share(
@@ -304,7 +344,8 @@ def _load_criterion(
 ) -> tuple[int, list[Reason]]:
     """The share of heating time with the load below the boiler's minimum power: unknown is
     named (a rule-of-thumb model saying so, S-17); often below is a problem control does not
-    change — the boiler's minimum power is not control's; rarely is fine."""
+    change — the boiler's minimum power is not control's, and a common cause of short burns,
+    not named the main one (I13.4); rarely is fine."""
     if load_below_min is None or load_below_min.value is None:
         missing = Reason(
             ReasonCode.LOAD_UNKNOWN,
