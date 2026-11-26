@@ -213,5 +213,11 @@ boilers use OpenTherm IDs 16 and 24 (the thermostat-like mode).
   `vtherm_api`; VT's central boiler decides whether to heat, through a helper the plugin follows;
   no learning pauses, water interface or frost protection of the plugin's; the rooms from VT; VT
   10.6.5 the oldest supported (the user's decisions of 2026-11-24 and 2026-11-25)
+- 0.2, step I13 — `docs/en/development/plans/plan-0.2-i13.md`: the corrections from the
+  literature — "Gives no heat" only while a room is withheld heat, the boiler link without
+  chatter, the comfort correction's pace, the building's range and the verdict, the monitor's
+  figures, a restart pause (off by default), the modulation cap (opt-in), a longer outdoor mean
+  for heavy houses, the documents (the user's decision of 2026-11-26); the sources in
+  `literature/`
 - Device templates — `docs/en/development/plans/plan-device-templates.md`: one parameter file per
   boiler device, after the first release (the user's decisions of 2026-11-22)
