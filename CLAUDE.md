@@ -17,7 +17,8 @@ user's decisions of 2026-11-18, before the first release), is planned in
 history; step I11, control switched only in the plugin's settings (the user's decisions of
 2026-11-22, after J4), in [`plan-0.2-i11.md`][plan-0.2-i11], listed there too; step I12, data
 through `vtherm_api` and VT deciding whether to heat (the user's decisions of 2026-11-24/25), in [`plan-0.2-i12.md`][plan-0.2-i12],
-listed there too; the device
+listed there too; step I13, the corrections from the literature (the user's decision of
+2026-11-26), in [`plan-0.2-i13.md`][plan-0.2-i13], before the test environment's move and J4; the device
 templates, after the first release and before 0.3, in
 [`plan-device-templates.md`][plan-device-templates]; phases run in order. A 🔒 step whose plan says it holds nothing
 up is noted in the report and passed; work goes on with the next step. 0.1 and 0.2 are built in one
@@ -35,6 +36,7 @@ go; the first published version is decided at K4 and K5 (`plan-0.2.2.md`, decisi
 [plan-0.2-i10]: docs/en/development/plans/plan-0.2-i10.md
 [plan-0.2-i11]: docs/en/development/plans/plan-0.2-i11.md
 [plan-0.2-i12]: docs/en/development/plans/plan-0.2-i12.md
+[plan-0.2-i13]: docs/en/development/plans/plan-0.2-i13.md
 [plan-device-templates]: docs/en/development/plans/plan-device-templates.md
 [plan-0.2.1]: docs/en/development/plans/plan-0.2.1.md
 [plan-0.2.2]: docs/en/development/plans/plan-0.2.2.md
@@ -94,7 +96,11 @@ Each topic lives only in its file; do not copy it here.
   for the page's screenshots, `playwright` likewise, its Chromium into `.tools/ms-playwright/`,
   and the system libraries Chromium needs as Debian packages fetched with `apt-get download`
   (no root) and unpacked into `.tools/chromium-libs/` (`scripts/bootstrap_browser.sh`); any
-  other package needs the user's consent first. Sources and documents of typical DIY boiler
+  other package needs the user's consent first. Consented 2026-11-26: literature with a licence
+  that allows sharing it (CC BY, Open Government Licence) in the repository's `literature/`, each
+  file listed with its source and licence in `literature/README.md`; useful literature that may
+  not be shared only in the git-ignored `research/literature/`, listed in its `INDEX.md`; the
+  SmartPI project's documents at `/home/ai/projects/vtherm_smartpi/` may be read. Sources and documents of typical DIY boiler
   interfaces (OTGW, ESPHome, EMS-ESP, DIYLess and the like) are downloaded on purpose into the
   git-ignored `research/diy/` — one folder per solution, every file listed with its source, date
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read

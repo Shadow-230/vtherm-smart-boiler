@@ -215,5 +215,11 @@ kotły używają identyfikatorów OpenTherm 16 i 24 (tryb „jak termostat”).
   `vtherm_api`; o grzaniu decyduje centralny kocioł VT przez pomocnika, za którym idzie wtyczka;
   bez pauz nauki, interfejsu wody i własnej ochrony przed mrozem; pokoje z VT; VT 10.6.5 jako
   najstarsza obsługiwana wersja (decyzje użytkownika z 2026-11-24 i 2026-11-25)
+- 0.2, krok I13 — `docs/en/development/plans/plan-0.2-i13.md`: poprawki z literatury — „Nie daje
+  ciepła” tylko wtedy, gdy pokojowi brakuje ciepła, połączenie z kotłem bez migania, tempo
+  korekty komfortu, przedział dla budynku i werdykt, liczby monitora, przerwa przed ponownym
+  startem (domyślnie wyłączona), ograniczenie modulacji (na życzenie), dłuższa średnia temperatury
+  zewnętrznej dla ciężkich domów, dokumenty (decyzja użytkownika z 2026-11-26); źródła w
+  `literature/`
 - Szablony urządzeń — `docs/en/development/plans/plan-device-templates.md`: jeden plik parametrów na
   urządzenie kotła, po pierwszym wydaniu (decyzje użytkownika z 2026-11-22)
