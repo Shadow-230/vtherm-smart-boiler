@@ -136,8 +136,8 @@ reaches `main` with the first release.
 
 | Release | Content |
 |---|---|
-| 0.2 Control base | the monitor plus control of the water temperature, heating on and off as VT's central boiler decides, the safe hand-back |
-| 0.3 Anti-cycling and the thermostat-like mode | duty cycling, a modulation cap, forecast planning, the thermostat-like mode, underfloor behind a mixing valve |
+| 0.2 Control base | the monitor plus control of the water temperature, heating on and off as VT's central boiler decides, the safe hand-back, a modulation cap (opt-in) |
+| 0.3 Anti-cycling and the thermostat-like mode | duty cycling, forecast planning, the thermostat-like mode, underfloor behind a mixing valve |
 | 0.4 Learning and tuning | water-side learning, suggestions, seasonal tune-up |
 | 0.5 Forecast | anticipation for slow emitters from recorded forecasts |
 | Later | hot-water charging, the HACS default list, more devices |

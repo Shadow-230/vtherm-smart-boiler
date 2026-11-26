@@ -107,7 +107,7 @@ building (the building's answers), the lower of now and the mean kept.
 Built: 12 h where the curve's circuit has an underfloor room (from VT's rooms, as the exponent
 reads them); underfloor only, as the building's mass went in I8 (B5).
 
-### I13.9 Documents
+### I13.9 Documents ✅
 
 The underfloor exponent's wording (1.1 is the floor surface's; the water side is about 1.0); the
 starts and burn thresholds (6 and 12 an hour, 10 minutes) named as conventions; the Bennett figure

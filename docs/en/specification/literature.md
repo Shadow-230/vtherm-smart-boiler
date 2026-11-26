@@ -33,6 +33,8 @@ repository. Each line says what the plugin takes from the source.
   nearly linear: its exponent is about 1.0.
 - Gritzki, R. et al. (2021). Can we still trust in EN 442? *REHVA Journal*. The radiator output
   formula and its exponent 1.3.
+- Siemens. *LMS14 boiler management unit*, user documentation. A minimum off time between
+  heating starts, and the outdoor temperature filtered over 10–20 hours: the outdoor mean.
 - Kull, T. M., Simson, R., Thalfeldt, M., Kurnitski, J. (2017). Influence of time constants on
   low energy buildings' heating control. 11th Nordic Symposium on Building Physics, *Energy
   Procedia* 132, 75–80. Rooms with underfloor

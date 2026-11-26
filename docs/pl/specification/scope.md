@@ -1299,7 +1299,7 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Próg „dolej wody” | brak | wartość pochodzi z instrukcji kotła; zła wartość domyślna niczego nie zatrzyma, ale wprowadzi w błąd |
 | Ostrzeżenie / alarm wysokiego ciśnienia | brak — wpisywane poniżej wartości znamionowej zaworu bezpieczeństwa, odczytanej z zaworu | wartości się różnią (często 3 bar w Europie, około 2.1 bar w Ameryce Północnej): domyślne 2.8 bar nigdy nie zadziałałoby poniżej zaworu 2.1 bar (decyzja 13 z `docs/en/development/plans/plan-0.2.3.md`) |
 | Ostrzeżenie / alarm spalin | 85 / 100 °C przy kotle kondensacyjnym; brak przy niekondensacyjnym | cieplejsze spaliny znaczą, że kocioł nie kondensuje; zbyt wysoka wartość ostrzega za późno dla plastikowych rur spalinowych; kocioł niekondensacyjny ma znacznie gorętsze spaliny (powód do potwierdzenia w K4) |
-| Częste starty | alarm: więcej niż 12 startów na godzinę; ostrzeżenie: ponad 6 na godzinę przez 3 h | alarm: jeden start na 5-minutowy cykl, domyślny w VT; ostrzeżenie (K4, decyzja użytkownika z 2026-11-17): wartość projektowa TPI dla kotłów gazowych, 6 na godzinę (Bennett 2019: 70 % startów grzania krótszych niż 10 min); zbyt wysoka wartość ukrywa krótkie cykle |
+| Częste starty | alarm: więcej niż 12 startów na godzinę; ostrzeżenie: ponad 6 na godzinę przez 3 h | alarm: jeden start na 5-minutowy cykl, domyślny w VT; ostrzeżenie (K4, decyzja użytkownika z 2026-11-17): wartość projektowa TPI dla kotłów gazowych, 6 na godzinę (Bennett 2019: u 70 % kotłów średni start grzania krótszy niż 10 min); umowna wartość, a nie próg szkodliwości podany w literaturze (I13.9); zbyt wysoka wartość ukrywa krótkie cykle |
 | Niestabilny zapłon | więcej niż 10 paleń krótszych niż minuta w ciągu doby | kilka może pochodzić z krótkich poborów c.w.u.; zbyt wiele ukryje problem z zapłonem (powód do potwierdzenia w K4) |
 | Sygnały usterki kotła | brak | użytkownik mapuje własną usterkę kotła tam, gdzie pokazuje ją integracja |
 | Zaciski termostatu (bramka) | brak — wymagane; „nie wiem” blokuje sterowanie | styk włącz/wyłącz nie mógłby ogrzać domu po awarii, gdy jest w stanie „wyłączone” (decyzja 1) |
@@ -1318,6 +1318,15 @@ Stałe wartości (S-37) — nie są opcjami. Każdy wiersz jest albo postanowion
 decyzja lub data), albo tymczasowy, K4; wiersz, który nie podaje żadnej decyzji — „istniejące”,
 „powód do potwierdzenia” lub sam powód — jest tymczasowy, K4. „Powód do potwierdzenia” oznacza
 wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każdą tymczasową wartość w K4.
+
+Sprawdzone z literaturą 2026-11-26 ([literatura](literature.md); krok I13): zgodne — kształt krzywej
+i wykładnik grzejników 1,3, „pełne otwarcie” od 95 %, wodę ustawia najbardziej wymagający obieg,
+limit obiegu, utrata łączności z kotłem po 5 min w ciągu 10 i jej powrót, nastawa powtarzana co
+30 s tam, gdzie nadpisanie wygasa, histereza alarmów, nastawa awaryjna w punkcie projektowym
+krzywej, rada o cyklu VT co najmniej 10 min. Wartości umowne, a nie progi szkodliwości podane w
+literaturze: starty na godzinę (6 dla ostrzeżenia, 12 dla alarmu), krótkie palenie poniżej 10 minut,
+10 paleń krótszych niż minuta na dobę dla niestabilnego zapłonu. Wykładnik podłogówki 1,1 dotyczy
+powierzchni podłogi; po stronie wody to około 1,0 (Olesen 2007): różnica jest poniżej 1 K.
 
 | Wartość | Gdzie | Dlaczego |
 |---|---|---|
