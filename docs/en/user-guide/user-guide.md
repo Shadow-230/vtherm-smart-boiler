@@ -459,9 +459,9 @@ algorithms count the outdoor temperature as well, so the weather then acts twice
 - **TPI** (VT's time-proportional algorithm) adds `tpi_coef_ext` × (target − outdoor) to each
   zone's heating time. With the plugin's curve, colder weather brings both warmer water and longer
   heating times. The term is VT's setting, per zone; the plugin does not change it.
-- **SmartPI** (0.4.0) learns an outdoor term of its own (`u_ff1`, a learned factor ×
-  (target − outdoor)). It cannot be set or switched off; it learns with the water the plugin
-  sends.
+- **SmartPI** (checked in 0.6.7 and 1.0) learns an outdoor term of its own (`u_ff1`, a learned
+  factor × (target − outdoor)). It cannot be set or switched off; it learns with the water the
+  plugin sends.
 
 How a zone behaves with both depends on its room and its algorithm; the plugin describes this and
 gives no advice on these settings.

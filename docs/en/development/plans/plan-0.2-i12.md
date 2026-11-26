@@ -297,7 +297,7 @@ A burn while the helper was off counted as hot water, also while a circuit run b
 asked for heat. The circuits' request entities (the user's entities) are read from the recorder
 beside the helper: a burn while one asks counts as heating.
 
-#### I12.19 Documents
+#### I12.19 Documents ✅
 
 The development plan (the restart pause no longer cut short by the plugin's frost protection; the
 tests' move to Home Assistant 2026.11 as a step of its own), `CLAUDE.md` (CI fetches VT 10.6.5,

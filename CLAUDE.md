@@ -100,8 +100,9 @@ Each topic lives only in its file; do not copy it here.
   and license in `research/diy/INDEX.md` — rather than left by a tool outside the project; read
   for interface facts only (the user's decision, 2026-09-24). The official license text only
   with the user's consent at that step (`docs/en/development/plans/plan-0.2.md` K1). CI on GitHub's servers fetches VT
-  10.5.1 (10.4.0 until 2026-10-13, the user's decision) and SmartPI 0.4.0 from their tags for the
-  real-VT tests; nothing is downloaded locally (`docs/en/development/plans/plan-0.2.2.md`, decision 14).
+  10.6.5 (10.5.1 until 2026-11-25, 10.4.0 until 2026-10-13) for the real-VT tests and SmartPI 0.4.0
+  only for the test bench's deploy, both by their release commits; nothing is downloaded locally
+  (`docs/en/development/plans/plan-0.2.2.md`, decision 14; `plan-0.2-i12.md` I12.6, I12.9).
 - Nothing is created without the user's consent: no files or directories (temporary ones
   included), repositories, installs, environments, issues or pull requests.
   Exceptions: files and directories in the agreed layout (the "Layout" sections of
