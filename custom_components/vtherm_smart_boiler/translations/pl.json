@@ -87,7 +87,6 @@
           "control": "Urządzenie sterujące (eksperymentalne)",
           "control_curve": "Krzywa grzewcza",
           "control_behaviour": "Zachowanie sterowania",
-          "control_frost": "Ochrona przed mrozem",
           "control_alarms": "Reakcje na alarmy",
           "finish": "Utwórz",
           "incomplete": "Konfiguracja niekompletna"
@@ -195,7 +194,7 @@
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Prosto z kotła (bez mieszania); mieszany przez kocioł (drugi obieg); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa z najwyżej jednym obiegiem prosto z kotła i bez obiegu mieszanego przez kocioł.",
-          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa jest w jednym obiegu, chyba że podzielono ją przez urządzenia. Strefa zbudowana na własnym termostacie kotła jest odrzucana: prosiłaby przy każdym płomieniu.",
+          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg. Strefa poza obiegami nie prosi o ciepło; strefa jest w jednym obiegu, chyba że podzielono ją przez urządzenia. Strefa zbudowana na własnym termostacie kotła jest odrzucana: prosiłaby przy każdym płomieniu.",
           "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
           "devices": "Opcjonalnie: dla pokoju zasilanego przez ten obieg tylko w części — tu grzejnik, w innym obiegu pętla podłogówki — jego urządzenia zamiast całej strefy. W obiegu sterowanym przez inną automatykę prosi wtedy tylko, gdy któreś z nich jest włączone.",
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: obowiązuje dla nich wykładnik krzywej i najwyższa temperatura wody obiegu. Pozostałe to grzejniki, chyba że konwektory.",
@@ -375,20 +374,6 @@
           "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana."
         }
       },
-      "control_frost": {
-        "title": "Ochrona przed mrozem",
-        "description": "Pilnowana strefa zimniejsza niż próg uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć; grzanie przeciw mrozowi kończy się, gdy każda pilnowana strefa jest powyżej progu zwolnienia.",
-        "data": {
-          "frost_limit": "Ochrona przed mrozem poniżej",
-          "frost_release": "Ochrona przed mrozem do",
-          "frost_zone": "Strefa przeciwmrozowa"
-        },
-        "data_description": {
-          "frost_limit": "Pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć, w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
-          "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
-          "frost_zone": "Opcjonalnie: pilnuj tylko tej strefy. Puste (domyślnie): każdej. Grzanie przeciw mrozowi rusza tylko dla zimnego pokoju, którego zawór może się otworzyć; taki, który VT trzyma zamknięty, daje zgłoszenie w Naprawach. Grzanie, które przez dwie godziny nie ogrzewa pokoju, daje alarm; nigdy nie jest przerywane."
-        }
-      },
       "control_alarms": {
         "title": "Reakcje na alarmy",
         "description": "Co robi sterowanie, gdy kocioł ignoruje wartość zapisywaną przez wtyczkę. Pozostałe alarmy tylko informują; wtyczka wyłącza grzanie wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy.",
@@ -447,7 +432,6 @@
       "mqtt_topic_invalid": "Wpisz poziom tematu tak, jak używa go firmware bramki, bez spacji i symboli wieloznacznych + i #.",
       "hand_back_value_missing": "Sposób „wartość” wymaga wartości oddania.",
       "hand_back_entity_missing": "Sposób „przełącznik” wymaga przełącznika sterowania zewnętrznego.",
-      "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna.",
       "hand_back_timeout_not_expiring": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających; wybierz wartość albo przełącznik.",
       "hand_back_value_out_of_range": "Wartość oddania leży poza zakresem, który przyjmuje encja nastawy.",
       "limits_outside_entity_range": "Encja nastawy nie przyjmuje tego limitu; utrzymaj limity w jej zakresie.",
@@ -533,7 +517,6 @@
           "control": "Urządzenie sterujące (eksperymentalne)",
           "control_curve": "Krzywa grzewcza",
           "control_behaviour": "Zachowanie sterowania",
-          "control_frost": "Ochrona przed mrozem",
           "control_alarms": "Reakcje na alarmy",
           "save": "Zapisz i zakończ"
         }
@@ -752,7 +735,7 @@
         "data_description": {
           "name": "Pokazywana w menu. Wybierz obszar Home Assistant albo strefę VT albo wpisz dowolną nazwę; wewnętrzny identyfikator wtyczki pozostaje ukryty. Puste: numer obiegu.",
           "control": "Prosto z kotła (bez mieszania); mieszany przez kocioł (drugi obieg); sterowany przez inną automatykę (mieszacz albo pompa, którymi wtyczka nigdy nie steruje); albo termostatyczny zawór mieszający (stały). Sterowanie działa z najwyżej jednym obiegiem prosto z kotła i bez obiegu mieszanego przez kocioł.",
-          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg. Strefa poza obiegami nie prosi o ciepło i nie jest pilnowana przed mrozem; strefa jest w jednym obiegu, chyba że podzielono ją przez urządzenia. Strefa zbudowana na własnym termostacie kotła jest odrzucana: prosiłaby przy każdym płomieniu.",
+          "zones": "Strefy Versatile Thermostat, które grzeje ten obieg. Strefa poza obiegami nie prosi o ciepło; strefa jest w jednym obiegu, chyba że podzielono ją przez urządzenia. Strefa zbudowana na własnym termostacie kotła jest odrzucana: prosiłaby przy każdym płomieniu.",
           "area": "Skrót: strefy VT z tego obszaru Home Assistant są dopisywane do listy przy zapisie.",
           "devices": "Opcjonalnie: dla pokoju zasilanego przez ten obieg tylko w części — tu grzejnik, w innym obiegu pętla podłogówki — jego urządzenia zamiast całej strefy. W obiegu sterowanym przez inną automatykę prosi wtedy tylko, gdy któreś z nich jest włączone.",
           "underfloor": "Strefy tego obiegu z ogrzewaniem podłogowym: obowiązuje dla nich wykładnik krzywej i najwyższa temperatura wody obiegu. Pozostałe to grzejniki, chyba że konwektory.",
@@ -904,20 +887,6 @@
           "off_setpoint": "Nastawa zapisywana dla „wyłączone” bez przełącznika grzania, w °C. Domyślnie 10, poniżej najniższej temperatury wody. Niska nastawa może nie wyłączyć grzania w kotle — pompa może dalej pracować. Sterowanie bez przełącznika grzania jest w tej wersji zablokowane, więc nie jest jeszcze zapisywana."
         }
       },
-      "control_frost": {
-        "title": "Ochrona przed mrozem",
-        "description": "Pilnowana strefa zimniejsza niż próg uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć; grzanie przeciw mrozowi kończy się, gdy każda pilnowana strefa jest powyżej progu zwolnienia.",
-        "data": {
-          "frost_limit": "Ochrona przed mrozem poniżej",
-          "frost_release": "Ochrona przed mrozem do",
-          "frost_zone": "Strefa przeciwmrozowa"
-        },
-        "data_description": {
-          "frost_limit": "Pilnowana strefa zimniejsza niż ta wartość uruchamia grzanie, bez względu na resztę, jeśli ciepło może do niej dotrzeć, w °C. Domyślnie 5 °C. Za niska grozi zamarznięciem rur; za wysoka grzeje pokoje, które trzymasz wyłączone.",
-          "frost_release": "Ochrona przed mrozem kończy się, gdy każda pilnowana strefa jest powyżej tej wartości, w °C. Domyślnie 7 °C, powyżej progu. Blisko progu grzanie przeciwmrozowe włącza się i wyłącza częściej.",
-          "frost_zone": "Opcjonalnie: pilnuj tylko tej strefy. Puste (domyślnie): każdej. Grzanie przeciw mrozowi rusza tylko dla zimnego pokoju, którego zawór może się otworzyć; taki, który VT trzyma zamknięty, daje zgłoszenie w Naprawach. Grzanie, które przez dwie godziny nie ogrzewa pokoju, daje alarm; nigdy nie jest przerywane."
-        }
-      },
       "control_alarms": {
         "title": "Reakcje na alarmy",
         "description": "Co robi sterowanie, gdy kocioł ignoruje wartość zapisywaną przez wtyczkę. Pozostałe alarmy tylko informują; wtyczka wyłącza grzanie wyłącznie wtedy, gdy sam kocioł zgłasza usterkę, która go zatrzymuje. Inny sterownik piszący do kotła zawsze sprawia, że wtyczka ustępuje; nigdy z nim nie walczy.",
@@ -991,7 +960,6 @@
       "need_on_underfloor": "Podłogówka z potrzebną temperaturą wody: przy każdym wołaniu jej stref kocioł idzie do tej temperatury. Podłoga za mieszaczem jej nie potrzebuje — zostaw puste, wodę da krzywa. Zatwierdź ponownie, żeby zachować.",
       "hand_back_value_missing": "Sposób „wartość” wymaga wartości oddania.",
       "hand_back_entity_missing": "Sposób „przełącznik” wymaga przełącznika sterowania zewnętrznego.",
-      "frost_release_not_above_limit": "Ochrona przed mrozem musi kończyć się powyżej temperatury, przy której się zaczyna.",
       "hand_back_timeout_not_expiring": "Limit czasu urządzenia oddaje sterowanie tylko przy zapisach wygasających; wybierz wartość albo przełącznik.",
       "hand_back_value_out_of_range": "Wartość oddania leży poza zakresem, który przyjmuje encja nastawy.",
       "limits_outside_entity_range": "Encja nastawy nie przyjmuje tego limitu; utrzymaj limity w jej zakresie.",
@@ -1524,7 +1492,6 @@
           "waiting_data": "Czeka na dane",
           "heating": "Grzanie",
           "idle": "Postój",
-          "frost": "Ochrona przed mrozem",
           "fallback": "Nastawa awaryjna",
           "boiler_fault": "Usterka kotła: grzanie wyłączone"
         },
@@ -1603,7 +1570,6 @@
               "no_demand": "Kocioł centralny VT nie prosi o ciepło",
               "zones_unknown": "Nic nie może poprosić o ciepło: nie jest znany stan żadnej strefy ani decyzja VT",
               "zones_recognition": "Strefy jeszcze się zgłaszają: nic nowego nie jest ustalane",
-              "frost": "Ochrona przed mrozem",
               "ramp": "Nastawa zmienia się stopniowo (rampa)",
               "limit_hard_min": "Utrzymana na najniższej temperaturze wody",
               "limit_hard_max": "Ograniczona do najwyższej temperatury wody",
@@ -1723,7 +1689,7 @@
             "name": "Strefy o nieznanym stanie"
           },
           "room_sensor_lost_zones": {
-            "name": "Strefy, które straciły czujnik pokojowy"
+            "name": "Pokoje pominięte w ocenie krzywej"
           },
           "writes_stopped": {
             "name": "Zapisy zatrzymane (inny sterownik)"
@@ -2031,20 +1997,6 @@
           "comfort_correction_missing_text": {
             "name": "Korekta komfortu: czego brakuje"
           },
-          "frost_protection": {
-            "name": "Ochrona przed mrozem",
-            "state": {
-              "available": "Dostępna",
-              "degraded": "Ograniczona: działa ze słabszych danych",
-              "inactive": "Nieaktywna: brakuje potrzebnych danych albo są niedostępne"
-            }
-          },
-          "frost_protection_missing": {
-            "name": "Ochrona przed mrozem: brakuje"
-          },
-          "frost_protection_missing_text": {
-            "name": "Ochrona przed mrozem: czego brakuje"
-          },
           "activation_delay": {
             "name": "Opóźnienie włączenia",
             "state": {
@@ -2201,7 +2153,7 @@
           "frost_protection_by": {
             "name": "Ochrona przed mrozem przez",
             "state": {
-              "plugin": "Wtyczka",
+              "vt": "Versatile Thermostat, przez wtyczkę",
               "thermostat": "Termostat",
               "boiler": "Własna ochrona kotła, jeśli ją ma",
               "device": "Własne sterowanie kotła lub urządzenia"
@@ -2678,12 +2630,6 @@
       "alarm_boiler_link_lost": {
         "name": "Sterowanie: utracono dane kotła"
       },
-      "alarm_zone_unknown": {
-        "name": "Sterowanie: stan strefy nieznany"
-      },
-      "alarm_frost_not_warming": {
-        "name": "Sterowanie: grzanie przeciwmrozowe nie ogrzewa pomieszczenia"
-      },
       "alarm_correction_at_limit": {
         "name": "Sterowanie: korekta komfortu na granicy"
       },
@@ -3101,30 +3047,6 @@
       "title": "Versatile Thermostat nie odpowiada",
       "description": "Żadna strefa nie odpowiada ({zones}); monitor nie może ich ocenić. Sprawdź, czy Versatile Thermostat jest załadowany, jego termostaty są włączone, a ich identyfikatory encji zgadzają się z opcjami wtyczki."
     },
-    "frost_zone_closed": {
-      "title": "Pokój poniżej progu mrozu nie może dostać ciepła",
-      "description": "{zones}: Versatile Thermostat trzyma zawór zamknięty (termostat wyłączony albo jego nastawa jest poniżej progu mrozu), więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. Użyj presetu mrozowego VT zamiast wyłączenia; centralny tryb mrozowy VT wymaga ustawienia temperatury mrozowej w każdym termostacie."
-    },
-    "frost_zone_closed_window": {
-      "title": "Pokój poniżej progu mrozu nie może dostać ciepła: otwarte okno",
-      "description": "{zones}: Versatile Thermostat trzyma zawór zamknięty, bo wykrywa otwarte okno, więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. Pokój zostaje nieogrzewany, dopóki VT go znów nie otworzy: zamknij okno albo sprawdź wykrywanie okna w VT dla tego pokoju."
-    },
-    "frost_zone_closed_central_mode": {
-      "title": "Pokój poniżej progu mrozu nie może dostać ciepła: tryb centralny VT",
-      "description": "{zones}: Versatile Thermostat trzyma zawór zamknięty z powodu swojego trybu centralnego, więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. W trybie centralnym „Zatrzymany” pokój zostaje nieogrzewany, dopóki VT go znów nie otworzy; centralny tryb mrozowy VT wymaga ustawienia temperatury mrozowej w każdym termostacie. Wtyczka nigdy nie zmienia trybu VT."
-    },
-    "frost_zone_closed_vt_function": {
-      "title": "Pokój poniżej progu mrozu nie może dostać ciepła: wyłącza go funkcja VT",
-      "description": "{zones}: jedna z funkcji samego Versatile Thermostat (tryb bezpieczeństwa albo automatyczny start/stop) trzyma zawór zamknięty, więc wtyczka nie może go ogrzać i nie włącza dla niego kotła. Pokój zostaje nieogrzewany, dopóki VT go znów nie otworzy: sprawdź czujnik temperatury pokoju w tym termostacie i jego ustawienia automatycznego startu/stopu."
-    },
-    "frost_zone_closed_inhibition": {
-      "title": "Pokój poniżej progu mrozu nie może dostać ciepła: trzyma go inna wtyczka",
-      "description": "{zones}: inna wtyczka wyłączyła ten termostat spod sterowania Versatile Thermostat, więc VT trzyma zawór zamknięty, a wtyczka nie może go ogrzać i nie włącza dla niego kotła. Pokój zostaje nieogrzewany, dopóki tamta wtyczka nie odda termostatu VT: sprawdź wtyczkę, która go trzyma."
-    },
-    "frost_zone_closed_mixed": {
-      "title": "Pokoje poniżej progu mrozu nie mogą dostać ciepła",
-      "description": "{zones}: VT trzyma ich zawory zamknięte z różnych powodów, więc wtyczka nie może ich ogrzać. Dla termostatu wyłączonego użyj presetu przeciwmrozowego VT zamiast wyłączenia; pokój zamknięty przez okno, „Zatrzymany” VT albo inną funkcję VT zostaje nieogrzany, dopóki VT go nie otworzy, a pokój trzymany przez inną wtyczkę — dopóki tamta wtyczka go nie odda."
-    },
     "thermostat_kind_missing": {
       "title": "Podaj, co jest podłączone do zacisków termostatu bramki",
       "description": "Sterowanie kotłem czeka na odpowiedź na pytanie w „Interfejs kotła”: co jest podłączone do zacisków termostatu bramki. Bez termostatu (praca samodzielna) kocioł do tego czasu nie grzeje."
@@ -3292,6 +3214,10 @@
     "vt_settings_moved": {
       "title": "Ustaw progi wezwania ciepła w kotle centralnym VT",
       "description": "Kocioł centralny Versatile Thermostat decyduje teraz, czy kocioł grzeje, więc własne ustawienia wezwania ciepła wtyczki zniknęły. Część z nich była ustawiona: wołające pokoje {count}, moc {power} kW, otwarcie zaworu {opening} %, opóźnienie włączenia {delay} s („-”: nieustawione). Ustaw w kotle centralnym VT to, co VT oferuje — progi liczby urządzeń i mocy oraz opóźnienie włączenia; VT nie ma progu otwarcia zaworu — i skieruj jego polecenia na pomocnika, którego wybierzesz we wtyczce."
+    },
+    "frost_moved_to_vt": {
+      "title": "Ochrona przed mrozem należy teraz tylko do Versatile Thermostat",
+      "description": "Wtyczka nie grzeje już sama przeciw mrozowi. Robi to Versatile Thermostat: daj każdemu termostatowi preset ochrony przed mrozem albo ustaw tryb centralny VT na „Ochrona przed mrozem” i zostaw obie komendy kotła centralnego VT na pomocniku wybranym we wtyczce. W VT „Zatrzymany” oznacza, że nic nie grzeje, nawet przeciw mrozowi."
     }
   },
   "services": {

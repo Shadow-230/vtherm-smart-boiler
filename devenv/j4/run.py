@@ -1521,7 +1521,8 @@ async def K5(r: Run):
 
 
 async def E5(r: Run):
-    """VT "Stopped" and a room at 4 °C behind the valve VT keeps closed: no frost heat, a repair issue naming it"""
+    """VT "Stopped" and a room at 4 °C behind the valve VT keeps closed: no heat, no hand-back,
+    no repair issue — "Stopped" means nobody heats, and frost protection is VT's (I12.10)"""
     await r.switch(True)
     await r.ha.wait(60)
     t = time.time()
@@ -1542,11 +1543,8 @@ async def E5(r: Run):
     )
     r.check(0 not in [v for k, v in r.cmds(t, "setpoint")], "no hand-back")
     issues = await r.ha.issues()
-    frost = [i for i in issues if i["issue_id"].startswith("frost_zone_closed")]
-    r.check(bool(frost), f"repair issue: {[i['issue_id'] for i in issues]}")
-    # SB-27: the advice by VT's reason, which VT publishes in ``specific_states``.
-    keys = [i.get("translation_key") for i in frost]
-    r.check("frost_zone_closed_central_mode" in keys, f"advice by VT's central mode: {keys}")
+    frost = [i["issue_id"] for i in issues if i["issue_id"].startswith("frost_zone_closed")]
+    r.check(not frost, f"no frost issue of the plugin's (I12.10): {frost}")
 
 
 async def E6(r: Run):

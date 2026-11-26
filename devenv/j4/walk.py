@@ -5,7 +5,7 @@ changes it asks for, back to the menu, then "Save and finish".
 The changes are one flat set of field names: each goes to whichever form asks it, so a field
 that moved between forms (I8: the read-backs to the boiler signals, the gateway's questions to
 the boiler interface, the comfort correction to the curve, VT's activation delay to the
-behaviour, frost protection to its own item) needs no other change here. A ``None`` value
+behaviour) needs no other change here. A ``None`` value
 empties the field. Pure: the caller passes its ``rest`` — the runner's client, or a test's.
 """
 

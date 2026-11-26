@@ -106,7 +106,6 @@ def test_every_form_field_and_select_option_is_translated() -> None:
         "interface": _interface_schemas(flow),
         "control_curve": flow.control_curve_schema(options),
         "control_behaviour": flow.control_behaviour_schema(options),
-        "control_frost": flow.control_frost_schema(options),  # I8 (decision H4)
         "control_alarms": flow.control_alarms_schema(options),
         "control_return_confirm": flow.control_return_confirm_schema(),
         "confirm_blocking": flow.confirm_blocking_schema(),  # X5.12
@@ -233,11 +232,8 @@ def test_every_control_entity_blocker_and_issue_is_translated() -> None:
         assert no_zone["title"], kind
         assert set(PLACEHOLDER.findall(no_zone["description"])) == {"zones"}, kind
     assert "no_criterion_judged_off" not in SOURCE["issues"]  # I12: VT's decision instead
-    # Decision 4 (X4); SB-27: the advice by VT's reason for closing the room.
-    for advice in ("", "_window", "_central_mode", "_vt_function", "_inhibition", "_mixed"):
-        frost = SOURCE["issues"][f"frost_zone_closed{advice}"]
-        assert frost["title"], advice
-        assert set(PLACEHOLDER.findall(frost["description"])) == {"zones"}, advice
+    # I12.10: frost protection is VT's — the plugin's closed-room issue went.
+    assert not any(key.startswith("frost_zone_closed") for key in SOURCE["issues"])
     assert SOURCE["entity"]["button"]["reset_comfort_correction"]["name"]  # answer J (X4)
     too_hot = SOURCE["entity"]["binary_sensor"]["alarm_circuit_too_hot"]["state_attributes"]
     # Y1 (S-16): held through a gap in the flow, then unknown with its reason; not judged while
@@ -733,7 +729,6 @@ def _flow_fields() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 "interface": _interface_schemas(flow),
                 "control_curve": flow.control_curve_schema(options),
                 "control_behaviour": flow.control_behaviour_schema(options),
-                "control_frost": flow.control_frost_schema(options),
                 "control_alarms": flow.control_alarms_schema(options),
                 "control_return_confirm": flow.control_return_confirm_schema(),
                 "confirm_blocking": flow.confirm_blocking_schema(),

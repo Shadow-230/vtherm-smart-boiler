@@ -42,8 +42,6 @@
       "alarm_control_error": { "default": "mdi:alert-octagon", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_hand_back_failed": { "default": "mdi:hand-back-left-off", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_boiler_link_lost": { "default": "mdi:lan-disconnect", "state": { "off": "mdi:check-circle-outline" } },
-      "alarm_zone_unknown": { "default": "mdi:help-circle-outline", "state": { "off": "mdi:check-circle-outline" } },
-      "alarm_frost_not_warming": { "default": "mdi:snowflake-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_correction_at_limit": { "default": "mdi:chart-bell-curve-cumulative", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_outdoor_sensor_suspect": { "default": "mdi:thermometer-alert", "state": { "off": "mdi:check-circle-outline" } },
       "alarm_monitor_failed": { "default": "mdi:eye-off", "state": { "off": "mdi:check-circle-outline" } },

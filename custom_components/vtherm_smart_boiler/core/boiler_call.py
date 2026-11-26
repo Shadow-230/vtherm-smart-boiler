@@ -35,15 +35,14 @@ class CallReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class BoilerCall:
-    """``called``: the boiler is asked for space heating now (frost protection included);
-    ``None`` while the plugin does not decide it or cannot tell. ``reason``: ``None`` while
-    called."""
+    """``called``: the boiler is asked for space heating now; ``None`` while the plugin does not
+    decide it or cannot tell. ``reason``: ``None`` while called."""
 
     called: bool | None
     reason: CallReason | None
 
 
-_CALLED = frozenset({ControlMode.HEATING, ControlMode.FROST, ControlMode.FALLBACK})
+_CALLED = frozenset({ControlMode.HEATING, ControlMode.FALLBACK})
 _NOT_CONTROLLING = frozenset(
     {ControlMode.DISABLED, ControlMode.NOT_ALLOWED, ControlMode.HANDED_BACK}
 )
@@ -51,10 +50,10 @@ _NOT_CONTROLLING = frozenset(
 
 def boiler_call(mode: ControlMode, reasons: Collection[Reason], calling: int) -> BoilerCall:
     """The call from the control state: its ``mode``, its ``reasons`` and how many zones call
-    now (``calling``). Heating, frost protection and the fallback setpoint call — the
-    recognition period's held command too; a fault, VT's activation delay, rooms calling while
-    VT's central boiler does not, and nothing calling do not, in that order; the recognition
-    period holding "off", and every zone or VT's decision unknown, cannot be told."""
+    now (``calling``). Heating and the fallback setpoint call — the recognition period's held
+    command too; a fault, VT's activation delay, rooms calling while VT's central boiler does
+    not, and nothing calling do not, in that order; the recognition period holding "off", and
+    every zone or VT's decision unknown, cannot be told."""
     if mode in _NOT_CONTROLLING:
         return BoilerCall(None, CallReason.NOT_CONTROLLING)
     if mode is ControlMode.WAITING_DATA:
@@ -93,7 +92,7 @@ class NoHeat:
 
 
 NO_HEAT_UNKNOWN = NoHeat(None)
-_HEAT_GIVEN = frozenset({ControlMode.HEATING, ControlMode.FALLBACK, ControlMode.FROST})
+_HEAT_GIVEN = frozenset({ControlMode.HEATING, ControlMode.FALLBACK})
 _NOT_VOUCHED = frozenset({ControlMode.NOT_ALLOWED, ControlMode.HANDED_BACK})
 
 
@@ -114,8 +113,8 @@ def no_heat(
     for data (a stale link short of a loss, a read-back unknown, the recognition period with
     nothing held): the last value, nothing being written meanwhile. Handed back, blocked, writes
     stopped, or VT's decision unknown: on, ``handed_back``. Then the boiler's fault; heating
-    wanted (frost protection and the recognition period's kept "on" included): off, or on for hot
-    water; heating not wanted: on, for VT's activation delay or VT not calling."""
+    wanted (the recognition period's kept "on" included): off, or on for hot water; heating not
+    wanted: on, for VT's activation delay or VT not calling."""
     if mode is ControlMode.DISABLED:
         return NO_HEAT_UNKNOWN
     if mode is ControlMode.WAITING_DATA:

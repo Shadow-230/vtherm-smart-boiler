@@ -79,7 +79,7 @@ function flameOn(inputs: LiveInputs): boolean {
 
 // The control states that call the boiler for heat (``core.boiler_call``), where the plugin's
 // "Heat call" sensor is not there to say it.
-const CALLING_MODES = new Set(["heating", "frost", "fallback"]);
+const CALLING_MODES = new Set(["heating", "fallback"]);
 
 /** Whether the boiler is lit, called for heat between burns, or neither: the plugin's "Heat
  * call" says whether it is called, else the control state does. */

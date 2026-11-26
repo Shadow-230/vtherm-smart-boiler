@@ -87,7 +87,6 @@
           "control": "Control device (experimental)",
           "control_curve": "Heating curve",
           "control_behaviour": "Control behaviour",
-          "control_frost": "Frost protection",
           "control_alarms": "Alarm reactions",
           "finish": "Create",
           "incomplete": "Configuration incomplete"
@@ -195,7 +194,7 @@
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Straight from the boiler (unmixed); mixed by the boiler (a second circuit); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one straight circuit and none the boiler mixes.",
-          "zones": "The Versatile Thermostat zones this circuit heats. A zone in no circuit neither asks for heat nor is watched for frost; a zone is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
+          "zones": "The Versatile Thermostat zones this circuit heats. A zone in no circuit does not ask for heat; a zone is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
           "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
           "devices": "Optional: for a room this circuit feeds only in part — a radiator here, a floor loop on another circuit — its own devices instead of the whole zone. In a circuit run by other automation it then asks only while one of them is on.",
           "underfloor": "This circuit's zones with underfloor heating: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
@@ -375,20 +374,6 @@
           "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet."
         }
       },
-      "control_frost": {
-        "title": "Frost protection",
-        "description": "A watched zone colder than its limit starts heating, whatever else applies, where heat can reach it; heating for frost ends once every watched zone is above the release.",
-        "data": {
-          "frost_limit": "Frost protection below",
-          "frost_release": "Frost protection until",
-          "frost_zone": "Frost zone"
-        },
-        "data_description": {
-          "frost_limit": "A watched zone colder than this starts heating, whatever else applies, where heat can reach it, in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
-          "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
-          "frost_zone": "Optional: watch only this zone. Empty (default): every zone. Frost heating runs only for a cold room whose valve can open; one VT keeps closed raises a repair issue. Frost heating that does not warm the room in two hours raises an alarm; it never stops."
-        }
-      },
       "control_alarms": {
         "title": "Alarm reactions",
         "description": "What control does when the boiler ignores a value the plugin writes. Other alarms only inform; the plugin stops heating only while the boiler itself reports a fault that stops it. Another controller writing to the boiler always makes the plugin step aside; it never fights it.",
@@ -447,7 +432,6 @@
       "mqtt_topic_invalid": "Enter the topic level as the gateway's firmware uses it, without spaces or the wildcards + and #.",
       "hand_back_value_missing": "The value method needs a hand-back value.",
       "hand_back_entity_missing": "The switch method needs the external control switch.",
-      "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts.",
       "hand_back_timeout_not_expiring": "The device's timeout hands back only with expiring writes; choose a value or a switch.",
       "hand_back_value_out_of_range": "The hand-back value is outside what the setpoint entity accepts.",
       "limits_outside_entity_range": "The setpoint entity does not accept this limit; keep the limits within its range.",
@@ -533,7 +517,6 @@
           "control": "Control device (experimental)",
           "control_curve": "Heating curve",
           "control_behaviour": "Control behaviour",
-          "control_frost": "Frost protection",
           "control_alarms": "Alarm reactions",
           "save": "Save and finish"
         }
@@ -752,7 +735,7 @@
         "data_description": {
           "name": "Shown in the menu. Pick a Home Assistant area or a VT zone, or type any name; the plugin's own ID stays hidden. Empty: the circuit's number.",
           "control": "Straight from the boiler (unmixed); mixed by the boiler (a second circuit); controlled by other automation (a mixer or pump the plugin never drives); or a thermostatic mixing valve (fixed). Control runs with at most one straight circuit and none the boiler mixes.",
-          "zones": "The Versatile Thermostat zones this circuit heats. A zone in no circuit neither asks for heat nor is watched for frost; a zone is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
+          "zones": "The Versatile Thermostat zones this circuit heats. A zone in no circuit does not ask for heat; a zone is in one circuit unless split by its devices. One built on the boiler's own thermostat is refused: it would ask whenever the flame burns.",
           "area": "A shortcut: the VT zones in this Home Assistant area are added to the list at the save.",
           "devices": "Optional: for a room this circuit feeds only in part — a radiator here, a floor loop on another circuit — its own devices instead of the whole zone. In a circuit run by other automation it then asks only while one of them is on.",
           "underfloor": "This circuit's zones with underfloor heating: their curve exponent and the circuit's highest water temperature apply. The rest are radiators unless convectors.",
@@ -904,20 +887,6 @@
           "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet."
         }
       },
-      "control_frost": {
-        "title": "Frost protection",
-        "description": "A watched zone colder than its limit starts heating, whatever else applies, where heat can reach it; heating for frost ends once every watched zone is above the release.",
-        "data": {
-          "frost_limit": "Frost protection below",
-          "frost_release": "Frost protection until",
-          "frost_zone": "Frost zone"
-        },
-        "data_description": {
-          "frost_limit": "A watched zone colder than this starts heating, whatever else applies, where heat can reach it, in °C. Default 5 °C. Too low risks frozen pipes; too high heats rooms you keep off.",
-          "frost_release": "Frost protection ends once every watched zone is above this, in °C. Default 7 °C, above the limit. Close to the limit, frost heating starts and stops more often.",
-          "frost_zone": "Optional: watch only this zone. Empty (default): every zone. Frost heating runs only for a cold room whose valve can open; one VT keeps closed raises a repair issue. Frost heating that does not warm the room in two hours raises an alarm; it never stops."
-        }
-      },
       "control_alarms": {
         "title": "Alarm reactions",
         "description": "What control does when the boiler ignores a value the plugin writes. Other alarms only inform; the plugin stops heating only while the boiler itself reports a fault that stops it. Another controller writing to the boiler always makes the plugin step aside; it never fights it.",
@@ -991,7 +960,6 @@
       "need_on_underfloor": "Underfloor heating with a water need: at every call of its zones the boiler goes to this temperature. A floor behind a mixer needs none — leave it empty and the curve gives the water. Submit again to keep it.",
       "hand_back_value_missing": "The value method needs a hand-back value.",
       "hand_back_entity_missing": "The switch method needs the external control switch.",
-      "frost_release_not_above_limit": "Frost protection must end above the temperature where it starts.",
       "hand_back_timeout_not_expiring": "The device's timeout hands back only with expiring writes; choose a value or a switch.",
       "hand_back_value_out_of_range": "The hand-back value is outside what the setpoint entity accepts.",
       "limits_outside_entity_range": "The setpoint entity does not accept this limit; keep the limits within its range.",
@@ -1524,7 +1492,6 @@
           "waiting_data": "Waiting for data",
           "heating": "Heating",
           "idle": "Idle",
-          "frost": "Frost protection",
           "fallback": "Fallback setpoint",
           "boiler_fault": "Boiler fault: heating off"
         },
@@ -1603,7 +1570,6 @@
               "no_demand": "VT's central boiler does not ask for heat",
               "zones_unknown": "Nothing can ask for heat: neither a zone's state nor VT's decision is known",
               "zones_recognition": "The zones are still reporting: nothing new is decided",
-              "frost": "Frost protection",
               "ramp": "The setpoint moves step by step (ramp)",
               "limit_hard_min": "Held at the lowest water temperature",
               "limit_hard_max": "Held at the highest water temperature",
@@ -1723,7 +1689,7 @@
             "name": "Zones not known now"
           },
           "room_sensor_lost_zones": {
-            "name": "Zones that lost their room sensor"
+            "name": "Rooms left out of the curve's judgement"
           },
           "writes_stopped": {
             "name": "Writes stopped (another controller)"
@@ -2031,20 +1997,6 @@
           "comfort_correction_missing_text": {
             "name": "Comfort correction: what is missing"
           },
-          "frost_protection": {
-            "name": "Frost protection",
-            "state": {
-              "available": "Available",
-              "degraded": "Degraded: works from weaker inputs",
-              "inactive": "Inactive: an input it needs is missing or unavailable"
-            }
-          },
-          "frost_protection_missing": {
-            "name": "Frost protection: missing"
-          },
-          "frost_protection_missing_text": {
-            "name": "Frost protection: what is missing"
-          },
           "activation_delay": {
             "name": "Activation delay",
             "state": {
@@ -2201,7 +2153,7 @@
           "frost_protection_by": {
             "name": "Frost protection by",
             "state": {
-              "plugin": "The plugin",
+              "vt": "Versatile Thermostat, through the plugin",
               "thermostat": "The thermostat",
               "boiler": "The boiler's own, if it has one",
               "device": "The boiler's or the device's own control"
@@ -2678,12 +2630,6 @@
       "alarm_boiler_link_lost": {
         "name": "Control: boiler link lost"
       },
-      "alarm_zone_unknown": {
-        "name": "Control: a zone's state is unknown"
-      },
-      "alarm_frost_not_warming": {
-        "name": "Control: frost heating does not warm the room"
-      },
       "alarm_correction_at_limit": {
         "name": "Control: comfort correction at its limit"
       },
@@ -3101,30 +3047,6 @@
       "title": "Versatile Thermostat gives no answer",
       "description": "None of the zones answers ({zones}); the monitor cannot judge them. Check that Versatile Thermostat is loaded, its thermostats are enabled and their entity IDs are the ones in the plugin's options."
     },
-    "frost_zone_closed": {
-      "title": "A room below the frost limit cannot get heat",
-      "description": "{zones}: Versatile Thermostat keeps the valve closed (the thermostat is off, or its target is below the frost limit), so the plugin cannot heat it and does not start the boiler for it. Use VT's frost preset instead of off; VT's central frost mode needs a frost temperature set in every thermostat."
-    },
-    "frost_zone_closed_window": {
-      "title": "A room below the frost limit cannot get heat: window open",
-      "description": "{zones}: Versatile Thermostat keeps the valve closed because it detects an open window, so the plugin cannot heat it and does not start the boiler for it. The room stays unheated until VT opens it again: close the window, or check VT's window detection for that room."
-    },
-    "frost_zone_closed_central_mode": {
-      "title": "A room below the frost limit cannot get heat: VT's central mode",
-      "description": "{zones}: Versatile Thermostat keeps the valve closed because of its central mode, so the plugin cannot heat it and does not start the boiler for it. With the central mode \"Stopped\" the room stays unheated until VT opens it again; VT's central frost mode needs a frost temperature set in every thermostat. The plugin never changes VT's mode."
-    },
-    "frost_zone_closed_vt_function": {
-      "title": "A room below the frost limit cannot get heat: a VT function keeps it off",
-      "description": "{zones}: one of Versatile Thermostat's own functions (its safety mode, or auto start/stop) keeps the valve closed, so the plugin cannot heat it and does not start the boiler for it. The room stays unheated until VT opens it again: check that thermostat's room sensor and its auto start/stop settings."
-    },
-    "frost_zone_closed_inhibition": {
-      "title": "A room below the frost limit cannot get heat: another plugin holds it",
-      "description": "{zones}: another plugin has taken this thermostat out of Versatile Thermostat's control, so VT keeps the valve closed and the plugin cannot heat it and does not start the boiler for it. The room stays unheated until that plugin gives the thermostat back to VT: check the plugin that holds it."
-    },
-    "frost_zone_closed_mixed": {
-      "title": "Rooms below the frost limit cannot get heat",
-      "description": "{zones}: VT keeps their valves closed for different reasons, so the plugin cannot heat them. For a thermostat that is off, use VT's frost preset instead; a room closed for a window, VT's \"Stopped\" or another VT function stays unheated until VT opens it, and a room another plugin holds until that plugin gives it back."
-    },
     "thermostat_kind_missing": {
       "title": "Say what is wired to the gateway's thermostat terminals",
       "description": "Control of the boiler waits for the answer to a question under \"Boiler interface\": what is wired to the gateway's thermostat terminals. Without a thermostat (stand-alone) the boiler does not heat meanwhile."
@@ -3292,6 +3214,10 @@
     "vt_settings_moved": {
       "title": "Set the heat-call thresholds in VT's central boiler",
       "description": "Versatile Thermostat's central boiler now decides whether the boiler heats, so the plugin's own heat-call settings are gone. Some of them were set: rooms calling {count}, power {power} kW, valve opening {opening} %, activation delay {delay} s (\"-\": not set). Set what VT offers in its central boiler — its device-count and power thresholds and its activation delay; VT has no valve-opening threshold — and point its commands at a helper you pick in the plugin."
+    },
+    "frost_moved_to_vt": {
+      "title": "Frost protection is now Versatile Thermostat's alone",
+      "description": "The plugin no longer heats on its own against frost. Versatile Thermostat does it: give every thermostat a frost preset, or set VT's central mode to \"Frost protection\", and keep VT's central boiler's two commands on the helper picked in the plugin. In VT, \"Stopped\" means nothing heats, not even against frost."
     }
   },
   "services": {

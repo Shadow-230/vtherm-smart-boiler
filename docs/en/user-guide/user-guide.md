@@ -113,7 +113,7 @@ Only one entry of the integration can exist: it runs one boiler.
    - **Building** and **Monitor thresholds** — at the advanced level, for the monitor only;
      **Days of data for the verdict** is there (7 by default).
    - **Control items** — with full control or on/off: the control device, the heating curve, the
-     control behaviour, frost protection and the alarm reactions (see
+     control behaviour and the alarm reactions (see
      [Control is opt-in](#42-control-is-opt-in)).
 4. **Read the verdict.** Once it has the days of data, the sensor **Control verdict** says whether
    control is worth enabling ([4.1](#41-monitoring-and-the-verdict)). You decide.
@@ -227,7 +227,8 @@ temperature and its safety rules.
   started yet, is "unknown" — never "no demand".
 - VT's central mode (Auto, Stopped, Heat only, Cool only, Frost protection) acts through the
   zones. With every zone stopped, nothing calls for heat, so the boiler stays off. "Stopped" in
-  VT does not hand the boiler back; frost protection still watches.
+  VT does not hand the boiler back, and it means nobody heats: frost protection is VT's (see
+  [Frost protection](#45-frost-protection)).
 - There is no summer switch in the plugin. If VT's zones are off, the boiler does not heat.
 - **VT's cycle for rooms that call the boiler: 10 to 15 minutes.** VT switches a room's heating
   on and off in cycles (5 minutes by default). The plugin follows the rooms at once, so each gap
@@ -238,11 +239,11 @@ temperature and its safety rules.
 - A circuit controlled by other automation asks for heat while its **Circuit asks for heat**
   entity is on, or one of its zones calls: heating goes on for it, whatever VT's central boiler
   says — its mixer needs the water. If that entity is unavailable or unknown, the
-  circuit asks nothing (its zones still can, and frost protection still watches), and the
+  circuit asks nothing (its zones still can), and the
   control state shows the reason `circuit_request_unknown`.
 - **What the plugin shows** (with control set up):
-  - **Heat call** — on while the plugin calls the boiler for heat (frost protection
-    included); off while it controls the boiler and does not call it, with the reason: nothing
+  - **Heat call** — on while the plugin calls the boiler for heat (VT's frost protection
+    included, as VT calls for it); off while it controls the boiler and does not call it, with the reason: nothing
     calls, rooms call but VT's central boiler does not, VT's central boiler waits its activation
     delay, the boiler reports a fault; unknown while it does not control the boiler (control off,
     blocked, handed back) or cannot tell yet. Its attributes show the rooms calling and when VT's
@@ -313,19 +314,21 @@ it costs: more gas, and more burner starts — with VT's TPI zones it often sits
 raises the starts several times over for almost no warmth. That is why it is off: where a room
 stays cold, raise the curve first. A "Reset comfort correction" button sets it back to zero.
 
+**Which rooms judge the curve.** A room's temperature counts for the comfort correction, its
+warning "curve too low", the long burn's "water too cool" and the critical zone only while the
+plugin can trust it. It is left out while VT runs that thermostat in its safety mode, while the
+room's thermometer (the sensor set in VT) is unavailable or unknown, and after the plugin starts
+until VT has measured the room again. The room still counts when it calls for heat. **Control
+state** lists such rooms in its attribute `room_sensor_lost_zones`; no alarm rises for them.
+
 ### 4.5 Frost protection
 
-Frost protection heats even when no zone calls for heat:
-
-- It watches every zone (default) or one zone you pick.
-- When a watched zone falls below **5 °C** (default), heating runs on the curve until every
-  watched zone is above **7 °C** (default).
-- It heats only a room whose heat can reach it: VT reports the valve open or the device on. If
-  VT keeps a cold room closed (thermostat off, open window, central mode "Stopped"), the plugin
-  does not start the boiler for it. It raises a repair issue that names the room and says what
-  to do — for example, use VT's frost preset instead of "off".
-- If frost heating runs for about 2 hours without the room warming, an alarm tells you. Heating
-  is not stopped for that.
+Frost protection is VT's job; the plugin has none of its own. Use VT's frost preset on a
+thermostat, or VT's central mode "Frost protection": VT then makes a cold room call, its central
+boiler turns the helper on, and the plugin heats as for any other call. So keep VT's central
+boiler on the helper. "Stopped" in VT means nobody heats, a cold room included. While control
+does not hold the boiler and nothing else heats, the alarm "handed back while a room is near
+freezing" tells you of a room below 5 °C ([Safety and hand-back](#6-safety-and-hand-back)).
 
 ### 4.6 VT's activation delay
 
@@ -335,7 +338,6 @@ pump start. The plugin has no delay of its own.
 
 - While VT waits it out, the plugin shows "off" with the reason `activation_delay` and when the
   delay ends. The boiler starts when VT turns the helper on.
-- Frost heating does not wait for it.
 
 ### 4.7 After a restart
 
@@ -346,8 +348,8 @@ restores its last command at once. If something has changed, it hands
 the boiler back first.
 
 **Grace period.** If a zone becomes unknown while VT runs, its last answer is kept for 10
-minutes. After that it drops out and the other zones decide. A zone unknown for 30 minutes
-raises an alarm, because frost protection cannot see it.
+minutes. After that it drops out and the other zones decide. **Control state** lists the zones
+it cannot see in its attribute `unknown_zones`.
 
 **No zone answers.** If every zone is unknown after these periods, or VT's helper is neither on nor
 off, nothing can ask for heat:
@@ -390,7 +392,8 @@ told apart as heating or hot water does not depend on it.
 
 Open windows are VT's to handle. VT's own window detection — a window sensor, or its automatic
 detection by the temperature's slope — turns the zone off or lowers its setpoint; such a zone no
-longer asks for heat. The plugin has no window handling of its own.
+longer asks for heat. The plugin has no window handling of its own; it only keeps a room with an
+open window out of its critical zone ([Entities](#9-entities)).
 
 ### 4.10 Circuits and zones
 
@@ -881,8 +884,8 @@ that signal must be mapped too. With the OTGW firmware over MQTT, the gateway's 
 on the same Home Assistant device as its setpoint. Entities written by hand in YAML have no device:
 they count as the gateway's when the setpoint has none either.
 
-While such a fault reads "on" for 5 minutes, the plugin keeps heating off — frost heating
-included — with no hand-back and no latch. It heats again by itself as soon as every mapped fault
+While such a fault reads "on" for 5 minutes, the plugin keeps heating off — with no hand-back
+and no latch. It heats again by itself as soon as every mapped fault
 reads off (or unknown). Read the fault on the boiler and follow its manual.
 
 Low, high or falling water pressure and hot flue gas only inform, with a notification that says
@@ -1052,9 +1055,7 @@ not confirmed.
 
 | Alarm | Meaning |
 |---|---|
-| Control: a zone's state is unknown | unknown for 30 minutes; frost protection cannot see it |
-| Control: frost heating does not warm the room | frost heating for 2 hours without warming |
-| Control: handed back while a room is near freezing | frost protection rests on the boiler |
+| Control: handed back while a room is near freezing | a room below 5 °C while nothing heats: frost protection rests on the boiler's own |
 | Control: no zone answers | no zone known: nothing can ask for heat |
 | Control: VT's decision unknown | VT's helper is neither on nor off: nothing can ask for heat |
 
@@ -1064,7 +1065,6 @@ not confirmed.
 | VT's decision is unknown (2 variants) | check the helper, and that VT's central boiler switches it |
 | VT's central boiler switches something other than the helper | point VT's commands at the helper |
 | Set the heat-call thresholds in VT's central boiler | after an update: set your old values in VT |
-| A room below the frost limit cannot get heat (6 variants) | VT keeps it closed; see text |
 | A heating circuit has no rooms | add its rooms, or remove the circuit |
 | Underfloor heating without a water limit | enter the circuit's highest water temperature |
 | Short cycles in VT: more boiler starts | set those rooms' cycle in VT to 10–15 minutes |
@@ -1140,13 +1140,9 @@ stateDiagram-v2
     state Controlling {
         state "Idle (heating off)" as Idle
         state "Heating" as Heating
-        state "Frost heating" as Frost
         [*] --> Idle
         Idle --> Heating: VT's helper on, or a circuit asks
         Heating --> Idle: demand gone
-        Idle --> Frost: a watched zone below the frost limit
-        Frost --> Idle: every watched zone warm again
-        Frost --> Heating: VT's helper on
     }
 
     Controlling --> HandedBack: link lost, no zone answers, monitor failing, a blocker
@@ -1202,7 +1198,7 @@ disabled by default.
 | Building loss coefficient, Building heating threshold *hidden* | the building values in use — yours, measured or the default — with their source; a measured loss with its likely range |
 | Suggested lowest water temperature | a suggestion only, never applied |
 | Forecast snapshots *disabled* | how many recorded forecasts are kept, for later releases |
-| Critical zone, circuit … | per circuit, the zone whose own controller works hardest now |
+| Critical zone, circuit … | per circuit, the zone whose own controller works hardest now; never a room whose temperature is not trusted, nor one with its window open — by its sensor, VT's automatic detection or VT holding it off — nor one still warming back after the window closes, until it is within 0.3 K of its target or has risen less than 0.2 K in 30 minutes |
 | Signals | on while flame and flow (and a relay) are known and fresh |
 | Outdoor sensor problem | the boiler's outdoor sensor is stuck or disagrees with the weather entity |
 | Long burn without warming | the burner on for 3 h (short gaps included) without the rooms warming, with the likely reason |
@@ -1213,12 +1209,12 @@ disabled by default.
 | Entity | What it shows or does |
 |---|---|
 | Control (experimental) | switches control on and off; its attributes say what blocks it and what a hand-back does in your installation |
-| Control state | off, not allowed, handed back, waiting for data, heating, idle, frost protection, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
+| Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
 | Gives no heat | on while the boiler gives the rooms no heat, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
 | Calling for heat | the rooms calling now, and which |
-| Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, a zone unknown, frost not warming and the others |
+| Control: … (binary sensors) | the control alarms: write failed or ignored, another controller, hand-back failed, boiler link lost, handed back while a room is near freezing and the others |
 | Reset comfort correction | sets the comfort correction back to 0 |
 | Reset measured heat loss, Reset measured heating threshold | forget the measured building values |
 
@@ -1265,7 +1261,6 @@ risks. The main ones — described, not advised:
 | Helper switched by VT's central boiler | none — you pick it | VT's central boiler decides through it; pointed at the boiler instead, two controllers would fight |
 | Write type of a picked target | unknown — not written | expiring or held must be declared; a wrong declaration wears the boiler's memory or lets a value lapse |
 | Hand-back value | none — entered with its effect | the same number means "own control" on one device and "no heat" on another |
-| Frost protection | 5 °C on, 7 °C off, every zone | heats only zones whose emitters can take heat; a zone VT keeps closed gets a repair issue |
 | Alarm reactions | information — a few alarms always hand back | an alarm set to hand back stops control until you switch it off and on |
 | Return by itself after another controller | off | on, control returns 60 minutes after the last foreign value, while the other controller may still be there |
 
@@ -1346,8 +1341,8 @@ target:
 - **Changes no read-back can see:** heating switched off or summer mode on the boiler's panel, a
   lockout, the maker's app, another controller's modulation limit, the hot-water enable, a boiler
   that clamps the setpoint behind a gateway — the gateway still shows the plugin's value. They
-  show only through their effects: the comfort correction at its limit (after about 4.5 h), or
-  frost heating that does not warm a room (after 2 h).
+  show only through their effects: no sign the boiler heats while VT calls (after 30 minutes),
+  or the comfort correction at its limit (after about 4.5 h).
 - **A boiler that clips a steady setpoint** looks like another controller: a lower value is
   recognised as the boiler's own limit only once the plugin has sent values at least 1 K apart.
   With one steady value it is written back once, and a second change within 24 h makes the plugin

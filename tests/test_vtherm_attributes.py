@@ -151,7 +151,7 @@ def test_vt_cap_on_the_duty_cycle(raw: object, cap: float | None) -> None:
     assert values.max_on_percent == (None if cap is None else pytest.approx(cap))
 
 
-# --- X3: power 0 is no data (P-14), VT's safety and shedding, the mean power, "reported" -------
+# --- X3: power 0 is no data (P-14), VT's shedding, the mean power, "reported" -------
 
 
 @pytest.mark.parametrize("device_power", [0, 0.0, -1.0, "0"])
@@ -161,24 +161,6 @@ def test_a_device_power_of_zero_is_no_data(device_power: object) -> None:
         "heat", {"power_manager": {"device_power": device_power, "power_unit": "kW"}}
     )
     assert values.power is None
-
-
-@pytest.mark.parametrize(
-    ("manager", "safety"),
-    [
-        ({"safety_state": "on", "safety_delay_min": 5}, True),
-        ({"safety_state": "off"}, False),
-        ({"safety_state": "unknown"}, False),
-        ({"safety_state": None}, False),
-        ({}, False),
-        (None, False),  # safety not configured: VT publishes no safety_manager
-        ("on", False),  # not VT's shape
-    ],
-)
-def test_vt_safety_state_on_is_read(manager: object, safety: bool) -> None:
-    """S-35: VT 10.4.0 publishes ``safety_manager.safety_state`` where safety is configured."""
-    attributes = {} if manager is None else {"safety_manager": manager}
-    assert zone_values("heat", attributes).safety_on is safety
 
 
 @pytest.mark.parametrize(

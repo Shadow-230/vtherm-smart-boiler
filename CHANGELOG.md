@@ -46,8 +46,11 @@ version is decided then.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
   connected is the setup's first question. Control never writes through a cloud service.
-- Frost protection; a fallback setpoint when no outdoor temperature is known; the comfort
-  correction.
+- A fallback setpoint when no outdoor temperature is known; the comfort correction. Frost
+  protection is VT's — its frost preset and central mode make a room call — not the plugin's.
+- A room's temperature judges the curve only while it is trusted: not while VT runs it in safety
+  mode, its thermometer is unavailable, or VT has not measured it since the plugin started. A
+  room with its window open, or still warming back after it closes, is not the critical zone.
 - **Gives no heat**: one binary sensor, on while the boiler gives the rooms no heat — VT's central
   boiler not calling, its activation delay, hot water, a boiler fault, or the plugin unable to
   vouch for heat — with the reason. Pick it in SmartPI 1.0's "heating unavailable" setting, or

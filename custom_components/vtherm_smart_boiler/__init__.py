@@ -31,6 +31,8 @@ REMOVED_ISSUE = "entity_removed"
 REACTIONS_REMOVED_ISSUE = "reactions_removed"
 # I12's migration: demand settings VT's central boiler must be given now were set (a warning).
 VT_SETTINGS_ISSUE = "vt_settings_moved"
+# I12.10: the plugin's frost protection gone at migration 24, told once where control was set up.
+FROST_ISSUE = "frost_moved_to_vt"
 # The issues a control unit raises for a hand-back without a latch (decision 7, Y1).
 HAND_BACK_ISSUES = ("hand_back_boiler_link_lost", "hand_back_control_error")
 # SB-10 (decision 12): a setup that failed where the house goes unheated — one issue per entry,
@@ -340,6 +342,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _migrate_vt_decides(hass, entry)
     if entry.minor_version < 23:
         _migrate_learning_pauses(hass, entry)
+    if entry.minor_version < 24:
+        _migrate_frost(hass, entry)
     return True
 
 
@@ -734,6 +738,33 @@ def _migrate_learning_pauses(hass: HomeAssistant, entry: ConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options=options, minor_version=23)
 
 
+def _migrate_frost(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """I12.10 (minor version 24, the user's decision of 2026-11-25): the plugin's own frost
+    protection goes — VT's frost preset and central mode make the rooms call — so its settings go
+    from the control section. Where control was set up, one warning issue says that frost
+    protection is VT's alone now: a house that relied on the plugin's is otherwise unprotected."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .control_config import without_frost
+
+    options = dict(entry.options)
+    control = options.get(CONTROL)
+    tell = has_control_section(options)
+    if isinstance(control, Mapping):
+        options[CONTROL] = without_frost(control)
+    hass.config_entries.async_update_entry(entry, options=options, minor_version=24)
+    if tell:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"{FROST_ISSUE}_{entry.entry_id}",
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=FROST_ISSUE,
+        )
+
+
 def _stored_float(raw: Any, default: float) -> float:
     """A stored number, or ``default`` where none (or no finite number) is stored."""
     import math
@@ -909,7 +940,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         "control_state_not_saved",  # the control store cannot be written (PB-16)
         "control_latched",  # the entry's one latch issue (V7)
         "no_zone_known",  # every zone unknown (decision 3, X3)
-        "frost_zone_closed",  # a cold room VT keeps closed (decision 4, X4)
         KIND_ISSUE,  # the thermostat-terminals question not answered (X6)
         "wall_thermostat_fallback",  # the wall thermostat on a gateway set low (X6)
         "lowest_water_suggestion",  # the lowest water temperature's suggestion (X6)
@@ -927,6 +957,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         *HAND_BACK_ISSUES,
         REACTIONS_REMOVED_ISSUE,
         VT_SETTINGS_ISSUE,
+        FROST_ISSUE,
         # P-94: the installation's warnings (Y3).
         *(f"{INSTALLATION_ISSUE}_{code.value}" for code in INSTALLATION_WARNINGS),
     ):

@@ -126,7 +126,14 @@ from .core.alarms import (
 from .core.analysis import Analysis, analyse
 from .core.comfort_rules import heating_starts
 from .core.controller import OutageWindow, follow_outage, is_short
-from .core.critical_zone import CriticalZone, critical_zone
+from .core.critical_zone import (
+    CriticalZone,
+    RoomReadings,
+    WindowHold,
+    critical_zone,
+    follow_window,
+    keep_readings,
+)
 from .core.daily import (
     DAY_MARGIN_S,
     KEEP_DAYS,
@@ -412,6 +419,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.long_run_totals: dict[str, float] = {}
         self._long_run_at: float | None = None
         self._critical: dict[str, CriticalZone] = {}
+        # I12.10: the critical zone's window rule — each room's own recent readings and where its
+        # window stands (live only: empty after a restart).
+        self._room_readings: dict[str, RoomReadings] = {}
+        self._windows: dict[str, WindowHold] = {}
         self._alarms: dict[AlarmKind, Alarm] = {}
         self._circuit_alarms: dict[str, Alarm] = {}  # each circuit's too-hot alarm (decision 10)
         # Y1: since when each mapped fault signal has counted (the notification's own clock;
@@ -505,6 +516,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if await self.reports.async_start(self.hass, self._report_topics()):
             self._unsubs.append(self.reports.stop)
         await self.link.async_detect()
+        # VT's safety and window events, and the start a room's measurement must be newer than
+        # (I12, decision 8).
+        self._unsubs.append(self.link.start(now))
         self._restore_notices()
         self.report_installation()
         # Current states seed the history too: without the recorder they are all there is, and
@@ -1148,11 +1162,14 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         """G11 E, a look at every refresh: the rooms counted — heating, known — against the flow,
         the setpoint (control's written one, else the boiler's CH setpoint) and the modulation.
         Information on its binary sensor; the power limit a warning repair issue too. The counts
-        kept for 0.4's tuning, the correction's hours at its limit among them."""
+        kept for 0.4's tuning, the correction's hours at its limit among them. A room whose
+        temperature is not trusted is left out (I12, decision 8)."""
         rooms = [
             RoomLook(zone.zone_id, zone.temperature, zone.target, is_short(zone))
             for zone in zones.values()
-            if zone.heating_enabled is True and zone.is_known(now, ZONE_MAX_AGE_S)
+            if zone.heating_enabled is True
+            and zone.is_known(now, ZONE_MAX_AGE_S)
+            and not zone.room_sensor_lost
         ]
         before = self.long_run
         self.long_run = follow_long_run(
@@ -1184,6 +1201,26 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     ", ".join(self.link.zone_name(zone) for zone in self.long_run.rooms_named),
                 )
             self._show_power_limit(found is LongRunClass.POWER_LIMIT)
+
+    def _follow_windows(self, zones: Mapping[str, ZoneState], now: float) -> set[str]:
+        """I12.10: each room's readings kept and its window followed at every look (the critical
+        zone's window rule, ``core.critical_zone``); the rooms it holds off now."""
+        held: set[str] = set()
+        for zone_id, zone in zones.items():
+            readings = keep_readings(self._room_readings.get(zone_id, ()), now, zone.temperature)
+            self._room_readings[zone_id] = readings
+            hold = follow_window(
+                self._windows.get(zone_id, WindowHold()),
+                zone.window_open,
+                now,
+                readings,
+                zone.temperature,
+                zone.target,
+            )
+            self._windows[zone_id] = hold
+            if hold.held:
+                held.add(zone_id)
+        return held
 
     def _water_setpoint(self, snapshot: BoilerSnapshot) -> float | None:
         """The setpoint the flow is judged against (G11 E): the one control wrote while it holds
@@ -1288,6 +1325,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 heat,
             )
 
+        held = self._follow_windows(zone_states, now)
         for circuit in config.installation.circuits:
             members = [
                 zone_states[z.zone_id] for z in config.installation.zones_in(circuit.circuit_id)
@@ -1298,6 +1336,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 now,
                 ZONE_MAX_AGE_S,
                 self._critical.get(circuit.circuit_id),
+                held=held,
             )
 
         known_zones = [z for z in zone_states.values() if z.is_fresh(now, ZONE_MAX_AGE_S)]

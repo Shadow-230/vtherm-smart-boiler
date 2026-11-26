@@ -120,7 +120,7 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    - **Budynek** i **Progi monitora** — na poziomie zaawansowanym, tylko dla monitora; tam jest
      **Dni danych do werdyktu** (domyślnie 7).
    - **Pozycje sterowania** — przy pełnym sterowaniu albo wł./wył.: urządzenie sterujące, krzywa
-     grzewcza, zachowanie sterowania, ochrona przed mrozem i reakcje na alarmy (zobacz
+     grzewcza, zachowanie sterowania i reakcje na alarmy (zobacz
      [Sterowanie włączasz sam](#42-sterowanie-włączasz-sam)).
 4. **Przeczytaj werdykt.** Gdy zbierze tyle dni danych, czujnik **Werdykt sterowania** mówi, czy
    warto włączyć sterowanie ([4.1](#41-monitorowanie-i-werdykt)). Decyzja należy do ciebie.
@@ -238,8 +238,8 @@ zasady bezpieczeństwa.
   taka, której VT jeszcze nie uruchomił, ma stan „nieznany” — nigdy „brak zapotrzebowania”.
 - Tryb centralny VT (Auto, Zatrzymany, Tylko grzanie, Tylko chłodzenie, Ochrona przed mrozem)
   działa przez strefy. Gdy wszystkie strefy są zatrzymane, nic nie potrzebuje ciepła, więc
-  kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła; ochrona przed mrozem dalej
-  czuwa.
+  kocioł zostaje wyłączony. „Zatrzymany” w VT nie oddaje kotła i znaczy, że nikt nie grzeje:
+  ochrona przed mrozem należy do VT (zobacz [Ochrona przed mrozem](#45-ochrona-przed-mrozem)).
 - Wtyczka nie ma przełącznika lato/zima. Jeśli strefy VT są wyłączone, kocioł nie grzeje.
 - **Cykl w VT dla pokoi, które wołają kocioł: 10 do 15 minut.** VT włącza i wyłącza grzanie
   pokoju w cyklach (domyślnie co 5 minut). Wtyczka idzie za pokojami od razu, więc każda przerwa
@@ -251,12 +251,12 @@ zasady bezpieczeństwa.
   jest włączona albo gdy potrzebuje ciepła któraś z jego stref: grzanie włącza się wtedy dla
   niego, bez względu na kocioł centralny VT — jego mieszacz potrzebuje wody. Gdy tej
   encji nie da się odczytać (niedostępna, nieznana), obieg o nic nie prosi (jego strefy dalej
-  mogą, a ochrona przed mrozem dalej czuwa), a stan sterowania pokazuje powód
+  mogą), a stan sterowania pokazuje powód
   `circuit_request_unknown`.
 - **Co pokazuje wtyczka** (gdy sterowanie jest ustawione):
-  - **Wezwanie do grzania** — włączone, gdy wtyczka wzywa kocioł do grzania (także ochrona przed
-    mrozem); wyłączone, gdy steruje kotłem i go nie wzywa, z powodem: nic nie woła, pokoje wołają,
-    a kocioł centralny VT nie, kocioł centralny VT czeka na opóźnienie włączenia, kocioł zgłasza
+  - **Wezwanie do grzania** — włączone, gdy wtyczka wzywa kocioł do grzania (także dla ochrony
+    przed mrozem VT, gdy VT o nią woła); wyłączone, gdy steruje kotłem i go nie wzywa, z powodem:
+    nic nie woła, pokoje wołają, a kocioł centralny VT nie, kocioł centralny VT czeka na opóźnienie włączenia, kocioł zgłasza
     usterkę; nieznane, gdy nie steruje kotłem (sterowanie wyłączone, zablokowane, kocioł oddany)
     albo jeszcze nie wie. Jego atrybuty pokazują wołające pokoje i to, kiedy kończy się
     opóźnienie włączenia VT.
@@ -330,20 +330,23 @@ strefach TPI w VT często stoi na limicie i kilkakrotnie zwiększa liczbę start
 ciepła. Dlatego jest wyłączona: gdy pokój zostaje zimny, najpierw podnieś krzywą. Przycisk
 „Wyzeruj korektę komfortu” cofa ją do zera.
 
+**Które pokoje oceniają krzywą.** Temperatura pokoju liczy się dla korekty komfortu, jej
+ostrzeżenia „za niska krzywa”, „za chłodnej wody” przy długim spalaniu i strefy krytycznej tylko
+wtedy, gdy wtyczka może jej ufać. Jest pomijana, gdy VT prowadzi ten termostat w trybie
+bezpieczeństwa, gdy termometr pokoju (czujnik ustawiony w VT) jest niedostępny albo nieznany,
+oraz po starcie wtyczki, dopóki VT znowu nie zmierzy pokoju. Pokój dalej się liczy, gdy woła o
+ciepło. **Stan sterowania** podaje takie pokoje w atrybucie `room_sensor_lost_zones`; nie ma dla
+nich alarmu.
+
 ### 4.5 Ochrona przed mrozem
 
-Ochrona przed mrozem grzeje nawet wtedy, gdy żadna strefa nie potrzebuje ciepła:
-
-- Pilnuje wszystkich stref (domyślnie) albo jednej wybranej.
-- Gdy pilnowana strefa spadnie poniżej **5 °C** (domyślnie), grzanie pracuje według krzywej,
-  dopóki każda pilnowana strefa nie przekroczy **7 °C** (domyślnie).
-- Grzeje tylko pomieszczenie, do którego ciepło może dotrzeć: VT podaje otwarty zawór albo
-  włączone urządzenie. Jeśli VT trzyma zimne pomieszczenie zamknięte (termostat wyłączony,
-  otwarte okno, tryb centralny „Zatrzymany”), wtyczka nie uruchamia dla niego kotła. Tworzy
-  zgłoszenie w Naprawach, które wskazuje pomieszczenie i mówi, co zrobić — na przykład użyć
-  presetu przeciwmrozowego VT zamiast „wyłączony”.
-- Jeśli grzanie przeciwmrozowe trwa około 2 godzin, a pomieszczenie się nie ogrzewa, informuje o
-  tym alarm. Grzanie nie jest z tego powodu zatrzymywane.
+Ochroną przed mrozem zajmuje się VT; wtyczka nie ma własnej. Użyj presetu przeciwmrozowego VT na
+termostacie albo trybu centralnego VT „Ochrona przed mrozem”: VT każe wtedy zimnemu pokojowi
+wołać o ciepło, jego kocioł centralny włącza pomocnika, a wtyczka grzeje jak przy każdym innym
+wezwaniu. Dlatego kocioł centralny VT ma przełączać pomocnika. „Zatrzymany” w VT znaczy, że nikt
+nie grzeje, także zimnego pokoju. Gdy sterowanie nie trzyma kotła i nic innego nie grzeje, alarm
+„oddane, a w pomieszczeniu grozi mróz” mówi o pokoju poniżej 5 °C
+([Bezpieczeństwo i oddanie sterowania](#6-bezpieczeństwo-i-oddanie-sterowania)).
 
 ### 4.6 Opóźnienie włączenia z VT
 
@@ -353,7 +356,6 @@ przed startem kotła i jego pompy. Wtyczka nie ma własnego opóźnienia.
 
 - Gdy VT odlicza opóźnienie, wtyczka pokazuje „wyłączone” z powodem `activation_delay` i to, kiedy
   opóźnienie się kończy. Kocioł startuje, gdy VT włączy pomocnika.
-- Grzanie przeciwmrozowe na nie nie czeka.
 
 ### 4.7 Po ponownym uruchomieniu
 
@@ -364,8 +366,8 @@ zachowuje albo od razu przywraca swoje ostatnie polecenie. Jeśli coś
 się zmieniło, najpierw oddaje kocioł.
 
 **Okres przejściowy.** Jeśli strefa staje się nieznana, gdy VT działa, jej ostatnia odpowiedź
-jest zachowywana przez 10 minut. Potem strefa wypada, a decydują pozostałe. Strefa nieznana
-przez 30 minut wywołuje alarm, bo ochrona przed mrozem jej nie widzi.
+jest zachowywana przez 10 minut. Potem strefa wypada, a decydują pozostałe. **Stan sterowania**
+podaje strefy, których nie widzi, w atrybucie `unknown_zones`.
 
 **Żadna strefa nie odpowiada.** Jeśli po tych okresach wszystkie strefy są nieznane albo pomocnik
 VT nie jest ani włączony, ani wyłączony, nic nie może poprosić o ciepło:
@@ -412,7 +414,8 @@ Rozróżnianie, czy kocioł grzał dom, czy wodę, od niej nie zależy.
 
 Otwartymi oknami zajmuje się VT. Jego własne wykrywanie okna — czujnik okna albo automatyczne
 wykrywanie po szybkości zmian temperatury — wyłącza strefę albo obniża jej nastawę; taka strefa
-przestaje wołać o ciepło. Wtyczka nie ma własnej obsługi okien.
+przestaje wołać o ciepło. Wtyczka nie ma własnej obsługi okien; tylko nie uznaje pokoju z otwartym
+oknem za strefę krytyczną ([Encje](#9-encje)).
 
 ### 4.10 Obiegi i strefy
 
@@ -921,8 +924,8 @@ która go zatrzymuje. Na OTGW usterka liczy się tylko wtedy, gdy jednocześnie 
 bramki to te na tym samym urządzeniu Home Assistanta co jej nastawa. Encje napisane ręcznie w YAML
 nie mają urządzenia: liczą się jako encje bramki, gdy nastawa też go nie ma.
 
-Dopóki taka usterka pokazuje „włączony” przez 5 minut, wtyczka trzyma grzanie wyłączone — razem
-z grzaniem przeciwmrozowym — bez oddania sterowania i bez zatrzasku. Grzeje znowu sama, gdy
+Dopóki taka usterka pokazuje „włączony” przez 5 minut, wtyczka trzyma grzanie wyłączone — bez
+oddania sterowania i bez zatrzasku. Grzeje znowu sama, gdy
 tylko każda wskazana usterka pokaże „wyłączony” (albo stan nieznany). Odczytaj usterkę na
 kotle i postępuj według jego instrukcji.
 
@@ -1101,9 +1104,7 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 
 | Alarm | Znaczenie |
 |---|---|
-| Sterowanie: stan strefy nieznany | nieznany przez 30 minut; ochrona przed mrozem jej nie widzi |
-| Sterowanie: grzanie przeciwmrozowe nie ogrzewa pomieszczenia | grzanie przeciwmrozowe przez 2 godziny bez ogrzania |
-| Sterowanie: oddane, a w pomieszczeniu grozi mróz | ochrona przed mrozem zależy od kotła |
+| Sterowanie: oddane, a w pomieszczeniu grozi mróz | pokój poniżej 5 °C, a nic nie grzeje: ochrona przed mrozem zależy od własnej ochrony kotła |
 | Sterowanie: żadna strefa nie odpowiada | żadna strefa nie jest znana: nic nie może poprosić o ciepło |
 | Sterowanie: decyzja VT nieznana | pomocnik VT nie jest ani włączony, ani wyłączony: nic nie może poprosić o ciepło |
 
@@ -1113,7 +1114,6 @@ niepasujące do połączenia kotła, a przy ESPHome niepotwierdzony bezpieczny s
 | Decyzja VT nie jest znana (2 warianty) | sprawdź pomocnika i to, czy kocioł centralny VT go przełącza |
 | Kocioł centralny VT przełącza coś innego niż pomocnika | skieruj polecenia VT na pomocnika |
 | Ustaw progi wezwania ciepła w kotle centralnym VT | po aktualizacji: ustaw swoje dawne wartości w VT |
-| Pokój poniżej progu mrozu nie może dostać ciepła (6 wariantów) | VT trzyma go zamkniętym; zobacz tekst |
 | Obieg grzewczy nie ma pomieszczeń | dodaj jego pomieszczenia albo usuń obieg |
 | Ogrzewanie podłogowe bez limitu temperatury wody | wpisz najwyższą temperaturę wody obiegu |
 | Krótkie cykle w VT: więcej startów kotła | ustaw w VT cykl tych pokoi na 10–15 minut |
@@ -1190,13 +1190,9 @@ stateDiagram-v2
     state Controlling {
         state "Bezczynność (grzanie wyłączone)" as Idle
         state "Grzanie" as Heating
-        state "Grzanie przeciwmrozowe" as Frost
         [*] --> Idle
         Idle --> Heating: pomocnik VT włączony albo obieg prosi o ciepło
         Heating --> Idle: zapotrzebowanie zniknęło
-        Idle --> Frost: pilnowana strefa poniżej progu mrozu
-        Frost --> Idle: każda pilnowana strefa znów ciepła
-        Frost --> Heating: pomocnik VT włączony
     }
 
     Controlling --> HandedBack: utrata łączności, brak odpowiedzi stref, monitor zawodzi, blokada
@@ -1252,7 +1248,7 @@ domyślnie wyłączone.
 | Współczynnik strat budynku, Próg grzania budynku *ukryte* | używane wartości budynku — twoje, zmierzone albo domyślne — ze źródłem; zmierzone straty z prawdopodobnym zakresem |
 | Proponowana najniższa temperatura wody | tylko propozycja, nigdy nie stosowana |
 | Migawki prognozy *wyłączona* | ile zapisanych prognoz jest przechowywanych, na przyszłe wydania |
-| Strefa krytyczna, obieg … | w każdym obiegu strefa, której własny regulator pracuje teraz najciężej |
+| Strefa krytyczna, obieg … | w każdym obiegu strefa, której własny regulator pracuje teraz najciężej; nigdy pokój, którego temperaturze wtyczka nie ufa, ani pokój z otwartym oknem — według jego czujnika, automatycznego wykrywania VT albo wyłączenia przez VT — ani pokój, który po zamknięciu okna jeszcze się nagrzewa, dopóki nie dojdzie do 0,3 K od nastawy albo nie urośnie o mniej niż 0,2 K w 30 minut |
 | Sygnały | włączony, gdy płomień i zasilanie (oraz przekaźnik) są znane i świeże |
 | Problem z czujnikiem zewnętrznym | czujnik zewnętrzny kotła stoi albo nie zgadza się z encją pogody |
 | Długie palenie bez nagrzewania | palnik pracuje 3 h (z krótkimi przerwami) bez nagrzewania pomieszczeń, z prawdopodobną przyczyną |
@@ -1263,12 +1259,12 @@ domyślnie wyłączone.
 | Encja | Co pokazuje albo robi |
 |---|---|
 | Sterowanie (eksperymentalne) | włącza i wyłącza sterowanie; jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
-| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, ochrona przed mrozem, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
+| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
 | Nie daje ciepła | włączone, gdy kocioł nie daje pokojom ciepła, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
 | Wołające o ciepło | pokoje wołające teraz i które to są |
-| Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, nieznana strefa, mróz bez nagrzewania i pozostałe |
+| Sterowanie: … (czujniki binarne) | alarmy sterowania: zapis nieudany lub zignorowany, inny sterownik, oddanie nieudane, utrata łączności z kotłem, oddane, a w pomieszczeniu grozi mróz, i pozostałe |
 | Wyzeruj korektę komfortu | ustawia korektę komfortu z powrotem na 0 |
 | Wyzeruj zmierzone straty ciepła, Wyzeruj zmierzony próg grzania | zapominają zmierzone wartości budynku |
 
@@ -1315,7 +1311,6 @@ Najważniejsze — opisane, nie doradzane:
 | Pomocnik przełączany przez kocioł centralny VT | brak — wybierasz go | kocioł centralny VT decyduje przez niego; skierowany zamiast tego na kocioł dałby dwa kłócące się sterowniki |
 | Typ zapisu wybranego celu | nieznany — bez zapisu | trzeba zadeklarować „wygasa” albo „trzymany”; zła deklaracja zużywa pamięć kotła albo pozwala wartości wygasnąć |
 | Wartość przy oddaniu sterowania | brak — wpisywana razem ze skutkiem | ta sama liczba na jednym urządzeniu znaczy „własne sterowanie”, na innym „bez ciepła” |
-| Ochrona przed mrozem | wł. przy 5 °C, wył. przy 7 °C, każda strefa | grzeje tylko strefy, których grzejniki mogą przyjąć ciepło; strefa trzymana przez VT zamknięta dostaje zgłoszenie w Naprawach |
 | Reakcje na alarmy | informacja — kilka alarmów zawsze oddaje sterowanie | alarm ustawiony na oddanie zatrzymuje sterowanie, dopóki go nie wyłączysz i nie włączysz |
 | Powrót sam po innym sterowniku | wyłączony | włączony: sterowanie wraca 60 minut po ostatniej obcej wartości, choć inny sterownik może wciąż działać |
 
@@ -1397,8 +1392,8 @@ target:
 - **Zmiany, których nie widać w odczycie zwrotnym:** grzanie wyłączone albo tryb letni na panelu
   kotła, blokada kotła, aplikacja producenta, limit modulacji innego sterownika, zezwolenie na
   ciepłą wodę, kocioł obcinający nastawę za bramką — bramka wciąż pokazuje wartość wtyczki. Widać
-  je tylko po skutkach: korekta komfortu na swoim limicie (po około 4,5 h) albo grzanie
-  przeciwmrozowe, które nie ogrzewa pomieszczenia (po 2 h).
+  je tylko po skutkach: brak oznak grzania kotła, gdy VT woła (po 30 minutach), albo korekta
+  komfortu na swoim limicie (po około 4,5 h).
 - **Kocioł obcinający stałą nastawę** wygląda jak inny sterownik: niższa wartość jest uznawana za
   własny limit kotła dopiero wtedy, gdy wtyczka wysłała wartości różniące się o co najmniej 1 K.
   Przy jednej stałej wartości jest raz zapisywana ponownie, a druga zmiana w ciągu 24 h każe

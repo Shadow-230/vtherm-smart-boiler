@@ -481,37 +481,40 @@ async def test_a_real_vt_valve_zone_calls_only_with_its_valve_opened_past_its_fl
     assert not zone_wants_heat(zone)
 
 
-async def test_a_vt_safety_mode_zone_follows_vt_and_is_flagged(
+async def test_a_vt_safety_mode_zone_follows_vt_and_is_left_out_of_the_curve(
     hass: HomeAssistant, freezer: Any
 ) -> None:
-    """T-44 (S-35): the room sensor goes quiet; VT enters its safety mode and runs the zone on
-    its safety duty cycle. The plugin follows VT's pulses — the zone stays known and its demand
-    counts — and flags it as a lost sensor, which the zone alarm reports after its limit."""
+    """T-44 (S-35), I12.10: the room sensor goes quiet; VT enters its safety mode, fires its
+    safety event and runs the zone on its safety duty cycle. The plugin hears the event: the
+    room is left out of the curve's judgement, while it follows VT's pulses — the zone stays
+    known and its demand counts. The sensor back, VT ends its safety mode and the room counts
+    again."""
+    celsius = {"unit_of_measurement": "°C", "device_class": "temperature"}
     entry = await started_with_the_plugin(hass, vt_thermostat())
     link = entry.runtime_data.link
-    assert link.zone(LIVING).safety_on is False
-    for _ in range(11):  # the sensor quiet: VT checks at its cycle, every five minutes
+    events: list[dict[str, Any]] = []
+    hass.bus.async_listen(
+        "versatile_thermostat_safety_event", lambda event: events.append(dict(event.data))
+    )
+    await later(hass, freezer, 10.0)
+    hass.states.async_set("sensor.living_temperature", "19.2", celsius)  # measured after the start
+    await hass.async_block_till_done()
+    assert link.zone(LIVING).room_sensor_lost is False
+    for _ in range(6):  # the sensor quiet: VT's safety delay here is five minutes
         await later(hass, freezer, 60.0)
     attributes = hass.states.get(LIVING).attributes
     assert attributes["safety_manager"]["safety_state"] == "on"
+    assert [(e["type"], e["entity_id"]) for e in events] == [("start", LIVING)]
     zone = link.zone(LIVING)
-    assert zone.safety_on
-    assert zone.room_sensor_lost  # flagged: the zone alarm follows after its limit
+    assert zone.room_sensor_lost  # VT's safety event: left out of the curve's judgement
     now = zone.reported_at or 0.0
     assert zone.is_known(now, None)  # VT runs it: its demand still counts
     assert zone.on_percent == pytest.approx(0.3)  # VT's safety duty cycle
-    hass.states.async_set(
-        "sensor.living_temperature",
-        "19.1",
-        {"unit_of_measurement": "°C", "device_class": "temperature"},
-    )
-    hass.states.async_set(
-        "sensor.outdoor_temperature",
-        "5.1",
-        {"unit_of_measurement": "°C", "device_class": "temperature"},
-    )
+    hass.states.async_set("sensor.living_temperature", "19.1", celsius)
+    hass.states.async_set("sensor.outdoor_temperature", "5.1", celsius)
     await later(hass, freezer, 300.0)
-    assert not link.zone(LIVING).safety_on  # the sensor back: VT ends its safety mode
+    assert [e["type"] for e in events] == ["start", "end"]
+    assert not link.zone(LIVING).room_sensor_lost  # the sensor back: VT ends its safety mode
 
 
 async def test_vt_power_shedding_removes_demand(hass: HomeAssistant, freezer: Any) -> None:

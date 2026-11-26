@@ -150,11 +150,9 @@ def test_a_remembered_zone_keeps_its_last_answer() -> None:
 def test_a_zone_in_vts_safety_mode_stays_known_and_is_counted_as_vt_runs_it() -> None:
     """VT's safety mode (the room sensor gone quiet): VT keeps running the zone on its safety
     duty, its device pulsing. The zone stays known — never unknown — and calls as VT's pulses
-    show; the lost sensor only raises the zone's alarm (S-35)."""
+    show; only its temperature is left out of the curve's judgement (I12, decision 8)."""
     normal = zone("a", on_percent=0.6, device_active=True, temperature=19.0)
-    pulse_on = replace(
-        normal, on_percent=0.1, device_active=True, safety_on=True, room_sensor_lost=True
-    )
+    pulse_on = replace(normal, on_percent=0.1, device_active=True, room_sensor_lost=True)
     pulse_off = replace(pulse_on, device_active=False)
     results = [boiler_demand([z], NOW, AGE, True) for z in (normal, pulse_on, pulse_off)]
     assert [(r.zones_wanting, r.fresh_zones, r.unknown) for r in results] == [

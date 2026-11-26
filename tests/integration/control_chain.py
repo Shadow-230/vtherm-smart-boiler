@@ -19,14 +19,11 @@ from .harness import VT_HELPER
 _KEPT: dict[str, dict[str, Any]] = {}
 _LAST: dict[str, dict[str, Any]] = {}
 # The item that asks each key that moved (I8.9a): the comfort correction to the curve, VT's
-# central boiler's helper (I12) to the behaviour, frost protection to its own item.
+# central boiler's helper (I12) to the behaviour.
 _HOME = {
     "comfort_correction": "control_curve",
     "comfort_correction_max_k": "control_curve",
     "vt_boiler_helper": "control_behaviour",
-    "frost_limit": "control_frost",
-    "frost_release": "control_frost",
-    "frost_zone": "control_frost",
 }
 
 
@@ -97,14 +94,10 @@ def _taken(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def no_step_of_its_own(result: dict[str, Any], menu: list[str]) -> bool:
-    """A form the chain had no step for, its fields another form's: frost protection (the
-    curve's or the relay behaviour's), and the behaviour of full control at the simple level
-    (VT's central boiler's helper, I12)."""
-    step = result["step_id"]
-    if step == "control_frost":
-        return True
+    """A form the chain had no step for, its fields another form's: the behaviour of full
+    control at the simple level (VT's central boiler's helper, I12)."""
     return (
-        step == "control_behaviour"
+        result["step_id"] == "control_behaviour"
         and _fields(result) == {"vt_boiler_helper"}
         and "control_curve" in menu
     )

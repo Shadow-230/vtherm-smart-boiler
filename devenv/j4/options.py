@@ -16,7 +16,6 @@ GATEWAY_ITEMS = (
     "control",
     "control_curve",
     "control_behaviour",
-    "control_frost",
     "control_alarms",
 )
 
@@ -56,9 +55,7 @@ BASE_GATEWAY: dict[str, object] = {
     "ramp_k_per_min": 1.0,
     "decision_interval_min": 5.0,
     "off_setpoint": 10.0,
-    # Frost protection (the advanced level).
-    "frost_limit": 5.0,
-    "frost_release": 7.0,
+    # No frost protection of the plugin's since I12.10: VT's frost preset and central mode.
     # Alarm reactions.
     "write_ignored": "info",
     "return_after_outside_change": False,

@@ -93,11 +93,14 @@ class ZoneState:
     10.4.0 keeps for good while none of its devices reports); ``None``: not said, ``ready``
     alone decides.
     ``temperature_at``: when the room temperature was last measured; the zone is fresh by it,
-    else by the entity's report. ``room_sensor_lost``: the room sensor VT reads is gone,
-    unavailable or unknown now, or VT's own safety mode is on — VT keeps the last temperature it
-    had (live only). ``safety_on``: VT's safety mode; ``shedding``: VT's power shedding holds
-    the zone off (live only). ``device_count``: the devices VT drives in the zone, from its entry
-    (``None``: not readable) — what a count of devices is capped by.
+    else by the entity's report. ``room_sensor_lost``: the room's temperature is not trusted now
+    (I12, decision 8; ``core.zones.room_trusted``) — VT runs it in safety mode, its thermometer
+    is unavailable, or VT has not measured it since the plugin started — so it judges nothing of
+    the curve (live only). ``window_open``: VT holds the zone off for a window, its automatic
+    window detection says open, or the window sensor VT reads is on (live only).
+    ``shedding``: VT's power shedding holds the zone off (live only). ``device_count``: the
+    devices VT drives in the zone, from its entry (``None``: not readable) — what a count of
+    devices is capped by.
     """
 
     zone_id: str
@@ -116,7 +119,7 @@ class ZoneState:
     max_on_percent: float | None = None  # VT's cap on the duty cycle, 0 to 1
     room_sensor_lost: bool = False
     mean_power: float | None = None
-    safety_on: bool = False
+    window_open: bool = False
     shedding: bool = False
     reported: bool | None = None
     devices_active: frozenset[str] | None = None
