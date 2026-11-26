@@ -3652,7 +3652,9 @@ async def test_a_failed_outdoor_sensor_is_not_a_lost_link(rig: Rig) -> None:
 
 async def test_control_waits_while_home_assistant_is_starting(rig: Rig) -> None:
     """VT starts its thermostats only once Home Assistant has started, while `is_running` is
-    already true during the start: control waits for the start to end."""
+    already true during the start: control waits for the start to end. "Gives no heat" does not
+    turn on meanwhile (I12.16): it cannot tell yet, so a zone algorithm is not held back at
+    each start; once control heats, it is off."""
     from homeassistant.core import CoreState
 
     rig.hass.set_state(CoreState.starting)
@@ -3661,9 +3663,11 @@ async def test_control_waits_while_home_assistant_is_starting(rig: Rig) -> None:
     await rig.advance(20)
     assert rig.gateway.calls == []
     assert "ha_starting" in rig.state("sensor", "control_state").attributes["blockers"]
+    assert rig.state("binary_sensor", "no_heat").state == "unavailable"
     rig.hass.set_state(CoreState.running)
     await rig.advance(10)
     assert rig.gateway.setpoints() == [EXPECTED]
+    assert rig.state("binary_sensor", "no_heat").state == "off"
 
 
 async def test_the_switch_says_how_off_is_sent(rig: Rig) -> None:

@@ -103,21 +103,24 @@ def no_heat(
     *,
     hot_water: bool | None = None,
     writes_stopped: bool = False,
+    starting: bool = False,
 ) -> NoHeat:
     """The signal from the control step: its ``mode`` and ``reasons``, the last value
-    (``previous``), hot water taking the rooms' heat now (``hot_water``, only ``True`` counts)
-    and whether another controller has the boiler (``writes_stopped``).
+    (``previous``), hot water taking the rooms' heat now (``hot_water``, only ``True`` counts),
+    whether another controller has the boiler (``writes_stopped``) and whether the only blockers
+    are Home Assistant starting or VT's settings not known yet (``starting``, I12.16).
 
-    Control switched off by the user: unknown — the plugin does not drive the boiler, and an
-    "on" would hold a zone algorithm's learning back for as long as control stays off. Waiting
-    for data (a stale link short of a loss, a read-back unknown, the recognition period with
-    nothing held): the last value, nothing being written meanwhile. Handed back, blocked, writes
-    stopped, or VT's decision unknown: on, ``handed_back``. Then the boiler's fault; heating
-    wanted (the recognition period's kept "on" included): off, or on for hot water; heating not
-    wanted: on, for VT's activation delay or VT not calling."""
+    Control switched off by the user: unknown — the plugin does not drive the boiler, and an "on"
+    would hold a zone algorithm's learning back for as long as control stays off. Waiting for data
+    (a stale link short of a loss, a read-back unknown, the recognition period with nothing held),
+    or not allowed only for a start: the last value, nothing being written meanwhile — so a zone
+    algorithm does not hold its integral at each start. Handed back, blocked, writes stopped, or
+    VT's decision unknown: on, ``handed_back``. Then the boiler's fault; heating wanted (the
+    recognition period's kept "on" included): off, or on for hot water; heating not wanted: on,
+    for VT's activation delay or VT not calling."""
     if mode is ControlMode.DISABLED:
         return NO_HEAT_UNKNOWN
-    if mode is ControlMode.WAITING_DATA:
+    if mode is ControlMode.WAITING_DATA or (mode is ControlMode.NOT_ALLOWED and starting):
         return previous
     if mode in _NOT_VOUCHED or writes_stopped or Reason.ZONES_UNKNOWN in reasons:
         return NoHeat(True, NoHeatReason.HANDED_BACK)

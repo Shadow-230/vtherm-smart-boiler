@@ -2038,6 +2038,7 @@ class ControlUnit:
                 # Hot water only where it takes the rooms' heat (I6, decision 8).
                 hot_water=self._coordinator.dhw_takes_heat(snapshot),
                 writes_stopped=out.blocked,
+                starting=bool(blockers) and set(blockers) <= KEPT_IN_RECOGNITION,
             ),
         )
 
