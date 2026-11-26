@@ -925,6 +925,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         async_read_control_state,
         control_store,
         main_store,
+        rooms_store,
     )
     from .forecasts import remove_partition_files
     from .journal import journal_store
@@ -982,11 +983,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             severity=ir.IssueSeverity.ERROR,
             translation_key="hand_back_owed_after_removal",
         )
-    # Nothing of the entry stays behind: its stores — the last-run record too — and its
-    # forecast weeks.
+    # Nothing of the entry stays behind: its stores — the last-run record and the rooms'
+    # history too — and its forecast weeks.
     await control.async_remove()
     await alive_store(hass, entry.entry_id).async_remove()
     await journal_store(hass, entry.entry_id).async_remove()
+    await rooms_store(hass, entry.entry_id).async_remove()
     await store.async_remove()
     await hass.async_add_executor_job(
         remove_partition_files, Path(hass.config.path(".storage")), entry.entry_id

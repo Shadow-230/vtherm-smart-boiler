@@ -19,6 +19,10 @@ version is decided then.
 - Degree-days and gas per degree-day — measured with a gas meter you map, else estimated — and the
   change in use against the day before, split into weather, hot water, settings and the rest.
 - A verdict on whether control is worth enabling, after 7 days of data by default.
+- The past from the boiler's signals in the recorder; whether the boiler was called for heat from
+  the helper VT's central boiler switches, its recorder history included; the rooms' details from
+  the plugin's own reads, kept 8 days in its own storage — nothing is read back from VT's
+  thermostats in the recorder, so room details start from the installation.
 - Signal health, and each feature active only with its data: the sensor **Features** says why
   one is not.
 - Alarms and early warnings: water pressure low, high or falling; flue gas; frequent starts;

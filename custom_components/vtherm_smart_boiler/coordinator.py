@@ -5,8 +5,12 @@ Two paths. The quick one runs on state changes (debounced) and every 30 s: curre
 signal check, hot water, the heat each zone gets, critical zones,
 current alarms. The analysis runs every few minutes on a copy of the history, off the event loop:
 summaries, verdict, trend warnings, report, outdoor check and building fit. After a restart the
-history is rebuilt from the recorder, which keeps these states anyway; the entry's own store
-holds only small things: the monitoring start, measured parameters and when
+boiler's signals and the helper VT's central boiler switches are rebuilt from the recorder, which
+keeps these states anyway; never VT's climates (I12.7b). The rooms' history is the plugin's own:
+each room as read through ``vtherm_api`` at every refresh and control step, changes only, kept
+``HISTORY_DAYS`` in the rooms' store — written half an hour after a change and at a clean stop,
+read back at the start, unknown from its last write on. The entry's own store holds only small
+things: the monitoring start, measured parameters and when
 the user reset one, the day summaries, a copy of when the plugin was down and a copy of the
 control state (P-116). A small store of its own, the last-run record, keeps when the plugin last
 ran — written every ten minutes and at a clean stop, so the entry's store is written only when
@@ -52,7 +56,7 @@ import copy
 import logging
 import math
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
@@ -86,6 +90,7 @@ from .const import (
     FORECAST_SECONDS,
     HISTORY_DAYS,
     REFRESH_COOLDOWN_SECONDS,
+    ROOMS_STORE_VERSION,
     STORAGE_VERSION,
     SUMMARY_SECONDS,
     TICK_SECONDS,
@@ -97,6 +102,7 @@ from .const import (
     has_control_section,
     main_store_key,
     owes_hand_back,
+    rooms_store_key,
     stored_flag,
 )
 from .control_config import Connection, Topology, WritePath, wall_thermostat_applies
@@ -144,7 +150,13 @@ from .core.daily import (
 )
 from .core.freshness import Rhythm, automatic_limit, observe
 from .core.heat import Heat, heat_available, heat_through_any
-from .core.history import History, ZoneSeries, with_downtime
+from .core.history import (
+    History,
+    ZoneSeries,
+    rooms_from_stored,
+    rooms_to_stored,
+    with_downtime,
+)
 from .core.installation import CircuitControl, IssueCode, Severity
 from .core.long_run import LongRun, LongRunClass, RoomLook, follow_long_run, tally
 from .core.lowest_water import (
@@ -279,6 +291,13 @@ ANALYSIS_JOB = "The periodic analysis"
 # entry's store with a year of days in it (SD cards, eMMC). After a crash the downtime starts at
 # its last write. Downtimes are kept as long as the rolling history.
 ALIVE_SAVE_S = 10 * 60
+# I12.7b: the rooms' store is written this long after a change — about 48 writes a day, not one
+# every 30 s refresh (SD cards, eMMC) — and at a clean stop; a crash loses what came since its
+# last write, read back as unknown. Each series keeps at most this many samples, the newest — a
+# change every 70 s for eight days, far above a room's own pace (a TPI relay's ten-minute cycle
+# is 2,300) — so a value flapping every refresh cannot grow the file without end.
+ROOMS_SAVE_DELAY_S = 30 * 60
+ROOMS_MAX_POINTS = 10_000
 # PB-65: the record names the Home Assistant run that wrote it (a token made once per run, kept
 # in ``hass.data``); a setup in the same run — a reload, the entry enabled again — follows no
 # stop of Home Assistant: the recorder ran through it, so no downtime is recorded.
@@ -383,6 +402,11 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self.transport.heard = self.reports.heard
         self.link = VThermLink(hass, config.zone_entities)
         self.history = self._empty_history()
+        # I12.7b: the rooms' history in a store of its own; nothing is written to it before it
+        # was read (a setup that fails earlier must not write over what the last run kept).
+        self._rooms_store = rooms_store(hass, entry.entry_id)
+        self._rooms_read = False
+        self._rooms_save_pending = False
         self.parameters = config.parameters
         # Days summarised with other settings no longer count (A4): the key of the current ones.
         self.settings_key = settings_key(summary_settings(config, self._registry_source))
@@ -521,14 +545,12 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._unsubs.append(self.link.start(now))
         self._restore_notices()
         self.report_installation()
+        await self._async_restore_rooms(now)
         # Current states seed the history too: without the recorder they are all there is, and
-        # an entity that does not change would otherwise never enter it.
-        zones = set(self.config.zone_entities)
-        for entity_id in self.config.watched_entities:
-            if entity_id in zones:  # I12.7b: the zone history from VT's climate, for now
-                state = self.link.recorded_state(entity_id)
-            else:
-                state = self.hass.states.get(entity_id)
+        # an entity that does not change would otherwise never enter it. Not VT's climates: the
+        # rooms enter it from the plugin's own reads, at the first refresh (I12.7b).
+        for entity_id in self._history_entities():
+            state = self.hass.states.get(entity_id)
             if state is not None:
                 self._record(entity_id, state, state.last_updated.timestamp())
         if self.control is not None:
@@ -537,10 +559,10 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             # disabled sensor does not lose it; the recorder's copy fills what came before.
             self._record_control_state()
             self._unsubs.append(self.control.async_add_listener(self._record_control_state))
+        helper = self.config.vt_boiler_helper
+        followed = list(dict.fromkeys([*self.config.watched_entities, *filter(None, [helper])]))
         self._unsubs.append(
-            async_track_state_change_event(
-                self.hass, list(self.config.watched_entities), self._handle_state_event
-            )
+            async_track_state_change_event(self.hass, followed, self._handle_state_event)
         )
         self._unsubs.append(
             async_track_time_interval(
@@ -611,6 +633,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             # A clean stop: the downtime from here on (P-95).
             await self._async_save_alive()
             await self._store.async_save(self._stored_data())
+        await self._async_save_rooms()
         if self.forecasts is not None:
             await self.forecasts.async_stop()
 
@@ -879,7 +902,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                     include_start_time_state=True,
                     significant_changes_only=False,
                     minimal_response=False,
-                    no_attributes=False,  # I12.7b: zones need their attributes, for now
+                    no_attributes=False,  # the signals' units, the weather's temperature
                 )
                 if not states.get(flame):
                     return None  # the recorder reaches no further back
@@ -929,7 +952,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
                 include_start_time_state=True,
                 significant_changes_only=False,  # every change, as the live history keeps
                 minimal_response=False,
-                no_attributes=False,  # I12.7b: zones need their attributes, for now
+                no_attributes=False,  # the signals' units, the weather's temperature
             )
             # The downtime is marked up to now: the samples recorded live since setup follow.
             return self._rebuild(states, start.timestamp(), math.inf, down)
@@ -941,11 +964,22 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
             return
         self.history.prepend(older)
 
+    def _history_entities(self) -> list[str]:
+        """The entities whose states the history keeps: the watched ones but VT's climates — the
+        rooms are the plugin's own reads (I12.7b) — and the helper VT's central boiler switches,
+        where one is set."""
+        zones = set(self.config.zone_entities)
+        entity_ids = [e for e in self.config.watched_entities if e not in zones]
+        helper = self.config.vt_boiler_helper
+        if helper is not None and helper not in entity_ids:
+            entity_ids.append(helper)
+        return entity_ids
+
     def _recorded_entities(self) -> list[str]:
-        """What is read back from the recorder: the watched entities and, where there is one,
+        """What is read back from the recorder: the history's entities and, where there is one,
         the plugin's own control-state sensor (P-96) — as the registry names it now, so a
-        rename is followed. Called in the event loop."""
-        entity_ids = list(self.config.watched_entities)
+        rename is followed. Never VT's climates (I12.7b). Called in the event loop."""
+        entity_ids = self._history_entities()
         self._control_entity = er.async_get(self.hass).async_get_entity_id(
             "sensor", DOMAIN, f"{self.config_entry.entry_id}_control_state"
         )
@@ -980,12 +1014,76 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
 
     @callback
     def _handle_state_event(self, event: Event[EventStateChangedData]) -> None:
-        state = event.data["new_state"]
-        moment = state.last_updated.timestamp() if state is not None else event.time_fired
-        if isinstance(moment, datetime):
-            moment = moment.timestamp()
-        self._record(event.data["entity_id"], state, float(moment))
+        entity_id = event.data["entity_id"]
+        # I12.11: a VT climate's change only asks for a refresh, which reads its room through
+        # ``vtherm_api``; nothing of its state is read (I12.7b).
+        if entity_id not in self.config.zone_entities:
+            state = event.data["new_state"]
+            moment = state.last_updated.timestamp() if state is not None else event.time_fired
+            if isinstance(moment, datetime):
+                moment = moment.timestamp()
+            self._record(entity_id, state, float(moment))
         self.config_entry.async_create_task(self.hass, self.async_request_refresh())
+
+    # --- the rooms' history (I12.7b) ------------------------------------------------------
+
+    async def _async_restore_rooms(self, now: float) -> None:
+        """The rooms' history the last run kept, for the rooms configured now: the last
+        ``HISTORY_DAYS``, unknown from the store's last write on — put before anything recorded
+        since. A store that cannot be read starts it empty."""
+        raw = _mapping(await _async_try_load(self._rooms_store))
+        saved_at = _timestamp(raw.get("saved_at"))
+        if saved_at is not None:
+            rooms, damaged = rooms_from_stored(
+                raw.get("zones"), self.history.zones, now - HISTORY_DAYS * DAY, saved_at
+            )
+            if damaged:
+                _LOGGER.warning("Ignoring %d unreadable series of the rooms' history", damaged)
+            older = History(zones=rooms)
+            self.history.prepend(older)
+        elif raw:
+            _LOGGER.warning("Ignoring the rooms' history: it says not when it was written")
+        self._rooms_read = True
+
+    def record_rooms(self, zones: Iterable[ZoneState], now: float) -> None:
+        """Rooms as just read through ``vtherm_api`` — at each refresh and control step — into
+        the rolling history, changes only; the rooms' store is written a while after a change
+        (I12.7b)."""
+        changed = False
+        for zone in zones:
+            series = self.history.zones.get(zone.zone_id)
+            if series is not None and series.record(zone, now):
+                changed = True
+        if changed:
+            self._schedule_rooms_save()
+
+    def _schedule_rooms_save(self) -> None:
+        """One delayed write at a time: the store's own timer starts again with each call, which
+        would put the write off for as long as the rooms change."""
+        if self._stopped or not self._rooms_read or self._rooms_save_pending:
+            return
+        self._rooms_save_pending = True
+        self._rooms_store.async_delay_save(self._stored_rooms, ROOMS_SAVE_DELAY_S)
+
+    async def _async_save_rooms(self) -> None:
+        """The rooms' store written now — at a clean stop, an unload or Home Assistant's —, once
+        it was read; a write that fails is logged and costs only the rooms' last minutes."""
+        if not self._rooms_read:
+            return
+        try:
+            await self._rooms_store.async_save(self._stored_rooms())
+        except Exception:  # a full disk, say: the stop goes on
+            _LOGGER.warning("Could not write the rooms' history", exc_info=True)
+
+    def _stored_rooms(self) -> dict[str, Any]:
+        self._rooms_save_pending = False
+        now = dt_util.utcnow().timestamp()
+        return {
+            "saved_at": now,
+            "zones": rooms_to_stored(
+                self.history.zones, now - HISTORY_DAYS * DAY, ROOMS_MAX_POINTS
+            ),
+        }
 
     def _registry_source(self, entity_id: str) -> str:
         """PB-17: what an entity is — its registry entry, which stays when its ID is renamed;
@@ -1015,20 +1113,9 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         if signal is not None:
             reading = self.transport.reading_of(signal, state, outdoor)
             _append(history.signals[signal], t, reading.value)
-        if entity_id in history.zones:
-            # I12.7b: recorded from VT's climate entity until the plugin's own store replaces it.
-            zone = self.link.zone_from_state(state)
-            series = history.zones[entity_id]
-            for target, value in (
-                (series.temperature, zone.temperature),
-                (series.target, zone.target),
-                (series.heating_enabled, zone.heating_enabled),
-                (series.calling, zone.calling),
-                (series.on_percent, zone.on_percent),
-                (series.valve_open, zone.valve_open),
-                (series.power, zone.power),
-            ):
-                _append(target, t, value)
+        if entity_id == self.config.vt_boiler_helper:
+            # I12.7b: VT's call, as the helper its central boiler switches shows it.
+            _append(history.vt_called, t, _vt_call(state))
         if entity_id == self.config.weather:
             _append(history.weather, t, weather_from_state(state).value)
         if entity_id == self.config.setpoint_read_back:
@@ -1276,6 +1363,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         dhw = self.dhw_takes_heat(snapshot)
 
         zone_states = {z.zone_id: self.link.zone(z.zone_id) for z in config.installation.zones}
+        self.record_rooms(zone_states.values(), now)
         flame = snapshot.flag(Signal.FLAME, self._max_age(Signal.FLAME))
         self._follow_long_run(snapshot, zone_states, flame, now)
         heats: dict[str, list[Heat]] = {}
@@ -1942,6 +2030,7 @@ class SmartBoilerCoordinator(DataUpdateCoordinator[MonitorData]):
         self._alive_stop_unsub = None
         if not self._stopped:
             await self._async_save_alive()
+            await self._async_save_rooms()  # Home Assistant's stop unloads no entry (PB-57)
 
     async def _async_alive_tick(self, _now: datetime) -> None:
         if not self._stopped:
@@ -2324,6 +2413,13 @@ def alive_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(hass, ALIVE_STORE_VERSION, alive_store_key(entry_id), atomic_writes=True)
 
 
+def rooms_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """The rooms' history (I12.7b): each room as the plugin read it over the last
+    ``HISTORY_DAYS``, each series one line of text; written half an hour after a change and at
+    a clean stop, atomically."""
+    return Store(hass, ROOMS_STORE_VERSION, rooms_store_key(entry_id), atomic_writes=True)
+
+
 @dataclass(frozen=True, slots=True)
 class ControlRead:
     """The control state as read, with the cautious answer to whether a hand-back is owed."""
@@ -2425,6 +2521,11 @@ def _mapping(value: object) -> dict[str, Any]:
     if value is not None and not isinstance(value, dict):
         _LOGGER.warning("Ignoring stored data that is not a mapping")
     return value if isinstance(value, dict) else {}
+
+
+def _vt_call(state: State | None) -> bool | None:
+    """VT's call as its helper shows it: on, off, or not known."""
+    return None if state is None else {"on": True, "off": False}.get(state.state)
 
 
 def _append(series: Series[Any], t: float, value: object) -> None:

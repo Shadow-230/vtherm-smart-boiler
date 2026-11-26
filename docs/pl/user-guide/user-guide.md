@@ -164,6 +164,16 @@ dopóki nie włączysz sterowania, co możesz zrobić od pierwszego dnia. Rejest
 Werdykt potrzebuje domyślnie **7 dni danych**. Możesz zażądać więcej (do 60 dni), ale nie mniej.
 Liczą się dni kalendarzowe od dnia utworzenia wpisu.
 
+**Skąd bierze się przeszłość.** Sygnały kotła są odczytywane z rejestratora Home Assistant:
+ostatnie 8 dni i starsze dni tak daleko, jak sięga rejestrator, do roku wstecz. To, czy kocioł był wezwany do grzania — co odróżnia palenie na grzanie od poboru
+ciepłej wody — pochodzi z pomocnika przełączanego przez kocioł centralny VT: włączony oznacza, że
+VT wezwał ciepło. Liczy się też jego historia w rejestratorze, więc działa to także dla dni sprzed
+instalacji wtyczki. Szczegóły pokoi — temperatury, nastawy, które pokoje wzywają ciepła, otwarcia
+zaworów — są własne wtyczki: zapisuje je przy każdym odczycie pokoi i trzyma ostatnie 8 dni we
+własnym magazynie. Nie odczytuje ich z termostatów VT w rejestratorze, więc analizy, które
+potrzebują szczegółów pokoi, zaczynają się od instalacji. Bez pomocnika (samo monitorowanie) także
+to, czy kocioł był wezwany, pochodzi z pokoi zapisanych przez wtyczkę.
+
 Potem czujnik **Werdykt sterowania** pokazuje jedną z wartości:
 
 | Werdykt | Znaczenie |
@@ -1293,9 +1303,9 @@ Problemy, które wymagają twojej uwagi, pojawiają się też jako zgłoszenia w
 ## 11. Co zostaje lokalnie
 
 Wszystko. Wtyczka nie łączy się z żadną usługą w chmurze i nic nie wysyła poza Home Assistant.
-Czyta encje, zapisuje tylko do wybranych przez ciebie celów, swój stan i zapisane prognozy trzyma
-we własnym magazynie Home Assistant (`.storage`), a jej czujniki trafiają do rejestratora Home
-Assistant jak każde inne. Pobrana diagnostyka (urządzenie integracji → Pobierz diagnostykę)
+Czyta encje, zapisuje tylko do wybranych przez ciebie celów, swój stan, ostatnie 8 dni pokoi i
+zapisane prognozy trzyma we własnym magazynie Home Assistant (`.storage`), a jej czujniki trafiają
+do rejestratora Home Assistant jak każde inne. Pobrana diagnostyka (urządzenie integracji → Pobierz diagnostykę)
 zastępuje identyfikatory encji i bramki, zanim ją komuś przekażesz.
 
 ## 12. Opcje i ryzyko
@@ -1416,7 +1426,7 @@ target:
 1. Możesz najpierw wyłączyć sterowanie (**Tryb sterowania**, odznacz **Sterowanie włączone**) i
    sprawdzić, że kocioł wrócił do własnego sterowania.
 2. Usuń wpis: Ustawienia → Urządzenia oraz usługi → Smart Boiler for Versatile Thermostat → Usuń.
-   Wtyczka oddaje kocioł i usuwa swój zapisany stan, dziennik i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
+   Wtyczka oddaje kocioł i usuwa swój zapisany stan, dziennik, historię pokoi i prognozy. Jeśli oddania nie dało się potwierdzić, po usunięciu zostaje zgłoszenie w
    Naprawach: oddaj kocioł ręcznie.
 3. Usuń ją w HACS (albo usuń jej folder) i uruchom ponownie Home Assistant.
 4. Aby kocioł centralny VT znów sterował kotłem, skieruj jego polecenia z powrotem na kocioł w

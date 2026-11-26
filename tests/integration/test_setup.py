@@ -341,15 +341,14 @@ async def test_the_recorder_backfill_runs_after_setup_and_goes_before_live_sampl
     assert len(asked) == 2
 
 
-async def test_the_backfill_puts_a_zones_recorded_states_before_its_live_ones(
+async def test_no_recorder_query_asks_for_vts_climates(
     hass: HomeAssistant, freezer, zones: FakeZones, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P-117: a VT zone's recorded states, read back with their attributes, go before the
-    zone's states recorded live since setup — series by series, only what is older, as the
-    boiler's signals do. Negative: a zone the recorder has nothing for keeps its live states
-    alone."""
-    import asyncio
-
+    """I12.7b (the user's decision of 2026-11-25): the rooms' past is no longer rebuilt from the
+    recorder's records of VT's climates — neither the rolling eight days nor the older days the
+    day summaries are built from ask for them. A room enters the history from the plugin's own
+    read through ``vtherm_api`` at the first refresh; without a helper (monitoring only) no
+    helper is asked for either. Negative: a climate state the recorder would give is not there."""
     from homeassistant.core import State
     from homeassistant.util import dt as dt_util
 
@@ -357,53 +356,158 @@ async def test_the_backfill_puts_a_zones_recorded_states_before_its_live_ones(
 
     freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
     now = dt_util.utcnow()
-    release = asyncio.Event()
-    living = zones.add(
-        "living",
-        current_temperature=20.5,
-        temperature=21.0,
-        hvac_action="heating",
-        valve_open_percent=70,
-    )
-    bedroom = zones.add("bedroom", current_temperature=19.0, valve_open_percent=10)
+    living = zones.add("living", current_temperature=20.5, temperature=21.0, hvac_action="heating")
+    asked: list[tuple[bool, list[str]]] = []
 
-    def recorded(temperature: float, action: str, opening: int, days: int) -> State:
-        attributes = {
-            "current_temperature": temperature,
-            "temperature": 21.0,
-            "hvac_action": action,
-            "valve_open_percent": opening,
-            "is_ready": True,
-            "specific_states": {},
+    def significant_states(hass, start_time, *, end_time=None, entity_ids=None, **_kwargs):
+        asked.append((end_time is None, list(entity_ids)))
+        if start_time < now - timedelta(days=12):
+            return {}  # the recorder reaches no further back
+        flame = boiler.entity(Signal.FLAME)
+        climate = {"current_temperature": 18.0, "hvac_action": "heating", "is_ready": True}
+        return {
+            flame: [State(flame, "off", {}, last_updated=start_time)],
+            living: [State(living, "heat", climate, last_updated=start_time)],
         }
-        return State(living, "heat", attributes, last_updated=now - timedelta(days=days))
-
-    def significant_states(hass, start_time, **kwargs):
-        return {living: [recorded(18.0, "heating", 40, 2), recorded(19.0, "idle", 0, 1)]}
 
     class Recorder:
         async def async_add_executor_job(self, target, *args):
-            await release.wait()
             return await hass.async_add_executor_job(target, *args)
 
     monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
     monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
     hass.config.components.add("recorder")
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
-    boiler.set_many({Signal.FLAME: True, Signal.FLOW: 45.0})
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 45.0})
     entry = entry_for(boiler, zones)
-    await setup(hass, entry, background=False)  # does not wait for the recorder
+    await setup(hass, entry)
+    assert {rolling for rolling, _ids in asked} == {True, False}  # both kinds of query ran
+    assert all(living not in ids for _rolling, ids in asked)
+    assert all(not any(e.startswith("input_boolean.") for e in ids) for _rolling, ids in asked)
     zone = entry.runtime_data.history.zones[living]
-    assert [s.value for s in zone.temperature] == [20.5]
-    release.set()
+    assert [(s.t, s.value) for s in zone.temperature] == [(now.timestamp(), 20.5)]
+    assert [s.value for s in zone.calling] == [True]
+
+
+async def test_the_rooms_history_survives_a_restart_and_goes_with_the_entry(
+    hass: HomeAssistant, freezer, hass_storage: dict[str, Any], zones: FakeZones
+) -> None:
+    """I12.7b: each room as read at every refresh goes into the history by its changes only; the
+    rooms' store keeps it, written at the stop; read back at the next start, it is unknown from
+    that write until the room is read again. The store goes with the entry."""
+    from custom_components.vtherm_smart_boiler.core.series import Series
+
+    def samples(series: Series[Any]) -> list[tuple[float, Any]]:
+        return [(s.t, s.value) for s in series]
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    t0 = datetime(2026, 1, 10, 12, tzinfo=UTC).timestamp()
+    living = zones.add("living", current_temperature=20.5, temperature=21.0, hvac_action="heating")
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 45.0})
+    entry = entry_for(boiler, zones)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    freezer.tick(timedelta(minutes=5))
+    zones.set("living", current_temperature=20.8, temperature=21.0, hvac_action="idle")
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()  # nothing changed: nothing added
+    zone = coordinator.history.zones[living]
+    assert samples(zone.temperature) == [(t0, 20.5), (t0 + 300, 20.8)]
+    assert samples(zone.target) == [(t0, 21.0)]
+    assert samples(zone.calling) == [(t0, True), (t0 + 300, False)]
+    freezer.tick(timedelta(minutes=1))
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    key = f"{DOMAIN}.{entry.entry_id}.rooms"
+    stored = hass_storage[key]["data"]
+    assert stored["saved_at"] == t0 + 360
+    assert set(stored["zones"]) == {living}
+    freezer.tick(timedelta(hours=1))  # an hour down
+    zones.set("living", current_temperature=19.0, temperature=21.0, hvac_action="heating")
+    assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert [s.value for s in zone.temperature] == [18.0, 19.0, 20.5]
-    assert [s.value for s in zone.valve_open] == [0.4, 0.0, 0.7]
-    assert [s.value for s in zone.calling] == [True, False, True]
-    assert [s.value for s in zone.target] == [21.0]  # unchanged throughout: one sample
-    assert zone.temperature.first_time == (now - timedelta(days=2)).timestamp()
-    other = entry.runtime_data.history.zones[bedroom]
-    assert [s.value for s in other.temperature] == [19.0]
+    zone = entry.runtime_data.history.zones[living]
+    back = t0 + 360 + 3600
+    assert samples(zone.temperature) == [(t0, 20.5), (t0 + 300, 20.8), (t0 + 360, None),
+                                         (back, 19.0)]  # fmt: skip
+    assert samples(zone.target) == [(t0, 21.0), (t0 + 360, None), (back, 21.0)]
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert key not in hass_storage
+
+
+async def test_the_rooms_store_is_written_half_an_hour_late_and_keeps_eight_days(
+    hass: HomeAssistant,
+    freezer,
+    hass_storage: dict[str, Any],
+    zones: FakeZones,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I12.7b: a change of a room schedules one write of the rooms' store, half an hour later —
+    later changes do not put it off, nor schedule another while it waits. What is read back
+    reaches eight days back, the value holding then included; an unreadable series is left out,
+    the rest kept; a store that says not when it was written is ignored."""
+    from homeassistant.helpers.storage import Store
+
+    from custom_components.vtherm_smart_boiler.coordinator import ROOMS_SAVE_DELAY_S
+
+    freezer.move_to(datetime(2026, 1, 10, 12, tzinfo=UTC))
+    now = datetime(2026, 1, 10, 12, tzinfo=UTC).timestamp()
+    living = zones.add("living", current_temperature=20.0, temperature=21.0)
+    boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
+    boiler.set_many({Signal.FLAME: False, Signal.FLOW: 45.0})
+    entry = entry_for(boiler, zones)
+    key = f"{DOMAIN}.{entry.entry_id}.rooms"
+    first = round(now - 10 * DAY)
+    temperature = f"{first}:18.0,{DAY:.0f}:18.5,{7 * DAY:.0f}:19.0"  # 10, 9 and 2 days ago
+    hass_storage[key] = {
+        "version": 1,
+        "key": key,
+        "data": {
+            "saved_at": now - DAY,
+            "zones": {living: {"temperature": temperature, "target": "x:21"}},
+        },
+    }
+    delays: list[float] = []
+    delay_save = Store.async_delay_save
+
+    def recorded(store: Store[Any], data_func: Any, delay: float = 0) -> None:
+        if store.key == key:
+            delays.append(delay)
+        delay_save(store, data_func, delay)
+
+    monkeypatch.setattr(Store, "async_delay_save", recorded)
+    await setup(hass, entry)
+    coordinator = entry.runtime_data
+    zone = coordinator.history.zones[living]
+    assert [(s.t, s.value) for s in zone.temperature] == [
+        (now - 9 * DAY, 18.5),
+        (now - 2 * DAY, 19.0),
+        (now - DAY, None),
+        (now, 20.0),
+    ]
+    assert [s.value for s in zone.target] == [21.0]  # the damaged series left out
+    assert delays == [ROOMS_SAVE_DELAY_S]  # the first read's change
+    for degrees in (20.3, 20.6):
+        freezer.tick(timedelta(minutes=1))
+        zones.set("living", current_temperature=degrees, temperature=21.0)
+        await coordinator.async_refresh()
+    assert delays == [ROOMS_SAVE_DELAY_S]  # one write pending: none more
+    freezer.tick(timedelta(seconds=ROOMS_SAVE_DELAY_S))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass_storage[key]["data"]["saved_at"] > now
+    zones.set("living", current_temperature=20.9, temperature=21.0)
+    await coordinator.async_refresh()
+    assert delays == [ROOMS_SAVE_DELAY_S] * 2  # written: the next change schedules another
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    hass_storage[key]["data"].pop("saved_at")
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    zone = entry.runtime_data.history.zones[living]
+    assert [s.value for s in zone.temperature] == [20.9]  # nothing read back
 
 
 async def test_no_day_is_kept_before_the_history_is_back(
@@ -2351,17 +2455,23 @@ async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
 ) -> None:
     """R6, A2: a TPI zone at 10 % keeps its duty cycle through the cycle while its relay pulses.
     Burns that follow the relay — lit after it closes, out after it opens — lost no flame; the
-    same short burns going out while the relay is still closed are flames lost."""
+    same short burns going out while the relay is still closed are flames lost. The room enters
+    the history as the refresh that follows its change reads it (I12.7b)."""
     freezer.move_to(datetime(2026, 1, 10, 6, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
     zones.add("living", on_percent=0.1)
     await setup(hass, entry_for(boiler, zones))
     entry = hass.config_entries.async_entries(DOMAIN)[0]
+
+    async def relay(action: str) -> None:
+        zones.set("living", hvac_action=action, on_percent=0.1)
+        await entry.runtime_data.async_refresh()
+
     # Y1: a count is judged with the flame known for half its window at least (12 h a day).
     freezer.tick(timedelta(hours=12))
     for _ in range(12):  # twelve five-minute cycles, 30 s on each
-        zones.set("living", hvac_action="heating", on_percent=0.1)
+        await relay("heating")
         freezer.tick(timedelta(seconds=10))
         boiler.set(Signal.FLAME, True)
         await hass.async_block_till_done()
@@ -2369,10 +2479,10 @@ async def test_a_tpi_zones_short_pulses_are_no_ignition_problem(
             freezer.tick(timedelta(seconds=15))
             boiler.set(Signal.FLAME, False)  # out while the relay is still closed
             freezer.tick(timedelta(seconds=5))
-            zones.set("living", hvac_action="idle", on_percent=0.1)
+            await relay("idle")
         else:
             freezer.tick(timedelta(seconds=20))
-            zones.set("living", hvac_action="idle", on_percent=0.1)
+            await relay("idle")
             freezer.tick(timedelta(seconds=2))
             boiler.set(Signal.FLAME, False)  # out once the relay has opened
         await hass.async_block_till_done()
@@ -2871,8 +2981,9 @@ async def test_home_assistants_stop_writes_the_last_run_record(
 ) -> None:
     """PB-57: Home Assistant's stop unloads no entry, so the record was written only every ten
     minutes — up to ten minutes before each restart counted as downtime. A shutdown job writes
-    it at the stop, and stays in Home Assistant's list while the jobs run; an unload without a
-    stop removes it (negative: nothing of the entry left behind)."""
+    it — and the rooms' history (I12.7b) — at the stop, and stays in Home Assistant's list while
+    the jobs run; an unload without a stop removes it (negative: nothing of the entry left
+    behind)."""
     freezer.move_to(datetime(2026, 2, 1, tzinfo=UTC))
     boiler = FakeBoiler(hass, (Signal.FLAME, Signal.FLOW))
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 30.0})
@@ -2894,6 +3005,9 @@ async def test_home_assistants_stop_writes_the_last_run_record(
     await ours()[0].job.target()
     await hass.async_block_till_done()
     assert hass_storage[_alive_key(entry)]["data"]["alive_at"] == pytest.approx(stop)
+    # I12.7b: the rooms' history too — Home Assistant's stop unloads no entry (PB-57).
+    rooms = hass_storage[f"{DOMAIN}.{entry.entry_id}.rooms"]["data"]
+    assert rooms["saved_at"] == pytest.approx(stop)
     assert len(ours()) == 1  # the job does not remove itself while the jobs run
 
 

@@ -2531,7 +2531,7 @@
             "state": {
               "held": "Stan zachowany: dane wejściowe chwilowo nieznane (do godziny)",
               "unknown_input": "Nieznany: brak danych wejściowych albo jest ich za mało",
-              "no_zone_data": "Brak danych stref"
+              "no_zone_data": "Brak danych o wezwaniach ciepła: brak pomocnika kotła centralnego VT i jeszcze brak historii pokoi"
             }
           },
           "limit": {

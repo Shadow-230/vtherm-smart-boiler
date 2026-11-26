@@ -37,9 +37,8 @@ MAPPING = {
         "modulation": "sensor.test_modulation",
     },
     "weather": {"entity": "weather.test"},
-    "zones": {"living": "climate.test_living"},
+    "vt": {"helper": "input_boolean.test_vt_boiler"},
     "parameters": {"boiler_min_power": 4.0, "boiler_max_power": 20.0},
-    "options": {"temperature_unit": "°F"},
 }
 
 
@@ -50,17 +49,9 @@ def recorder(tmp_path: Path) -> Path:
     writer.add("sensor.test_modulation", T0, "25", {"unit_of_measurement": "%"})
     writer.add("sensor.test_return", T0, "38.0", celsius)
     writer.add("weather.test", T0, "cloudy", {"temperature": 41.0, "temperature_unit": "°F"})
-    writer.add(
-        "climate.test_living",
-        T0,
-        "heat",
-        {
-            "current_temperature": 68.0,
-            "temperature": 69.8,
-            "hvac_action": "heating",
-            "valve_open_percent": 60,
-        },
-    )
+    writer.add("input_boolean.test_vt_boiler", T0, "on")  # VT calls through the two days
+    writer.add("input_boolean.test_vt_boiler", T0 + 2 * DAY + HOUR, "unavailable")
+    writer.add("input_boolean.test_vt_boiler", T0 + 2 * DAY + 2 * HOUR, "off")
     for k in range(int(2 * DAY // (30 * MIN))):
         t = T0 + k * 30 * MIN
         writer.add("binary_sensor.test_flame", t, "off")
@@ -83,23 +74,24 @@ def test_mapping_requires_flame_and_flow_and_known_names() -> None:
         parse_mapping({"boiler": {"flame": "a.b", "flow": "c.d"}, "parameters": {"x": 1}})
     mapping = parse_mapping(MAPPING)
     assert mapping.parameters.value(ParameterKey.BOILER_MIN_POWER) == 4.0
-    assert mapping.temperature_unit == "°F"
+    assert mapping.vt_helper == "input_boolean.test_vt_boiler"
+    assert parse_mapping({"boiler": {"flame": "a.b", "flow": "c.d"}}).vt_helper is None
 
 
 def test_read_history_converts_and_keeps_unknowns(recorder: Path) -> None:
     mapping = parse_mapping(MAPPING)
     with RecorderDatabase(recorder) as db:
-        history = read_history(db, mapping, T0, T0 + 2 * DAY)
+        history = read_history(db, mapping, T0, T0 + 3 * DAY)
     assert set(history.signals) == {Signal.FLAME, Signal.FLOW, Signal.RETURN, Signal.MODULATION}
     flow = history.signal(Signal.FLOW)
     assert flow.value_at(T0 + HOUR + 1) is None  # unavailable stays unknown
     assert flow.value_at(T0 + 15 * MIN) == 45.0
     assert history.weather.value_at(T0) == pytest.approx(5.0)
-    zone = history.zones["living"].state_at(T0)
-    assert zone.temperature == pytest.approx(20.0)
-    assert zone.target == pytest.approx(21.0)
-    assert zone.valve_open == pytest.approx(0.6)
-    assert zone.heating_enabled is True
+    # I12.7b: VT's call from its helper — on, unknown, off; no room is read from VT's climates.
+    called = history.vt_called
+    moments = (T0, T0 + 2 * DAY + HOUR, T0 + 2 * DAY + 2 * HOUR)
+    assert [called.value_at(t) for t in moments] == [True, None, False]
+    assert not history.zones
 
 
 def test_report_runs_the_core(recorder: Path) -> None:
@@ -107,6 +99,7 @@ def test_report_runs_the_core(recorder: Path) -> None:
     with RecorderDatabase(recorder) as db:
         history = read_history(db, mapping, T0, T0 + 2 * DAY)
     text = report(history, mapping, T0, T0 + 2 * DAY, ZoneInfo("UTC"))
+    assert "vt_called" in text
     assert "starts per hour     2.00" in text
     assert "median burn (min)   20.00" in text
     assert "Condensing share:    1.00" in text
@@ -131,8 +124,8 @@ def test_local_days_follow_the_clock_change() -> None:
 @pytest.mark.parametrize(
     ("data", "message"),
     [
-        ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"}, "zones": {"a": "nodot"}},
-         "zones"),
+        ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"}, "vt": {"helper": "nodot"}},
+         "helper"),
         ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"},
           "parameters": {"loss_coefficient": "much"}}, "loss_coefficient"),
         ({"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"},
@@ -170,8 +163,10 @@ BASE = {"boiler": {"flame": "binary_sensor.f", "flow": "sensor.f"}}
         (BASE | {"zone": {"living": "climate.x"}}, r"\[zone\]"),  # a misspelt section
         (BASE | {"options": {"condensing_retrun": 50}}, "condensing_retrun"),  # a misspelt key
         (BASE | {"weather": {"entity": "weather.x", "unit": "C"}}, "unit"),
-        (BASE | {"zones": {"living": "sensor.living"}}, "climate"),
-        (BASE | {"options": {"temperature_unit": "C"}}, "temperature_unit"),
+        (BASE | {"vt": {"helper": "switch.boiler"}}, "input_boolean"),
+        (BASE | {"vt": {"helpr": "input_boolean.x"}}, "helpr"),
+        (BASE | {"zones": {"living": "climate.living"}}, "the rooms' history is the plugin's own"),
+        (BASE | {"options": {"temperature_unit": "°C"}}, "temperature_unit"),
         (BASE | {"options": {"condensing_return": 90}}, "condensing_return"),
     ],
 )
@@ -286,7 +281,7 @@ def test_the_example_mapping_is_valid_with_every_line_in_use() -> None:
     mapping = parse_mapping(tomllib.loads(used))
     assert set(mapping.signals) == set(Signal)
     assert mapping.weather is not None
-    assert mapping.zones
+    assert mapping.vt_helper is not None
 
 
 def _steady_heat(start: float, end: float) -> History:

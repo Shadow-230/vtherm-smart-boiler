@@ -48,6 +48,7 @@ from .control_config import (
     map_control_entities,
     mqtt_topic_valid,
     parse_control,
+    vt_helper_valid,
     with_boiler_inputs,
 )
 from .core.alarms import (
@@ -314,6 +315,13 @@ class EntryConfig:
         if Signal.CH_SETPOINT in self.signals or not self.control.configured:
             return None
         return self.control.confirmed_entity
+
+    @property
+    def vt_boiler_helper(self) -> str | None:
+        """I12.7b: the helper VT's central boiler switches, where control picks a valid one — its
+        history says when VT called for heat; ``None`` otherwise (monitoring only)."""
+        helper = self.control.vt_boiler_helper
+        return helper if vt_helper_valid(helper) else None
 
     @property
     def watched_entities(self) -> tuple[str, ...]:

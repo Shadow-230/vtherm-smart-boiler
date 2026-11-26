@@ -5186,6 +5186,7 @@ async def test_a_store_read_that_fails_writes_nothing_and_still_reports_the_debt
     await rig.advance(700)  # past the delayed save and the last-run record's ten minutes
     assert {key: hass_storage[key] for key in before} == before
     assert f"{DOMAIN}.{entry.entry_id}.alive" not in hass_storage  # nor that one (P-95)
+    assert f"{DOMAIN}.{entry.entry_id}.rooms" not in hass_storage  # nor the rooms' (I12.7b)
     assert rig.gateway.calls == []
     found = issue(rig, "hand_back_owed")
     assert found is not None
@@ -12908,6 +12909,64 @@ async def test_days_under_control_are_read_back_from_the_control_state_sensor(
     ]  # the day before yesterday
     assert day.controlled_s == pytest.approx(2 * 3600.0 + 1.5 * 3600.0)
     assert day.under_control
+
+
+async def test_vts_helper_is_read_back_and_followed_as_vts_call(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I12.7b: where a helper is set, the recorder's history of it — the rolling eight days and
+    the older days the day summaries are built from — is VT's call in the history, before what
+    is recorded live; each change of it is followed live. No query asks for VT's climates."""
+    from custom_components.vtherm_smart_boiler import coordinator as coordinator_module
+
+    now = dt_util.utcnow()
+    helper = rig.zones.helper
+    living = rig.zones.entities["living"]
+    asked: list[tuple[bool, list[str]]] = []
+
+    def significant_states(hass, start_time, *, end_time=None, entity_ids=None, **_kwargs):
+        asked.append((end_time is None, list(entity_ids)))
+        if start_time < now - timedelta(days=12):
+            return {}  # the recorder reaches no further back
+        flame = BOILER_ENTITIES[Signal.FLAME]
+        return {
+            flame: [State(flame, "off", {}, last_updated=start_time)],
+            helper: [
+                State(helper, "on", {}, last_updated=start_time),
+                State(helper, "unavailable", {}, last_updated=start_time + timedelta(hours=1)),
+                State(helper, "off", {}, last_updated=start_time + timedelta(hours=2)),
+            ],
+        }
+
+    class Recorder:
+        async def async_add_executor_job(self, target: Any, *args: Any) -> Any:
+            return await rig.hass.async_add_executor_job(target, *args)
+
+    monkeypatch.setattr(coordinator_module, "_recorder", lambda hass: Recorder())
+    monkeypatch.setattr(coordinator_module, "_significant_states", lambda: significant_states)
+    rig.hass.config.components.add("recorder")
+    await start(rig)
+    assert rig.entry is not None
+    assert {rolling for rolling, _ids in asked} == {True, False}
+    assert all(helper in ids and living not in ids for _rolling, ids in asked)
+    called = rig.entry.runtime_data.history.vt_called
+    begin = (now - timedelta(days=8)).timestamp()
+    assert [called.value_at(begin + hours * 3600.0) for hours in (0.5, 1.5, 2.5)] == [
+        True,
+        None,
+        False,
+    ]
+    live = rig.hass.states.get(helper)
+    assert live is not None
+    assert called.value_at(now.timestamp()) is {"on": True, "off": False}[live.state]
+    rig.freezer.tick(60)
+    rig.zones.set_helper("on")
+    await rig.hass.async_block_till_done()
+    assert called.last is not None
+    assert called.last.value is True
+    rig.zones.set_helper("unknown")
+    await rig.hass.async_block_till_done()
+    assert called.last.value is None
 
 
 # --- Y4: the coded lists' texts (P-39) and the switch's refusal (P-74) -------------------------

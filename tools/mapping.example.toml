@@ -26,10 +26,10 @@ flow = "sensor.boiler_flow_temperature"
 [weather]
 # entity = "weather.home"
 
-# VT thermostats: zone name = climate entity.
-[zones]
-# living_room = "climate.living_room"
-# bedroom = "climate.bedroom"
+# The helper VT's central boiler switches: on while VT calls for heat, which tells heating burns
+# from hot water. VT's climates are not read: the rooms' history is the plugin's own.
+[vt]
+# helper = "input_boolean.boiler_heating"
 
 # What you know about your boiler and house (all optional); used for estimates and the verdict.
 [parameters]
@@ -44,4 +44,3 @@ flow = "sensor.boiler_flow_temperature"
 [options]
 # modulation_scale = "range"    # "range": 0 % is minimum power; "capacity": % of maximum power
 # condensing_return = 55.0      # °C
-# temperature_unit = "°C"       # Home Assistant's unit system, for VT zone temperatures

@@ -157,6 +157,16 @@ example:
 The verdict needs **7 days of data** by default. You may ask for more (up to 60 days), but not
 fewer. They count calendar days from the day you created the entry.
 
+**Where the past comes from.** The boiler's signals are read back from Home Assistant's recorder:
+the last 8 days, and older days as far back as the recorder reaches, up to a year. Whether the boiler was called for heat — which tells a heating burn from a hot
+water draw — comes from the helper VT's central boiler switches: on means VT called for heat. Its
+recorder history counts too, so this works for the days before you installed the plugin. The
+rooms' details — temperatures, targets, which rooms call, valve openings — are the plugin's own:
+it notes them every time it reads the rooms and keeps the last 8 days in its own storage. It does
+not read them back from VT's thermostats in the recorder, so analyses that need room details
+start from the installation. Without a helper (monitoring only), whether the boiler was called
+also comes from the rooms the plugin noted.
+
 Then the sensor **Control verdict** shows one of:
 
 | Verdict | Meaning |
@@ -1242,9 +1252,9 @@ Problems that need you also show as repair issues under Settings → Repairs.
 ## 11. What stays local
 
 Everything. The plugin talks to no cloud service and sends nothing outside Home Assistant. It
-reads entities, writes only to the targets you pick, keeps its state and recorded forecasts in
-Home Assistant's own storage (`.storage`), and its sensors go to Home Assistant's recorder like
-any other. A diagnostics download (the integration's device → Download diagnostics) replaces
+reads entities, writes only to the targets you pick, keeps its state, the rooms' last 8 days and
+recorded forecasts in Home Assistant's own storage (`.storage`), and its sensors go to Home
+Assistant's recorder like any other. A diagnostics download (the integration's device → Download diagnostics) replaces
 entity IDs and the gateway's identifiers before you share it.
 
 ## 12. Options and risks
@@ -1364,7 +1374,7 @@ target:
 1. Optionally switch control off first (**Control mode**, untick **Control on**) and check the
    boiler is back under its own control.
 2. Delete the entry: Settings → Devices & services → Smart Boiler for Versatile Thermostat →
-   Delete. The plugin hands the boiler back and deletes its stored state, its journal and its forecasts. If the hand-back could not be confirmed, a repair issue stays
+   Delete. The plugin hands the boiler back and deletes its stored state, its journal, the rooms' history and its forecasts. If the hand-back could not be confirmed, a repair issue stays
    after removal: hand the boiler back by hand.
 3. Remove it in HACS (or delete its folder) and restart Home Assistant.
 4. To let VT's central boiler drive the boiler again, point its commands back at the boiler in VT's
