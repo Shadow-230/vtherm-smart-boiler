@@ -683,6 +683,7 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "call_reason": status.call_reason,
             **demand_attributes(status),
             **self._relay(status),
+            **_cap(status),
         }
 
     def _relay(self, status: Any) -> dict[str, Any]:
@@ -695,6 +696,17 @@ class ControlStateSensor(ControlEntity, SensorEntity):
             "relay_check": status.relay_check,
             "boiler_heats": status.boiler_heats,
         }
+
+
+def _cap(status: Any) -> dict[str, Any]:
+    """I13.7: the modulation cap in force, in %, and why it is applied or released — only where
+    the user switched it on, or one is left to release."""
+    if status.modulation_cap_state is None:
+        return {}
+    return {
+        "modulation_cap": status.modulation_cap,
+        "modulation_cap_state": status.modulation_cap_state,
+    }
 
 
 class DemandCountSensor(ControlEntity, SensorEntity):

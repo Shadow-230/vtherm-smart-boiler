@@ -612,7 +612,7 @@ wersja podrzędna 14), co właśnie robił.
 | **Monitor** | starty na godzinę, czas palenia, udział kondensacji, gaz na stopniodzień, stan łączności; alarmy — informacyjne, z reakcją w postaci oddania sterowania tylko tam, gdzie pozwala na nią decyzja 7 (§7); **wczesne ostrzeżenie** (spaliny, zapłony, ciśnienie, histereza); **długie palenie bez ocieplania** — płomień pali się 3 h, a temperatura w pokojach nie rośnie: woda za chłodna dla pokoi, którym brakuje ciepła, kocioł na granicy swojej mocy (ostrzeżenie), woda za gorąca (`docs/en/development/plans/plan-0.2-g11.md` E); **raport wyjaśniający zmiany** (pogoda / c.w.u. / ustawienia); kontrola czujnika zewnętrznego; wykrywanie c.w.u.; **zapis prognozy** (FC0); **kontrola sygnałów** — które opcjonalne sygnały są obecne i świeże | nie |
 | **Doradca** | podpowiedzi dotyczące krzywej i ochrony przed częstymi startami, z uzasadnieniem i przyciskiem „zastosuj” | nie |
 | **Krzywa (strategia A)** | temperatura wody obok włącz/wyłącz VT, zamiast automatyzacji użytkownika; krzywa dla każdego obiegu; efektywna temperatura zewnętrzna; rampa; podtrzymanie; czujnik „nie daje ciepła” dla algorytmów stref (tylko pod sterowaniem) | tak |
-| **Ochrona przed częstymi startami** (do rozstrzygnięcia wobec zasady 12, decyzja 13) | praca cyklami przy małym obciążeniu, limit startów na godzinę, ograniczenie modulacji; **planowanie według prognozy** — przed nami łagodne godziny → długie cykle od początku (FC2) | tak |
+| **Ochrona przed częstymi startami** (do rozstrzygnięcia wobec zasady 12, decyzja 13) | praca cyklami przy małym obciążeniu, limit startów na godzinę, ograniczenie modulacji (zbudowane wcześniej, w I13.7, jako opcja domyślnie wyłączona: §7); **planowanie według prognozy** — przed nami łagodne godziny → długie cykle od początku (FC2) | tak |
 | **Strojenie krzywej (strategia B)** | pasmo strojenia Niskie / Średnie / Wysokie / Własne (domyślnie 3 / 8 / 15 %); ręczne / półautomatyczne / automatyczne; **sezonowe dostrajanie** — każdego dnia trochę niżej, dopóki pokoje trzymają komfort; dla każdego obiegu | tak |
 | **Prognoza** | **wyprzedzanie dla wolnych odbiorników ciepła** — podnieść wodę wcześniej przed mrozem, obniżyć ją wcześniej przed ciepłym lub słonecznym dniem (FC3); czas wyprzedzenia uczony dla każdego obiegu | tak |
 | **C.w.u.** (opcjonalnie, tylko z zasobnikiem) | szybkie ładowanie, harmonogram dopasowany do okien nauki | tak |
@@ -879,6 +879,34 @@ Jak sterowanie podejmuje decyzje (zasada 12):
   sterowanie nie zostanie wyłączone. Odliczanie zaczyna się od nowa, gdy tylko któryś warunek
   przestaje być spełniony, i po poborze c.w.u.; gdy nie jest znany ani płomień, ani temperatura
   zasilania, nic nie jest oceniane. Ścieżka z przekaźnikiem ma własny dowód ciepła (§5).
+- **Ograniczenie modulacji** (I13.7; domyślnie wyłączone, poziom zaawansowany; nie dla
+  przekaźnika): gdy sterowanie trzyma kocioł, maksymalna modulacja kotła jest ograniczona do
+  wartości użytkownika, 30–100 % (70 %, gdy zaznaczone; tymczasowe, K4), aby wydłużyć pracę
+  palnika przy małym obciążeniu. Dowody są słabe — HEM-VAL-05 (DESNZ 2023): kocioł ustawiony na
+  najmniejszą moc „pracuje prawie jak włącz-wyłącz”; Bennett i in. 2019: minimum, 20–30 %
+  maksimum, daje więcej ciepła, niż potrzeba przy małym obciążeniu, a ograniczenie maksimum nie
+  zejdzie poniżej niego — więc jest proponowane, nigdy narzucane. Nigdy poniżej 30 % ani bliżej
+  niż 10 punktów od udziału minimum kotła w jego maksimum, gdy obie moce są wpisane: odczyt
+  procentu OpenTherm jako udziału mocy maksymalnej, ten, który daje mniej ciepła, więc
+  ograniczenie zostaje powyżej minimum przy każdym odczycie. Zwalniane, gdy grzeje się ciepła
+  woda, i nigdy niewłączane w kotle grzejącym c.w.u., gdy nie da się jej stwierdzić: ID 14
+  OpenTherm nie jest w specyfikacji ograniczony do grzania, a kran kotła dwufunkcyjnego zostałby
+  bez mocy (`selburnpow` EMS-ESP jest w telegramie nastaw grzania 0x1A, ale czy kocioł stosuje go
+  do c.w.u., nie jest opisane: zwalniane mimo to). Zdejmowane na 3 h, gdy zasilanie przez 10 min
+  jest ponad 5 K poniżej nastawy przy płomieniu — mniej ciepła w mróz to jego ryzyko. Zapisywane
+  przez `MM=` bramki (`set_max_modulation`, `-1` kasuje; `maxmodulation` oprogramowania, `-`
+  kasuje) co 5 min, jako wartość trzymana, tracona przy resecie PIC; na ścieżce encji do encji
+  liczbowej wybranej przez użytkownika (`selburnpow` EMS-ESP, maksymalna względna modulacja
+  ESPHome), co 30 s, gdy encja nastawy jest zadeklarowana jako wygasająca, inaczej co 5 min,
+  zwalniane na 100 % (albo maksimum encji) — na encji trzymanej aż ją pokaże, jednym zapisem
+  na wygasającej. Zwalniane przy każdym oddaniu
+  sterowania, przy zatrzymaniu, po wyłączeniu i przy następnym starcie, gdy magazyn mówi, że
+  ograniczenie może obowiązywać (zapisane przed pierwszym zapisem; magazyn, którego nie da się
+  zapisać, wstrzymuje zapis ograniczenia). Nieudany zapis jest pokazywany i ponawiany po minucie;
+  nigdy nie wstrzymuje grzania. Gdy werdykt widzi głównie krótkie palenia, a moce kotła i
+  projektowe zapotrzebowanie domu (zaufane straty ciepła) są znane, opis opcji podaje proponowaną
+  wartość — zapotrzebowanie × 1,2 jako udział maksimum, w górę do 5 %, brak przy 90 % lub więcej
+  — nigdy nie ustawianą samą.
 - **Ochrona kotła** opiera się na własnej logice kotła. Dwa opcjonalne sygnały przyjmują czujniki
   binarne, które wskazuje użytkownik: „własna usterka kotła: niskie ciśnienie wody” (poziom prosty)
   i „inna usterka, o której kocioł mówi, że go zatrzymuje” (poziom zaawansowany) — w `opentherm_gw`
@@ -1283,6 +1311,7 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Samoczynny powrót po innym sterowniku | wyłączony | inny sterownik może nadal działać; użytkownik najpierw sprawdza |
 | Samoczynny powrót po oddaniu sterowania przez włącznik sterowania zewnętrznego | wyłączony — własna opcja | włącznik pokazuje „wyłączony” także wtedy, gdy człowiek celowo wyłączył sterowanie zewnętrzne (decyzja 10 z `docs/en/development/plans/plan-0.2.3.md`) |
 | Limit wieku świeżości | automatyczny: brak, dopóki źródło cztery razy nie powtórzy niezmienionej wartości, potem 5 × jego rytm i co najmniej 2 × jego drugi największy odstęp (I13.2), 10–30 min (pogoda 3–12 h) (tymczasowe, K4) | wiele źródeł raportuje tylko przy zmianie; założony limit na takim źródle zatrzymałby sterowanie przy niezmiennej pogodzie |
+| Ograniczenie modulacji (I13.7) | wyłączone; zaznaczone, 70 % (30–100 %) (tymczasowe, K4) | dowody na zysk są słabe (HEM-VAL-05; Bennett i in. 2019), a ryzyko to mniej ciepła w mróz; 70 % to ostrożna strona zakresu |
 | Krótkie palenie (monitor, 1–60 min) | poniżej 10 min (tymczasowe, K4) | liczba krótkich paleń w monitorze i jego sugestie z niej korzystają; zbyt krótki limit ukrywa krótkie cykle, zbyt długi liczy normalne palenia jako krótkie |
 
 Stałe wartości (S-37) — nie są opcjami. Każdy wiersz jest albo postanowiony (podana jest jego
@@ -1303,6 +1332,7 @@ wartość, której powód nie jest jeszcze zapisany; użytkownik przegląda każ
 | Utrata łączności: 5 min nieświeże w ciągu 10 min; powrót po 60 s świeżych, po 10 min po drugiej utracie w ciągu godziny (I13.2) | `core/controller.py` | 5 min postanowione 2026-09-25; okno i powrót tymczasowe, K4 |
 | Utrzymanie temperatury zewnętrznej 3 h; stała czasowa temperatury zewnętrznej 3 h, 12 h, gdy w obiegu krzywej jest pokój z ogrzewaniem podłogowym (I13.8) | `core/curve.py` | utrzymanie: decyzja 9; stałe czasowe: tymczasowe, K4 (3 h: powód do potwierdzenia, Open after 0.2.2, #27; 12 h: pokoje z ogrzewaniem podłogowym reagują w ciągu 20–70 h, Kull i in. 2017, a instrukcja regulatora pogodowego filtruje przez 10–20 h dla większości budynków, Siemens LMS14 — 12 h w dolnej części, bo dłuższa średnia dłużej trzyma wodę wyżej podczas ocieplenia) |
 | Zawieszony czujnik: jedna wartość trzymana 12 h, gdy pogoda zmienia się o 3 K lub więcej; odchylenie 6 K na przestrzeni co najmniej 2 h nakładających się danych | `core/signal_check.py` | tymczasowe, K4 (powód do potwierdzenia) |
+| Ograniczenie modulacji (I13.7): nigdy poniżej 30 % ani bliżej niż 10 punktów od udziału minimum kotła w jego maksimum; zdejmowane na 3 h, gdy zasilanie przez 10 min jest ponad 5 K poniżej nastawy przy płomieniu; powtarzane co 30 s (encja wygasająca) albo co 5 min (bramka, encja trzymana); nieudany zapis albo zwolnienie, którego encja nie pokazuje, ponawiane po 60 s; odczyt oceniany po 120 s; propozycja: zapotrzebowanie × 1,2, w górę do 5 %, brak przy 90 % lub więcej | `core/modulation_cap.py`, `core/cap_suggestion.py`, `modulation_cap.py` | tymczasowe, K4 (dolna granica: minimum kotłów to 20–30 % maksimum, Bennett 2018, a ograniczenie na minimum daje pracę włącz-wyłącz, HEM-VAL-05; powtórzenia: `selburnpow` EMS-ESP wygasa w ciągu około minuty, `MM=` bramki trwa do resetu) |
 | Korekta komfortu +3 K (domyślna wartość jej limitu, opcja od 0.5 do 10 K od G11), najszybciej 30 min na K, 3 h na krawędzi, 1 K powyżej zatrzymuje wzrost; zaspokojona poniżej 70 %, brakuje 0.3 K | `core/controller.py` | postanowione 2026-09-25 |
 | Tempo i obniżenie korekty komfortu (I13.3): pokój liczy się jako niedogrzany po 2 swoich cyklach VT i 60 min bez przerwy; wzrost 1 K na 4 cykle najwolniejszego odczytywanego pokoju, nigdy szybciej niż 30 min na K; nieznany cykl liczy się jako 15 min; bez wzrostu, gdy pokój nagrzewa się po podniesieniu nastawy (0.2 K w 30 min i powrót w granice 0.3 K z reguły okna); obniżenie pod krzywą najwyżej 3 K, najszybciej 1 K na 2 h ciepła i nigdy szybciej niż połowa wzrostu, 3 K na dobę, gdy każdy pokój jest otwarty poniżej 70 %; powrót 1 K na 15 min | `core/comfort_rules.py`, `core/controller.py` | tymczasowe, K4: wolna pętla co najmniej 4 razy wolniejsza niż pętle pokoi (Skogestad 2023; Hägglund 2021); obniżenie z resetu według zaworów (Boegli i in. 2022; ASHRAE Guideline 36) |
 | Długie palenie bez nagrzewania: przebieg 3 h, przerwy płomienia do 30 min zachowane; pokój, który rośnie o mniej niż 0.2 K, się nie nagrzewa; woda doszła do nastawy, gdy zasilanie choć raz w ostatnich 30 min jest najwyżej 1 K poniżej niej albo powyżej, czy palnik gaśnie, czy nie (F15 z J4: kocioł na minimum ponad zbyt niską nastawą; uwaga użytkownika z 2026-11-22: własna histereza i opóźnienia kotła); 90 % to wysoka modulacja, przy granicy mocy z płomieniem przez cały czas; każdy pokój o 0.3 K ponad nastawą przez 1 h to woda za ciepła; średnie z 30 min | `core/long_run.py` | przerwy postanowione w K4 (użytkownik, 2026-11-17, F10 z J4: kocioł taktujący na minimum przy niedogrzanych pokojach to ten sam przypadek); reszta tymczasowa (G11 E) |

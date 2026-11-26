@@ -167,6 +167,9 @@ class SimCommand:
     ch_enable: bool | None = None
     setpoint: float | None = None
     hand_back: bool = False
+    # A gateway's ``MM=`` (I13.7): the boiler's maximum modulation, 0–100 % of its range; below
+    # 0 clears it; ``None`` leaves it as it is.
+    max_modulation: float | None = None
 
 
 type Controller = Callable[[float, SimView], SimCommand | None]
@@ -306,6 +309,9 @@ def simulate(scenario: Scenario) -> SimResult:
             command = scenario.controller(t, view)
             if command is not None:
                 result.commands += 1
+                if command.max_modulation is not None:
+                    cap = command.max_modulation
+                    plant.max_modulation = None if cap < 0 else cap
                 if command.hand_back:
                     plant.gateway_ch_off = False  # CH=1, then CS=0
                     plant.clear_override()

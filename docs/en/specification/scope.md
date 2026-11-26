@@ -582,7 +582,7 @@ entry that chose "room temperature only" before reads as monitoring only (I8.4a,
 | **Monitor** | starts per hour, burn time, condensing share, gas per degree-day, connection state; alarms — information, with a hand-back reaction only where decision 7 allows one (§7); **early warning** (flue gas, ignitions, pressure, hysteresis); **a long burn without warming** — the flame on for 3 h with the rooms not rising: the water too cool for the rooms short, the boiler at its power limit (a warning), the water too hot (`docs/en/development/plans/plan-0.2-g11.md` E); **report explaining changes** (weather / DHW / settings); outdoor sensor check; DHW detection; **forecast recording** (FC0); **signal check** — which optional signals are present and fresh | no |
 | **Advisor** | curve and anti-cycling suggestions with rationale and an "apply" button | no |
 | **Curve (strategy A)** | the water temperature beside VT's on/off, in place of user automations; curve per circuit; effective outdoor temperature; ramp; keep-alive; the "gives no heat" sensor for zone algorithms (under control only) | yes |
-| **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap; **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
+| **Anti-cycling** (to be decided against principle 12, decision 13) | duty cycling at low load, starts-per-hour budget, modulation cap (built earlier, in I13.7, as an opt-in, off by default: §7); **planning from the forecast** — mild hours ahead → long cycles from the start (FC2) | yes |
 | **Curve tuning (strategy B)** | tuning band Low / Medium / High / Custom (3 / 8 / 15 % defaults); manual / semi-automatic / automatic; **seasonal tune-up** — a little lower each day while rooms hold comfort; per circuit | yes |
 | **Forecast** | **anticipation for slow emitters** — raise water earlier before frost, lower it earlier before a warm or sunny day (FC3); lead time learned per circuit | yes |
 | **DHW** (optional, storage tank only) | fast charging, schedule aligned with learning windows | yes |
@@ -835,6 +835,32 @@ How control decides (principle 12):
   with the flame unknown, the flow at the plugin's setpoint — or until control is switched off.
   The count starts again whenever a condition ends and after a hot-water draw; with neither the
   flame nor the flow known, nothing is judged. The relay path has its own proof of heat (§5).
+- **The modulation cap** (I13.7; off by default, the advanced level; not for a relay): while
+  control holds the boiler, the boiler's maximum modulation is capped at the user's value, 30–100 %
+  (70 % where ticked; provisional, K4), to lengthen burns at low load. The evidence is weak —
+  HEM-VAL-05 (DESNZ 2023): a boiler range-rated to its lowest output "is driven towards on/off";
+  Bennett et al. 2019: the minimum, 20–30 % of the maximum, gives more heat than a low load needs,
+  and a cap on the maximum cannot go under it — so it is offered, never imposed. Never below 30 %,
+  nor within 10 points of the boiler's minimum as a share of its maximum where both powers are
+  entered: the capacity reading of OpenTherm's percent, the one that gives less heat, so the cap
+  stays above the minimum on either reading. Released while hot water runs, and never applied on a
+  boiler that heats hot water while hot water cannot be told: OpenTherm's ID 14 is not limited to
+  heating by its specification, and a combi's tap would be starved (EMS-ESP's `selburnpow` sits in
+  the heating setpoints' telegram 0x1A, but whether a boiler applies it to hot water is not
+  documented: released all the same). Lifted for 3 h where the flow stays more than 5 K below the
+  setpoint for 10 min with the flame on — less heat in cold weather is its risk. Written through
+  the gateway's `MM=` (`set_max_modulation`, `-1` clears; the firmware's `maxmodulation`, `-`
+  clears) every 5 min, as a held value lost at a PIC reset; on the entity path to a number entity
+  the user picks (EMS-ESP's `selburnpow`, ESPHome's maximum relative modulation), every 30 s where
+  the setpoint entity is declared expiring, else every 5 min, released at 100 % (or the entity's
+  maximum) — read back on a held entity until it shows it, one write on a lapsing one.
+  Released at every hand-back, at a stop, when switched off,
+  and at the next start where the store says a cap may be in force (recorded before the first
+  write; a store that cannot be written keeps it from being written). A write that fails is shown
+  and sent again a minute later; it never holds heating back. Where the verdict finds mostly short
+  burns and the boiler's powers and the house's design load (a trusted heat loss) are known, the
+  option's text names a suggested value — the design load × 1.2 as a share of the maximum,
+  rounded up to 5 %, none at 90 % or more — never applied by itself.
 - **Boiler protection** follows the boiler's own logic. Two optional signals take binary sensors the
   user maps: "the boiler's own low-water-pressure fault" (simple level) and "another fault the
   boiler reports as stopping it" (advanced) — on `opentherm_gw` the boiler's "Low water pressure"
@@ -1207,6 +1233,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | Return by itself after another controller | off | the other controller may still be there; the user checks first |
 | Return by itself after an external-control switch's hand-back | off — its own option | the switch reads "off" also when a person turned external control off on purpose (decision 10 of `docs/en/development/plans/plan-0.2.3.md`) |
 | Freshness age limit | automatic: none until the source repeats an unchanged value four times, then 5 × its rhythm and at least 2 × its second-largest gap (I13.2), 10–30 min (weather 3–12 h) (provisional, K4) | many sources report only on change; an assumed limit on such a source would stop control in steady weather |
+| Modulation cap (I13.7) | off; ticked, 70 % (30–100 %) (provisional, K4) | the evidence for its gain is weak (HEM-VAL-05; Bennett et al. 2019), and its risk is less heat in cold weather; 70 % is the cautious side of the range |
 | A short burn (monitor, 1–60 min) | under 10 min (provisional, K4) | the monitor's short-burn count and its suggestions use it; too short hides short-cycling, too long counts normal burns as short |
 
 Fixed values (S-37) — not options. Each row is either decided (its decision or date named) or
@@ -1227,6 +1254,7 @@ reviews every provisional value at K4.
 | Lost link: 5 min stale within 10 min; back after 60 s fresh, after 10 min following a second loss within an hour (I13.2) | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
 | Outdoor hold 3 h; outdoor time constant 3 h, 12 h where the curve's circuit has a room with underfloor heating (I13.8) | `core/curve.py` | the hold: decision 9; the time constants: provisional, K4 (3 h: reason to confirm, Open after 0.2.2, #27; 12 h: rooms with underfloor heating answer over 20–70 h, Kull et al. 2017, and a weather compensator's manual filters over 10–20 h for most buildings, Siemens LMS14 — 12 h in the lower part, as a longer mean keeps the water up longer through a mild spell) |
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
+| Modulation cap (I13.7): never below 30 %, nor within 10 points of the boiler's minimum as a share of its maximum; lifted 3 h after the flow stays more than 5 K below the setpoint for 10 min with the flame on; repeated every 30 s (an expiring entity) or every 5 min (a gateway, a held entity); a failed write, or a release its entity does not show, sent again after 60 s; the read-back judged after 120 s; the suggestion the design load × 1.2, up to 5 %, none at 90 % or more | `core/modulation_cap.py`, `core/cap_suggestion.py`, `modulation_cap.py` | provisional, K4 (the floor: boilers' minimum is 20–30 % of the maximum, Bennett 2018, and a cap at the minimum drives on/off, HEM-VAL-05; the repeats: EMS-ESP's `selburnpow` lapses within about a minute, a gateway's `MM=` is held until a reset) |
 | Comfort correction +3 K (the default of its limit, an option from 0.5 to 10 K since G11), 30 min per K at the fastest, 3 h at the edge, 1 K over stops the rise; satisfied below 70 %, short by 0.3 K | `core/controller.py` | decided 2026-09-25 |
 | The comfort correction's pace and trim (I13.3): a room counts as short after 2 of its VT cycles and 60 min without a break; the rise 1 K per 4 cycles of the slowest room it reads, never faster than 30 min per K; a cycle not known counts as 15 min; no rise while a room warms back after a raised setpoint (the window rule's 0.2 K in 30 min, back within 0.3 K); the trim below the curve at most 3 K, 1 K per 2 h of heat at the fastest and never faster than half the rise, 3 K a day, while every room is under 70 % open; back at 1 K per 15 min | `core/comfort_rules.py`, `core/controller.py` | provisional, K4: the slow loop at least 4 times slower than the rooms' own (Skogestad 2023; Hägglund 2021); the trim from valve-driven reset (Boegli et al. 2022; ASHRAE Guideline 36) |
 | Long burn without warming: a run of 3 h, the flame's gaps up to 30 min kept; a room rising under 0.2 K is not warming; the water has reached its setpoint when the flow, at some moment of the last 30 min, is under it by at most 1 K or above it, the burner stopping or not (J4's F15: a boiler at its minimum above a setpoint too low; the user's note of 2026-11-22: the boiler's own hysteresis and delays); 90 % is high modulation, with the flame on throughout for the power limit; every room 0.3 K over for 1 h is too hot; 30-min averages | `core/long_run.py` | the gaps decided at K4 (the user, 2026-11-17, J4's F10: a boiler cycling at its minimum with the rooms short is the same case); the rest provisional (G11 E) |

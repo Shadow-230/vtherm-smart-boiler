@@ -223,7 +223,11 @@ async def _async_subscribe_mqtt(hass: HomeAssistant, hub: SimHub, topic: str) ->
             elif command == "chenable":
                 hub.sim.gateway_heating(hub.now(), payload == "1")
             elif command == "maxmodulation":
-                hub.sim.gateway_max_modulation(hub.now(), int(float(payload)))
+                # A non-numeric MM= clears the cap (the gateway's documentation), as the plugin's
+                # "-" does (I13.7).
+                numeric = payload.strip().lstrip("-").replace(".", "", 1).isdigit()
+                level = int(float(payload)) if numeric else -1
+                hub.sim.gateway_max_modulation(hub.now(), level)
         except ValueError:
             _LOGGER.warning("The simulated firmware ignores %s=%s", command, payload)
         hub.refresh()

@@ -17,6 +17,9 @@ from custom_components.vtherm_smart_boiler.control_config import (
     Topology,
     WritePath,
     boiler_class_for,
+    cap_offered,
+    cap_repeat_s,
+    cap_target,
     config_blockers,
     connection_suggested_by,
     fixed_keys,
@@ -2779,3 +2782,80 @@ def test_ems_esp_with_a_heating_switch_uses_it() -> None:
     control = parse_control(data, RADIATORS, None, connection=Connection.EMS_ESP)
     assert control.loop.ch_writes
     assert control.loop.off_setpoint == 10.0  # the default, unused with a switch
+
+
+# --- I13.7: the modulation cap ------------------------------------------------------------------
+
+ENTITY_PATH = {
+    "write_path": "entity",
+    "setpoint_entity": "number.boiler_flow",
+    "write_type": "expiring",
+    "ch_entity": "switch.boiler_ch",
+    "ch_write_type": "held",
+    "hand_back": "timeout",
+    "confirmed_entity": "sensor.boiler_ch_setpoint",
+    "topology": "virtual",
+    "curve": CURVE,
+    "vt_boiler_helper": HELPER,
+}
+
+
+def test_the_modulation_cap_is_off_by_default_and_blocks_nothing() -> None:
+    for section, installation in ((OTGW, RADIATORS), (ENTITY_PATH, RADIATORS), (RELAY, ON_OFF)):
+        options = parse_control(section, installation, None)
+        assert options.modulation_cap_pct is None
+        assert options.modulation_cap_entity is None
+    # Ticked without a target on the entity path: not applied, and control is not blocked.
+    ticked = parse_control(ENTITY_PATH | {"modulation_cap": True}, RADIATORS, None)
+    assert ticked.modulation_cap_pct == 70.0
+    assert not cap_target(ticked)
+    bare = parse_control(ENTITY_PATH, RADIATORS, None)
+    assert config_blockers(ticked, RADIATORS) == config_blockers(bare, RADIATORS)
+
+
+def test_the_modulation_cap_where_the_path_can_set_it() -> None:
+    gateway = parse_control(
+        OTGW | {"modulation_cap": True, "modulation_cap_pct": 45}, RADIATORS, None
+    )
+    assert gateway.modulation_cap_pct == 45.0
+    assert cap_target(gateway)
+    assert cap_repeat_s(gateway) == 300.0  # MM= is held in the gateway's memory
+    mqtt = {"write_path": "otgw_mqtt", "mqtt_top": "OTGW", "mqtt_node": "otgw-1"}
+    assert cap_target(parse_control(OTGW | mqtt | {"modulation_cap": True}, RADIATORS, None))
+    # A gateway without its ID, or the firmware without its topics: nowhere to write it.
+    assert not cap_target(replace(gateway, gateway_id=None))
+    no_topic = parse_control(OTGW | mqtt | {"mqtt_node": None}, RADIATORS, None)
+    assert not cap_target(no_topic)
+    entity = parse_control(
+        ENTITY_PATH | {"modulation_cap": True, "modulation_cap_entity": "number.selburnpow"},
+        RADIATORS,
+        None,
+    )
+    assert entity.modulation_cap_entity == "number.selburnpow"
+    assert "number.selburnpow" in entity.entities
+    assert cap_target(entity)
+    assert cap_repeat_s(entity) == 30.0  # EMS-ESP's selburnpow lapses: every keep-alive
+    assert cap_repeat_s(replace(entity, write_type=WriteType.HELD)) == 300.0
+    # Never through a relay; an entity in another role is no target; a gateway keeps none.
+    relay = parse_control(RELAY | {"modulation_cap": True}, ON_OFF, None)
+    assert relay.modulation_cap_pct is None
+    assert not cap_target(relay)
+    assert not cap_offered(WritePath.RELAY)
+    assert not cap_offered(None)
+    assert not cap_target(replace(entity, modulation_cap_entity="number.boiler_flow"))
+    on_gateway = parse_control(
+        OTGW | {"modulation_cap": True, "modulation_cap_entity": "number.x"}, RADIATORS, None
+    )
+    assert on_gateway.modulation_cap_entity is None
+
+
+@pytest.mark.parametrize("value", [29, 101, "high", True, float("nan")])
+def test_a_stored_cap_outside_the_forms_bounds_is_refused(value: Any) -> None:
+    """PB-24: a value the form would not take — a hand edit — leaves control out."""
+    with pytest.raises(ValueError, match="modulation_cap_pct"):
+        parse_control(OTGW | {"modulation_cap": True, "modulation_cap_pct": value}, RADIATORS, None)
+
+
+def test_an_unreadable_tick_is_refused() -> None:
+    with pytest.raises(ValueError, match="modulation_cap"):
+        parse_control(OTGW | {"modulation_cap": "yes"}, RADIATORS, None)

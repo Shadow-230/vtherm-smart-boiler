@@ -349,18 +349,24 @@
       },
       "control_behaviour": {
         "title": "Control behaviour",
-        "description": "Versatile Thermostat's central boiler decides whether the boiler heats, with its own thresholds and activation delay: pick the helper it switches. At the advanced level with full control: the ramp, the decision interval and, without a heating switch, the \"off\" setpoint.",
+        "description": "Versatile Thermostat's central boiler decides whether the boiler heats, with its own thresholds and activation delay: pick the helper it switches. At the advanced level with full control: the ramp, the decision interval, without a heating switch the \"off\" setpoint, and the boiler's modulation cap where the connection can set it (off by default).",
         "data": {
           "vt_boiler_helper": "Helper switched by VT's central boiler",
           "ramp_k_per_min": "Setpoint ramp",
           "decision_interval_min": "Decision interval",
-          "off_setpoint": "Off setpoint"
+          "off_setpoint": "Off setpoint",
+          "modulation_cap": "Cap the boiler's maximum modulation",
+          "modulation_cap_pct": "Maximum modulation",
+          "modulation_cap_entity": "Maximum modulation entity"
         },
         "data_description": {
           "vt_boiler_helper": "The on/off helper (input_boolean) that Versatile Thermostat's central boiler turns on and off. VT decides whether the boiler heats, with its own thresholds and activation delay; the plugin follows this helper and sets the water temperature. Create the helper, give VT's central boiler the commands input_boolean.turn_on and input_boolean.turn_off on it, and pick it here. Never point VT's commands at the boiler itself: two controllers would fight. No default: control waits until it is picked.",
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5. Heating on and off follows VT's central boiler at once regardless. Shorter follows the weather sooner but moves the water more often under the zones' algorithms.",
-          "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet."
+          "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet.",
+          "modulation_cap": "Off by default. On: while the plugin controls the boiler, it limits the boiler's highest power (its maximum modulation), so a burn may last longer when little heat is needed. It cannot lower the boiler's lowest power: where the house needs less than that, the boiler still starts and stops. The gain is not well proven (a laboratory test and installers' advice). The risk: less heat in cold weather — never use it to save gas on the coldest days. The plugin lifts the cap for 3 hours when the water stays 5 K below its setpoint for 10 minutes, releases it while hot water runs or cannot be told, and at every hand-back. Not offered for a relay.",
+          "modulation_cap_pct": "The highest modulation while capped, in %, 30 to 100; default 70. Never written below 30 %, nor within 10 points of the boiler's lowest power (its powers in the Boiler item). Suggested from this house's data: {cap_suggestion} — the house's design heat load with a 20 % margin, shown only where burns are mostly short and the boiler's powers and the heat load are known; never set by itself.",
+          "modulation_cap_entity": "With a writable entity: the number entity that sets the boiler's maximum modulation — on EMS-ESP its selected burner power (selburnpow), never its burner maximum power (burnmaxpower), which the boiler keeps in its memory; on ESPHome OpenTherm its maximum relative modulation. It is written as the water temperature entity is declared: every 30 s where values lapse, every 5 minutes where they are held. Pick nothing the boiler stores in its memory. Required with the cap."
         }
       },
       "control_alarms": {
@@ -474,7 +480,9 @@
       "device_in_another_circuit": "{zone} is already in another circuit's list: a device belongs to one circuit.",
       "emitter_twice": "A zone is underfloor or convectors, not both.",
       "vt_helper_not_input_boolean": "Pick an on/off helper (input_boolean).",
-      "vt_helper_missing": "This helper does not exist in Home Assistant."
+      "vt_helper_missing": "This helper does not exist in Home Assistant.",
+      "modulation_cap_entity_missing": "Pick the number entity that sets the boiler's maximum modulation, or switch the cap off.",
+      "modulation_cap_entity_in_another_role": "This entity already has another role in control: pick the one for the maximum modulation."
     }
   },
   "options": {
@@ -848,18 +856,24 @@
       },
       "control_behaviour": {
         "title": "Control behaviour",
-        "description": "Versatile Thermostat's central boiler decides whether the boiler heats, with its own thresholds and activation delay: pick the helper it switches. At the advanced level with full control: the ramp, the decision interval and, without a heating switch, the \"off\" setpoint.",
+        "description": "Versatile Thermostat's central boiler decides whether the boiler heats, with its own thresholds and activation delay: pick the helper it switches. At the advanced level with full control: the ramp, the decision interval, without a heating switch the \"off\" setpoint, and the boiler's modulation cap where the connection can set it (off by default).",
         "data": {
           "vt_boiler_helper": "Helper switched by VT's central boiler",
           "ramp_k_per_min": "Setpoint ramp",
           "decision_interval_min": "Decision interval",
-          "off_setpoint": "Off setpoint"
+          "off_setpoint": "Off setpoint",
+          "modulation_cap": "Cap the boiler's maximum modulation",
+          "modulation_cap_pct": "Maximum modulation",
+          "modulation_cap_entity": "Maximum modulation entity"
         },
         "data_description": {
           "vt_boiler_helper": "The on/off helper (input_boolean) that Versatile Thermostat's central boiler turns on and off. VT decides whether the boiler heats, with its own thresholds and activation delay; the plugin follows this helper and sets the water temperature. Create the helper, give VT's central boiler the commands input_boolean.turn_on and input_boolean.turn_off on it, and pick it here. Never point VT's commands at the boiler itself: two controllers would fight. No default: control waits until it is picked.",
           "ramp_k_per_min": "The fastest setpoint change, in K per minute. Default 1. Faster changes stress the boiler and make zones overshoot.",
           "decision_interval_min": "How often the water temperature is decided anew, in minutes; default 5. Heating on and off follows VT's central boiler at once regardless. Shorter follows the weather sooner but moves the water more often under the zones' algorithms.",
-          "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet."
+          "off_setpoint": "The setpoint written for \"off\" without a heating switch, in °C. Default 10, below the lowest water temperature. A low setpoint may not switch the boiler's heating off — the pump may keep running. Control without a heating switch is blocked in this version, so it is not written yet.",
+          "modulation_cap": "Off by default. On: while the plugin controls the boiler, it limits the boiler's highest power (its maximum modulation), so a burn may last longer when little heat is needed. It cannot lower the boiler's lowest power: where the house needs less than that, the boiler still starts and stops. The gain is not well proven (a laboratory test and installers' advice). The risk: less heat in cold weather — never use it to save gas on the coldest days. The plugin lifts the cap for 3 hours when the water stays 5 K below its setpoint for 10 minutes, releases it while hot water runs or cannot be told, and at every hand-back. Not offered for a relay.",
+          "modulation_cap_pct": "The highest modulation while capped, in %, 30 to 100; default 70. Never written below 30 %, nor within 10 points of the boiler's lowest power (its powers in the Boiler item). Suggested from this house's data: {cap_suggestion} — the house's design heat load with a 20 % margin, shown only where burns are mostly short and the boiler's powers and the heat load are known; never set by itself.",
+          "modulation_cap_entity": "With a writable entity: the number entity that sets the boiler's maximum modulation — on EMS-ESP its selected burner power (selburnpow), never its burner maximum power (burnmaxpower), which the boiler keeps in its memory; on ESPHome OpenTherm its maximum relative modulation. It is written as the water temperature entity is declared: every 30 s where values lapse, every 5 minutes where they are held. Pick nothing the boiler stores in its memory. Required with the cap."
         }
       },
       "control_alarms": {
@@ -1015,7 +1029,9 @@
       "device_in_another_circuit": "{zone} is already in another circuit's list: a device belongs to one circuit.",
       "emitter_twice": "A zone is underfloor or convectors, not both.",
       "vt_helper_not_input_boolean": "Pick an on/off helper (input_boolean).",
-      "vt_helper_missing": "This helper does not exist in Home Assistant."
+      "vt_helper_missing": "This helper does not exist in Home Assistant.",
+      "modulation_cap_entity_missing": "Pick the number entity that sets the boiler's maximum modulation, or switch the cap off.",
+      "modulation_cap_entity_in_another_role": "This entity already has another role in control: pick the one for the maximum modulation."
     }
   },
   "selector": {
@@ -1690,6 +1706,23 @@
           },
           "demand_count": {
             "name": "Calling for heat"
+          },
+          "modulation_cap": {
+            "name": "Modulation cap"
+          },
+          "modulation_cap_state": {
+            "name": "Modulation cap state",
+            "state": {
+              "applied": "Applied",
+              "not_holding": "Released: the plugin does not control the boiler now",
+              "hot_water": "Released while hot water runs",
+              "hot_water_unknown": "Released: hot water cannot be told",
+              "lifted": "Lifted for 3 hours: the boiler could not reach its water temperature",
+              "full_range": "Nothing to cap: the cap allowed is 100 %",
+              "no_target": "Not applied: no entity picked for it",
+              "write_failed": "Its write failed; sent again in a minute",
+              "not_shown": "The device does not show the cap"
+            }
           }
         }
       },

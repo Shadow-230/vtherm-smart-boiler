@@ -38,6 +38,14 @@ from custom_components.vtherm_smart_boiler.core.installation import (
 )
 from custom_components.vtherm_smart_boiler.core.limits import FlowLimits
 from custom_components.vtherm_smart_boiler.core.loop import LoopConfig, LoopState, loop_step
+from custom_components.vtherm_smart_boiler.core.modulation_cap import (
+    CapInputs,
+    CapReason,
+    CapState,
+    cap_floor,
+    cap_level,
+    cap_step,
+)
 from custom_components.vtherm_smart_boiler.core.readings import ZoneState
 from custom_components.vtherm_smart_boiler.core.series import Series
 from custom_components.vtherm_smart_boiler.core.signals import Signal
@@ -87,6 +95,12 @@ class LoopController:
     # The zones' cycle as VT's ``entry_infos`` gives it (I13.3: the correction's pace); ``None``:
     # not known, as for thermostatic heads.
     cycle_s: float | None = None
+    # I13.7: the modulation cap asked for, in % (``None``: off), as the control unit applies it
+    # (``core.modulation_cap``); what it decided, and the cap in force.
+    cap_pct: float | None = None
+    cap_state: CapState = field(default_factory=CapState)
+    capped: float | None = None
+    caps: list[tuple[float, float | None]] = field(default_factory=list)
 
     def writes(self, start: float, end: float) -> list[tuple[float, object]]:
         """Every setpoint and heating write ``loop_step`` asked for in ``[start, end)``."""
@@ -126,17 +140,41 @@ class LoopController:
             self.setpoints.append((t, out.setpoint.value))
         if out.ch_enable is not None:
             self.switches.append((t, out.ch_enable))
+        cap = self._cap(t, view, out.hand_back) if link else None
         if out.hand_back:
             self.hand_backs.append(t)
-            return SimCommand(hand_back=True)
+            return SimCommand(hand_back=True, max_modulation=cap)
         if not link:
             return None  # the gateway the plugin cannot hear gets nothing either
-        if out.setpoint is None and out.ch_enable is None:
+        if out.setpoint is None and out.ch_enable is None and cap is None:
             return None
         return SimCommand(
             ch_enable=out.ch_enable,
             setpoint=out.setpoint.value if out.setpoint is not None else None,
+            max_modulation=cap,
         )
+
+    def _cap(self, t: float, view: SimView, hand_back: bool) -> float | None:
+        """The cap's command where it changes: its level, or −1 to clear it."""
+        if self.cap_pct is None:
+            return None
+        level = cap_level(self.cap_pct, cap_floor(None, None))
+        inputs = CapInputs(
+            t,
+            self.state.control.controlling and not hand_back,
+            view.dhw,
+            flame=view.flame,
+            flow=view.flow,
+            setpoint=self.state.setpoint.written,
+            capped=self.capped is not None,
+        )
+        self.cap_state, reason = cap_step(self.cap_state, inputs, level)
+        wanted = float(level) if reason is CapReason.APPLIED else None
+        if wanted == self.capped:
+            return None
+        self.capped = wanted
+        self.caps.append((t, wanted))
+        return -1.0 if wanted is None else wanted
 
 
 def zone_state(zone: SimZoneView, t: float, cycle_s: float | None = None) -> ZoneState:
@@ -720,3 +758,54 @@ def test_an_underfloor_house_on_the_slower_outdoor_mean_is_no_colder() -> None:
     fast_gas, slow_gas = sum(fast_run.daily_ch_kwh[1:]), sum(slow_run.daily_ch_kwh[1:])
     assert abs(slow_gas / fast_gas - 1.0) <= 0.01
     assert starts(slow_run, DAY, 3 * DAY) / 48.0 <= 1.0
+
+
+# --- I13.7: the modulation cap ------------------------------------------------------------------
+
+
+def capped_and_not(boiler: str, mean: float) -> tuple[SimResult, SimResult, LoopController]:
+    """Two days at ``mean`` with the ±3 K swing, the three TPI zones on VT's 5-min cycle, the
+    boiler under the plugin's control — without the cap, and with it at 30 % (the floor)."""
+    profile = BOILERS[boiler]
+    base = Scenario(
+        profile,
+        HOUSES["average"],
+        radiator_zones(),
+        daily_cycle([mean, mean], amplitude=SWING_K),
+        days=2,
+        step_s=10.0,
+        control_period_s=10.0,
+        tpi=TpiConfig(cycle_s=VT_DEFAULT_CYCLE_S),
+    )
+    free = simulate(replace(base, controller=LoopController(own_curve_loop(profile, None))))
+    controller = LoopController(own_curve_loop(profile, None), cap_pct=30.0)
+    return free, simulate(replace(base, controller=controller)), controller
+
+
+def test_the_cap_changes_nothing_where_the_boilers_minimum_is_the_limit() -> None:
+    """I13.7 on the simulator, at low load: the oversized boiler (8–24 kW) at +8 °C starts as
+    often capped at 30 % as not (334 times a day), with the same gas and the same rooms — its
+    minimum, not its maximum, makes it cycle (Bennett 2018). The simulator's burner modulates
+    down at once, so it shows none of the gain a boiler running near its maximum in short bursts
+    might have (HEM-VAL-05): the reason the cap is only offered."""
+    free, capped, controller = capped_and_not("short_cycling", 8.0)
+    assert controller.caps[0][1] == 30.0
+    assert starts(capped, DAY, 2 * DAY) == starts(free, DAY, 2 * DAY)
+    assert abs(capped.daily_ch_kwh[1] / free.daily_ch_kwh[1] - 1.0) <= 0.01
+    assert all(abs(short) <= 0.05 for short in comfort_shortfall(free, capped).values())
+
+
+def test_the_cap_lifts_itself_on_the_coldest_day() -> None:
+    """I13.7 on the simulator, at the design outdoor temperature (−15 °C, the 4–25 kW boiler,
+    about 8 kW needed): capped at 30 %, the water falls short while the house warms up, so the
+    cap is lifted after 10 minutes, for 3 hours, then applied again; no room is more than 0.1 K
+    colder on average, the gas is the same within 1 %, and the burner starts no more often (35
+    against 51 a day)."""
+    free, capped, controller = capped_and_not("condensing_large", -15.0)
+    levels = [level for _t, level in controller.caps]
+    assert levels[:3] == [30.0, None, 30.0]
+    lifted = controller.caps[2][0] - controller.caps[1][0]
+    assert lifted == pytest.approx(3 * HOUR, abs=60.0)
+    assert all(short <= 0.1 for short in comfort_shortfall(free, capped).values())
+    assert abs(capped.daily_ch_kwh[1] / free.daily_ch_kwh[1] - 1.0) <= 0.01
+    assert starts(capped, DAY, 2 * DAY) <= starts(free, DAY, 2 * DAY)

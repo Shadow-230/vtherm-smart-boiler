@@ -87,10 +87,14 @@ Not built: on the simulator the 3-minute pause cut no start in any case, and 5 m
 only at VT's 5-minute cycle, as a 10-minute cycle does with warmer rooms
 (`research/2026-11-26-i13-6-sim.md`; scope §11).
 
-### I13.7 The modulation cap, opt-in
+### I13.7 The modulation cap, opt-in ✅
 
 Offered as a suggestion only, to lengthen burns at low load; never below the boiler's reported
 minimum modulation (DESNZ, HEM-VAL-05, 2023). Off by default.
+
+Built: an advanced option (30–100 %, 70 %) written to the gateway's `MM=` or a picked number
+entity, never under 30 % nor the minimum + 10 points, released for hot water, at every hand-back
+and when the boiler falls short (3 h); the simulator shows no gain at low load.
 
 ### I13.8 The outdoor mean for heavy houses and underfloor heating ✅
 

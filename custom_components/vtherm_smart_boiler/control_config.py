@@ -67,6 +67,7 @@ from .core.installation import (
 )
 from .core.limits import FlowLimits
 from .core.loop import DEFAULT_OFF_SETPOINT, LoopConfig
+from .core.modulation_cap import CAP_BOUNDS_PCT, CAP_DEFAULT_PCT
 from .core.relay import (
     REPEAT_DEFAULT_S,
     REPEAT_MAX_S,
@@ -112,6 +113,10 @@ CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "comfort_correction_max_k": 3.0,
         # Without the tick, VT giving no answer at all means no heating and an alarm (answer F).
         "own_room_controller": False,
+        # I13.7: the modulation cap, off (the evidence for its gain is weak); its value where the
+        # user ticks it, on the cautious side (provisional, K4).
+        "modulation_cap": False,
+        "modulation_cap_pct": CAP_DEFAULT_PCT,
     }
 )
 CURVE_DEFAULTS: Mapping[str, float] = MappingProxyType(
@@ -130,6 +135,7 @@ CONTROL_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
         "decision_interval_min": (1.0, 30.0),
         "off_setpoint": (0.0, 30.0),
         "hand_back_value": (0.0, 90.0),
+        "modulation_cap_pct": CAP_BOUNDS_PCT,
     }
 )
 CURVE_BOUNDS: Mapping[str, tuple[float, float]] = MappingProxyType(
@@ -165,6 +171,11 @@ LEARNING_PAUSES_REMOVED = "learning_pauses"
 # I12.10 (minor version 24, the user's decision of 2026-11-25): the plugin's own frost protection
 # goes — VT's frost preset and central mode do it — and its settings with it.
 FROST_REMOVED = ("frost_limit", "frost_release", "frost_zone")
+# I13.7: the modulation cap — the tick, its value in %, and on the entity path the number entity
+# that takes it (EMS-ESP's ``selburnpow``, ESPHome's maximum relative modulation).
+MODULATION_CAP = "modulation_cap"
+MODULATION_CAP_PCT = "modulation_cap_pct"
+MODULATION_CAP_ENTITY = "modulation_cap_entity"
 
 
 class WritePath(StrEnum):
@@ -425,6 +436,7 @@ MQTT_TOPIC_KEYS = ("mqtt_top", "mqtt_node")
 ENTITY_KEYS = (
     "setpoint_entity", "ch_entity", "hand_back_entity", "confirmed_entity", "ch_confirmed_entity",
     "thermostat_setpoint_entity", "restart_entity", "relay_entity", VT_HELPER,
+    MODULATION_CAP_ENTITY,
 )  # fmt: skip
 # What a hand-back goes through: fixed while one is owed — for a relay, the relay and its rest
 # state.
@@ -611,6 +623,10 @@ class ControlOptions:
     esphome_safe_start: bool = False
     # I12: the helper VT's central boiler switches — its state is VT's decision.
     vt_boiler_helper: str | None = None
+    # I13.7: the modulation cap the user asked for, in % (``None``: off, or not offered on this
+    # path), and on the entity path the number entity that takes it.
+    modulation_cap_pct: float | None = None
+    modulation_cap_entity: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -639,6 +655,7 @@ class ControlOptions:
             self.thermostat_setpoint_entity,
             self.restart_entity,
             self.relay.entity,
+            self.modulation_cap_entity,
         )
         return tuple(e for e in found if e)
 
@@ -1200,9 +1217,51 @@ def parse_control(
         control_mode=control_mode,
         esphome_safe_start=data.get(ESPHOME_SAFE_START) is True,
         vt_boiler_helper=data.get(VT_HELPER) or None,
+        # I13.7: only where the path can set the boiler's maximum modulation — never a relay.
+        modulation_cap_pct=(
+            _required(value, MODULATION_CAP_PCT)
+            if _yes_no(value, MODULATION_CAP) and cap_offered(path)
+            else None
+        ),
+        modulation_cap_entity=(
+            data.get(MODULATION_CAP_ENTITY) or None if path is WritePath.ENTITY else None
+        ),
     )
     working = replace(loop.control, working_thermostat=working_thermostat(options))
     return replace(options, loop=replace(loop, control=working))
+
+
+def cap_offered(path: object) -> bool:
+    """I13.7: whether a write path can set the boiler's maximum modulation — the OpenTherm
+    Gateway (``MM=``) through either path, and a number entity the user picks on the entity
+    path (EMS-ESP's ``selburnpow``, ESPHome's maximum relative modulation); never a relay."""
+    return path in (WritePath.OPENTHERM_GW, WritePath.OTGW_MQTT, WritePath.ENTITY)
+
+
+def cap_repeat_s(control: ControlOptions) -> float:
+    """How often the cap is written again while it applies: a gateway keeps ``MM=`` in its
+    memory until a reset, so every 5 minutes, as a held value; on the entity path as the
+    setpoint entity is declared — every keep-alive where its values lapse (EMS-ESP's
+    ``selburnpow`` lapses within about a minute and EMS-ESP never sends it again), else every 5
+    minutes."""
+    if control.write_path is WritePath.ENTITY and control.write_type is WriteType.EXPIRING:
+        return KEEPALIVE_S
+    return HELD_REFRESH_S
+
+
+def cap_target(control: ControlOptions) -> bool:
+    """Whether the cap has somewhere to go: a gateway with its ID, or the firmware's topics; on
+    the entity path its number entity, in no other role."""
+    if control.write_path is WritePath.OPENTHERM_GW:
+        return bool(control.gateway_id)
+    if control.write_path is WritePath.OTGW_MQTT:
+        return bool(control.mqtt_top and control.mqtt_node)
+    entity = control.modulation_cap_entity
+    return (
+        control.write_path is WritePath.ENTITY
+        and entity is not None
+        and entity not in _roles(control)
+    )
 
 
 def _off_setpoint(

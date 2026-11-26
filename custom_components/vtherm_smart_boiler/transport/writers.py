@@ -34,6 +34,13 @@ hand-back always sends ``CH=1`` before ``CS=0`` — it only clears the plugin's 
 A gateway service's normal return proves nothing: pyotgw returns after a timeout of its own, and
 an MQTT publish once it is written to the socket. So a gateway's hand-back counts only once its
 setpoint read-back shows the release.
+
+The modulation cap (I13.7) has writers of its own (``CapWriter``), apart from the hand-back's:
+the gateway's ``MM=`` — Home Assistant's ``set_max_modulation``, ``-1`` clearing it, or the
+firmware's ``maxmodulation``, a non-numeric value clearing it (``MM=-``, as ``opentherm_gw``
+sends when it unloads) — or a number entity the user picks. Cleared, a gateway passes the
+thermostat's own value on again, or 100 % stand-alone (research/2026-09-24-otgw-topologies-f3-f7.md
+§5); a number entity is set back to 100 %, or its own maximum where that is lower.
 """
 
 from __future__ import annotations
@@ -55,6 +62,7 @@ from ..control_config import (
     ControlOptions,
     HandBack,
     WritePath,
+    cap_target,
     hand_back_heating_on,
     highest_water_temperature,
     one_entity_in_two_roles,
@@ -62,6 +70,7 @@ from ..control_config import (
 from ..core.guards import HELD_REFRESH_S, WriteType
 from ..core.hand_back import RELEASE_TOLERANCE_K, CheckKind, CheckSource, ReleaseRule
 from ..core.limits import GRID_EPSILON, Grid, is_on_grid
+from ..core.modulation_cap import RELEASED_PCT
 from ..core.relay import CONTEXTS_KEPT
 from ..units import celsius_to, parse_number
 from .entities import grid_from_state, reported_at, shown_step, step_scale
@@ -78,6 +87,10 @@ OPENTHERM_GW = "opentherm_gw"
 OTGW_SERVICES = frozenset(
     {(OPENTHERM_GW, "set_control_setpoint"), (OPENTHERM_GW, "set_central_heating_ovrd")}
 )
+# I13.7: the gateway's maximum modulation (``MM=``), called only with the cap switched on.
+OTGW_CAP_SERVICES = frozenset({(OPENTHERM_GW, "set_max_modulation")})
+OTGW_CAP_CLEAR = -1  # Home Assistant's ``level`` that clears ``MM=``
+MQTT_CAP_CLEAR = "-"  # a non-numeric ``MM=`` clears it
 
 
 class WriteError(Exception):
@@ -288,7 +301,24 @@ def _domain(entity_id: str) -> str:
 
 
 def writer_services(options: ControlOptions) -> frozenset[tuple[str, str]]:
-    """Every service a writer for these options may call; empty when control is not set up."""
+    """Every service a writer for these options may call — the modulation cap's among them where
+    it is switched on; empty when control is not set up."""
+    return _writer_services(options) | cap_services(options)
+
+
+def cap_services(options: ControlOptions) -> frozenset[tuple[str, str]]:
+    """The services the modulation cap calls, where it is switched on and has a target."""
+    if options.modulation_cap_pct is None or not cap_target(options):
+        return frozenset()
+    if options.write_path is WritePath.OPENTHERM_GW:
+        return OTGW_CAP_SERVICES
+    if options.write_path is WritePath.OTGW_MQTT:
+        return frozenset({("mqtt", "publish")})
+    entity = options.modulation_cap_entity or ""
+    return frozenset({(_domain(entity), "set_value")})
+
+
+def _writer_services(options: ControlOptions) -> frozenset[tuple[str, str]]:
     path = options.write_path
     if path is WritePath.RELAY:
         relay = options.relay.entity
@@ -328,6 +358,8 @@ def writer_entities(options: ControlOptions) -> tuple[str, ...]:
         found.append(options.ch_entity)
     if options.hand_back_entity and options.hand_back is HandBack.SWITCH:
         found.append(options.hand_back_entity)
+    if options.modulation_cap_pct is not None and cap_target(options):
+        found.append(options.modulation_cap_entity or "")  # I13.7: the cap's number entity
     return tuple(found)
 
 
@@ -939,6 +971,169 @@ async def _all_of(*steps: Callable[[], Awaitable[None]]) -> None:
             errors.append(err)
     if errors:
         raise WriteError("; ".join(str(err) for err in errors))
+
+
+# --- the modulation cap (I13.7) ----------------------------------------------------------------
+
+
+class CapWriter(Protocol):
+    """Writes the boiler's maximum modulation, and releases it."""
+
+    @property
+    def services(self) -> frozenset[tuple[str, str]]: ...
+
+    @property
+    def read_back(self) -> str | None:
+        """The entity that shows the cap the device holds; ``None``: none here."""
+        ...
+
+    async def write_cap(self, level: int, timeout_s: float | None = None) -> float:
+        """The cap, in %; returns the value the read-back must show."""
+        ...
+
+    async def release(self, timeout_s: float | None = None) -> float | None:
+        """The device's own maximum again; returns the value the read-back must show
+        (``None``: none to judge)."""
+        ...
+
+
+def _cap_checked(level: int) -> int:
+    if not 0 < level <= RELEASED_PCT:
+        raise WriteError(f"modulation cap {level} outside 1 to {RELEASED_PCT:g}")
+    return int(level)
+
+
+class OpenthermGwCapWriter(_GatewayWriter):
+    """``MM=`` through Home Assistant's opentherm_gw: ``set_max_modulation``, ``-1`` clears."""
+
+    def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
+        super().__init__(hass, options)
+        if not options.gateway_id:
+            raise ValueError("no gateway id")
+        self._gateway = options.gateway_id
+
+    @property
+    def services(self) -> frozenset[tuple[str, str]]:
+        return OTGW_CAP_SERVICES
+
+    @property
+    def read_back(self) -> str | None:
+        return None
+
+    async def _level(self, level: int, timeout_s: float | None) -> None:
+        await self._call(
+            OPENTHERM_GW,
+            "set_max_modulation",
+            {"gateway_id": self._gateway, "level": level},
+            timeout_s=timeout_s,
+        )
+        self._require_connected()
+
+    async def write_cap(self, level: int, timeout_s: float | None = None) -> float:
+        await self._level(_cap_checked(level), timeout_s)
+        return float(level)
+
+    async def release(self, timeout_s: float | None = None) -> float | None:
+        await self._level(OTGW_CAP_CLEAR, timeout_s)
+        return None
+
+
+class OtgwMqttCapWriter(_GatewayWriter):
+    """``MM=`` through the OTGW firmware: ``<top>/set/<node>/maxmodulation``; ``-`` clears."""
+
+    def __init__(self, hass: HomeAssistant, options: ControlOptions) -> None:
+        super().__init__(hass, options)
+        if not (options.mqtt_top and options.mqtt_node):
+            raise ValueError("no MQTT topic")
+        base = f"{options.mqtt_top.strip('/')}/set/{options.mqtt_node.strip('/')}"
+        self._topic = f"{base}/maxmodulation"
+
+    @property
+    def services(self) -> frozenset[tuple[str, str]]:
+        return frozenset({("mqtt", "publish")})
+
+    @property
+    def read_back(self) -> str | None:
+        return None
+
+    async def _publish(self, payload: str, timeout_s: float | None) -> None:
+        await self._call(
+            "mqtt", "publish", {"topic": self._topic, "payload": payload}, timeout_s=timeout_s
+        )
+        self._require_connected()
+
+    async def write_cap(self, level: int, timeout_s: float | None = None) -> float:
+        await self._publish(str(_cap_checked(level)), timeout_s)
+        return float(level)
+
+    async def release(self, timeout_s: float | None = None) -> float | None:
+        await self._publish(MQTT_CAP_CLEAR, timeout_s)
+        return None
+
+
+class EntityCapWriter(_ServiceWriter):
+    """A number entity the user picked for the cap (EMS-ESP's ``selburnpow``, ESPHome's maximum
+    relative modulation): set to the cap, and to 100 % — its own maximum where lower — to
+    release. Its own state is the read-back."""
+
+    def __init__(self, hass: HomeAssistant, entity: str) -> None:
+        super().__init__(hass)
+        self._entity = entity
+
+    @property
+    def services(self) -> frozenset[tuple[str, str]]:
+        return frozenset({(_domain(self._entity), "set_value")})
+
+    @property
+    def read_back(self) -> str | None:
+        return self._entity
+
+    def _value(self, state: State, level: float, release: bool) -> float:
+        """``level`` as the entity takes it: a percentage within its range, on its step from
+        its minimum — rounded up, the cautious side. A cap the entity cannot take at or above
+        the level within its range is refused (it would cap lower than asked); a release above
+        its maximum takes its maximum."""
+        unit = state.attributes.get("unit_of_measurement")
+        if unit not in (None, "", "%"):
+            raise WriteError(f"{self._entity}: unit {unit!r} is not a percentage")
+        low = parse_number(state.attributes.get("min"))
+        high = parse_number(state.attributes.get("max"))
+        value = float(level)
+        if low is not None:
+            value = max(value, low)
+        step = shown_step(state)
+        if step is not None:
+            base = 0.0 if low is None else low
+            value = base + math.ceil((value - base) / step - GRID_EPSILON) * step
+        if high is not None and value > high + GRID_EPSILON:
+            if not release:
+                raise WriteError(f"{self._entity}: {level:g} is above what it takes ({high:g})")
+            value = high
+        return round(value, 6)
+
+    async def _set(self, level: float, release: bool, timeout_s: float | None) -> float:
+        state = self._check_target(self._entity)
+        value = self._value(state, level, release)
+        await self._call_entity("set_value", self._entity, timeout_s=timeout_s, value=value)
+        return value
+
+    async def write_cap(self, level: int, timeout_s: float | None = None) -> float:
+        return await self._set(_cap_checked(level), False, timeout_s)
+
+    async def release(self, timeout_s: float | None = None) -> float | None:
+        return await self._set(RELEASED_PCT, True, timeout_s)
+
+
+def make_cap_writer(hass: HomeAssistant, options: ControlOptions) -> CapWriter | None:
+    """The cap's writer for these options, the cap switched on or not — a cap the last run left
+    is released through it; ``None`` where the path has no target for it."""
+    if not cap_target(options):
+        return None
+    if options.write_path is WritePath.OPENTHERM_GW:
+        return OpenthermGwCapWriter(hass, options)
+    if options.write_path is WritePath.OTGW_MQTT:
+        return OtgwMqttCapWriter(hass, options)
+    return EntityCapWriter(hass, options.modulation_cap_entity or "")
 
 
 def make_writer(hass: HomeAssistant, options: ControlOptions) -> Writer:

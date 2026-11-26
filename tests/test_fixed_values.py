@@ -16,11 +16,13 @@ from custom_components.vtherm_smart_boiler import (
     control,
     control_config,
     feature_manager,
+    modulation_cap,
     vtherm_link,
 )
 from custom_components.vtherm_smart_boiler import forecasts as forecasts_module
 from custom_components.vtherm_smart_boiler.core import (
     alarms,
+    cap_suggestion,
     comfort_rules,
     controller,
     critical_zone,
@@ -35,6 +37,7 @@ from custom_components.vtherm_smart_boiler.core import (
     signal_check,
     zone_watch,
 )
+from custom_components.vtherm_smart_boiler.core import modulation_cap as core_cap
 from custom_components.vtherm_smart_boiler.transport import writers
 
 H = 3600.0
@@ -155,6 +158,17 @@ ROWS: list[tuple[str, Any, Any]] = [
     ("the reload-VT issue after 15 min", feature_manager.RELOAD_GRACE_S, 900),
     ("a day counts when 90 % of it is known", daily.FIT_COVERAGE, 0.9),
     ("the read-back waiting issue after 5 min", control.READ_BACK_WAIT_S, 300.0),
+    # I13.7: the modulation cap.
+    ("modulation cap never below 30 %", core_cap.SAFE_FLOOR_PCT, 30.0),
+    ("nor within 10 points of the boiler's minimum", core_cap.ABOVE_MINIMUM_PCT, 10.0),
+    ("lifted when the flow is 5 K below the setpoint", core_cap.SHORT_K, 5.0),
+    ("for 10 min", core_cap.SHORT_S, 600.0),
+    ("lifted for 3 h", core_cap.LIFTED_S, 3 * H),
+    ("a failed cap write sent again after 60 s", modulation_cap.CAP_RETRY_S, 60.0),
+    ("the cap's read-back judged after 120 s", core_cap.READ_BACK_WAIT_S, 120.0),
+    ("the suggestion: the design load x 1.2", cap_suggestion.DESIGN_MARGIN, 1.2),
+    ("the suggestion: up to 5 %", cap_suggestion.SUGGESTION_STEP_PCT, 5.0),
+    ("the suggestion: none at 90 % or more", cap_suggestion.NO_GAIN_PCT, 90.0),
 ]
 
 

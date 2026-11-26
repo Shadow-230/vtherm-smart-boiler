@@ -633,6 +633,70 @@ a zmiany podlegają tym samym zasadom. Są dostępne, póki wtyczka działa, czy
 bocznym, czy nie. Po aktualizacji odśwież stronę przeglądarki, jeśli karta pokazuje jeszcze starą
 wersję.
 
+### 4.13 Ograniczenie modulacji (do włączenia)
+
+Na poziomie zaawansowanym **Zachowanie sterowania** ma opcję **Ogranicz maksymalną modulację
+kotła**. Domyślnie jest wyłączona. Nie ma jej przy przekaźniku.
+
+**Co robi.** Gdy wtyczka steruje kotłem, ogranicza jego największą moc. Palnik grzeje wtedy wodę
+wolniej, więc może pracować dłużej, gdy dom potrzebuje mało ciepła. Nie obniża najmniejszej mocy
+kotła: gdy dom potrzebuje mniej, kocioł i tak się włącza i wyłącza, z ograniczeniem czy bez.
+
+**Czym grozi.** Mniej ciepła w mróz: nigdy nie używaj tego do oszczędzania gazu w najzimniejsze
+dni. Zysk nie jest dobrze potwierdzony — jedna próba w laboratorium i rady instalatorów, brak
+badań w domach (HEM-VAL-05, DESNZ 2023; Bennett i in. 2019). Niektóre kotły w ogóle go nie
+słuchają.
+
+**Jak jest zabezpieczone** (wszystkie liczby tymczasowe):
+
+- Ustawiasz 30–100 %, domyślnie 70 %. Wtyczka nigdy nie zapisuje mniej niż 30 %. Gdy wpisano
+  najmniejszą i największą moc kotła (pozycja **Kocioł**), nigdy nie zapisuje mniej niż udział
+  najmniejszej w największej plus 10 punktów: dla kotła 8–24 kW to 44 %. Ograniczenie na
+  najmniejszej mocy sprawiłoby, że kocioł włączałby się i wyłączał częściej, nie rzadziej.
+- Gdy woda przez 10 minut jest ponad 5 K poniżej zadanej, a płomień się pali, kocioł nie
+  nadąża: wtyczka zdejmuje ograniczenie na 3 godziny.
+- Gdy grzeje się ciepła woda, ograniczenie jest zwalniane, w ciągu około 10–30 sekund od
+  odkręcenia kranu: OpenTherm nie ogranicza maksymalnej modulacji do grzania, więc w kotle
+  dwufunkcyjnym ograniczenie mogłoby zabrać wodzie użytkowej moc. Gdy kocioł grzeje ciepłą wodę,
+  a wtyczka nie umie stwierdzić, czy grzeje ją teraz, ograniczenie w ogóle nie jest włączane —
+  podłącz sygnał ciepłej wody kotła.
+- Jest zwalniane przy każdym oddaniu sterowania, przy zatrzymaniu Home Assistanta i gdy je
+  wyłączysz. Jeśli Home Assistant padł z włączonym ograniczeniem, zwalnia je przy następnym
+  starcie.
+- Nigdy nie wstrzymuje grzania: nieudany zapis jest tylko pokazywany i ponawiany po minucie.
+
+**Gdzie trafia**, zależnie od połączenia:
+
+| Połączenie | Co zapisuje wtyczka | Jak je zwalnia |
+|---|---|---|
+| OpenTherm Gateway | `MM=` bramki, przez jej usługę `set_max_modulation`, co 5 minut | poziom −1: bramka znów przekazuje wartość termostatu, a bez niego 100 % |
+| Oprogramowanie OTGW przez MQTT | `MM=`, na `<top>/set/<node>/maxmodulation`, co 5 minut | treść `-` |
+| EMS-ESP | encję liczbową wybranej mocy palnika (`selburnpow`), co 30 sekund — wygasa w ciągu około minuty, jak nastawa zasilania | 100 %; potem wygasa sama |
+| ESPHome OpenTherm, inna zapisywalna encja | encję liczbową, którą wybierzesz, tak jak zadeklarowano encję temperatury wody: co 30 sekund, gdy wartości wygasają, co 5 minut, gdy są trzymane | 100 % albo jej maksimum, gdy niższe, aż encja to pokaże |
+| Przekaźnik | niedostępne | — |
+
+Wybieraj tylko encję, której kocioł nie zapisuje w pamięci. W EMS-ESP nigdy nie wybieraj
+maksymalnej mocy palnika (`burnmaxpower`): kocioł ją zapisuje. W ESPHome liczba maksymalnej
+modulacji musi startować od 100 % i nie może przywracać ostatniej wartości po restarcie, tak jak
+nastawa ([ESPHome OpenTherm](#57-esphome-opentherm)).
+
+Kotły czytają ten procent na dwa sposoby: jako udział zakresu ponad najmniejszą mocą (sposób
+OpenTherm) albo jako udział największej mocy. Dolna granica i propozycja zakładają ten drugi,
+który przy tej samej liczbie daje mniej ciepła: ostrożniejszy.
+
+**Proponowana wartość.** Gdy werdykt widzi głównie krótkie palenia, a najmniejsza i
+największa moc kotła i straty ciepła domu (wpisane albo zmierzone z pewnością) są znane, opis
+opcji podaje wartość: zapotrzebowanie domu na ciepło przy projektowej temperaturze zewnętrznej z
+zapasem 20 %, jako udział największej mocy kotła, zaokrąglone w górę do 5 %, nigdy poniżej dolnej
+granicy. Nie ma jej, gdy wyszłoby 90 % lub więcej: mało do zyskania. Nigdy nie jest ustawiana
+sama.
+
+**Stan sterowania** pokazuje włączone ograniczenie (`modulation_cap`, %) i powód
+(`modulation_cap_state`): włączone; zwolnione, gdy wtyczka nie steruje kotłem, gdy grzeje się
+ciepła woda albo gdy nie da się jej stwierdzić; zdjęte na 3 godziny; nie ma czego ograniczać
+(dozwolona wartość to 100 %); nie wybrano dla niego encji; jego zapis się nie udaje; urządzenie
+go nie pokazuje.
+
 ## 5. Podłączenie kotła
 
 Wtyczka czyta kocioł przez encje, które wybierasz w jej formularzach. Do sterowania potrzebuje
@@ -1327,7 +1391,7 @@ domyślnie wyłączone.
 | Encja | Co pokazuje albo robi |
 |---|---|
 | Sterowanie (eksperymentalne) | czy sterowanie jest włączone; niczego nie przełącza (sterowanie przełącza się w opcjach). Jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
-| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę |
+| Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę; ograniczenie modulacji i jego powód, gdy jest włączone ([4.13](#413-ograniczenie-modulacji-do-włączenia)) |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
 | Nie daje ciepła | włączone, gdy pokój woła o ciepło, a kocioł go nie daje, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
@@ -1382,6 +1446,7 @@ Najważniejsze — opisane, nie doradzane:
 | Wartość przy oddaniu sterowania | brak — wpisywana razem ze skutkiem | ta sama liczba na jednym urządzeniu znaczy „własne sterowanie”, na innym „bez ciepła” |
 | Reakcje na alarmy | informacja — kilka alarmów zawsze oddaje sterowanie | alarm ustawiony na oddanie zatrzymuje sterowanie, dopóki go nie wyłączysz i nie włączysz |
 | Powrót sam po innym sterowniku | wyłączony | włączony: sterowanie wraca 60 minut po ostatniej obcej wartości, choć inny sterownik może wciąż działać |
+| Ograniczenie modulacji (zaawansowane) | wyłączone; zaznaczone, 70 % (30–100 %, tymczasowo) | ogranicza największą moc kotła, gdy wtyczka nim steruje, co może wydłużyć pracę palnika przy małym zapotrzebowaniu — dowody są słabe; mniej ciepła w mróz, więc zdejmuje się samo, gdy woda nie nadąża, i jest zwalniane na czas ciepłej wody i przy każdym oddaniu sterowania |
 
 Każda wartość domyślna i jej powód: tabela wartości domyślnych w [specyfikacji, część 7](../specification/scope.md#7-funkcje-według-etapów).
 Wartości oznaczone jako tymczasowe są przeglądane przed pierwszym wydaniem.

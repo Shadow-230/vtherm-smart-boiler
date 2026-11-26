@@ -603,6 +603,66 @@ plugin by itself, and the same rules apply to changes. They are there while the 
 whether the page is in the sidebar or not. After an update, reload the browser page if a card
 still shows the old version.
 
+### 4.13 The modulation cap (opt-in)
+
+At the advanced level, **Control behaviour** offers **Cap the boiler's maximum modulation**. It is
+off by default. It is not offered for a relay.
+
+**What it does.** While the plugin controls the boiler, it limits the boiler's highest power. A
+burn then heats the water more slowly, so it may last longer when the house needs little heat.
+It cannot lower the boiler's lowest power: where the house needs less than that, the boiler still
+starts and stops, cap or not.
+
+**What it risks.** Less heat in cold weather: never use it to save gas on the coldest days. The
+gain is not well proven — a laboratory test and installers' advice, no field study (HEM-VAL-05,
+DESNZ 2023; Bennett et al. 2019). Some boilers ignore it altogether.
+
+**How it is kept safe** (every number provisional):
+
+- You set 30–100 %, 70 % by default. The plugin never writes less than 30 %. Where both the
+  boiler's lowest and highest power are entered (the **Boiler** item), it never writes less
+  than the lowest as a share of the highest plus 10 points: for an 8–24 kW boiler, 44 %. A cap at
+  the lowest power would make the boiler start and stop more, not less.
+- Where the water stays more than 5 K below its setpoint for 10 minutes with the flame on, the
+  boiler cannot keep up: the plugin lifts the cap for 3 hours.
+- While hot water runs, the cap is released, within about 10 to 30 seconds of a draw starting:
+  OpenTherm does not limit the maximum modulation to heating, so on a combi the cap could starve
+  the tap. Where the boiler heats hot water and the plugin cannot tell whether it runs, the cap is
+  not applied at all — map the boiler's hot-water signal.
+- It is released at every hand-back, when Home Assistant stops, and when you switch it off. If
+  Home Assistant crashed with the cap in force, it is released at the next start.
+- It never holds heating back: a write that fails is only shown, and sent again a minute later.
+
+**Where it goes**, by connection:
+
+| Connection | What the plugin writes | How it releases it |
+|---|---|---|
+| OpenTherm Gateway | the gateway's `MM=`, through its `set_max_modulation` service, every 5 minutes | the level −1: the gateway passes the thermostat's own value on again, or 100 % without one |
+| OTGW firmware over MQTT | `MM=`, on `<top>/set/<node>/maxmodulation`, every 5 minutes | the payload `-` |
+| EMS-ESP | the number entity of its selected burner power (`selburnpow`), every 30 seconds — it lapses within about a minute, as the flow setpoint | 100 %; then it lapses by itself |
+| ESPHome OpenTherm, another writable entity | the number entity you pick, as the water temperature entity is declared: every 30 seconds where values lapse, every 5 minutes where they are held | 100 %, or its maximum where lower, until the entity shows it |
+| A relay | not offered | — |
+
+Pick only an entity the boiler does not keep in its memory. On EMS-ESP never pick the burner's
+maximum power (`burnmaxpower`): the boiler stores it. On ESPHome, the maximum-modulation number
+must start at 100 % and must not restore its last value after a restart, as for the setpoint
+([ESPHome OpenTherm](#57-esphome-opentherm)).
+
+Boilers read the percentage in two ways: as a share of the range above their lowest power (the
+OpenTherm way), or as a share of their highest power. The floor and the suggestion assume the
+second, which gives less heat for the same number: the cautious side.
+
+**A suggested value.** Where the verdict finds mostly short burns, and the boiler's lowest and
+highest power and the house's heat loss (entered, or measured with confidence) are known, the
+option's text names a value: the house's heat load at the design outdoor temperature with a 20 %
+margin, as a share of the boiler's highest power, rounded up to 5 %, never under the floor. None
+is shown where it would be 90 % or more: little to gain. It is never set by itself.
+
+**Control state** shows the cap in force (`modulation_cap`, %) and why (`modulation_cap_state`):
+applied; released while the plugin does not control the boiler, while hot water runs, or while hot
+water cannot be told; lifted for 3 hours; nothing to cap (the value allowed is 100 %); no entity
+picked for it; its write failing; the device not showing it.
+
 ## 5. Connecting the boiler
 
 The plugin reads the boiler through entities you pick in its forms. To control the boiler it
@@ -1275,7 +1335,7 @@ disabled by default.
 | Entity | What it shows or does |
 |---|---|
 | Control (experimental) | whether control is on; it switches nothing (control is switched in the options). Its attributes say what blocks it and what a hand-back does in your installation |
-| Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with |
+| Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with; the modulation cap and why, where it is on ([4.13](#413-the-modulation-cap-opt-in)) |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
 | Gives no heat | on while a room calls for heat and the boiler gives none, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
@@ -1330,6 +1390,7 @@ risks. The main ones — described, not advised:
 | Hand-back value | none — entered with its effect | the same number means "own control" on one device and "no heat" on another |
 | Alarm reactions | information — a few alarms always hand back | an alarm set to hand back stops control until you switch it off and on |
 | Return by itself after another controller | off | on, control returns 60 minutes after the last foreign value, while the other controller may still be there |
+| Modulation cap (advanced) | off; ticked, 70 % (30–100 %, provisional) | limits the boiler's highest power while the plugin controls it, which may lengthen burns at low load — the evidence is weak; less heat in cold weather, so it lifts itself when the water falls short, and is released for hot water and at every hand-back |
 
 Every default and the reason for it: the defaults table in [`docs/en/specification/scope.md`, §7](../specification/scope.md#7-features-by-stage). Values marked
 provisional are reviewed before the first release.

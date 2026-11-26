@@ -96,11 +96,15 @@ from .control_config import (
     CONTROL_DEFAULTS,
     CURVE_BOUNDS,
     CURVE_DEFAULTS,
+    ENTITY_KEYS,
     ESPHOME_SAFE_START,
     GATEWAY_TOPOLOGIES,
     HAND_BACK_TIMEOUT_DEFAULT_MIN,
     HAND_BACK_TIMEOUT_MIN,
     INTERFACE_CONTROL_KEYS,
+    MODULATION_CAP,
+    MODULATION_CAP_ENTITY,
+    MODULATION_CAP_PCT,
     MQTT_TOPIC_KEYS,
     PATH_TOPOLOGIES,
     READ_BACK_PATHS,
@@ -124,6 +128,7 @@ from .control_config import (
     ValueEffect,
     WritePath,
     boiler_class_for,
+    cap_offered,
     config_blockers,
     connection_suggested_by,
     curve_problems,
@@ -148,6 +153,7 @@ from .core.alarms import (
     DEFAULT_UNSTABLE_BURNS_PER_DAY,
     FLUE_GAS_CONDENSING_BAND,
 )
+from .core.cap_suggestion import cap_suggestion
 from .core.guards import WriteType
 from .core.installation import BoilerClass, BoilerType, CircuitControl, HeatSource
 from .core.metrics import ModulationScale
@@ -1920,7 +1926,7 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
     central boiler switches at every level (I12); at the advanced level with full control also
     the ramp, the decision interval and the "off" setpoint where "off" is written as a low
     setpoint — not with a heating switch, nor where "off" is the connection's own, as EMS-ESP's 0
-    (I8, decision H3)."""
+    (I8, decision H3) — and the modulation cap where the path can set it (I13.7)."""
     control = options.get(CONTROL, {})
     fields: dict[Any, Any] = {**vt_helper_field(control)}
 
@@ -1946,7 +1952,64 @@ def control_behaviour_schema(options: dict[str, Any]) -> vol.Schema:
     }
     if not fixed_off(options) and not heating_writes(control):
         fields |= required("off_setpoint", _number(*CONTROL_BOUNDS["off_setpoint"], 0.5, "°C"))
-    return vol.Schema(fields)
+    return vol.Schema(fields | modulation_cap_fields(options))
+
+
+# I13.7: the modulation cap's fields, and the number entity that takes it on the entity path.
+CAP_KEYS = (MODULATION_CAP, MODULATION_CAP_PCT, MODULATION_CAP_ENTITY)
+_CAP_ENTITY = {"domain": "number"}
+
+
+def modulation_cap_fields(options: Mapping[str, Any]) -> dict[Any, Any]:
+    """I13.7, at the advanced level where the path can set the boiler's maximum modulation: the
+    tick, off by default; its value; on the entity path the number entity that takes it."""
+    path = control_path(options)
+    if not cap_offered(path):
+        return {}
+    control = _mapping(options.get(CONTROL))
+    stored = _plain_number(control.get(MODULATION_CAP_PCT))
+    fields: dict[Any, Any] = {
+        vol.Required(MODULATION_CAP, default=control.get(MODULATION_CAP) is True): (
+            selector.BooleanSelector()
+        ),
+        vol.Required(
+            MODULATION_CAP_PCT,
+            default=CONTROL_DEFAULTS[MODULATION_CAP_PCT] if stored is None else stored,
+        ): _number(*CONTROL_BOUNDS[MODULATION_CAP_PCT], 5, "%"),
+    }
+    if path == WritePath.ENTITY:
+        fields[_optional(MODULATION_CAP_ENTITY, dict(control))] = _entity(_CAP_ENTITY)
+    return fields
+
+
+def modulation_cap_error(
+    hass: HomeAssistant, options: Mapping[str, Any], user_input: Mapping[str, Any]
+) -> str | None:
+    """I13.7, in the form: switched on through a writable entity, the cap needs its number
+    entity, used in no other role, and not of an integration that works through a cloud
+    service — it is written every 30 s. The error key, or ``None``."""
+    if user_input.get(MODULATION_CAP) is not True or control_path(options) != WritePath.ENTITY:
+        return None
+    entity = user_input.get(MODULATION_CAP_ENTITY)
+    if not entity:
+        return "modulation_cap_entity_missing"
+    control = _mapping(options.get(CONTROL))
+    if entity in {control.get(key) for key in ENTITY_KEYS if key != MODULATION_CAP_ENTITY}:
+        return "modulation_cap_entity_in_another_role"
+    if through_cloud(hass, str(entity)):
+        return "write_through_cloud"
+    return None
+
+
+def modulation_cap_suggestion(runtime: object) -> str:
+    """I13.7: the cap the monitor's data suggest, for the form's text — "—" without one, or
+    outside the options of a running entry."""
+    parameters = getattr(runtime, "parameters", None)
+    analysis = getattr(runtime, "analysis", None)
+    if not isinstance(parameters, ParameterSet):
+        return "—"
+    found = cap_suggestion(getattr(analysis, "verdict", None), parameters)
+    return "—" if found is None else f"{found} %"
 
 
 RETURN_KEY = "return_after_outside_change"
@@ -2150,8 +2213,18 @@ def apply_control_curve(options: dict[str, Any], user_input: dict[str, Any]) -> 
 
 
 def apply_control_behaviour(options: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """The behaviour's answers: each field shown as answered, a hidden one as stored. The
+    modulation cap's are kept only while it is ticked: unticked, all three go (I13.7)."""
     control = dict(options.get(CONTROL, {}))
-    _set_or_drop(control, user_input, tuple(control_behaviour_schema(options).schema))
+    shown = tuple(str(marker) for marker in control_behaviour_schema(options).schema)
+    _set_or_drop(control, user_input, tuple(key for key in shown if key not in CAP_KEYS))
+    if MODULATION_CAP in shown:
+        if user_input.get(MODULATION_CAP) is True:
+            control[MODULATION_CAP] = True
+            _set_or_drop(control, user_input, tuple(k for k in CAP_KEYS[1:] if k in shown))
+        else:
+            for key in CAP_KEYS:
+                control.pop(key, None)
     options[CONTROL] = control
 
 
@@ -2564,6 +2637,7 @@ CONTROL_ENTITY_KEYS = (
     "thermostat_setpoint_entity",
     "restart_entity",
     "relay_entity",
+    MODULATION_CAP_ENTITY,
 )
 
 
@@ -2890,6 +2964,10 @@ class _Steps:
     def _stored_control(self) -> Mapping[str, Any]:
         """The control section as stored before this flow; the setup has none."""
         return {}
+
+    def _runtime_data(self) -> object:
+        """The running entry's coordinator; the setup has none."""
+        return None
 
     async def _async_hand_back_blocker(self) -> str | None:
         """Why what the hand-back goes through must not change now; the setup has none."""
@@ -3673,6 +3751,8 @@ class _ControlSteps(_Steps):
             )
             if (helper := vt_helper_error(self.hass, user_input.get(VT_HELPER))) is not None:
                 errors[VT_HELPER] = helper
+            elif (cap := modulation_cap_error(self.hass, self.options, user_input)) is not None:
+                errors[MODULATION_CAP_ENTITY] = cap
             elif as_setpoint and _outside(user_input.get("off_setpoint"), self._setpoint_bounds()):
                 errors["off_setpoint"] = "off_setpoint_outside_entity_range"
             elif as_setpoint and off_too_close_to_lowest(off, hard_min):
@@ -3682,7 +3762,15 @@ class _ControlSteps(_Steps):
             if not errors:
                 apply_control_behaviour(self.options, user_input)
                 return await self._after("control_behaviour")
-        return self._form(step_id="control_behaviour", data_schema=schema, errors=errors)
+        return self._form(
+            step_id="control_behaviour",
+            data_schema=schema,
+            errors=errors,
+            # I13.7: the cap the monitor's data suggest, named in its value's text.
+            description_placeholders={
+                "cap_suggestion": modulation_cap_suggestion(self._runtime_data())
+            },
+        )
 
     def _curve_problems(self, user_input: dict[str, Any]) -> list[tuple[str, str]]:
         """X5.8 (P-68) at both levels: the curve's room as entered, else as stored, else its
@@ -3933,6 +4021,10 @@ class SmartBoilerOptionsFlow(_ControlSteps, OptionsFlow):
         if step == "connection" and self._mode_due:
             return "mode"
         return "init"
+
+    def _runtime_data(self) -> object:
+        """The running entry's coordinator, ``None`` while it does not run."""
+        return getattr(self.config_entry, "runtime_data", None)
 
     async def _async_hand_back_blocker(self) -> str | None:
         """Why what the hand-back goes through must not change now: it has not reached the
