@@ -947,7 +947,9 @@ Wtyczka nic nie zapisuje bez świeżych danych. Gdy odczyt płomienia albo zasil
 
 - pojawia się alarm „Sterowanie: utracono dane kotła”, a wtyczka oddaje kocioł;
 - przy termostacie przejmuje termostat; przy bramce samodzielnej grzanie ustaje;
-- sterowanie wraca samo, gdy dane są świeże przez 60 sekund bez przerwy.
+- sterowanie wraca samo, gdy dane są świeże przez 60 sekund bez przerwy — przez 10 minut, gdy
+  łączność padła ponownie w ciągu godziny, żeby łącze, które co chwilę znika, nie oddawało i nie
+  przejmowało kotła co kilka minut.
 
 Awaria czujnika zewnętrznego nie jest utratą łączności: wtyczka używa nastawy awaryjnej, nigdy
 zerowego grzania.
@@ -999,7 +1001,7 @@ Oba znikają przy pierwszej oznace ciepła albo gdy wyłączysz sterowanie.
 | Zignorowane „wyłącz grzanie” albo „włącz grzanie”; przekaźnik przestaje przyjmować „wyłącz” | po wyłączeniu i włączeniu, po usunięciu przyczyny |
 | Błąd wewnętrzny | gdy wyłączysz i włączysz sterowanie |
 | Inna wartość ignorowana od początku | w następnej sesji |
-| Utracona łączność z kotłem | samo, po 60 sekundach świeżych danych |
+| Utracona łączność z kotłem | samo, po 60 sekundach świeżych danych (po 10 minutach po drugiej utracie w ciągu godziny) |
 | Przekaźnik poza zasięgiem | samo, gdy przekaźnik wróci |
 | Usterka samego kotła | samo, gdy usterka zniknie |
 | Żadna strefa nie odpowiada | samo, gdy strefa odpowie |
@@ -1025,7 +1027,8 @@ w opcjach, w **Limity świeżości**, w minutach, osobno dla każdego wskazanego
 pogody; sygnał usunięty z **Sygnałów kotła** zabiera swój limit ze sobą:
 
 - **Puste (domyślnie): automatycznie.** Bez limitu, dopóki źródło nie powtórzy niezmienionej
-  wartości co najmniej dwa razy w tym uruchomieniu; potem pięciokrotność jego własnego rytmu,
+  wartości co najmniej cztery razy w tym uruchomieniu; potem pięciokrotność jego własnego rytmu i
+  co najmniej dwukrotność jego drugiej najdłuższej przerwy,
   od 10 do 30 minut dla sygnałów kotła i od 3 do 12 godzin dla encji pogody. Źródło, które
   zgłasza tylko zmiany, nigdy go nie dostaje: stała wartość nie jest nieświeża, a limit
   zatrzymałby sterowanie przy stałej pogodzie.

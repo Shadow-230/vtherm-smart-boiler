@@ -45,7 +45,8 @@ async def test_a_source_that_repeats_unchanged_values_earns_its_limit(
     hass: HomeAssistant, freezer
 ) -> None:
     """A flow the source writes again unchanged every minute earns five times that, raised to
-    the 10-minute floor; a flame that only changes earns nothing — availability only."""
+    the 10-minute floor, once it has repeated four times (I13.2); a flame that only changes earns
+    nothing — availability only."""
     boiler = FakeBoiler(hass, SIGNALS)
     boiler.set_many({Signal.FLAME: False, Signal.FLOW: 40.0})
     entry = await set_up(hass, boiler_options(boiler))
@@ -53,6 +54,10 @@ async def test_a_source_that_repeats_unchanged_values_earns_its_limit(
     assert coordinator.max_age(Signal.FLOW) is None
     for flame in (True, False, True):
         boiler.set_many({Signal.FLAME: flame, Signal.FLOW: 40.0})  # the same flow again
+        await look(hass, entry, freezer, 60)
+    assert coordinator.max_age(Signal.FLOW) is None  # two heartbeats: not yet (I13.2)
+    for flame in (False, True):
+        boiler.set_many({Signal.FLAME: flame, Signal.FLOW: 40.0})
         await look(hass, entry, freezer, 60)
     assert coordinator.max_age(Signal.FLOW) == 600.0
     assert coordinator.max_age(Signal.FLAME) is None
@@ -83,7 +88,7 @@ async def test_the_weather_earns_its_own_longer_limit(hass: HomeAssistant, freez
     hass.states.async_set("weather.home", "cloudy", {"temperature": 5.0})
     entry = await set_up(hass, boiler_options(boiler, weather="weather.home"))
     assert entry.runtime_data.weather_max_age() is None
-    for _ in range(3):
+    for _ in range(5):  # four heartbeats after the first look (I13.2)
         hass.states.async_set("weather.home", "cloudy", {"temperature": 5.0})
         await look(hass, entry, freezer, 600)
     assert entry.runtime_data.weather_max_age() == 3 * 3600.0
@@ -134,7 +139,7 @@ async def test_the_interfaces_own_mqtt_repeats_count_as_reports(
     entry = await set_up(hass, options)
     coordinator = entry.runtime_data
     before = coordinator.transport.reading(Signal.FLAME).reported_at
-    for _ in range(3):
+    for _ in range(4):  # four heartbeats (I13.2)
         freezer.tick(60)
         async_fire_mqtt_message(hass, topic, "OFF" if "flame" in topic else '{"burngas":"off"}')
         await hass.async_block_till_done()

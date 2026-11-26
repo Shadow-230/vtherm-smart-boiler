@@ -34,10 +34,14 @@ def seen(*reports: tuple) -> Rhythm:
 
 
 def test_a_source_that_repeats_an_unchanged_value_earns_a_limit() -> None:
-    """Two heartbeats 60 s apart (the OTGW firmware's repeat): five times that, 300 s."""
-    rhythm = seen((0.0, 40.0), (60.0, 40.0), (120.0, 40.0))
+    """Four heartbeats 60 s apart (the OTGW firmware's repeat): five times that, 300 s. Fewer
+    earn nothing yet (I13.2: a limit from two heartbeats may come from a burst; Chen, Toueg,
+    Aguilera 2002: the estimate needs several samples; provisional, K4)."""
+    assert HEARTBEATS_NEEDED == 4
+    rhythm = seen(*((t * 60.0, 40.0) for t in range(5)))
     assert rhythm.heartbeats == HEARTBEATS_NEEDED
     assert automatic_limit(rhythm, FLOOR, CAP) == 300.0
+    assert automatic_limit(seen(*((t * 60.0, 40.0) for t in range(4))), FLOOR, CAP) is None
 
 
 def test_a_source_that_reports_only_changes_earns_none() -> None:
@@ -56,9 +60,9 @@ def test_one_heartbeat_is_not_enough() -> None:
 
 def test_the_limit_stays_within_its_floor_and_cap() -> None:
     """A fast source (every 10 s) gets the floor; a slow one (hourly) the cap."""
-    fast = seen((0.0, 1.0), (10.0, 1.0), (20.0, 1.0), (30.0, 1.0))
+    fast = seen(*((t * 10.0, 1.0) for t in range(5)))
     assert automatic_limit(fast, FLOOR, CAP) == FLOOR
-    slow = seen((0.0, 1.0), (3600.0, 1.0), (7200.0, 1.0))
+    slow = seen(*((t * 3600.0, 1.0) for t in range(5)))
     assert automatic_limit(slow, FLOOR, CAP) == CAP
 
 
@@ -66,6 +70,16 @@ def test_the_limit_follows_the_median_heartbeat_gap() -> None:
     """One long gap (a source back after an outage) does not stretch the limit."""
     rhythm = seen((0.0, 1.0), (100.0, 1.0), (200.0, 1.0), (300.0, 1.0), (3300.0, 1.0))
     assert automatic_limit(rhythm, 0.0, 10_000.0) == 500.0
+
+
+def test_a_source_that_often_pauses_longer_is_not_judged_stale_by_its_median() -> None:
+    """I13.2: a source whose heartbeats are mostly 60 s apart but often 400 s (a gateway busy
+    with other traffic) would be stale at five times the median, 300 s, between every long pause:
+    the limit is at least twice its second-largest gap — one long gap alone (back after an
+    outage) still does not stretch it."""
+    times = (0.0, 60.0, 460.0, 520.0, 940.0, 1000.0)  # gaps 60, 400, 60, 420, 60
+    rhythm = seen(*((t, 1.0) for t in times))
+    assert automatic_limit(rhythm, 0.0, 10_000.0) == 800.0
 
 
 @pytest.mark.parametrize(

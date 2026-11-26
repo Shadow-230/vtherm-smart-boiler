@@ -24,8 +24,10 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     CORRECTION_MAX_K,
     HA_STARTING,
     MAX_STEP_S,
+    OUTAGE_BACK_REPEAT_S,
     OUTAGE_BACK_S,
     OUTAGE_LOST_S,
+    OUTAGE_REPEAT_S,
     OUTAGE_WINDOW_S,
     BoilerCommand,
     ControlConfig,
@@ -972,6 +974,39 @@ def test_a_loss_ends_after_a_minute_without_a_failure_and_clears_the_window() ->
     assert not follow_outage(again, 600.0).lost
 
 
+def test_a_second_loss_within_an_hour_needs_ten_minutes_good_to_end() -> None:
+    """I13.2: a link that keeps dropping must not hand the boiler back and take it again every
+    few minutes. The first loss ends after a minute good, as before; a second loss beginning
+    within an hour of the first needs ten minutes good without a break (Adnan 2013: a longer
+    confirmation after a repeat; provisional, K4)."""
+    assert (OUTAGE_REPEAT_S, OUTAGE_BACK_REPEAT_S) == (3600, 600)
+    window = checks(OutageWindow(), failing(0.0, 330.0))
+    assert window.lost
+    window = checks(window, [(330.0, False), (360.0, False), (390.0, False)])
+    assert not window.lost  # the first: a minute good
+    assert window.losses == (0.0,)
+    window = checks(window, failing(420.0, 750.0))
+    assert window.lost  # the second, within the hour
+    good = [(750.0 + 30.0 * i, False) for i in range(21)]  # 750 s to 1350 s
+    window = checks(window, good[:3])
+    assert window.lost  # a minute good is not enough now
+    window = checks(window, good[3:-1])  # up to 1320 s
+    assert follow_outage(window, 1349.0).lost  # good for 599 s
+    assert not follow_outage(window, 1350.0, False).lost  # ten minutes good
+
+
+def test_a_loss_more_than_an_hour_after_the_last_ends_after_a_minute() -> None:
+    """I13.2, negative: losses an hour or more apart are each the first: a minute good ends
+    each."""
+    window = checks(OutageWindow(), failing(0.0, 330.0))
+    window = checks(window, [(330.0, False), (360.0, False), (390.0, False)])
+    assert not window.lost
+    later = checks(window, failing(4000.0, 4330.0))
+    assert later.lost
+    back = checks(later, [(4330.0, False), (4360.0, False), (4390.0, False)])
+    assert not back.lost
+
+
 def test_a_loss_ends_a_minute_after_the_last_good_check_without_a_new_one() -> None:
     """The monitor refreshes rarely where polling is off: a good check, then a minute without a
     failure, ends the loss."""
@@ -1067,7 +1102,8 @@ def test_after_a_stale_hand_back_control_resumes_after_a_minute_of_fresh_data() 
     assert back.command is not None
     assert back.mode is ControlMode.HEATING
     assert state.controlling
-    assert state.link == OutageWindow(good_since=1200.0)  # cleared
+    # Cleared; the loss is remembered for an hour (I13.2).
+    assert state.link == OutageWindow(good_since=1200.0, losses=(10.0,))
     steps = [inputs(1270.0, boiler_link=False), *linked(1280.0, 1500.0, lambda _t: True)]
     state, decisions = run(steps, state=state)
     assert not any(d.hand_back or d.link_lost for d in decisions)

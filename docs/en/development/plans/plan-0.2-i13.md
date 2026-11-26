@@ -29,7 +29,7 @@ zone model. The sensor is on only while at least one room VT counts calls for he
 while no room calls. Its reasons stay. The rooms calling come from VT's rooms (I12.11), not from
 VT's decision.
 
-### I13.2 The boiler link: no chatter, a better freshness estimate
+### I13.2 The boiler link: no chatter, a better freshness estimate ✅
 
 A link lost then back after 60 s good forgets its earlier failures (`core/controller.follow_outage`),
 so a link that drops for 5 of every 6–10 minutes hands the boiler back and takes it again each
