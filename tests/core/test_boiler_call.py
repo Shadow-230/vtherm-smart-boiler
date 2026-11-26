@@ -164,6 +164,25 @@ def test_waiting_for_data_keeps_the_last_value(reasons: tuple[Reason, ...]) -> N
         assert no_heat(ControlMode.WAITING_DATA, reasons, previous, hot_water=True) == previous
 
 
+def test_a_start_keeps_the_last_value() -> None:
+    """I12.16: while the only blockers are Home Assistant starting or VT's settings not known yet,
+    control is not allowed for a moment at every start — the last value stands, unknown if none,
+    so a zone algorithm does not hold its integral at each start. Negative: any other blocker
+    cannot vouch for heat."""
+    for previous in (GIVEN, ON_BEFORE, NO_HEAT_UNKNOWN):
+        assert (
+            no_heat(ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), previous, starting=True)
+            == previous
+        )
+    assert no_heat(ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), GIVEN) == on(
+        NoHeatReason.HANDED_BACK
+    )
+    # A hand-back is not a start: the plugin cannot vouch for heat.
+    assert no_heat(ControlMode.HANDED_BACK, (), GIVEN, starting=True) == on(
+        NoHeatReason.HANDED_BACK
+    )
+
+
 def test_writes_stopped_cannot_vouch_for_heat() -> None:
     """Another controller has the boiler: whatever control would decide, the plugin cannot vouch
     for heat."""

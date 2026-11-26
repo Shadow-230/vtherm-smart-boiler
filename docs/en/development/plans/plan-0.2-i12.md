@@ -274,7 +274,7 @@ them (the user, 2026-11-26).
 Found in the steps' reports and checked in the code on `dev` f0483a5
 (`research/2026-11-26-corrections-after-i12-plan.md`). One pull request each, in this order.
 
-#### I12.16 "Gives no heat" at a start
+#### I12.16 "Gives no heat" at a start ✅
 
 The signal turned on (`handed_back`) for a moment at every Home Assistant start, from the
 "starting" blocker. While the only blockers are Home Assistant starting or VT's settings not known

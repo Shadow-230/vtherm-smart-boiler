@@ -506,8 +506,9 @@ włączony:
   jest znana.
 
 Gdy sterowanie jest wyłączone, czujnik jest niedostępny: wtyczka wtedy nie steruje kotłem i nie
-może tego ocenić. Gdy wtyczka czeka na dane (połączenie z kotłem na chwilę nieświeże), zostawia
-ostatnią wartość. Wtyczka sama nie wstrzymuje nauki żadnej strefy; użyj czujnika tak:
+może tego ocenić. Gdy wtyczka czeka na dane (połączenie z kotłem na chwilę nieświeże) i gdy Home
+Assistant się uruchamia, zostawia ostatnią wartość. Wtyczka sama nie wstrzymuje nauki żadnej
+strefy; użyj czujnika tak:
 
 - **SmartPI 1.0:** wybierz czujnik w ustawieniu SmartPI dla termostatu **Heating unavailable
   entity (optional)** („encja braku grzania”), w każdym termostacie ze SmartPI. Nic więcej nie

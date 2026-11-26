@@ -481,8 +481,9 @@ does, as far as the plugin drives it. Its attribute `reason` says why it is on:
   unknown.
 
 It is unavailable while control is off: the plugin then does not drive the boiler and cannot
-tell. While the plugin waits for data (a boiler link stale for a moment), it keeps its last
-value. The plugin pauses no zone's learning itself; use the sensor as follows.
+tell. While the plugin waits for data (a boiler link stale for a moment), and while Home
+Assistant starts, it keeps its last value. The plugin pauses no zone's learning itself; use the
+sensor as follows.
 
 - **SmartPI 1.0:** pick the sensor in SmartPI's per-thermostat setting **Heating unavailable
   entity (optional)**, for each SmartPI thermostat. Nothing else to do: while it is on, SmartPI
