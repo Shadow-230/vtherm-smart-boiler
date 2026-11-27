@@ -304,3 +304,17 @@ tests' move to Home Assistant 2026.11 as a step of its own), `CLAUDE.md` (CI fet
 SmartPI 0.4.0 only for the bench's deploy), the user guide (EN, PL) without SmartPI's version where
 the curve's outdoor term is described. Beside, not in the repository: the list "code against the
 literature" brought up to date after I12.
+
+### Fourth part: corrections found at J4 (the user's go-ahead of 2026-11-27)
+
+#### I12.20 VT's central boiler read as set ✅
+
+Found by the test session at J4's first setup on `qas` 434f767 (HA 2026.11.3, VT 10.6.5), before
+any scenario: on every fresh instance control stayed blocked with "VT's central boiler not set",
+though it was set up as the test environment says. VT's flow stores "use a central boiler" in every
+zone too, `False` there (`config_flow.py` 109–112), and lays a zone's settings over the central
+entry's (`base_thermostat.py` 443–446), so every thermostat hands over `False`. The plugin now
+counts VT's central boiler set up by its two commands, which come from the central entry and which
+VT deletes when it is unticked; the flag is not read. The tests hand over the flag as VT does, and
+a real-VT test saves a zone through VT's own options flow
+(`research/2026-11-27-vt-central-boiler-flag.md`).

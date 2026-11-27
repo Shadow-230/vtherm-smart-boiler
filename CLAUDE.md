@@ -174,6 +174,12 @@ Each topic lives only in its file; do not copy it here.
   start (`docs/en/development/plans/plan-0.2.md`, J4). J4 may provoke an unclean restart (`docker kill` over SSH) and a
   lost link in the test HA's own container only, after that start (`docs/en/development/plans/plan-0.2.2.md`,
   decision 15).
+- **Tests on the test Home Assistant instances are started by the user** (the user's rule,
+  2026-11-27): a J4 run, or any other test there, begins only when the user starts it, in the
+  session the user picks for it. No session starts one on its own, as part of other work or as
+  a step of a plan. Asked what to check, Claude lists the checks and why — from the pull
+  requests' "J4 impact" sections, checked against the runner's code (`devenv/j4/*.py`) — and
+  does not connect. The automated tests on GitHub are Claude's to start without asking.
 - Use the Explore subagent for repository searches.
 - Read large files in parts (offset and limit, `sed -n`): the harness saves oversized tool
   output outside the project.
@@ -240,7 +246,10 @@ Each topic lives only in its file; do not copy it here.
   protection); VT applies it only to thermostats that follow the central mode
   (`is_controlled_by_central_mode`, VT 10.4.0 `base_thermostat.py`), so the plugin sees it
   through the zones' demand. Central boiler: binary sensor on device count or total power
-  thresholds, calls on/off actions; it counts as configured only with a command, and
+  thresholds, calls on/off actions; it counts as configured only with a command (VT's flow sets
+  `use_central_boiler_feature` from both commands in every entry, so a zone stores `False` and
+  its `entry_infos` carry that over the central `True`: the plugin reads the two commands, J4
+  2026-11-27), and
   `CENTRAL_BOILER_EVENT` follows each change its command made — the plugin follows it through a
   helper (I12). VT starts its thermostats at
   `EVENT_HOMEASSISTANT_STARTED` (at the end of an entry's setup once Home Assistant runs), while

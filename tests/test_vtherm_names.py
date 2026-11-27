@@ -34,7 +34,6 @@ VT_NAMES = frozenset(
         "thermostat_over_switch",
         "thermostat_type",
         "underlying_entity_ids",
-        "use_central_boiler_feature",
         "used_by_controls_central_boiler",
         "valve_regulation",
         "versatile_thermostat_central_boiler_event",
