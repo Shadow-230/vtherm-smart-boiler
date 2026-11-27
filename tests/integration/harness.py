@@ -52,13 +52,22 @@ VT_HELPER = "input_boolean.fake_vt_central_boiler"
 
 def vt_central_settings(helper: str = VT_HELPER, **changes: Any) -> dict[str, Any]:
     """VT's central boiler settings as a thermostat's ``entry_infos`` carries them (VT 10.6.5):
-    ticked, its commands turning ``helper`` on and off."""
+    set up, its commands turning ``helper`` on and off. "Use a central boiler" reads ``False``,
+    as on every installation set up through VT: VT's flow stores it in each zone, ``False``
+    there, and lays the zone's settings over the central entry's (J4 on qas 434f767)."""
     return {
-        "use_central_boiler_feature": True,
+        "use_central_boiler_feature": False,
         "central_boiler_activation_service": f"{helper}/input_boolean.turn_on",
         "central_boiler_deactivation_service": f"{helper}/input_boolean.turn_off",
         "central_boiler_activation_delay_sec": 0,
     } | changes
+
+
+def vt_central_unticked(helper: str = VT_HELPER) -> dict[str, Any]:
+    """VT's central boiler unticked in VT, whose flow then deletes its two commands."""
+    return vt_central_settings(
+        helper, central_boiler_activation_service=None, central_boiler_deactivation_service=None
+    )
 
 
 @dataclass

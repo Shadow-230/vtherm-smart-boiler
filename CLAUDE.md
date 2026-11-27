@@ -246,7 +246,10 @@ Each topic lives only in its file; do not copy it here.
   protection); VT applies it only to thermostats that follow the central mode
   (`is_controlled_by_central_mode`, VT 10.4.0 `base_thermostat.py`), so the plugin sees it
   through the zones' demand. Central boiler: binary sensor on device count or total power
-  thresholds, calls on/off actions; it counts as configured only with a command, and
+  thresholds, calls on/off actions; it counts as configured only with a command (VT's flow sets
+  `use_central_boiler_feature` from both commands in every entry, so a zone stores `False` and
+  its `entry_infos` carry that over the central `True`: the plugin reads the two commands, J4
+  2026-11-27), and
   `CENTRAL_BOILER_EVENT` follows each change its command made — the plugin follows it through a
   helper (I12). VT starts its thermostats at
   `EVENT_HOMEASSISTANT_STARTED` (at the end of an entry's setup once Home Assistant runs), while

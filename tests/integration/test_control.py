@@ -72,6 +72,7 @@ from .harness import (
     ServiceSpy,
     analyse_now,
     vt_central_settings,
+    vt_central_unticked,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -1322,7 +1323,7 @@ async def test_a_helper_that_is_gone_blocks_control(rig: Rig) -> None:
 @pytest.mark.parametrize(
     "changes",
     [
-        {"use_central_boiler_feature": False},
+        {"central_boiler_activation_service": None, "central_boiler_deactivation_service": None},
         {"central_boiler_activation_service": ""},
         {"central_boiler_deactivation_service": None},
     ],
@@ -1421,7 +1422,7 @@ async def test_the_newest_thermostat_gives_vts_settings(rig: Rig) -> None:
     await rig.advance(10)
     assert not {b for b in blockers(rig) if b.startswith("vt_")}
     unticked = FakeVtThermostat(
-        entry_infos=vt_central_settings(rig.zones.helper, use_central_boiler_feature=False),
+        entry_infos=vt_central_unticked(rig.zones.helper),
         unique_id="fake_unticked",
     )
     register_thermostat(rig.hass, unticked)
@@ -7877,7 +7878,8 @@ def vt_central_boiler(rig: Rig, configured: bool, **changes: Any) -> None:
     """VT's central boiler as the thermostats VT handed over carry its settings (I12): set up
     with its commands on the helper, or not (unticked) — then it blocks control
     (``vt_central_boiler_not_set``); ``changes``: other settings."""
-    settings = vt_central_settings(rig.zones.helper, use_central_boiler_feature=configured)
+    helper = rig.zones.helper
+    settings = vt_central_settings(helper) if configured else vt_central_unticked(helper)
     rig.zones.stand_in.entry_infos = settings | changes
 
 
