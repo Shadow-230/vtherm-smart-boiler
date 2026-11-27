@@ -174,6 +174,12 @@ Each topic lives only in its file; do not copy it here.
   start (`docs/en/development/plans/plan-0.2.md`, J4). J4 may provoke an unclean restart (`docker kill` over SSH) and a
   lost link in the test HA's own container only, after that start (`docs/en/development/plans/plan-0.2.2.md`,
   decision 15).
+- **Tests on the test Home Assistant instances are started by the user** (the user's rule,
+  2026-11-27): a J4 run, or any other test there, begins only when the user starts it, in the
+  session the user picks for it. No session starts one on its own, as part of other work or as
+  a step of a plan. Asked what to check, Claude lists the checks and why — from the pull
+  requests' "J4 impact" sections, checked against the runner's code (`devenv/j4/*.py`) — and
+  does not connect. The automated tests on GitHub are Claude's to start without asking.
 - Use the Explore subagent for repository searches.
 - Read large files in parts (offset and limit, `sed -n`): the harness saves oversized tool
   output outside the project.
