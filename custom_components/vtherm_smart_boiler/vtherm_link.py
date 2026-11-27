@@ -79,8 +79,12 @@ HANDED_OVER_KEY = f"{DOMAIN}_vt_handed_over"
 # VT's central boiler settings as a thermostat last handed them over in this Home Assistant run
 # (I12): while VT reloads its thermostats none is held, and the last ones stand.
 VT_SETTINGS_KEY = f"{DOMAIN}_vt_central_boiler"
-# VT's central boiler settings, as ``entry_infos`` carries them (VT 10.6.5 ``const.py``).
-CENTRAL_BOILER_FEATURE = "use_central_boiler_feature"
+# VT's central boiler commands, as ``entry_infos`` carries them from VT's central entry (VT 10.6.5
+# ``const.py``). Set up means both commands: VT's own flow sets "use a central boiler" from them and
+# deletes them when it is unticked (``config_flow.py`` 109–112, 1317–1321). That flag is not read:
+# VT's flow stores it in every zone too, ``False`` there, and a zone's settings are laid over the
+# central entry's (``base_thermostat.py`` 443–446), so a thermostat hands over ``False`` on every
+# installation set up through VT (J4 on qas 434f767, 2026-11-27).
 ACTIVATION_SERVICE = "central_boiler_activation_service"
 DEACTIVATION_SERVICE = "central_boiler_deactivation_service"
 # VT's central boiler event (``vtherm_api``'s ``EventType.CENTRAL_BOILER_EVENT``; the same name
@@ -174,20 +178,19 @@ class VtBoilerCheck(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class VtCentralBoiler:
-    """VT's central boiler settings as ``entry_infos`` carries them (I12): ticked or not, and its
-    two commands as VT keeps them — ``None`` where empty."""
+    """VT's central boiler settings as ``entry_infos`` carries them (I12): its two commands as VT
+    keeps them — ``None`` where empty, as when it is unticked in VT, which deletes them."""
 
-    configured: bool  # "use a central boiler" ticked in VT
     activation: str | None = None
     deactivation: str | None = None
 
     def check(self, helper: str | None) -> tuple[VtBoilerCheck | None, str | None]:
-        """Whether VT's central boiler switches the helper alone: ticked, with both commands —
-        VT counts it as configured with one, but then the helper would never turn back — the
-        activation command turning ``helper`` on, the deactivation command turning it off. The
-        problem, and the entity a command targets instead — the command as VT keeps it where the
-        plugin cannot read it — for the user to see; ``(None, None)`` where all is right."""
-        if not self.configured or self.activation is None or self.deactivation is None:
+        """Whether VT's central boiler switches the helper alone: set up, with both commands —
+        with one only, the helper would never turn back — the activation command turning
+        ``helper`` on, the deactivation command turning it off. The problem, and the entity a
+        command targets instead — the command as VT keeps it where the plugin cannot read it —
+        for the user to see; ``(None, None)`` where all is right."""
+        if self.activation is None or self.deactivation is None:
             return VtBoilerCheck.NOT_SET, None
         for raw, allowed in ((self.activation, HELPER_ON), (self.deactivation, HELPER_OFF)):
             command = parse_vt_command(raw)
@@ -534,7 +537,6 @@ def vt_central_boiler(hass: HomeAssistant) -> VtCentralBoiler | None:
         infos = runtime_readings(kept.thermostat, ("entry_infos",)).get("entry_infos")
         if isinstance(infos, Mapping):
             settings = VtCentralBoiler(
-                configured=infos.get(CENTRAL_BOILER_FEATURE) is True,
                 activation=_command(infos.get(ACTIVATION_SERVICE)),
                 deactivation=_command(infos.get(DEACTIVATION_SERVICE)),
             )

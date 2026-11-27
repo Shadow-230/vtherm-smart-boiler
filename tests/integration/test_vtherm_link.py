@@ -30,7 +30,13 @@ from custom_components.vtherm_smart_boiler.vtherm_link import (
     vt_supported,
 )
 
-from .harness import VT_HELPER, VT_PLATFORM, FakeVtThermostat, FakeZones, vt_central_settings
+from .harness import (
+    VT_HELPER,
+    VT_PLATFORM,
+    FakeVtThermostat,
+    FakeZones,
+    vt_central_unticked,
+)
 
 # The installed vtherm_api: the pinned version, or the newest in the early warnings.
 VTHERM_API = version("vtherm_api")
@@ -594,23 +600,23 @@ OFF = f"{VT_HELPER}/input_boolean.turn_off"
 @pytest.mark.parametrize(
     ("settings", "expected"),
     [
-        ((True, ON, OFF), (None, None)),
-        ((True, ON.replace("input_boolean.turn", "homeassistant.turn"), OFF), (None, None)),
-        ((False, ON, OFF), ("vt_central_boiler_not_set", None)),
-        ((True, None, OFF), ("vt_central_boiler_not_set", None)),
-        ((True, ON, None), ("vt_central_boiler_not_set", None)),
-        ((True, "switch.r/switch.turn_on", OFF), ("vt_command_not_helper", "switch.r")),
-        ((True, ON, "switch.r/switch.turn_off"), ("vt_command_not_helper", "switch.r")),
-        ((True, OFF, ON), ("vt_command_not_helper", VT_HELPER)),  # the other way round
-        ((True, f"{VT_HELPER}/input_boolean.toggle", OFF), ("vt_command_not_helper", VT_HELPER)),
-        ((True, f"{ON}/value:1", OFF), ("vt_command_not_helper", VT_HELPER)),
-        ((True, "nonsense", OFF), ("vt_command_not_helper", "nonsense")),
+        ((ON, OFF), (None, None)),
+        ((ON.replace("input_boolean.turn", "homeassistant.turn"), OFF), (None, None)),
+        ((None, None), ("vt_central_boiler_not_set", None)),  # unticked: VT deletes both
+        ((None, OFF), ("vt_central_boiler_not_set", None)),
+        ((ON, None), ("vt_central_boiler_not_set", None)),
+        (("switch.r/switch.turn_on", OFF), ("vt_command_not_helper", "switch.r")),
+        ((ON, "switch.r/switch.turn_off"), ("vt_command_not_helper", "switch.r")),
+        ((OFF, ON), ("vt_command_not_helper", VT_HELPER)),  # the other way round
+        ((f"{VT_HELPER}/input_boolean.toggle", OFF), ("vt_command_not_helper", VT_HELPER)),
+        ((f"{ON}/value:1", OFF), ("vt_command_not_helper", VT_HELPER)),
+        (("nonsense", OFF), ("vt_command_not_helper", "nonsense")),
     ],
 )
 def test_vts_central_boiler_must_switch_the_helper_alone(
-    settings: tuple[bool, str | None, str | None], expected: tuple[str | None, str | None]
+    settings: tuple[str | None, str | None], expected: tuple[str | None, str | None]
 ) -> None:
-    """I12: ticked with both commands, the activation turning the helper on, the deactivation
+    """I12: set up with both commands, the activation turning the helper on, the deactivation
     turning it off — else the problem, and the entity a command targets instead."""
     from custom_components.vtherm_smart_boiler.vtherm_link import VtCentralBoiler
 
@@ -637,10 +643,10 @@ async def test_vts_central_boiler_settings_come_from_the_newest_thermostat(
     hand(FakeVtThermostat(entry_infos=None, unique_id="first"))  # type: ignore[arg-type]
     assert vt_central_boiler(hass) is None  # none gives them
     hand(FakeVtThermostat(unique_id="older"))
-    assert vt_central_boiler(hass) == VtCentralBoiler(True, ON, OFF)
-    unticked = vt_central_settings(use_central_boiler_feature=False)
+    assert vt_central_boiler(hass) == VtCentralBoiler(ON, OFF)
+    unticked = vt_central_unticked()
     hand(FakeVtThermostat(entry_infos=unticked, unique_id="newer"))
-    assert vt_central_boiler(hass) == VtCentralBoiler(False, ON, OFF)
+    assert vt_central_boiler(hass) == VtCentralBoiler(None, None)
 
     class Broken:
         unique_id = "broken"
@@ -651,16 +657,16 @@ async def test_vts_central_boiler_settings_come_from_the_newest_thermostat(
 
     hand(Broken())
     hand(FakeVtThermostat(entry_infos=None, unique_id="none"))  # type: ignore[arg-type]
-    assert vt_central_boiler(hass) == VtCentralBoiler(False, ON, OFF)  # passed over
+    assert vt_central_boiler(hass) == VtCentralBoiler(None, None)  # passed over
     hand(
         FakeVtThermostat(
             entry_infos={"central_boiler_activation_service": "  ", "other": 1}, unique_id="blank"
         )
     )
-    assert vt_central_boiler(hass) == VtCentralBoiler(False, None, None)
+    assert vt_central_boiler(hass) == VtCentralBoiler(None, None)
     for thermostat in handed:
         unregister_thermostat(hass, thermostat)
-    assert vt_central_boiler(hass) == VtCentralBoiler(False, None, None)  # the last, this run
+    assert vt_central_boiler(hass) == VtCentralBoiler(None, None)  # the last, this run
     hass.data.pop("vtherm_smart_boiler_vt_central_boiler")  # a new run
     assert vt_central_boiler(hass) is None
 

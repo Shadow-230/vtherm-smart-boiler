@@ -734,6 +734,34 @@ async def test_a_real_vts_central_boiler_reaches_the_plugin_through_its_thermost
     assert settings.check(VT_HELPER) == (VtBoilerCheck.NOT_SET, None)
 
 
+async def test_a_zone_saved_through_vts_own_flow_leaves_its_central_boiler_set(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """J4 on `qas` 434f767 (the test session, 2026-11-27): VT's own flow stores
+    ``use_central_boiler_feature`` in every zone, ``False`` in a zone, which has no commands
+    (VT 10.6.5 ``config_flow.py`` 109–112), and VT lays a zone's settings over its central
+    entry's (``base_thermostat.py`` 443–446) — so the flag a thermostat hands over is ``False``
+    on every installation set up through VT. The plugin counts VT's central boiler set by its
+    two commands, which come from the central entry."""
+    from custom_components.versatile_thermostat import const as vt
+
+    from custom_components.vtherm_smart_boiler.vtherm_link import vt_central_boiler
+
+    helpers = {"vt_boiler": {}, "living_valve": {}}
+    assert await async_setup_component(hass, "input_boolean", {"input_boolean": helpers})
+    living = vt_thermostat(current=True, **{vt.CONF_USED_BY_CENTRAL_BOILER: True})
+    await started_with_the_plugin(hass, vt_central_with_boiler(), living)
+    flow = await hass.config_entries.options.async_init(living.entry_id)  # VT's own options
+    assert "finalize" in flow["menu_options"]
+    await hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "finalize"})
+    await hass.async_block_till_done()
+    await later(hass, freezer, 30.0)  # VT reloads the zone and hands it over again
+    assert living.data[vt.CONF_USE_CENTRAL_BOILER_FEATURE] is False  # as VT stores a zone
+    settings = vt_central_boiler(hass)
+    assert settings is not None
+    assert settings.check(VT_HELPER) == (None, None)
+
+
 # --- Control on, with VT's central boiler (TB-15) -------------------------------------------
 
 FLOW_NUMBER = "input_number.boiler_flow"
