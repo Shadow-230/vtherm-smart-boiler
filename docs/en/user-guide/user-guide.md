@@ -93,8 +93,10 @@ Only one entry of the integration can exist: it runs one boiler.
    an on/off helper
    (Settings → Devices & services → Helpers → Toggle) and set up VT's central boiler in VT's
    central configuration: its thresholds and activation delay, and its two commands on the helper
-   (`input_boolean.your_helper/input_boolean.turn_on` and `…/input_boolean.turn_off`). Never point
-   VT's commands at the boiler itself: two controllers must never drive the same boiler.
+   (`input_boolean.your_helper/input_boolean.turn_on` and `…/input_boolean.turn_off`). Set at
+   least one threshold above 0, for example the number of devices at 1: both are 0 by default, and
+   a threshold at 0 is off, so VT would never switch the helper. Never point VT's commands at the
+   boiler itself: two controllers must never drive the same boiler.
    Monitoring works without this; control waits for it.
 2. **Create the entry.** Settings → Devices & services → Add integration → **Smart Boiler for
    Versatile Thermostat**. The first panels ask how the boiler is connected, its heat source and
@@ -251,7 +253,9 @@ boiler stays with its own control or its thermostat.
 Versatile Thermostat's central boiler decides whether the boiler heats. Set it up in VT's central
 configuration, as VT's documentation describes: its thresholds (how many devices call, or how much
 power), its activation delay, and its two commands on an on/off helper (`input_boolean`) you
-create — never on the boiler itself. Then pick that helper in the plugin's **Control behaviour**.
+create — never on the boiler itself. At least one threshold must be above 0: both are 0 by
+default, and a threshold at 0 is off, so VT never switches the helper and nothing heats. Then pick
+that helper in the plugin's **Control behaviour**.
 The plugin follows the helper: on, the boiler heats; off, it does not. It adds the water
 temperature and its safety rules. VT's activation delay is the heat call's on-delay: a room
 calling for a moment does not start the boiler. The plugin adds no pause of its own (a pause before
@@ -525,7 +529,7 @@ room misses heat, and a zone algorithm can learn from the rest. Its attribute `r
 is on:
 
 - **VT's central boiler does not call for heat** (`vt_not_calling`) — a room calls, but VT's
-  helper is off: VT's thresholds are not reached;
+  helper is off: VT's thresholds are not reached, or both are 0;
 - **VT's activation delay runs** (`activation_delay`);
 - **The boiler heats hot water** (`hot_water`) — only with hot water priority;
 - **The boiler reports a fault** (`boiler_fault`);

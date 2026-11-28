@@ -346,7 +346,7 @@ after it has held 30 s (provisional, K4); never held for a fault, a lost link, c
 or a hand-back. VT restarts its own activation delay at each drop, which no hold short of it
 bridges. Waits for the user's decision; L1's check follows it.
 
-#### I12.24 VT's thresholds in the documents
+#### I12.24 VT's thresholds in the documents ✅
 
 VT's thresholds default to 0, and 0 turns a threshold off, so with both at 0 VT never switches the
 helper (`feature_central_boiler_manager.py` 514–527). The user guide (setup and §4.3) and the test

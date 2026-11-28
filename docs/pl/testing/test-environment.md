@@ -149,10 +149,13 @@ kopiowany jest tylko `configuration.yaml`; własne pliki instancji w tym katalog
 
 ## 4. Instalacja testowa
 
-Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy powiesz, że zaczynamy:
+Ustawiana w interfejsie użytkownika — albo przez API w sesji J4, którą uruchamiasz (testy na
+instancjach testowych uruchamiasz Ty):
 
 1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego i włączonym kotłem centralnym
-   VT, z jego progami domyślnymi i oboma poleceniami na pomocniku
+   VT, z jego progiem liczby urządzeń na 1 (progi VT mają domyślnie 0, a 0 wyłącza próg, więc VT
+   nigdy nie przełączyłby pomocnika), progiem mocy i opóźnieniem włączenia na 0 oraz oboma
+   poleceniami na pomocniku
    `input_boolean.j4_vt_central_boiler`, który ma każda konfiguracja w `devenv/config/`:
    `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` i `…/input_boolean.turn_off`.
    O tym, czy kocioł grzeje, decyduje VT; wtyczka idzie za pomocnikiem (I12.8). Nigdy nie kieruj

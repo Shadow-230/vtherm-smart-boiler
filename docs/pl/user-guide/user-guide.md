@@ -98,8 +98,10 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    sterowania utwórz pomocnika wł./wył.
    (Ustawienia → Urządzenia i usługi → Pomocnicy → Przełącznik) i ustaw kocioł centralny VT w
    konfiguracji centralnej VT: jego progi i opóźnienie włączenia oraz oba polecenia na pomocniku
-   (`input_boolean.twoj_pomocnik/input_boolean.turn_on` i `…/input_boolean.turn_off`). Nigdy nie
-   kieruj poleceń VT na sam kocioł: dwa sterowniki nigdy nie mogą sterować tym samym kotłem.
+   (`input_boolean.twoj_pomocnik/input_boolean.turn_on` i `…/input_boolean.turn_off`). Ustaw co
+   najmniej jeden próg powyżej 0, na przykład liczbę urządzeń na 1: oba mają domyślnie 0, a próg
+   0 jest wyłączony, więc VT nigdy nie przełączyłby pomocnika. Nigdy nie kieruj poleceń VT na sam
+   kocioł: dwa sterowniki nigdy nie mogą sterować tym samym kotłem.
    Monitorowanie działa i bez tego; sterowanie na to czeka.
 2. **Utwórz wpis.** Ustawienia → Urządzenia i usługi → Dodaj integrację → **Smart Boiler for
    Versatile Thermostat**. Pierwsze panele pytają, jak kocioł jest podłączony, o źródło ciepła i
@@ -262,7 +264,9 @@ przy własnym sterowaniu albo przy swoim termostacie.
 O tym, czy kocioł grzeje, decyduje kocioł centralny Versatile Thermostat. Ustaw go w konfiguracji
 centralnej VT, tak jak opisuje dokumentacja VT: jego progi (ile urządzeń woła albo ile mocy),
 opóźnienie włączenia i oba polecenia na pomocniku wł./wył. (`input_boolean`), którego tworzysz —
-nigdy na samym kotle. Potem wybierz tego pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
+nigdy na samym kotle. Co najmniej jeden próg musi być powyżej 0: oba mają domyślnie 0, a próg 0
+jest wyłączony, więc VT nigdy nie przełącza pomocnika i nic nie grzeje. Potem wybierz tego
+pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
 idzie za pomocnikiem: włączony — kocioł grzeje; wyłączony — nie. Dokłada temperaturę wody i swoje
 zasady bezpieczeństwa. Opóźnienie włączenia w VT działa jak zwłoka przy wezwaniu ciepła: pokój,
 który woła tylko przez chwilę, nie uruchamia kotła. Wtyczka nie dodaje własnej przerwy (przerwę
@@ -552,7 +556,7 @@ jest wyłączony: żadnemu pokojowi nie brakuje ciepła, a algorytm strefy może
 Jego atrybut `reason` mówi, dlaczego jest włączony:
 
 - **Kocioł centralny VT nie wzywa ciepła** (`vt_not_calling`) — pokój woła, ale pomocnik VT jest
-  wyłączony: progi VT nie są osiągnięte;
+  wyłączony: progi VT nie są osiągnięte albo oba wynoszą 0;
 - **Trwa opóźnienie włączenia VT** (`activation_delay`);
 - **Kocioł grzeje ciepłą wodę** (`hot_water`) — tylko przy priorytecie ciepłej wody;
 - **Kocioł zgłasza usterkę** (`boiler_fault`);
