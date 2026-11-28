@@ -684,6 +684,11 @@ async def F1(r: Run, fault="low_pressure_fault"):
     )
     issues = [i["issue_id"] for i in await r.ha.issues()]
     r.check(any("boiler_fault" in i for i in issues), f"repair issue: {issues}")
+    shown = await r.st("no_heat")
+    r.check(
+        shown["state"] == "on" and shown["attributes"].get("reason") == "boiler_fault",
+        f"gives no heat for the fault, the rooms calling: {shown['state']} {shown['attributes'].get('reason')}",
+    )
     t = time.time()
     await r.sim("set_fault", fault=fault, on=False)
     await r.ha.wait(40)
@@ -1427,6 +1432,73 @@ async def M1(r: Run):
     r.note(f"issues {[(i['issue_id'], i.get('translation_key')) for i in await r.ha.issues()]}")
 
 
+async def C7(r: Run):
+    """the boiler link lost twice within an hour (I13.2): control takes the boiler again a
+    minute after the first loss ends, ten minutes after the second — a link that keeps dropping
+    does not hand the boiler back and take it again every few minutes"""
+
+    async def handed_back() -> bool:
+        return await r.s("control_state") == "handed_back"
+
+    async def taken() -> bool:
+        return await r.s("control_state") in ("heating", "idle")
+
+    await r.switch(True)
+    await r.ha.wait(60)
+    back: list[float | None] = []
+    for loss in (1, 2):
+        await r.sim("fail_signal", signal="flow")
+        lost = await r.ha.until(handed_back, 480, 5)  # stale for 5 min: lost
+        r.check(lost is not None, f"loss {loss}: handed back after {lost and round(lost)} s")
+        await r.sim("fail_signal", signal="flow", failed=False)
+        back.append(await r.ha.until(taken, 900, 5))
+        r.note(f"loss {loss}: taken again after {back[-1] and round(back[-1])} s of fresh data")
+    first, second = back
+    r.check(
+        first is not None and first < 180,
+        f"first loss: back within 3 min ({first and round(first)} s)",
+    )
+    r.check(
+        second is not None and 540 <= second <= 780,
+        f"second loss within the hour: back after about 10 min ({second and round(second)} s)",
+    )
+
+
+async def M2(r: Run):
+    """the modulation cap (I13.7), ticked at 70 %: the gateway's cap set while control heats,
+    released for a hot-water draw and set again after it, released when control goes off"""
+
+    def caps(since: float) -> list[float]:
+        """The levels sent to the gateway since ``since``; -1 clears the cap (``MM=``)."""
+        return [float(v) for _k, v in r.cmds(since, "max_modulation") if v is not None]
+
+    try:
+        await r.options(behaviour={"modulation_cap": True, "modulation_cap_pct": 70.0})
+        for zone, target in ZONES:  # the rooms call, so control heats
+            await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+        t = time.time()
+        await r.switch(True)
+        await r.ha.wait(300)
+        r.check(70.0 in caps(t), f"the cap set at 70 %: {caps(t)}")
+        t_dhw = time.time()
+        await r.sim("start_dhw", minutes=5)
+        await r.ha.wait(120)
+        during = caps(t_dhw)
+        r.check(bool(during) and during[-1] == -1.0, f"released for hot water: {during}")
+        await r.ha.wait(600)
+        after = caps(t_dhw)
+        r.check(bool(after) and after[-1] == 70.0, f"set again after the draw: {after}")
+        t_off = time.time()
+        await r.switch(False)
+        await r.ha.wait(60)
+        off = caps(t_off)
+        r.check(bool(off) and off[-1] == -1.0, f"released when control goes off: {off}")
+    finally:
+        await r.switch(False)
+        await r.options(behaviour={"modulation_cap": False}, strict=False)
+        await r.zones()
+
+
 async def K1(r: Run):
     """a crashed run's stores (held, never given back): the full hand-back first, control off"""
     t = time.time()
@@ -2088,7 +2160,10 @@ async def P2(r: Run):
 
 
 SCENARIOS.update(
-    {f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1, E7, I1, I2, P2)}
+    {
+        f.__name__: f
+        for f in (M1, M2, K1, K2, K3, K4, K5, C7, E5, E6, L1, W1, T1, V1, E7, I1, I2, P2)
+    }
 )
 
 

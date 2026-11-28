@@ -377,6 +377,12 @@ VT's own activation delay (the "Gives no heat" reason `activation_delay`, the st
 blockers and repairs of I12; an entry from before I12; "Gives no heat" with no room calling, VT not
 calling, a boiler fault and a hand-back, and across a restart; the boiler link lost twice within an
 hour; the comfort correction's trim; the modulation cap. In a few pull requests.
+Done 2026-11-28, the first part: C7 (the link lost twice within an hour: back after a minute,
+then after ten), M2 (the modulation cap set, released for hot water and when control goes off), V2
+in `devenv/j4/vt_boiler.py` ("Gives no heat" off with no room calling, `vt_not_calling` below VT's
+threshold), and checks in F1 (`boiler_fault`) and B3 (not on across the restart). Next: VT's
+activation delay and the blockers, which change VT's settings through its own forms; the comfort
+correction's trim. An entry from before I12 stays a check by hand: it needs an older build deployed.
 
 #### I12.28 A setup script for the bench
 
