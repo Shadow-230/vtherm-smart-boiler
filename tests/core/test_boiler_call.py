@@ -50,6 +50,7 @@ NOT_CONTROLLING = BoilerCall(None, CallReason.NOT_CONTROLLING)
         # The recognition period holding "off", or every zone unknown: cannot be told.
         (ControlMode.IDLE, (Reason.ZONES_RECOGNITION,), 0, WAITING),
         (ControlMode.IDLE, (Reason.ZONES_UNKNOWN,), 0, WAITING),
+        (ControlMode.IDLE, (Reason.VT_DECISION_UNKNOWN,), 2, WAITING),
         (ControlMode.WAITING_DATA, (Reason.BOILER_LINK_STALE,), 1, WAITING),
         (ControlMode.WAITING_DATA, (Reason.ZONES_RECOGNITION,), 0, WAITING),
         (ControlMode.DISABLED, (Reason.CONTROL_OFF,), 1, NOT_CONTROLLING),
@@ -133,6 +134,7 @@ def on(reason: NoHeatReason) -> NoHeat:
         (ControlMode.HANDED_BACK, (Reason.ZONES_UNKNOWN,), None, on(NoHeatReason.HANDED_BACK)),
         (ControlMode.NOT_ALLOWED, (Reason.PRECONDITION,), None, on(NoHeatReason.HANDED_BACK)),
         (ControlMode.IDLE, (Reason.ZONES_UNKNOWN,), None, on(NoHeatReason.HANDED_BACK)),
+        (ControlMode.IDLE, (Reason.VT_DECISION_UNKNOWN,), None, on(NoHeatReason.HANDED_BACK)),
     ],
 )
 def test_the_no_heat_signal_follows_the_control_step(

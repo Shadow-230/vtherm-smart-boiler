@@ -1180,7 +1180,7 @@ async def test_vts_decision_unknown_is_decision_3s_end_state(
     rig.zones.set_helper(helper)
     await rig.advance(30)
     state = rig.state("sensor", "control_state")
-    assert "zones_unknown" in state.attributes["reasons"]
+    assert "vt_decision_unknown" in state.attributes["reasons"]
     if effect == "off":
         assert state.state == "idle"
         assert state.attributes["heating_on"] is False
@@ -10234,7 +10234,7 @@ async def test_vt_unknown_holds_while_calls_start_and_stop(
             await rig.advance(seconds)
             state = rig.state("sensor", "control_state")
             assert state.state == ("handed_back" if kind == "handed_back" else "idle")
-            assert "zones_unknown" in state.attributes["reasons"]
+            assert "vt_decision_unknown" in state.attributes["reasons"]
             assert "no_demand" not in state.attributes["reasons"]
             assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "on"
             found = no_zone_issue(rig)

@@ -198,7 +198,10 @@ class Reason(StrEnum):
     OUTDOOR_UNKNOWN = "outdoor_unknown"
     DEMAND = "demand"
     NO_DEMAND = "no_demand"
-    ZONES_UNKNOWN = "zones_unknown"
+    ZONES_UNKNOWN = "zones_unknown"  # no zone known: nothing can ask for heat
+    # The zones known, and VT's decision neither on nor off (its helper unknown or unavailable):
+    # decision 3's end state as for ``ZONES_UNKNOWN`` (J4 on qas 01ef0a6, A3).
+    VT_DECISION_UNKNOWN = "vt_decision_unknown"
     ZONES_RECOGNITION = "zones_recognition"  # the zones are still reporting: nothing new decided
     RAMP = "ramp"
     LIMIT_HARD_MIN = "limit_hard_min"
@@ -733,7 +736,7 @@ def _nothing_new(
         return _keep(state, now, None)
     if demand.wanted is None and config.working_thermostat:
         # Nothing can ask for heat: the working thermostat takes the boiler — no latch.
-        return _release(state, ControlMode.HANDED_BACK, Reason.ZONES_UNKNOWN)
+        return _release(state, ControlMode.HANDED_BACK, _unknown(demand))
     return None
 
 
@@ -992,8 +995,13 @@ def _want_heat(demand: Demand, fault: bool = False, asking: bool = False) -> tup
     if asking:
         return True, Reason.CIRCUIT_ASKS
     if demand.wanted is None:
-        return False, Reason.ZONES_UNKNOWN
+        return False, _unknown(demand)
     return False, Reason.NO_DEMAND
+
+
+def _unknown(demand: Demand) -> Reason:
+    """Why nothing can ask for heat: no zone known, or the zones known and VT's decision not."""
+    return Reason.VT_DECISION_UNKNOWN if demand.fresh_zones > 0 else Reason.ZONES_UNKNOWN
 
 
 def _circuits(inputs: ControlInputs, config: ControlConfig) -> CircuitsAsking:

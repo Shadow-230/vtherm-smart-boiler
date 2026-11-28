@@ -1715,7 +1715,8 @@ def test_vts_decision_unknown_ends_like_every_zone_unknown() -> None:
         _state, decisions = run(steps, config)
         last = decisions[-1]
         assert not last.zones_unknown
-        assert Reason.ZONES_UNKNOWN in last.reasons
+        assert Reason.VT_DECISION_UNKNOWN in last.reasons
+        assert Reason.ZONES_UNKNOWN not in last.reasons
         if handed_back:
             assert last.mode is ControlMode.HANDED_BACK
         else:
@@ -1769,12 +1770,14 @@ def test_vt_unknown_holds_through_calls_starting_and_stopping(
     """Check C's F2 and F3, with VT deciding: the helper unknown while the only zone's calls
     start and stop with VT's cycle. Decision 3's end state holds steadily — a working thermostat
     keeps the boiler, nothing is taken at a call's end and handed back at the next start; stand-
-    alone heating stays off — and the repair issue's ten minutes run through the calls."""
+    alone heating stays off — and the repair issue's ten minutes run through the calls. The
+    reason is VT's decision, not the zones, which are known (J4 on qas 01ef0a6, A3)."""
     end = 4 * NO_ZONE_ISSUE_S
     state, decisions = run(
         during(0.0, end, lambda t: tpi_cycle(t, period_s / 2.5, period_s), vt_heat=None), config
     )
-    assert all(d.vt_unknown and Reason.ZONES_UNKNOWN in d.reasons for d in decisions)
+    assert all(d.vt_unknown and Reason.VT_DECISION_UNKNOWN in d.reasons for d in decisions)
+    assert not any(Reason.ZONES_UNKNOWN in d.reasons or d.zones_unknown for d in decisions)
     assert not any(Reason.NO_DEMAND in d.reasons for d in decisions)
     assert not any(d.hand_back for d in decisions)  # nothing was ever taken to hand back
     if config.working_thermostat:
@@ -3043,7 +3046,7 @@ def test_nothing_asking_with_an_outdoor_temperature_decides_the_water_at_its_int
     sensor gone at 10 s, the held reading is not decided on yet."""
     steps = [blind(0.0), blind(10.0, outdoor_sensor=None)]
     _state, decisions = run(steps)
-    assert all(Reason.ZONES_UNKNOWN in d.reasons for d in decisions)
+    assert all(Reason.VT_DECISION_UNKNOWN in d.reasons for d in decisions)
     assert Reason.OUTDOOR_SENSOR in decisions[-1].reasons
 
 

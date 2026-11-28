@@ -318,3 +318,61 @@ counts VT's central boiler set up by its two commands, which come from the centr
 VT deletes when it is unticked; the flag is not read. The tests hand over the flag as VT does, and
 a real-VT test saves a zone through VT's own options flow
 (`research/2026-11-27-vt-central-boiler-flag.md`).
+
+The rest of this part comes from J4 on `qas` 01ef0a6 (2026-11-27/28: 48 of 51 scenarios passed,
+H1 and E6 the pack's, L1 one check), the test session's tasks of 2026-11-28 checked in the code
+(`research/2026-11-28-j4-01ef0a6-tasks.md`). The user's go-ahead of 2026-11-28 for I12.21 and
+I12.24–I12.28; I12.22 and I12.23 wait for the user's decisions, with the literature read for them
+(`research/2026-11-28-lit-outdoor-mean.md`, `research/2026-11-28-lit-off-delay.md`). One pull
+request each, in this order.
+
+#### I12.21 A reason of its own while VT's decision is unknown ✅
+
+With the zones known and VT's helper neither on nor off, the reason read `zones_unknown`, which says
+no zone is known. It reads `vt_decision_unknown` now; `zones_unknown` stays for no zone known. What
+control does is unchanged: decision 3's end state, the alarm and the repair as before.
+
+#### I12.22 The curve's outdoor mean across reloads 🔒
+
+The 3-hour and 12-hour means restart at every reload and restart, so after one in a mild spell
+the curve drops at once. Waits for the user's decision: keep "the lower of now and the mean" and
+keep the mean across reloads, or follow the current temperature for radiator circuits.
+
+#### I12.23 A hold on VT's "off" 🔒
+
+VT's central boiler drops for 0.1–5 s at a TPI cycle's boundary and the plugin stopped the boiler
+each time (5 of 16 burner stops in 12 h with VT's 5-minute cycle). Proposed: "on" at once, "off"
+after it has held 30 s (provisional, K4); never held for a fault, a lost link, control switched off
+or a hand-back. VT restarts its own activation delay at each drop, which no hold short of it
+bridges. Waits for the user's decision; L1's check follows it.
+
+#### I12.24 VT's thresholds in the documents
+
+VT's thresholds default to 0, and 0 turns a threshold off, so with both at 0 VT never switches the
+helper (`feature_central_boiler_manager.py` 514–527). The user guide (setup and §4.3) and the test
+environment (§4 item 1) say at least one must be above 0 (EN, PL).
+
+#### I12.25 H1 and E6 in the runner
+
+H1: VT's central boiler goes off when its thermostats are disabled and the plugin follows it; the
+check follows VT through recognition, then the hand-back and `no_zone_known`. E6: the switch-off is
+compared with the valves' state at that moment, not a sample taken seconds before.
+
+#### I12.26 The simulator's room thermometer and window
+
+A signal that makes a room's thermometer fail, and a window sensor per room, so that VT's safety and
+window events and the rooms' trust (I12.10) can be brought about on the bench; the scenarios that
+use them.
+
+#### I12.27 Scenarios for what J4 shows only by hand
+
+VT's own activation delay (the "Gives no heat" reason `activation_delay`, the start waiting); the
+blockers and repairs of I12; an entry from before I12; "Gives no heat" with no room calling, VT not
+calling, a boiler fault and a hand-back, and across a restart; the boiler link lost twice within an
+hour; the comfort correction's trim; the modulation cap. In a few pull requests.
+
+#### I12.28 A setup script for the bench
+
+A script in `devenv/` that sets up an instance as `test-environment.md` §4 says (VT's central
+configuration with the helper's commands and a threshold above 0, the zones counted, the plugin's
+entry and control), written from that description.
