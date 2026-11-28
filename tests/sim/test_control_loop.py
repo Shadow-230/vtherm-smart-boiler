@@ -21,6 +21,7 @@ from custom_components.vtherm_smart_boiler.control_config import parse_control
 from custom_components.vtherm_smart_boiler.core.comfort_rules import STARTS_WINDOW_S
 from custom_components.vtherm_smart_boiler.core.controller import (
     OVERHEAT_K,
+    VT_OFF_HOLD_S,
     ControlConfig,
     ControlInputs,
 )
@@ -53,6 +54,7 @@ from sim.simulator import (
     DAY,
     HOUR,
     LEARNING_PHASES,
+    MAX_STEP_S,
     Scenario,
     SimCommand,
     SimResult,
@@ -356,15 +358,21 @@ def test_hand_back_returns_the_boiler_to_its_own_control() -> None:
 
 def test_summer_heating_follows_vt_at_the_minimum_water_temperature() -> None:
     """Summer and winter come from VT (plan 0.2.1, decisions of 2026-09-25): there is no summer
-    switch of the plugin's own. A day at 24 °C outside: heating is on at exactly the steps a
-    zone calls — every call gives "on", nothing else does — at the lowest water temperature
-    the curve allows, and the warm water that brings is enough: after the first hour the burner
-    never lights (P-121: the name said "heating off", the test only counted ignitions)."""
+    switch of the plugin's own. A day at 24 °C outside: heating is on at every step a zone
+    calls, and off by the first step ``VT_OFF_HOLD_S`` after the last call — VT's "off" held
+    (I12.23) — at the lowest water temperature the curve allows, and the warm water that brings
+    is enough: after the first hour the burner never lights (P-121: the name said "heating
+    off", the test only counted ignitions)."""
     controller = LoopController(LOOP)
     result = simulate(scenario([24.0], controller, without_override=WithoutOverride.OWN_CURVE))
-    assert [on for _t, on, _called in controller.heating] == [
-        called for _t, _on, called in controller.heating
-    ]
+    last_call: float | None = None
+    for t, on, called in controller.heating:
+        if called:
+            last_call = t
+            assert on, t
+        elif on:
+            assert last_call is not None, t
+            assert t - last_call < VT_OFF_HOLD_S + MAX_STEP_S, t
     assert any(called for _t, _on, called in controller.heating)  # the zones do call
     hard_min = LOOP.control.limits.hard_min
     assert {value for _t, value in controller.setpoints} == {hard_min}
@@ -563,26 +571,16 @@ def test_comfort_parity_without_rooms_is_not_met() -> None:
     assert not comfort_parity(empty, empty)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "K4 (S-15, decision 8 of 0.2.3; the criterion of 2026-11-17): with VT's default 5-min "
-        "TPI cycle and the ±3 K daily outdoor swing, the rooms as warm (within 0.02 K), the "
-        "burner starts x1.12 as often at +8 °C (6.5 an hour) and x2.04 at -5 °C as the boiler's "
-        "own regulation, its median burn 2 min — every gap between the zones' pulses stops it "
-        "(the house of 22 h, L16; x1.20 and x2.16 in the heavier one before). "
-        "The plugin advises a 10–15 min cycle (the zone_cycle_short issue); with 15 min the "
-        "criterion passes (the next test)"
-    ),
-)
 @pytest.mark.parametrize("mean", [8.0, -5.0])
 def test_j4s_starts_criterion_with_the_daily_swing(mean: float) -> None:
     """J4's starts criterion with its conditions (SB-08, decision 8; K4): 24 h at +8 °C and at
     −5 °C, each with a ±3 K daily outdoor swing, on the boiler's own curve with the comfort
     correction off (the defaults), VT's default cycle: at most 1.10 times the boiler's own
     regulation's starts, or at most 6 starts an hour with a median burn of 10 min, with every
-    room as warm as under it (comfort parity)."""
+    room as warm as under it (comfort parity). Since I12.23's hold on VT's "off" it passes with
+    VT's default 5-min cycle — x0.64 at +8 °C, x0.31 at −5 °C, the rooms up to 0.1 K warmer:
+    the gaps between the zones' pulses no longer stop the burner (x1.12 and x2.04 before, a
+    strict expected failure)."""
     own, controlled = starts_both_ways(mean, comfort_correction=False, swing=SWING_K)
     assert controlled.override_s > 0.95 * 2 * DAY  # the control held the boiler throughout
     assert starts(own, DAY, 2 * DAY) > 0
@@ -625,28 +623,12 @@ def test_the_starts_criterion_passes_on_either_measure() -> None:
     assert not meets_starts_criterion(burns([30.0] * 24), burns(many))
 
 
-CORRECTION_ON_FAILS = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "K4.1 (S-15): the comfort correction, when switched on, rises to +3 K while a TPI zone "
-        "sits at full duty short of its target, and every zone's cycle then stops the burner: "
-        "x3.6 at a steady -5 °C since I13.3's slower pace (x5.2 before; x5 in the heavier house "
-        "before L16; research/2026-10-02-z3-starts-ratio.md) — why it is off by default. Rule 3 "
-        "(decision 11 of 0.2.3) leaves it so: the hours before the correction began, the house "
-        "warming up, show as many starts as after (research/2026-10-06-p2-4-report.md)"
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    "mean", [8.0, pytest.param(-5.0, marks=CORRECTION_ON_FAILS)], ids=["plus_8", "minus_5"]
-)
+@pytest.mark.parametrize("mean", [8.0, -5.0], ids=["plus_8", "minus_5"])
 def test_tpi_switch_zones_starts_per_hour_with_the_correction_on(mean: float) -> None:
     """The cost the option's text names: with the comfort correction switched on, the same
-    house fails J4's criterion at −5 °C. At a steady +8 °C it passes in the house of 22 h
-    (L16): since I13.3 the correction rises to about +0.8 K, and rule 3 brings it back (x0.99);
-    in the heavier house before, the warm-up's starts hid the rise (x1.75)."""
+    house meets J4's criterion — x0.39 at a steady +8 °C, x1.04 at −5 °C since I12.23's hold on
+    VT's "off" (x0.99 and x3.6 before, −5 °C a strict expected failure: every zone's cycle
+    stopped the burner while the correction sat at +3 K; research/2026-10-02-z3-starts-ratio.md)."""
     own, controlled = starts_both_ways(mean, comfort_correction=True)
     assert meets_starts_criterion(own, controlled)
 
@@ -665,17 +647,15 @@ def test_the_correction_buys_no_more_comfort_than_its_text_names(mean: float) ->
 @pytest.mark.parametrize(
     ("mean", "correction", "swing", "low", "high"),
     [
-        (8.0, False, SWING_K, 1.07, 1.17),
-        (-5.0, False, SWING_K, 1.95, 2.15),
-        (8.0, True, 0.0, 0.95, 1.05),
-        # I13.3's slower pace: x3.56 at a steady -5 °C (x5.2 before) — the "up to about 3.5
-        # times" the option's text names.
-        (-5.0, True, 0.0, 3.4, 3.75),
-        # The correction on — with the daily swing, x1.31 and x2.19 since I13.3 (x1.93 and x5.96
-        # before; x1.39 and x6.28 in the heavier house before L16), against x1.12 and x2.04 with
-        # it off.
-        (8.0, True, SWING_K, 1.25, 1.4),
-        (-5.0, True, SWING_K, 2.1, 2.3),
+        # Since I12.23's hold on VT's "off" (x1.12, x2.04, x0.99 and x3.56 before; x1.31 and x2.19
+        # with the correction on and the daily swing).
+        (8.0, False, SWING_K, 0.58, 0.7),
+        (-5.0, False, SWING_K, 0.25, 0.37),
+        (8.0, True, 0.0, 0.34, 0.43),
+        # x1.04 at a steady -5 °C — the "about 1.3 times at most" the option's text names.
+        (-5.0, True, 0.0, 0.95, 1.1),
+        (8.0, True, SWING_K, 0.55, 0.66),
+        (-5.0, True, SWING_K, 1.17, 1.37),
     ],
     ids=[
         "swing_plus_8",
@@ -689,11 +669,10 @@ def test_the_correction_buys_no_more_comfort_than_its_text_names(mean: float) ->
 def test_the_documented_starts_ratios_hold(
     mean: float, correction: bool | None, swing: float, low: float, high: float
 ) -> None:
-    """PB-94: the two strict xfails above fail on the starts criterion alone; this pins the
-    ratios their reasons document (x1.12 and x2.04 with the daily swing and the correction off,
-    x0.99 and x3.56 with the correction on since I13.3; the house of 22 h, L16), and the
-    correction on with the daily swing — so a far worse ratio, or a crash, shows here instead of
-    passing as the expected failure. Comfort parity holds in each (within 0.05 K)."""
+    """PB-94: the starts ratios against the boiler's own regulation, pinned — since I12.23's hold
+    on VT's "off": x0.64 and x0.31 with the daily swing and the correction off, x0.39 and x1.04
+    with the correction on, x0.60 and x1.27 with both (the house of 22 h, L16) — so a far worse
+    ratio, or a crash, shows. Comfort parity holds in each (within 0.05 K)."""
     own, controlled = starts_both_ways(mean, comfort_correction=correction, swing=swing)
     ratio = starts(controlled, DAY, 2 * DAY) / starts(own, DAY, 2 * DAY)
     assert low <= ratio <= high, ratio
@@ -797,15 +776,15 @@ def test_the_cap_changes_nothing_where_the_boilers_minimum_is_the_limit() -> Non
 
 def test_the_cap_lifts_itself_on_the_coldest_day() -> None:
     """I13.7 on the simulator, at the design outdoor temperature (−15 °C, the 4–25 kW boiler,
-    about 8 kW needed): capped at 30 %, the water falls short while the house warms up, so the
-    cap is lifted after 10 minutes, for 3 hours, then applied again; no room is more than 0.1 K
-    colder on average, the gas is the same within 1 %, and the burner starts no more often (35
-    against 51 a day)."""
+    about 8 kW needed): capped at 30 %, the burner never stops — since I12.23's hold on VT's
+    "off" it burns through the zones' cycles, capped or not — so the water does not fall short
+    and the cap stays at 30 % all day (before, the water fell short while the house warmed up
+    and the cap was lifted for 3 hours; the lift is pinned by the core and in-process tests); no
+    room is more than 0.1 K colder on average, the gas is the same within 1 %, and the burner
+    starts no more often."""
     free, capped, controller = capped_and_not("condensing_large", -15.0)
     levels = [level for _t, level in controller.caps]
-    assert levels[:3] == [30.0, None, 30.0]
-    lifted = controller.caps[2][0] - controller.caps[1][0]
-    assert lifted == pytest.approx(3 * HOUR, abs=60.0)
+    assert levels == [30.0]
     assert all(short <= 0.1 for short in comfort_shortfall(free, capped).values())
     assert abs(capped.daily_ch_kwh[1] / free.daily_ch_kwh[1] - 1.0) <= 0.01
     assert starts(capped, DAY, 2 * DAY) <= starts(free, DAY, 2 * DAY)

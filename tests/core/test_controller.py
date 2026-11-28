@@ -36,6 +36,7 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     OUTAGE_LOST_S,
     OUTAGE_REPEAT_S,
     OUTAGE_WINDOW_S,
+    VT_OFF_HOLD_S,
     BoilerCommand,
     ControlConfig,
     ControlDecision,
@@ -215,14 +216,12 @@ def test_vt_modes_act_through_the_zones() -> None:
         [
             inputs(0.0),
             inputs(10.0, zones=stopped(10.0)),
-            inputs(20.0, zones=stopped(20.0, temperature=4.0)),
-            inputs(30.0, zones=stopped(30.0, temperature=4.0, valve_open=1.0)),
+            inputs(40.0, zones=stopped(40.0, temperature=4.0)),
+            inputs(50.0, zones=stopped(50.0, temperature=4.0, valve_open=1.0)),
         ]
     )
     assert [d.hand_back for d in decisions] == [False] * 4
-    assert decisions[1].mode is ControlMode.IDLE
-    assert decisions[1].command is not None
-    assert not decisions[1].command.ch_enable
+    assert decisions[1].mode is ControlMode.HEATING  # VT's "off" held for 30 s (I12.23)
     for decision in decisions[2:]:
         assert decision.mode is ControlMode.IDLE
         assert decision.command is not None
@@ -373,7 +372,8 @@ def test_the_water_temperature_waits_for_the_interval_heating_does_not() -> None
     assert first is not None
     assert early is not None
     assert due is not None
-    assert not early.ch_enable  # the zones are satisfied: heating off at once
+    assert early.ch_enable  # the zones satisfied: VT's "off" held for 30 s (I12.23)
+    assert not due.ch_enable  # then heating off
     assert early.setpoint == first.setpoint  # the colder curve waits for the next decision
     assert due.setpoint > first.setpoint
 
@@ -794,26 +794,27 @@ def test_long_data_loss_hands_back_once_and_resumes() -> None:
 
 
 def test_heating_follows_the_zones_at_every_step_both_ways() -> None:
-    """VT decides whether to heat: off as soon as the zones are satisfied — even mid-burn — and
-    on again as soon as one calls, with no minimum burn, pause or budget, and no waiting for the
-    next water-temperature decision."""
+    """VT decides whether to heat: off once the zones have been satisfied for 30 s — even
+    mid-burn; a shorter lull, as at VT's cycles' boundaries, is held (I12.23) — and on again as
+    soon as one calls, with no minimum burn, pause or budget, and no waiting for the next
+    water-temperature decision."""
 
     def idle(t: float) -> tuple[ZoneState, ...]:
         return (zone(t, valve_open=0.0),)
 
+    times = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    lulls = {10.0: True, 20.0: True, 30.0: True, 40.0: True, 60.0: True}
     _state, decisions = run(
         [
-            inputs(0.0, flame=False),
-            inputs(10.0, flame=True, zones=idle(10.0)),
-            inputs(20.0, flame=False),
-            inputs(30.0, flame=True, zones=idle(30.0)),
-            inputs(40.0, flame=False),
+            inputs(t, flame=t in (10.0, 40.0), zones=idle(t)) if lulls.get(t) else inputs(t)
+            for t in times
         ],
         replace(CONFIG, decision_interval_s=300.0),
     )
-    assert [d.command.ch_enable for d in decisions] == [True, False, True, False, True]
-    assert [d.mode for d in decisions] == [ControlMode.HEATING, ControlMode.IDLE] * 2 + [
-        ControlMode.HEATING
+    on = [True, True, True, True, False, True, True]
+    assert [d.command.ch_enable for d in decisions] == on
+    assert [d.mode for d in decisions] == [
+        ControlMode.HEATING if heats else ControlMode.IDLE for heats in on
     ]
 
 
@@ -1831,21 +1832,22 @@ def heating_at(steps: list[ControlInputs], decisions: list[ControlDecision]) -> 
 
 
 def test_heating_follows_vts_helper_at_every_step_both_ways() -> None:
-    """I12: heating on the step VT's helper turns on, off the step it turns off — whatever the
-    rooms show: VT's thresholds count what the plugin does not see."""
+    """I12: heating on the step VT's helper turns on, off once its "off" has held 30 s (I12.23) —
+    whatever the rooms show: VT's thresholds count what the plugin does not see."""
     steps = [
         inputs(0.0, vt_heat=False),
         inputs(10.0, vt_heat=True, zones=(zone(10.0, valve_open=0.0),)),
         inputs(20.0, vt_heat=True),
         inputs(30.0, vt_heat=False),
+        inputs(60.0, vt_heat=False),
     ]
     _state, decisions = run(steps)
-    assert heating_at(steps, decisions) == [10.0, 20.0]
+    assert heating_at(steps, decisions) == [10.0, 20.0, 30.0]
     assert Reason.NO_DEMAND in decisions[0].reasons
     assert decisions[0].demand is not None
     assert decisions[0].demand.zones_wanting == 1  # a room calls; VT does not
     assert Reason.DEMAND in decisions[1].reasons
-    assert [d.calling for d in decisions] == [False, True, True, False]
+    assert [d.calling for d in decisions] == [False, True, True, True, False]
 
 
 def test_vts_activation_delay_is_shown_while_its_helper_is_off() -> None:
@@ -1904,13 +1906,14 @@ def test_fallback_is_shown_only_while_heating() -> None:
     zones satisfied the mode is IDLE."""
     steps = [
         inputs(0.0),
+        replace(quiet(LOST - 30.0), outdoor_sensor=None),  # VT's "off" begins (I12.23)
         replace(quiet(LOST), outdoor_sensor=None),
         replace(calling(LOST + 10.0), outdoor_sensor=None),
     ]
     _state, decisions = run(steps, replace(CONFIG, decision_interval_s=60.0))
-    assert decisions[1].mode is ControlMode.IDLE
-    assert Reason.OUTDOOR_UNKNOWN in decisions[1].reasons
-    assert decisions[2].mode is ControlMode.FALLBACK
+    assert decisions[2].mode is ControlMode.IDLE
+    assert Reason.OUTDOOR_UNKNOWN in decisions[2].reasons
+    assert decisions[3].mode is ControlMode.FALLBACK
 
 
 def test_the_fixed_fallback_applies_after_the_three_hour_hold() -> None:
@@ -2390,11 +2393,13 @@ def test_on_off_mode_follows_vt_and_shows_its_delay() -> None:
         inputs(0.0, vt_heat=False, vt_delay=True),
         inputs(10.0, vt_heat=True),
         inputs(20.0, vt_heat=False),
+        inputs(50.0, vt_heat=False),
     ]
-    _state, [waiting, on, off] = run(steps, ON_OFF)
+    _state, [waiting, on, held, off] = run(steps, ON_OFF)
     assert waiting.command == BoilerCommand(False, None)
     assert Reason.ACTIVATION_DELAY in waiting.reasons
     assert on.command == BoilerCommand(True, None)
+    assert held.command == BoilerCommand(True, None)  # VT's "off" held for 30 s (I12.23)
     assert off.command == BoilerCommand(False, None)
     restored = BoilerCommand(True, None)
     _state, [kept] = run(
@@ -3446,3 +3451,67 @@ def test_a_hand_back_resets_the_trim() -> None:
     state, [off] = run([inputs(3660.0, enabled=False)], WATER, state)
     assert state.correction == 0.0 == off.correction
     assert state.trims  # the day's trims stay
+
+
+# --- I12.23: VT's "off" followed once it has held -----------------------------------------------
+
+
+@pytest.mark.parametrize("gap_s", [0.1, 5.0, 25.0])
+def test_a_short_drop_of_vts_decision_does_not_stop_the_boiler(gap_s: float) -> None:
+    """I12.23 (the user's decision of 2026-11-28, from the literature): VT's central boiler drops
+    for 0.1–5 s at a TPI cycle's boundary, as one room's valve closes just before another's
+    opens. Its "off" is followed only once it has held ``VT_OFF_HOLD_S``: heating stays on
+    through the drop, and VT's "on" after it ends the hold."""
+    steps = [
+        inputs(0.0, vt_heat=True),
+        inputs(10.0, vt_heat=True),
+        inputs(20.0, vt_heat=False),
+        inputs(20.0 + gap_s, vt_heat=True),
+        inputs(40.0 + gap_s, vt_heat=False),
+    ]
+    state, decisions = run(steps)
+    assert all(d.mode is ControlMode.HEATING for d in decisions)
+    assert state.vt_off_since == 40.0 + gap_s  # a new drop holds from its own start
+    assert VT_OFF_HOLD_S == 30.0
+
+
+def test_vts_off_is_followed_once_it_has_held() -> None:
+    """I12.23: VT's "off" for good: heating goes off at the first step at least ``VT_OFF_HOLD_S``
+    after it began, never sooner."""
+    steps = [inputs(t, vt_heat=t < 20.0) for t in (0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0)]
+    _state, decisions = run(steps)
+    assert [d.mode for d in decisions] == [ControlMode.HEATING] * 5 + [ControlMode.IDLE] * 2
+    assert Reason.NO_DEMAND in decisions[-2].reasons
+
+
+def test_vts_off_is_followed_at_once_while_it_did_not_heat() -> None:
+    """I12.23, negative: nothing is held where VT had not asked for heat; and VT's decision
+    becoming unknown during a hold is decision 3's end state at once, not held."""
+    _state, [first] = run([inputs(0.0, vt_heat=False)])
+    assert first.mode is ControlMode.IDLE
+    steps = [inputs(0.0, vt_heat=True), inputs(10.0, vt_heat=False), inputs(15.0, vt_heat=None)]
+    _state, decisions = run(steps)
+    assert decisions[1].mode is ControlMode.HEATING
+    assert Reason.VT_DECISION_UNKNOWN in decisions[2].reasons
+    assert decisions[2].mode is not ControlMode.HEATING
+
+
+def test_a_clock_set_back_restarts_the_hold_from_now() -> None:
+    """I12.23 (C9): a step earlier than the drop's start counts the hold from that step."""
+    steps = [inputs(100.0, vt_heat=True), inputs(110.0, vt_heat=False), inputs(50.0, vt_heat=False)]
+    state, decisions = run(steps)
+    assert decisions[-1].mode is ControlMode.HEATING
+    assert state.vt_off_since == 50.0
+
+
+def test_nothing_is_held_into_a_session_from_steps_without_control() -> None:
+    """I12.23, negative: steps with control off still follow VT's helper; switched on with VT's
+    helper off, heating is off at once — the last step did not heat, so nothing is held."""
+    steps = [
+        inputs(0.0, vt_heat=True, enabled=False),
+        inputs(10.0, vt_heat=True, enabled=False),
+        inputs(20.0, vt_heat=False),
+    ]
+    _state, decisions = run(steps)
+    assert decisions[1].mode is ControlMode.DISABLED
+    assert decisions[2].mode is ControlMode.IDLE

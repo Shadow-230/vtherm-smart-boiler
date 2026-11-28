@@ -936,10 +936,10 @@ async def test_a_control_store_failing_while_control_holds_the_boiler_hands_back
     await rig.switch(True)
     await rig.advance(20)
     with control_writes_failing(rig) as failed:
-        # VT's helper goes off with the room (I12): a step at once, and the clock's after it —
-        # heating off, stored at once: the write fails; then the blocker: the safe hand-back.
+        # VT's helper goes off with the room (I12), held 30 s (I12.23); then heating off,
+        # stored at once: the write fails; then the blocker: the safe hand-back.
         rig.zones.set("living", **NO_DEMAND)
-        await rig.advance(10)
+        await rig.advance(50)
         assert rig.gateway.calls[-3:] == HAND_BACK
         assert len(failed) >= 2  # the debt's own save, made first, failed too: made anyway
         assert "control_state_not_saved" in blockers(rig)

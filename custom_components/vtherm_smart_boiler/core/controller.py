@@ -27,7 +27,9 @@ Order of precedence, checked on every tick:
    nothing new: a command held goes on as "off", none is written.
 6. Otherwise heating on or off, decided at every step from VT's decision — VT's central boiler,
    with its own thresholds and activation delay, switches a helper the plugin follows (I12,
-   ``ControlInputs.vt_heat``), and nothing counted or timed here holds heating against it; and
+   ``ControlInputs.vt_heat``); VT's "off" is followed once it has held ``VT_OFF_HOLD_S`` (I12.23:
+   VT drops for a moment at its cycles' boundaries), and nothing else counted or timed here holds
+   heating against it; and
    the water temperature, decided every decision interval (and at once after any of the above
    ends): the curve on the effective outdoor temperature, limits and ramp. Without an outdoor
    temperature the last one holds three hours, then the fallback setpoint applies (decision 9),
@@ -165,6 +167,13 @@ OUTAGE_BACK_S = 60.0  # provisional, K4
 # it again every few minutes (Adnan 2013: a longer confirmation after a repeat; provisional, K4).
 OUTAGE_REPEAT_S = 3600.0
 OUTAGE_BACK_REPEAT_S = 600.0
+# I12.23 (the user's decision of 2026-11-28, from the literature; provisional, K4): VT's central
+# boiler drops for 0.1–5 s at a TPI cycle's boundary, as one room's valve closes just before
+# another's opens (J4 on qas 01ef0a6: 5 of 16 burner stops in 12 h with VT's 5-minute cycle). Its
+# "off" is followed once it has held this long — six times the longest drop seen, shorter than a
+# valve's travel, far below a boiler's anti-cycle wait; its "on" at once. A fault, a lost link,
+# control switched off and VT's decision unknown are never held.
+VT_OFF_HOLD_S = 30.0
 # The blocker "Home Assistant is starting": it does not stop a command kept or restored in the
 # recognition period, which it keeps from ending (decision 3).
 HA_STARTING = "ha_starting"
@@ -398,6 +407,10 @@ class ControlState:
     # The zones' recognition period and graces (decision 3): a fact about the zones, kept
     # through a hand-back and a new session; empty after a restart.
     zones: ZoneWatch = field(default_factory=ZoneWatch)
+    # I12.23: VT's decision as the last step applied it, and since when VT has said "off" while
+    # that was "on" — the hold; a new session starts without.
+    vt_heat_applied: bool | None = None
+    vt_off_since: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,9 +616,9 @@ def decide(
         rooms=rooms,
     )
     recognition = in_recognition(watch)
-    demand = boiler_demand(
-        inputs.zones, now, config.zone_max_age_s, inputs.vt_heat, memory=graced(watch)
-    )
+    vt_heat, off_since = follow_vt(state, inputs.vt_heat, now)
+    state = replace(state, vt_heat_applied=vt_heat, vt_off_since=off_since)
+    demand = boiler_demand(inputs.zones, now, config.zone_max_age_s, vt_heat, memory=graced(watch))
     # PB-03, I12: the zones known, and VT's decision unknown — decision 3's end state too, and
     # since when, for its repair issue; held through a recognition period.
     unjudged = not recognition and demand.wanted is None and demand.fresh_zones > 0
@@ -974,6 +987,23 @@ def _on_off_decision(
         reasons=reasons,
         effective_outdoor=state.outdoor.effective,
     )
+
+
+def follow_vt(
+    state: ControlState, vt_heat: bool | None, now: float
+) -> tuple[bool | None, float | None]:
+    """VT's decision as this step applies it, and since when its "off" is held (I12.23): an "off"
+    while the last step applied "on" and heated stands as "on" until it has held
+    ``VT_OFF_HOLD_S``; "on" and "not known" apply at once and end a hold, and nothing is held
+    where the last step did not heat — control off, handed back, idle. A step earlier than the
+    hold's start (the clock set back, C9) counts it from that step."""
+    heated = state.mode in (ControlMode.HEATING, ControlMode.FALLBACK)
+    if vt_heat is not False or state.vt_heat_applied is not True or not heated:
+        return vt_heat, None
+    since = now if state.vt_off_since is None else min(state.vt_off_since, now)
+    if now - since < VT_OFF_HOLD_S:
+        return True, since
+    return False, None
 
 
 def _vt_waits(inputs: ControlInputs, want_heat: bool) -> bool:

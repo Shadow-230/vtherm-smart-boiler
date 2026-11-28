@@ -270,9 +270,14 @@ pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
 idzie za pomocnikiem: włączony — kocioł grzeje; wyłączony — nie. Dokłada temperaturę wody i swoje
 zasady bezpieczeństwa. Opóźnienie włączenia w VT działa jak zwłoka przy wezwaniu ciepła: pokój,
 który woła tylko przez chwilę, nie uruchamia kotła. Wtyczka nie dodaje własnej przerwy (przerwę
-przed ponownym startem palnika sprawdzono na symulatorze i nie pomogła, I13.6).
+przed ponownym startem palnika sprawdzono na symulatorze i nie pomogła, I13.6). Za „wyłącz” VT
+idzie dopiero, gdy trwa ono 30 sekund: między swoimi cyklami VT wyłącza pomocnika na kilka sekund,
+gdy zawór jednego pokoju zamyka się tuż przed otwarciem zaworu drugiego, a pójście za tym gasiło
+palnik bez potrzeby (wartość tymczasowa).
 
-- Wtyczka sprawdza co 10 sekund i od razu, gdy pomocnik się zmieni, w obie strony.
+- Wtyczka sprawdza co 10 sekund i od razu, gdy pomocnik się zmieni: „włącz” grzeje od razu,
+  „wyłącz” kończy grzanie, gdy trwa 30 sekund. Usterka kotła, utrata łączności, wyłączenie
+  sterowania i nieznana decyzja VT nigdy nie są przytrzymywane.
 - Sterowanie jest zablokowane bez pomocnika, dopóki kocioł centralny VT nie jest ustawiony
   (zaznaczony, z oboma poleceniami), i dopóki jego polecenia przełączają coś innego niż pomocnika;
   zgłoszenie w Naprawach podaje wtedy, co przełączają. Jeśli dziś VT przełącza przekaźnik twojego
@@ -411,7 +416,8 @@ ograniczenie już trzyma wodę. Najniższa temperatura wody zawsze obowiązuje. 
 pokazuje korektę ze znakiem: `comfort_correction` poniżej 0 znaczy pod krzywą.
 
 Koszt: więcej gazu i więcej startów palnika — przy strefach TPI w VT może stać na limicie: w
-symulacji do około 3,5 razy więcej startów przy stałym mrozie, prawie nie dodając ciepła. Pod
+symulacji do około 1,3 razy więcej startów w mrozie z dobowymi wahaniami, prawie nie dodając
+ciepła. Pod
 krzywą pomieszczenie może wolniej się nagrzewać. Dlatego jest wyłączona: gdy pokój zostaje zimny,
 najpierw podnieś krzywą. Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
 
