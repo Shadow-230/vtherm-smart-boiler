@@ -150,7 +150,9 @@ kopiowany jest tylko `configuration.yaml`; własne pliki instancji w tym katalog
 ## 4. Instalacja testowa
 
 Ustawiana w interfejsie użytkownika — albo przez API w sesji J4, którą uruchamiasz (testy na
-instancjach testowych uruchamiasz Ty):
+instancjach testowych uruchamiasz Ty), poleceniem `HA_INSTANCE=N scripts/env.sh python
+devenv/j4/setup_instance.py ROLA` (gateway, starts, relay, entity albo standalone): tworzy to, czego
+brakuje z punktów 1 do 5, raz restartuje instancję i ustawia próg urządzeń VT na 1:
 
 1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego i włączonym kotłem centralnym
    VT, z jego progiem liczby urządzeń na 1 (progi VT mają domyślnie 0, a 0 wyłącza próg, więc VT

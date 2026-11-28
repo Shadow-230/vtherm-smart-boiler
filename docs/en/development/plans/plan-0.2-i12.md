@@ -408,8 +408,15 @@ Done 2026-11-28, the third part: Q6 in `corrections.py` — a curve too high wit
 and every room satisfied: the trim below the curve, never more than 3 K, and back towards 0 once a
 room is short.
 
-#### I12.28 A setup script for the bench
+#### I12.28 A setup script for the bench ✅
 
 A script in `devenv/` that sets up an instance as `test-environment.md` §4 says (VT's central
 configuration with the helper's commands and a threshold above 0, the zones counted, the plugin's
-entry and control), written from that description.
+entry and control).
+Done 2026-11-28, after the bench's own script (read with the user's consent, 2026-11-28):
+`devenv/j4/setup_instance.py ROLE` makes what is missing — VT's central configuration with the
+helper's commands and its safety delay, SmartPI on the gateway role, the three zones counted by VT's
+central boiler, the bath reading its window sensor, the simulated gateway, the plugin's entry for
+the role — restarts the instance once and sets VT's device threshold at 1. An in-process test walks
+it through VT 10.6.5's and the plugin's real flows for four roles; the gateway role only adds
+SmartPI, whose vendored 0.4.0 does not register with VT 10.6.5.
