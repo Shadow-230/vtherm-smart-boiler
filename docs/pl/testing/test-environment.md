@@ -149,10 +149,15 @@ kopiowany jest tylko `configuration.yaml`; własne pliki instancji w tym katalog
 
 ## 4. Instalacja testowa
 
-Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy powiesz, że zaczynamy:
+Ustawiana w interfejsie użytkownika — albo przez API w sesji J4, którą uruchamiasz (testy na
+instancjach testowych uruchamiasz Ty), poleceniem `HA_INSTANCE=N scripts/env.sh python
+devenv/j4/setup_instance.py ROLA` (gateway, starts, relay, entity albo standalone): tworzy to, czego
+brakuje z punktów 1 do 5, raz restartuje instancję i ustawia próg urządzeń VT na 1:
 
 1. **Konfiguracja centralna VT**: z listą wyboru trybu centralnego i włączonym kotłem centralnym
-   VT, z jego progami domyślnymi i oboma poleceniami na pomocniku
+   VT, z jego progiem liczby urządzeń na 1 (progi VT mają domyślnie 0, a 0 wyłącza próg, więc VT
+   nigdy nie przełączyłby pomocnika), progiem mocy i opóźnieniem włączenia na 0 oraz oboma
+   poleceniami na pomocniku
    `input_boolean.j4_vt_central_boiler`, który ma każda konfiguracja w `devenv/config/`:
    `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` i `…/input_boolean.turn_off`.
    O tym, czy kocioł grzeje, decyduje VT; wtyczka idzie za pomocnikiem (I12.8). Nigdy nie kieruj
@@ -164,6 +169,9 @@ Ustawiana w interfejsie użytkownika — albo przez Claude'a przez API w J4, gdy
    ustaw jej własne opóźnienie bezpieczeństwa 1440 min: VT uznaje za martwy czujnik, którego stan nie był
    zapisany przez czas tego opóźnienia (domyślnie 60 min), i przełącza strefę w tryb bezpieczeństwa,
    a ustabilizowane pokoje symulatora albo stała temperatura zewnętrzna trzymają jedną wartość dłużej.
+   W łazience wykrywanie okna czujnikiem, `binary_sensor.boiler_sim_zone_bath_window`, z ustawieniami
+   domyślnymi VT (30 s, strefa wyłączana): W2 otwiera to okno (`devenv/j4/rooms.py`), a bez niego
+   nie jest uruchamiany.
 3. **Smart Boiler for Versatile Thermostat**:
    - Sygnały: `binary_sensor.boiler_sim_flame`, `sensor.boiler_sim_flow`,
      `sensor.boiler_sim_return`, `sensor.boiler_sim_modulation`,
@@ -240,7 +248,9 @@ są gubione — utrata łączności; `relay`: stan przekaźnika nieznany;
 `thermostat_setpoint`; sygnał usterki), `force_setpoint` (inny sterownik), `ignore_writes`,
 `refuse_id1` (potwierdzone, potem porzucone), `clip_setpoint`, `drop_override` (pojedynczy powrót awaryjny),
 `start_dhw`, `set_topology`, `set_zone_mode` (strefa wyłączona przez VT zamyka swój zawór),
-`set_room_temperature` (jeden pokój ustawiany od razu, na przykład na 4 °C jak przy ochronie przed mrozem), `reset_gateway` i
+`set_room_temperature` (jeden pokój ustawiany od razu, na przykład na 4 °C jak przy ochronie przed mrozem), `fail_room_sensor`
+(termometr pokoju niedostępny), `set_window` (czujnik okna pokoju `binary_sensor.boiler_sim_<zone>_window`
+otwarty lub zamknięty; przy otwartym oknie pokój traci ciepło pięć razy szybciej), `reset_gateway` i
 `restart_device` (utracone polecenie ze śladem), `relay_restart` (zauważony albo, z `reported: false`,
 niezauważony), `relay_wifi_loss`, `relay_switch` (automatyka albo jego przycisk), `set_wall_setpoint`,
 `set_fault` — oraz własnej usługi atrapy `opentherm_gw.reset_gateway` i opcji (przez nie przełącza się sterowanie: „Tryb sterowania”, „Sterowanie włączone”, I11), a także

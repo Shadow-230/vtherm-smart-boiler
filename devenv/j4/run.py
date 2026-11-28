@@ -29,6 +29,7 @@ from options import (
     CIRCUIT_ASKS_NEED,
     GATEWAY_ITEMS,
     REMOVE_CIRCUIT,
+    VT_HELPER,
 )
 from page_checks import (
     burns_problems,
@@ -683,6 +684,11 @@ async def F1(r: Run, fault="low_pressure_fault"):
     )
     issues = [i["issue_id"] for i in await r.ha.issues()]
     r.check(any("boiler_fault" in i for i in issues), f"repair issue: {issues}")
+    shown = await r.st("no_heat")
+    r.check(
+        shown["state"] == "on" and shown["attributes"].get("reason") == "boiler_fault",
+        f"gives no heat for the fault, the rooms calling: {shown['state']} {shown['attributes'].get('reason')}",
+    )
     t = time.time()
     await r.sim("set_fault", fault=fault, on=False)
     await r.ha.wait(40)
@@ -760,7 +766,9 @@ async def G3(r: Run):
 
 
 async def H1(r: Run):
-    """every VT zone unavailable: the command held through recognition, then handed back to the thermostat"""
+    """every VT zone unavailable: control follows VT's central boiler while the zones are in
+    their grace — VT turns its helper off as its thermostats go (I12) — then the hand-back to
+    the thermostat and the alarm once no zone is known"""
     await r.switch(True)
     await r.ha.wait(60)
     entries = [await r.ha.entry("versatile_thermostat", z) for z, _ in ZONES]
@@ -771,9 +779,18 @@ async def H1(r: Run):
         )
     await r.ha.wait(540)
     st = await r.st("control_state")
+    reasons = st["attributes"].get("reasons") or []
+    helper = (await r.ha.state(VT_HELPER) or {}).get("state")
     r.check(
-        st["attributes"].get("reasons") == ["zones_recognition"],
-        f"held: reasons {st['attributes'].get('reasons')}, unknown {st['attributes'].get('unknown_zones')}",
+        "zones_unknown" not in reasons and st["state"] != "handed_back",
+        f"zones in their grace: {st['state']} {reasons}, unknown {st['attributes'].get('unknown_zones')}",
+    )
+    # J4 on qas 01ef0a6: the zones go one by one, so no recognition period need start; VT's
+    # helper goes off with its thermostats, and control follows it (the recognition period,
+    # where it starts, holds the command instead).
+    r.check(
+        helper != "off" or "no_demand" in reasons or "zones_recognition" in reasons,
+        f"control follows VT's helper ({helper}): {st['state']} {reasons}",
     )
     r.check(await r.s("alarm_no_zone_known") == "off", "no alarm yet")
     await r.ha.wait(90)
@@ -1415,6 +1432,73 @@ async def M1(r: Run):
     r.note(f"issues {[(i['issue_id'], i.get('translation_key')) for i in await r.ha.issues()]}")
 
 
+async def C7(r: Run):
+    """the boiler link lost twice within an hour (I13.2): control takes the boiler again a
+    minute after the first loss ends, ten minutes after the second — a link that keeps dropping
+    does not hand the boiler back and take it again every few minutes"""
+
+    async def handed_back() -> bool:
+        return await r.s("control_state") == "handed_back"
+
+    async def taken() -> bool:
+        return await r.s("control_state") in ("heating", "idle")
+
+    await r.switch(True)
+    await r.ha.wait(60)
+    back: list[float | None] = []
+    for loss in (1, 2):
+        await r.sim("fail_signal", signal="flow")
+        lost = await r.ha.until(handed_back, 480, 5)  # stale for 5 min: lost
+        r.check(lost is not None, f"loss {loss}: handed back after {lost and round(lost)} s")
+        await r.sim("fail_signal", signal="flow", failed=False)
+        back.append(await r.ha.until(taken, 900, 5))
+        r.note(f"loss {loss}: taken again after {back[-1] and round(back[-1])} s of fresh data")
+    first, second = back
+    r.check(
+        first is not None and first < 180,
+        f"first loss: back within 3 min ({first and round(first)} s)",
+    )
+    r.check(
+        second is not None and 540 <= second <= 780,
+        f"second loss within the hour: back after about 10 min ({second and round(second)} s)",
+    )
+
+
+async def M2(r: Run):
+    """the modulation cap (I13.7), ticked at 70 %: the gateway's cap set while control heats,
+    released for a hot-water draw and set again after it, released when control goes off"""
+
+    def caps(since: float) -> list[float]:
+        """The levels sent to the gateway since ``since``; -1 clears the cap (``MM=``)."""
+        return [float(v) for _k, v in r.cmds(since, "max_modulation") if v is not None]
+
+    try:
+        await r.options(behaviour={"modulation_cap": True, "modulation_cap_pct": 70.0})
+        for zone, target in ZONES:  # the rooms call, so control heats
+            await r.sim("set_room_temperature", zone=zone, temperature=target - 3.0)
+        t = time.time()
+        await r.switch(True)
+        await r.ha.wait(300)
+        r.check(70.0 in caps(t), f"the cap set at 70 %: {caps(t)}")
+        t_dhw = time.time()
+        await r.sim("start_dhw", minutes=5)
+        await r.ha.wait(120)
+        during = caps(t_dhw)
+        r.check(bool(during) and during[-1] == -1.0, f"released for hot water: {during}")
+        await r.ha.wait(600)
+        after = caps(t_dhw)
+        r.check(bool(after) and after[-1] == 70.0, f"set again after the draw: {after}")
+        t_off = time.time()
+        await r.switch(False)
+        await r.ha.wait(60)
+        off = caps(t_off)
+        r.check(bool(off) and off[-1] == -1.0, f"released when control goes off: {off}")
+    finally:
+        await r.switch(False)
+        await r.options(behaviour={"modulation_cap": False}, strict=False)
+        await r.zones()
+
+
 async def K1(r: Run):
     """a crashed run's stores (held, never given back): the full hand-back first, control off"""
     t = time.time()
@@ -1553,7 +1637,7 @@ async def E5(r: Run):
 
 async def E6(r: Run):
     """an oversized boiler in mild weather starting often on its own: heating follows VT's
-    zones and is never switched off while a zone calls"""
+    central boiler and is never switched off while VT's helper is on"""
     valves = [f"switch.boiler_sim_{zone}_valve" for zone, _t in ZONES]
     try:
         await r.sim("set_boiler", profile="short_cycling")
@@ -1570,12 +1654,13 @@ async def E6(r: Run):
             flame = now_flame
             await r.ha.wait(5)
         ch = [(at, v) for at, k, v in r.ha.since(t, "ch")]
+        # J4 on qas 01ef0a6: the plugin follows VT's helper at once, 4 ms after the last valve
+        # closes, so a valve sample seconds before still shows a call. The helper's changes as
+        # the recorder kept them judge each switch-off: wrong only if the helper was on all
+        # through the 10 s before it and the 2 s after (the runner's and the instance's clocks).
+        helper = await history(r, VT_HELPER, t)
         wrong = [
-            round(at - t)
-            for at, on in ch
-            if on is False
-            and (before := [calling for when, calling in seen if when < at - 2])
-            and before[-1]
+            round(at - t) for at, on in ch if on is False and on_throughout(helper, at - 10, at + 2)
         ]
         r.check(starts >= 6, f"the boiler cycled: {starts} starts in the hour")
         r.check(any(calling for _w, calling in seen), "a zone called")
@@ -1589,6 +1674,28 @@ async def E6(r: Run):
         # E6 off a starts instance's condensing_large (J4 of 2026-11-18).
         await r.sim("set_boiler", profile="condensing_small")
         await r.sim("set_outdoor", temperature=3.0)
+
+
+async def history(r: Run, entity_id: str, since: float) -> list[tuple[float, str]]:
+    """An entity's states since a minute before ``since``, as the recorder kept them: (when, on
+    the instance's clock; state)."""
+    start = dt.datetime.fromtimestamp(since - 60, dt.UTC).isoformat()
+    _s, h = await r.ha.rest(
+        "GET",
+        f"/api/history/period/{start}?filter_entity_id={entity_id}&minimal_response&no_attributes",
+    )
+    return [
+        (dt.datetime.fromisoformat(x["last_changed"]).timestamp(), x["state"])
+        for x in (h[0] if h else [])
+        if x.get("last_changed")
+    ]
+
+
+def on_throughout(states: list[tuple[float, str]], start: float, end: float) -> bool:
+    """Whether the entity was "on" from ``start`` to ``end`` without a break."""
+    before = [state for when, state in states if when <= start]
+    within = [state for when, state in states if start < when <= end]
+    return bool(before) and before[-1] == "on" and all(state == "on" for state in within)
 
 
 GUARD_ALARMS = ("write_failed", "write_ignored", "outside_change", "commands_lost")
@@ -1669,14 +1776,15 @@ async def L1(r: Run):
     gaps = [b[0] - a[0] for a, b in pairwise(sp)]
     ch = writes(t, "ch")
     toggles = sum(1 for a, b in pairwise(ch) if bool(a[2]) != bool(b[2]))
-    # A heating write matches VT's demand as sampled from 40 s before it (the plugin's step and
-    # the gateway's 30-s repeat) to 15 s after it: the runner samples every 10 s, so a change the
-    # plugin followed within seconds may be sampled only after the write.
+    # A heating write matches VT's demand as sampled from 70 s before it (the plugin's 30-s hold
+    # on VT's "off", I12.23, its step and the gateway's 30-s repeat) to 15 s after it: the runner
+    # samples every 10 s, so a change the plugin followed within seconds may be sampled only
+    # after the write. VT's drops of a few seconds at its cycles' boundaries make no write.
     mismatched = [
         round((at - t) / 60)
         for at, _k, v in ch
-        if bool(v) not in {c for when, c in samples if at - 40 <= when <= at + 15}
-        and any(at - 40 <= when <= at + 15 for when, _c in samples)
+        if bool(v) not in {c for when, c in samples if at - 70 <= when <= at + 15}
+        and any(at - 70 <= when <= at + 15 for when, _c in samples)
     ]
     rooms = {}
     for zone, target in ZONES:
@@ -2053,7 +2161,10 @@ async def P2(r: Run):
 
 
 SCENARIOS.update(
-    {f.__name__: f for f in (M1, K1, K2, K3, K4, K5, E5, E6, L1, W1, T1, V1, E7, I1, I2, P2)}
+    {
+        f.__name__: f
+        for f in (M1, M2, K1, K2, K3, K4, K5, C7, E5, E6, L1, W1, T1, V1, E7, I1, I2, P2)
+    }
 )
 
 

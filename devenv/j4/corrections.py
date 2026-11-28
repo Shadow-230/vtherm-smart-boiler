@@ -27,6 +27,7 @@ from run import SCENARIOS, ZONES, NotRun, Run, check_written_exactly, main
 FLAME = "binary_sensor.boiler_sim_flame"
 SMARTPI_ZONE = "climate.zone_bedroom"
 LOW_CURVE = {"design_flow": 38.0}  # well below what the simulated house needs
+HIGH_CURVE = {"design_flow": 65.0}  # above it: the rooms ease off, their valves well under 70 %
 
 
 async def correction_on(r: Run) -> bool:
@@ -52,6 +53,12 @@ async def set_targets(r: Run, targets: dict[str, float]) -> None:
 
 
 CORRECTION_ON = {"comfort_correction": True}
+
+
+async def correction(r: Run) -> float | None:
+    """The comfort correction the session has learned, K: below 0 a trim (I13.3)."""
+    value = await r.attr("control_state", "comfort_correction")
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 async def curve_issue(r: Run) -> dict[str, Any] | None:
@@ -231,7 +238,50 @@ async def Q5(r: Run):
         await r.zones()
 
 
-SCENARIOS.update({f.__name__: f for f in (Q1, Q2, Q3, Q5)})
+async def Q6(r: Run):
+    """a curve too high with the correction on and every room satisfied, its valve well under
+    70 % open (I13.3): the correction trims the water below the curve — at most 1 K per 2 h of
+    heat flow, never more than 3 K; a room made short stops the trim, and it goes back towards 0.
+    The trim also waits while the boiler starts more often than before it: a run may need its
+    whole 5 h"""
+
+    async def trimmed() -> bool:
+        value = await correction(r)
+        return value is not None and value <= -0.5
+
+    try:
+        await r.options(curve=HIGH_CURVE | CORRECTION_ON)
+        r.ent.update(await r.ha.entities())
+        await r.sim("set_outdoor", temperature=3.0)
+        await r.zones()
+        await r.switch(True)
+        got = await r.ha.until(trimmed, 5 * 3600, 60)
+        value = await correction(r)
+        r.check(
+            got is not None, f"trimmed below the curve ({got and round(got / 60)} min): {value} K"
+        )
+        r.check(value is None or value >= -3.0, f"never more than 3 K: {value} K")
+        r.check(await correction_on(r), "the reason comfort_correction shown")
+        living, target_c = ZONES[0]
+        await r.sim("set_room_temperature", zone=living, temperature=target_c - 1.5)
+
+        async def going_back() -> bool:
+            later = await correction(r)
+            return later is not None and value is not None and later > value
+
+        back = await r.ha.until(going_back, 3600, 60)
+        r.check(
+            back is not None,
+            f"a room short: the trim goes back towards 0 ({await correction(r)} K)",
+        )
+    finally:
+        await r.switch(False)
+        await r.ha.wait(10)
+        await r.options()
+        await r.zones()
+
+
+SCENARIOS.update({f.__name__: f for f in (Q1, Q2, Q3, Q5, Q6)})
 
 
 if __name__ == "__main__":

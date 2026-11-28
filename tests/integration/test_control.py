@@ -706,7 +706,7 @@ async def test_vt_stopped_acts_through_the_zones(rig: Rig) -> None:
     await rig.switch(True)
     hass.states.async_set(select.entity_id, "Stopped")
     rig.zones.set("living", "off", hvac_action="off", valve_open_percent=0, on_percent=0.0)
-    await rig.advance(10)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert rig.gateway.calls[-1] == ("ch", False)
     assert 0.0 not in rig.gateway.setpoints()
     hass.states.async_set(select.entity_id, "Auto")
@@ -1135,11 +1135,12 @@ def heating_on(rig: Rig) -> bool | None:
     return rig.state("sensor", "control_state").attributes["heating_on"]
 
 
-async def test_vts_helper_drives_heating_both_ways_at_once(rig: Rig) -> None:
-    """I12: VT's central boiler switches its helper; heating follows it at once — a step without
-    waiting for the clock (writes at least 5 s apart, MIN_WRITE_INTERVAL_S) — whatever the rooms
-    show: off with a room calling ("rooms call, VT's central boiler does not"), on with none
-    (VT's own thresholds count what the plugin does not see)."""
+async def test_vts_helper_drives_heating_both_ways(rig: Rig) -> None:
+    """I12: VT's central boiler switches its helper; heating follows it — "on" at once, a step
+    without waiting for the clock (writes at least 5 s apart, MIN_WRITE_INTERVAL_S), "off" once
+    it has held 30 s (I12.23) — whatever the rooms show: off with a room calling ("rooms call,
+    VT's central boiler does not"), on with none (VT's own thresholds count what the plugin does
+    not see)."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(10)
@@ -1147,6 +1148,8 @@ async def test_vts_helper_drives_heating_both_ways_at_once(rig: Rig) -> None:
     rig.freezer.tick(6)
     rig.zones.set_helper("off")
     await rig.hass.async_block_till_done(wait_background_tasks=True)  # no tick
+    assert heating_on(rig) is True  # VT's "off" held
+    await rig.advance(40)
     state = rig.state("sensor", "control_state")
     assert state.attributes["heating_on"] is False
     assert "no_demand" in state.attributes["reasons"]
@@ -1180,7 +1183,7 @@ async def test_vts_decision_unknown_is_decision_3s_end_state(
     rig.zones.set_helper(helper)
     await rig.advance(30)
     state = rig.state("sensor", "control_state")
-    assert "zones_unknown" in state.attributes["reasons"]
+    assert "vt_decision_unknown" in state.attributes["reasons"]
     if effect == "off":
         assert state.state == "idle"
         assert state.attributes["heating_on"] is False
@@ -1231,7 +1234,7 @@ async def test_vts_activation_delay_is_shown_from_its_event(rig: Rig, path: str)
     events = async_capture_events(rig.hass, BOILER_CALL_EVENT)
     await rig.switch(True)
     rig.zones.set_helper("off")
-    await rig.advance(20)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     sent = dt_util.utcnow().timestamp()
     rig.hass.bus.async_fire(
         "versatile_thermostat_central_boiler_event", {"delayed_activation_sec": 120}
@@ -3750,6 +3753,34 @@ async def test_an_underfloor_curve_follows_a_slower_outdoor_mean(
     assert curve_outdoor() == 0.0
 
 
+async def test_the_curves_outdoor_mean_is_kept_through_a_reload(rig: Rig) -> None:
+    """I12.22: an hour at 10 °C after 5 °C, then the entry reloaded (options saved, control
+    switched in the settings, a restart): the curve keeps reading the 3-hour mean, aged by the
+    reload's minute, not the current 10 °C. "Curve outdoor temperature" shows that value, with
+    the mean, the last reading, where it came from and the mean's hours."""
+    await set_up(rig, add_entry(rig, with_circuit(rig, {"max_flow": 40})))
+    await rig.switch(True)
+    await rig.advance(60)
+    rig.outdoor = 10.0
+    await rig.advance(3600, step=60.0)
+
+    def curve_outdoor() -> float:
+        return rig.state("sensor", "control_state").attributes["curve_outdoor"]
+
+    before = curve_outdoor()
+    assert before == pytest.approx(6.4, abs=0.051)
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.advance(60)
+    assert curve_outdoor() == pytest.approx(before, abs=0.2)  # not 10 °C again
+    shown = rig.state("sensor", "curve_outdoor")
+    assert float(shown.state) == pytest.approx(curve_outdoor(), abs=0.051)
+    assert shown.attributes["mean"] == pytest.approx(curve_outdoor(), abs=0.051)
+    assert shown.attributes["now"] == 10.0
+    assert shown.attributes["source"] == "sensor"
+    assert shown.attributes["mean_hours"] == 3.0
+
+
 async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5515,7 +5546,7 @@ async def test_the_last_command_is_stored_at_once(
     assert rig.gateway.setpoints()[-1] == pytest.approx(written, abs=0.05)
 
     rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
-    await rig.advance(10)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert rig.gateway.calls[-1] == ("ch", False)
     assert last_command(hass_storage, rig)["heating"] is False
 
@@ -8634,7 +8665,7 @@ async def test_heating_on_ignored_from_the_start_blocks_and_hands_back(rig: Rig,
             return
         assert state.state == "heating"
         rig.zones.set("living", hvac_action="idle", valve_open_percent=0, on_percent=0.0)
-        await rig.advance(20)
+        await rig.advance(40)  # VT's "off" held 30 s (I12.23)
         assert switch.writes[-1] is False  # VT's "off" written
         return
     assert state.state == "handed_back"
@@ -10234,7 +10265,7 @@ async def test_vt_unknown_holds_while_calls_start_and_stop(
             await rig.advance(seconds)
             state = rig.state("sensor", "control_state")
             assert state.state == ("handed_back" if kind == "handed_back" else "idle")
-            assert "zones_unknown" in state.attributes["reasons"]
+            assert "vt_decision_unknown" in state.attributes["reasons"]
             assert "no_demand" not in state.attributes["reasons"]
             assert rig.state("binary_sensor", "alarm_vt_decision_unknown").state == "on"
             found = no_zone_issue(rig)
@@ -11193,7 +11224,7 @@ async def test_on_the_gateway_heating_off_goes_out_with_every_keep_alive(
     await rig.switch(True)
     assert sent()[:2] == [("setpoint", EXPECTED), ("ch", True)]
     no_demand(rig)
-    await rig.advance(10)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert sent()[-1] == ("ch", False)  # "off" commanded
     count = len(sent())
     await rig.advance(300)
@@ -11674,14 +11705,14 @@ def name_of(rig: Rig, entity_id: str) -> str:
 
 
 async def test_relay_control_follows_vt_both_ways(rig: Rig, relay: FakeRelay) -> None:
-    """The relay goes on and off with the zones, at once; written on a mismatch only — no
-    repeats for a relay that reports its state and has no timer; switched off, control hands
-    back to the rest state, "off"."""
+    """The relay goes on with the zones at once, and off once they have stopped calling for 30 s
+    (I12.23); written on a mismatch only — no repeats for a relay that reports its state and has
+    no timer; switched off, control hands back to the rest state, "off"."""
     await start_relay(rig)
     await rig.switch(True)
     assert relay.calls == [True]
     calling(rig, False)
-    await rig.advance(10)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert relay.calls == [True, False]
     calling(rig)
     await rig.advance(10)
@@ -12390,7 +12421,7 @@ async def test_a_relay_that_stops_taking_off_mid_session_blocks_control(
     assert relay.on
     relay.takes = False
     calling(rig, False)
-    await rig.advance(10)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert relay.calls == [True, False]  # "off", not taken
     await rig.advance(880)
     assert issue(rig, "relay_not_taking") is None

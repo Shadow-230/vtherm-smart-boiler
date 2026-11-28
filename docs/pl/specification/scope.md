@@ -97,9 +97,10 @@ sterownikiem pompy ciepła (wykluczona) ani niczym, co wysyła dane na zewnątrz
     zewnętrznej.
 12. **VT decyduje, czy grzać** — centralny kocioł VT, z własnymi progami i opóźnieniem włączenia,
     przełącza pomocnika, za którym idzie wtyczka (I12): grzanie włącza się i wyłącza tak, jak
-    decyduje VT, od razu i w obu kierunkach; wtyczka decyduje tylko o tym, jak ciepła
-    jest woda — krzywa, limity i rampa. Nic, co wtyczka liczy lub odmierza, nie wstrzymuje ani nie
-    utrzymuje grzania wbrew VT: stary kocioł z wysoką minimalną mocą sam często się włącza i wyłącza,
+    decyduje VT — włącza od razu, wyłącza, gdy „wyłącz” VT trwa 30 s, bo VT na chwilę gaśnie na
+    przełomie swoich cykli (I12.23); wtyczka decyduje tylko o tym, jak ciepła
+    jest woda — krzywa, limity i rampa. Poza tym przytrzymaniem nic, co wtyczka liczy lub odmierza,
+    nie wstrzymuje ani nie utrzymuje grzania wbrew VT: stary kocioł z wysoką minimalną mocą sam często się włącza i wyłącza,
     a jego blokowanie zostawiłoby dom zimny. Częste starty to informacja — alarm z progiem i werdykt.
     (Decyzja użytkownika z 2026-09-25.) Wymienione wyjątki, każdy ze swoim powodem (§7; decyzje
     użytkownika z 2026-09-26/27):
@@ -670,7 +671,8 @@ danych wejściowych; każda funkcja działa z tym, co ma.
 Jak sterowanie podejmuje decyzje (zasada 12):
 
 - Grzanie włącza się i wyłącza według decyzji VT przy każdym kroku sterowania (10 s) i od razu,
-  gdy pomocnik się zmieni, w obu kierunkach. Odstęp decyzji (opcja, domyślnie 5 min) dotyczy tylko
+  gdy pomocnik się zmieni: włącza od razu, wyłącza, gdy „wyłącz” VT trwa 30 s (I12.23, wartość
+  tymczasowa, K4). Odstęp decyzji (opcja, domyślnie 5 min) dotyczy tylko
   temperatury wody.
 - **O tym, czy grzać, decyduje VT** (I12, decyzja użytkownika z 2026-11-25). Kocioł centralny VT,
   ustawiony w VT z własnymi progami (wołające urządzenia, łączna moc) i opóźnieniem włączenia,
@@ -1293,7 +1295,7 @@ Wartości domyślne opcji bezpieczeństwa i dlaczego (użytkownik przegląda je 
 | Limit czasu urządzenia przy oddaniu sterowania przez limit czasu | 1 min (1–60), własny limit urządzenia wpisuje użytkownik | zwolnienie jest oceniane dopiero po jego wykonaniu, a „oddanie sterowania nie powiodło się” po 3 min od niego; dłuższy rzeczywisty limit czasu daje fałszywy alarm, który znika, gdy zwolnienie się pokaże (decyzja 5 z `docs/en/development/plans/plan-0.2.3.md`; tymczasowe, K4) |
 | Nastawa awaryjna | ostatnia efektywna temperatura zewnętrzna przez 3 h, potem projektowa temperatura zasilania, albo stała wartość użytkownika (decyzja 9) | nigdy zero ciepła; zawory chronią pokoje przed przegrzaniem |
 | Pomocnik VT | żaden — użytkownik wybiera pomocnika przełączanego przez kocioł centralny VT; sterowanie na niego czeka | wtyczka idzie za decyzją VT i nigdy jej nie zgaduje (I12.8) |
-| Korekta komfortu | wyłączona (K4, decyzja użytkownika z 2026-11-17, odwracająca tę z 2026-10-10 po F8 z J4 i przeglądzie literatury; wpis zostaje przy tym, co zapisał); po włączeniu do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie, gdy pokój nie dochodzi do nastawy od godziny; do 3 K pod krzywą, gdy każdy pokój jest otwarty poniżej 70 % (I13.3) | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: do około 3,5 razy więcej startów w symulacji od wolniejszego tempa I13.3 (stałe −5 °C; przy dobowym wahaniu temperatury zewnętrznej x1.3 i x2.2, wobec x1.1 i x2.0 bez niej; wcześniej około 2 do 6 razy), za mniej niż 0.15 K komfortu; pod krzywą pokój może wolniej się nagrzewać; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
+| Korekta komfortu | wyłączona (K4, decyzja użytkownika z 2026-11-17, odwracająca tę z 2026-10-10 po F8 z J4 i przeglądzie literatury; wpis zostaje przy tym, co zapisał); po włączeniu do swojego limitu, domyślnie 3 K (najwyżej 10 K), rośnie najwyżej 3 K dziennie, gdy pokój nie dochodzi do nastawy od godziny; do 3 K pod krzywą, gdy każdy pokój jest otwarty poniżej 70 % (I13.3) | przy strefach TPI z VT może utrzymać wodę na jej krawędzi +3 K, podczas gdy strefa przy pełnym cyklu pracy nie dochodzi do celu o własne przesunięcie TPI, i wtedy cykl każdej strefy zatrzymuje palnik: do około 1,3 razy więcej startów w symulacji od przytrzymania „wyłącz” VT w I12.23 (x1.04 przy stałym −5 °C, x1.27 z dobowym wahaniem temperatury zewnętrznej; x0.39 i x0.60 przy +8 °C; wobec x0.31 do x0.64 bez niej; wcześniej około 3,5 razy, a przed I13.3 około 2 do 6 razy), za mniej niż 0.15 K komfortu; pod krzywą pokój może wolniej się nagrzewać; włączona, pomaga pokojowi, którego odbiornik ciepła nie może ogrzać na krzywej, z ograniczeniem, aby inne się nie przegrzały |
 | Reakcja alarmu | informacja; oddania sterowania z decyzji 7 zawsze | inny sterownik zapisuje wartości — nigdy z nim nie walczymy; wtyczka zatrzymuje grzanie tylko tam, gdzie sam kocioł się zatrzymuje |
 | Alarm maksimum obiegu | maksimum obiegu + 5 K, przez 10 min (informacja); na obiegu zasilanym prosto z kotła c.w.u. z priorytetem nie jest liczona | kocioł może przekroczyć maksimum; użytkownik to widzi (decyzja 10); c.w.u. nie dociera do tego obiegu (2026-10-12) |
 | Próg „dolej wody” | brak | wartość pochodzi z instrukcji kotła; zła wartość domyślna niczego nie zatrzyma, ale wprowadzi w błąd |
@@ -1339,6 +1341,7 @@ powierzchni podłogi; po stronie wody to około 1,0 (Olesen 2007): różnica jes
 | Okno ponownego zapisu 24 h | `core/guards.py` | postanowione 2026-09-25 |
 | Ponowienie oddania sterowania co 60 s | `control.py` | istniejące |
 | Utrata łączności: 5 min nieświeże w ciągu 10 min; powrót po 60 s świeżych, po 10 min po drugiej utracie w ciągu godziny (I13.2) | `core/controller.py` | 5 min postanowione 2026-09-25; okno i powrót tymczasowe, K4 |
+| „Wyłącz” VT wykonywane, gdy trwa 30 s; „włącz” od razu (I12.23) | `core/controller.py` | tymczasowo, K4 (decyzja użytkownika z 2026-11-28, według literatury) |
 | Utrzymanie temperatury zewnętrznej 3 h; stała czasowa temperatury zewnętrznej 3 h, 12 h, gdy w obiegu krzywej jest pokój z ogrzewaniem podłogowym (I13.8) | `core/curve.py` | utrzymanie: decyzja 9; stałe czasowe: tymczasowe, K4 (3 h: powód do potwierdzenia, Open after 0.2.2, #27; 12 h: pokoje z ogrzewaniem podłogowym reagują w ciągu 20–70 h, Kull i in. 2017, a instrukcja regulatora pogodowego filtruje przez 10–20 h dla większości budynków, Siemens LMS14 — 12 h w dolnej części, bo dłuższa średnia dłużej trzyma wodę wyżej podczas ocieplenia) |
 | Zawieszony czujnik: jedna wartość trzymana 12 h, gdy pogoda zmienia się o 3 K lub więcej; odchylenie 6 K na przestrzeni co najmniej 2 h nakładających się danych | `core/signal_check.py` | tymczasowe, K4 (powód do potwierdzenia) |
 | Ograniczenie modulacji (I13.7): nigdy poniżej 30 % ani bliżej niż 10 punktów od udziału minimum kotła w jego maksimum; zdejmowane na 3 h, gdy zasilanie przez 10 min jest ponad 5 K poniżej nastawy przy płomieniu; powtarzane co 30 s (encja wygasająca) albo co 5 min (bramka, encja trzymana); nieudany zapis albo zwolnienie, którego encja nie pokazuje, ponawiane po 60 s; odczyt oceniany po 120 s; propozycja: zapotrzebowanie × 1,2, w górę do 5 %, brak przy 90 % lub więcej | `core/modulation_cap.py`, `core/cap_suggestion.py`, `modulation_cap.py` | tymczasowe, K4 (dolna granica: minimum kotłów to 20–30 % maksimum, Bennett 2018, a ograniczenie na minimum daje pracę włącz-wyłącz, HEM-VAL-05; powtórzenia: `selburnpow` EMS-ESP wygasa w ciągu około minuty, `MM=` bramki trwa do resetu) |

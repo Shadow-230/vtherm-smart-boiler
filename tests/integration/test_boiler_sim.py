@@ -305,6 +305,42 @@ async def test_scenario_services(hass: HomeAssistant, freezer) -> None:
             await scenario(hass, service, **data)
 
 
+async def test_a_room_thermometer_fails_and_a_window_opens(hass: HomeAssistant, freezer) -> None:
+    """I12.26: a room's thermometer made unavailable and back, the other rooms' untouched; a
+    room's window sensor open and closed, the room losing heat faster while it is open."""
+    await setup_sim(hass, freezer)
+    bedroom = "sensor.boiler_sim_zone_bedroom_temperature"
+    await scenario(hass, "fail_room_sensor", zone="zone_bedroom")
+    assert value(hass, bedroom) == "unavailable"
+    assert value(hass, "sensor.boiler_sim_zone_living_temperature") != "unavailable"
+    await scenario(hass, "fail_room_sensor", zone="zone_bedroom", failed=False)
+    assert value(hass, bedroom) != "unavailable"
+    with pytest.raises(vol.Invalid):
+        await scenario(hass, "fail_room_sensor", zone="zone_garage")
+
+    bath, window = (
+        "sensor.boiler_sim_zone_bath_temperature",
+        "binary_sensor.boiler_sim_zone_bath_window",
+    )
+    assert value(hass, window) == "off"
+    await scenario(hass, "set_outdoor", temperature=3)
+    await scenario(hass, "set_zone_mode", zone="zone_bath", mode="off")  # its valve closed
+    await advance(hass, freezer, 3600)  # its radiator gives off what it held
+
+    async def cooled_in_an_hour() -> float:
+        await scenario(hass, "set_room_temperature", zone="zone_bath", temperature=20)
+        await advance(hass, freezer, 3600)
+        return 20.0 - float(value(hass, bath))
+
+    closed = await cooled_in_an_hour()
+    await scenario(hass, "set_window", zone="zone_bath")
+    assert value(hass, window) == "on"
+    opened = await cooled_in_an_hour()
+    assert opened > 3 * closed > 0
+    await scenario(hass, "set_window", zone="zone_bath", open=False)
+    assert value(hass, window) == "off"
+
+
 async def test_decision_6s_classes_are_reachable_through_services(
     hass: HomeAssistant, freezer
 ) -> None:

@@ -98,8 +98,10 @@ Może istnieć tylko jeden wpis integracji: obsługuje jeden kocioł.
    sterowania utwórz pomocnika wł./wył.
    (Ustawienia → Urządzenia i usługi → Pomocnicy → Przełącznik) i ustaw kocioł centralny VT w
    konfiguracji centralnej VT: jego progi i opóźnienie włączenia oraz oba polecenia na pomocniku
-   (`input_boolean.twoj_pomocnik/input_boolean.turn_on` i `…/input_boolean.turn_off`). Nigdy nie
-   kieruj poleceń VT na sam kocioł: dwa sterowniki nigdy nie mogą sterować tym samym kotłem.
+   (`input_boolean.twoj_pomocnik/input_boolean.turn_on` i `…/input_boolean.turn_off`). Ustaw co
+   najmniej jeden próg powyżej 0, na przykład liczbę urządzeń na 1: oba mają domyślnie 0, a próg
+   0 jest wyłączony, więc VT nigdy nie przełączyłby pomocnika. Nigdy nie kieruj poleceń VT na sam
+   kocioł: dwa sterowniki nigdy nie mogą sterować tym samym kotłem.
    Monitorowanie działa i bez tego; sterowanie na to czeka.
 2. **Utwórz wpis.** Ustawienia → Urządzenia i usługi → Dodaj integrację → **Smart Boiler for
    Versatile Thermostat**. Pierwsze panele pytają, jak kocioł jest podłączony, o źródło ciepła i
@@ -262,13 +264,20 @@ przy własnym sterowaniu albo przy swoim termostacie.
 O tym, czy kocioł grzeje, decyduje kocioł centralny Versatile Thermostat. Ustaw go w konfiguracji
 centralnej VT, tak jak opisuje dokumentacja VT: jego progi (ile urządzeń woła albo ile mocy),
 opóźnienie włączenia i oba polecenia na pomocniku wł./wył. (`input_boolean`), którego tworzysz —
-nigdy na samym kotle. Potem wybierz tego pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
+nigdy na samym kotle. Co najmniej jeden próg musi być powyżej 0: oba mają domyślnie 0, a próg 0
+jest wyłączony, więc VT nigdy nie przełącza pomocnika i nic nie grzeje. Potem wybierz tego
+pomocnika w **Zachowaniu sterowania** wtyczki. Wtyczka
 idzie za pomocnikiem: włączony — kocioł grzeje; wyłączony — nie. Dokłada temperaturę wody i swoje
 zasady bezpieczeństwa. Opóźnienie włączenia w VT działa jak zwłoka przy wezwaniu ciepła: pokój,
 który woła tylko przez chwilę, nie uruchamia kotła. Wtyczka nie dodaje własnej przerwy (przerwę
-przed ponownym startem palnika sprawdzono na symulatorze i nie pomogła, I13.6).
+przed ponownym startem palnika sprawdzono na symulatorze i nie pomogła, I13.6). Za „wyłącz” VT
+idzie dopiero, gdy trwa ono 30 sekund: między swoimi cyklami VT wyłącza pomocnika na kilka sekund,
+gdy zawór jednego pokoju zamyka się tuż przed otwarciem zaworu drugiego, a pójście za tym gasiło
+palnik bez potrzeby (wartość tymczasowa).
 
-- Wtyczka sprawdza co 10 sekund i od razu, gdy pomocnik się zmieni, w obie strony.
+- Wtyczka sprawdza co 10 sekund i od razu, gdy pomocnik się zmieni: „włącz” grzeje od razu,
+  „wyłącz” kończy grzanie, gdy trwa 30 sekund. Usterka kotła, utrata łączności, wyłączenie
+  sterowania i nieznana decyzja VT nigdy nie są przytrzymywane.
 - Sterowanie jest zablokowane bez pomocnika, dopóki kocioł centralny VT nie jest ustawiony
   (zaznaczony, z oboma poleceniami), i dopóki jego polecenia przełączają coś innego niż pomocnika;
   zgłoszenie w Naprawach podaje wtedy, co przełączają. Jeśli dziś VT przełącza przekaźnik twojego
@@ -368,8 +377,11 @@ obejmuje około 3 godzin. Gdy w obiegu, któremu służy krzywa, jest pokój z o
 podłogowym, obejmuje około 12 godzin (wartość tymczasowa): podłoga nagrzewa się i stygnie dobę
 albo dłużej, więc jej woda nie powinna iść za krótkim ociepleniem; przy ociepleniu woda zostaje
 wtedy dłużej nieco cieplejsza. Wtyczka nie wie, jak ciężki jest Twój dom: ciężki dom z
-grzejnikami zostaje przy średniej z 3 godzin. Stan sterowania pokazuje używaną wartość
-(`curve_outdoor`).
+grzejnikami zostaje przy średniej z 3 godzin. Średnia przetrwa restart i zmianę ustawień:
+liczy się dalej od miejsca, w którym była, nadrabiając czas, który minął, zamiast zaczynać od
+bieżącej temperatury. **Temperatura zewnętrzna dla krzywej** pokazuje wartość, której używa
+krzywa, ze średnią, ostatnim odczytem, jego źródłem i liczbą godzin średniej; pokazuje ją też
+stan sterowania (`curve_outdoor`).
 
 Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3 godziny trzyma
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
@@ -404,7 +416,8 @@ ograniczenie już trzyma wodę. Najniższa temperatura wody zawsze obowiązuje. 
 pokazuje korektę ze znakiem: `comfort_correction` poniżej 0 znaczy pod krzywą.
 
 Koszt: więcej gazu i więcej startów palnika — przy strefach TPI w VT może stać na limicie: w
-symulacji do około 3,5 razy więcej startów przy stałym mrozie, prawie nie dodając ciepła. Pod
+symulacji do około 1,3 razy więcej startów w mrozie z dobowymi wahaniami, prawie nie dodając
+ciepła. Pod
 krzywą pomieszczenie może wolniej się nagrzewać. Dlatego jest wyłączona: gdy pokój zostaje zimny,
 najpierw podnieś krzywą. Przycisk „Wyzeruj korektę komfortu” cofa ją do zera.
 
@@ -552,7 +565,7 @@ jest wyłączony: żadnemu pokojowi nie brakuje ciepła, a algorytm strefy może
 Jego atrybut `reason` mówi, dlaczego jest włączony:
 
 - **Kocioł centralny VT nie wzywa ciepła** (`vt_not_calling`) — pokój woła, ale pomocnik VT jest
-  wyłączony: progi VT nie są osiągnięte;
+  wyłączony: progi VT nie są osiągnięte albo oba wynoszą 0;
 - **Trwa opóźnienie włączenia VT** (`activation_delay`);
 - **Kocioł grzeje ciepłą wodę** (`hot_water`) — tylko przy priorytecie ciepłej wody;
 - **Kocioł zgłasza usterkę** (`boiler_fault`);
@@ -1418,6 +1431,7 @@ domyślnie wyłączone.
 | Sterowanie (eksperymentalne) | czy sterowanie jest włączone; niczego nie przełącza (sterowanie przełącza się w opcjach). Jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
 | Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę; ograniczenie modulacji i jego powód, gdy jest włączone ([4.13](#413-ograniczenie-modulacji-do-włączenia)) |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
+| Temperatura zewnętrzna dla krzywej | temperatura zewnętrzna, której używa krzywa — niższa z bieżącej i średniej — ze średnią, ostatnim odczytem, jego źródłem i liczbą godzin średniej ([4.4](#44-temperatura-wody)); nie przy przekaźniku |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
 | Nie daje ciepła | włączone, gdy pokój woła o ciepło, a kocioł go nie daje, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
 | Wołające o ciepło | pokoje wołające teraz, które to są i na jakich obiegach |

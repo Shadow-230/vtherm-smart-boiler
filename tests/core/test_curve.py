@@ -64,7 +64,16 @@ def test_invalid_curves_are_rejected(kwargs: dict) -> None:
 
 def test_sensor_wins_and_average_starts_at_the_first_value() -> None:
     state = update_outdoor(OutdoorState(), sensor=5.0, weather=8.0, now=0.0)
-    assert state == OutdoorState(5.0, 5.0, OutdoorSource.SENSOR, 0.0)
+    assert state == OutdoorState(5.0, 5.0, OutdoorSource.SENSOR, 0.0, current=5.0)
+
+
+def test_a_long_gap_ages_the_mean_by_its_length() -> None:
+    """I12.22: a mean kept across a restart is aged by the time since its last reading, as an
+    exponential mean is: after one time constant it has gone 63 % of the way to the reading."""
+    kept = OutdoorState(-5.0, -5.0, OutdoorSource.SENSOR, 0.0)
+    back = update_outdoor(kept, 5.0, None, 12 * HOUR, time_constant_s=12 * HOUR)
+    assert back.average == pytest.approx(-5.0 + 10.0 * (1 - math.exp(-1)), rel=1e-6)
+    assert back.effective == back.average  # the mean, lower than now
 
 
 def test_weather_is_the_fallback_source() -> None:
@@ -176,9 +185,9 @@ def test_missing_readings_keep_the_average_and_when_the_last_reading_came() -> N
     reading back continues the average instead of starting it again."""
     state = update_outdoor(OutdoorState(), 2.0, None, EPOCH)
     held = update_outdoor(state, None, None, EPOCH + 1800.0, hold_s=HOUR)
-    assert held == OutdoorState(2.0, 2.0, OutdoorSource.HELD, EPOCH)
+    assert held == OutdoorState(2.0, 2.0, OutdoorSource.HELD, EPOCH, current=2.0)
     gone = update_outdoor(held, None, None, EPOCH + HOUR + 1.0, hold_s=HOUR)
-    assert gone == OutdoorState(2.0, None, OutdoorSource.NONE, EPOCH)
+    assert gone == OutdoorState(2.0, None, OutdoorSource.NONE, EPOCH, current=2.0)
     back = update_outdoor(gone, 8.0, None, EPOCH + 2 * HOUR, time_constant_s=3 * HOUR)
     assert back.average == pytest.approx(2.0 + 6.0 * (1 - math.exp(-2 / 3)))
     assert back.effective == back.average

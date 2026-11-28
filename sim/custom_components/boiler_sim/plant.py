@@ -6,7 +6,8 @@ Physics, deliberately simple:
   return ``T_w − Q / (2k)``, with ``P`` the burner power, ``Q`` the heat the emitters take from
   the water and ``k`` the pump's flow times heat capacity.
 - Each zone is a share of the house: its loss to outdoors and internal gains, and its heat
-  capacity — its share of the house's, or its own (``ZoneProfile.capacity_kwh_per_k``).
+  capacity — its share of the house's, or its own (``ZoneProfile.capacity_kwh_per_k``). An open
+  window multiplies its room's loss by ``WINDOW_LOSS_FACTOR`` (test-only value).
 - Emitters take heat from the water by EN 442 — ``Q = opening · P_ref · (excess / reference
   excess)^n`` — while the pump circulates, and pass it on to their room with first-order inertia
   (``EMITTER_TAU_S``: a radiator about 20 minutes, underfloor heating about 2 hours; test-only
@@ -52,6 +53,9 @@ HOUR = 3600.0
 WATER_KWH_PER_L_K = 4.186 / 3600.0
 DEMAND_OPENING = 0.05
 MODULATION_TAU_S = 120.0
+# An open window: its room loses this many times its usual heat — about 3 K an hour at +3 °C with
+# the heating off in the average house, against 0.65 K closed (I12.26; test-only value).
+WINDOW_LOSS_FACTOR = 5.0
 # Emitter inertia (P-112; test-only values): the time constant with which an emitter passes the
 # heat it takes from the water on to its room. A convector is given a radiator's (assumed: the
 # review names radiators and underfloor heating only).
@@ -185,6 +189,7 @@ class Plant:
         self.water_capacity = boiler.water_volume_l * WATER_KWH_PER_L_K  # kWh/K
         self.room = [z.target for z in self.zones]
         self.targets = [z.target for z in self.zones]
+        self.window_open = [False for _z in self.zones]
         self.stored = [0.0] * len(self.zones)  # heat in each emitter on its way to the room, kWh
         self.water = water
         self.burner = False
@@ -388,6 +393,8 @@ class Plant:
             given[i] = self.stored[i] / self.taus[i]
             self.stored[i] = max(0.0, self.stored[i] + (taken[i] - given[i]) * dt_h)
             loss = house.loss_kw_per_k * z.share * (self.room[i] - outdoor)
+            if self.window_open[i]:
+                loss *= WINDOW_LOSS_FACTOR
             gains = house.gains_kw * z.share
             self.room[i] += (given[i] + gains - loss) * dt_h / self.capacities[i]
 

@@ -148,10 +148,15 @@ Proxmox host, so the firewall there is out of its reach.
 
 ## 4. The test installation
 
-Set up in the user interface — or by Claude through the API at J4, once you say to start:
+Set up in the user interface — or through the API by the J4 session you start (tests on the test
+instances are started by you), with `HA_INSTANCE=N scripts/env.sh python devenv/j4/setup_instance.py
+ROLE` (gateway, starts, relay, entity or standalone): it makes what is missing of items 1 to 5,
+restarts the instance once, and sets VT's device threshold at 1:
 
 1. **VT central configuration**: with the central mode select, and VT's central boiler on, its
-   thresholds at VT's defaults and its two commands on the helper
+   threshold of devices at 1 (VT's thresholds are 0 by default, and 0 turns a threshold off, so VT
+   would never switch the helper), the power threshold and the activation delay at 0, and its two
+   commands on the helper
    `input_boolean.j4_vt_central_boiler`, which every configuration in `devenv/config/` holds:
    `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` and `…/input_boolean.turn_off`.
    VT decides whether the boiler heats; the plugin follows the helper (I12.8). Never point these
@@ -162,7 +167,10 @@ Set up in the user interface — or by Claude through the API at J4, once you sa
    SmartPI in the bedroom, a zone algorithm that learns. In each zone's advanced settings, its own
    safety delay of 1440 min: VT takes a sensor whose state has not been written for its delay
    (60 min by default) for dead and switches the zone to its safety mode, and the simulator's
-   steady rooms, or a steady outdoor temperature, keep one value longer than that.
+   steady rooms, or a steady outdoor temperature, keep one value longer than that. In the bath,
+   window detection by a sensor, `binary_sensor.boiler_sim_zone_bath_window`, at VT's defaults
+   (30 s, the zone turned off): W2 opens that window (`devenv/j4/rooms.py`), and is not run
+   without it.
 3. **Smart Boiler for Versatile Thermostat**:
    - Signals: `binary_sensor.boiler_sim_flame`, `sensor.boiler_sim_flow`,
      `sensor.boiler_sim_return`, `sensor.boiler_sim_modulation`,
@@ -237,7 +245,9 @@ reach, its commands dropped — the lost link; `relay`: the relay's state unknow
 `thermostat_setpoint`; a fault signal), `force_setpoint` (another controller), `ignore_writes`,
 `refuse_id1` (confirmed, then dropped), `clip_setpoint`, `drop_override` (a single fall-back),
 `start_dhw`, `set_topology`, `set_zone_mode` (a zone VT switched off closes its valve),
-`set_room_temperature` (one room set at once, as to 4 °C for frost), `reset_gateway` and
+`set_room_temperature` (one room set at once, as to 4 °C for frost), `fail_room_sensor` (a room's
+thermometer unavailable), `set_window` (a room's window sensor `binary_sensor.boiler_sim_<zone>_window`
+open or closed; the room loses heat five times as fast while it is open), `reset_gateway` and
 `restart_device` (a lost command with a trace), `relay_restart` (seen, or with `reported: false`
 unseen), `relay_wifi_loss`, `relay_switch` (an automation or its button), `set_wall_setpoint`,
 `set_fault` — the stub's own `opentherm_gw.reset_gateway`, the options (control switched through them: "Control mode", "Control on", I11), and

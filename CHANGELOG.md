@@ -55,15 +55,19 @@ version is decided then.
   the water at its need while it asks, nothing added; a fixed valve sets no lower bound — the
   boiler follows its curve, the valve standing open at or below its setting.
 - Heating on and off as VT's central boiler decides: with its own thresholds and activation
-  delay, it switches an on/off helper (`input_boolean`) that the plugin follows at once, in both
-  directions. **Heat call** shows the plugin's call with the reason when it is off, **Calling for
-  heat** the rooms that call, and an event follows each change of the call.
+  delay, it switches an on/off helper (`input_boolean`) that the plugin follows — "on" at once,
+  "off" once it has lasted 30 seconds: VT turns the helper off for a few seconds between its
+  cycles, as one room's valve closes just before another's opens, and following that stopped the
+  burner for nothing. **Heat call** shows the plugin's call with the reason when it is off,
+  **Calling for heat** the rooms that call, and an event follows each change of the call.
 - Write paths: the OpenTherm Gateway (`opentherm_gw`, or its firmware over MQTT), ESPHome
   OpenTherm, EMS-ESP, another writable entity, and a relay for an on/off boiler; how the boiler is
   connected is the setup's first question. Control never writes through a cloud service.
 - The curve reads the lower of the outdoor temperature now and its mean over 3 hours, over
-  12 hours for a circuit with underfloor heating. A fallback setpoint when no outdoor temperature
-  is known.
+  12 hours for a circuit with underfloor heating. The mean is kept through a restart and a change
+  of settings; **Curve outdoor temperature** shows the value the curve uses, with the mean, the
+  last reading, where it came from and the hours the mean covers. A fallback setpoint when no
+  outdoor temperature is known.
 - The comfort correction (off by default): it counts a room short only after it has been fully
   open and short for two of its cycles and an hour, rises at most 1 K per four cycles of the
   slowest room it reads, waits while a room warms back after its setpoint was raised, and trims
@@ -87,6 +91,10 @@ version is decided then.
   plugin keeps no list of rooms, and reads no state of VT's climates, none of the settings in
   VT's config entries, and no history of them. VT 10.6.5 is the oldest supported. At a first installation while VT runs, reload VT
   once; a repair issue reminds you.
+- Set at least one of the thresholds of VT's central boiler above 0: both are 0 by default, and a
+  threshold of 0 is off, so VT would never switch the helper. VT's central boiler counts as set up
+  once it has both its commands. The control state tells VT's decision not known — its helper
+  unknown or unavailable — apart from no room known.
 - What stays VT's: when to heat and the activation delay, frost protection (VT's frost preset and
   central mode), and the zone algorithms' learning — the plugin pauses none and publishes nothing
   on VT's thermostats.

@@ -46,6 +46,9 @@ _CALLED = frozenset({ControlMode.HEATING, ControlMode.FALLBACK})
 _NOT_CONTROLLING = frozenset(
     {ControlMode.DISABLED, ControlMode.NOT_ALLOWED, ControlMode.HANDED_BACK}
 )
+# Every zone unknown, or the zones known and VT's decision not: nothing can ask for heat.
+_UNKNOWN = frozenset({Reason.ZONES_UNKNOWN, Reason.VT_DECISION_UNKNOWN})
+_UNDECIDED = _UNKNOWN | {Reason.ZONES_RECOGNITION}
 
 
 def boiler_call(mode: ControlMode, reasons: Collection[Reason], calling: int) -> BoilerCall:
@@ -62,7 +65,7 @@ def boiler_call(mode: ControlMode, reasons: Collection[Reason], calling: int) ->
         return BoilerCall(False, CallReason.BOILER_FAULT)
     if mode in _CALLED:
         return BoilerCall(True, None)
-    if Reason.ZONES_RECOGNITION in reasons or Reason.ZONES_UNKNOWN in reasons:
+    if not _UNDECIDED.isdisjoint(reasons):
         return BoilerCall(None, CallReason.WAITING_DATA)
     if Reason.ACTIVATION_DELAY in reasons:
         return BoilerCall(False, CallReason.ACTIVATION_DELAY)
@@ -131,7 +134,7 @@ def no_heat(
         return previous
     if rooms_calling is False:
         return NoHeat(False)
-    if mode in _NOT_VOUCHED or writes_stopped or Reason.ZONES_UNKNOWN in reasons:
+    if mode in _NOT_VOUCHED or writes_stopped or not _UNKNOWN.isdisjoint(reasons):
         return NoHeat(True, NoHeatReason.HANDED_BACK)
     if mode is ControlMode.BOILER_FAULT:
         return NoHeat(True, NoHeatReason.BOILER_FAULT)

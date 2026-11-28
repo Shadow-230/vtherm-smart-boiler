@@ -260,7 +260,8 @@ it — fixed by refusing VT's entities by the registry first.
 #### I12.14 VT's author 🔒
 
 Decision 9, once the user has read the issue and consented. Waits: nothing is published (the
-user, 2026-11-26). Meanwhile the plugin keeps to `SAFETY_EVENT` with the restart rule, and counts a
+user, 2026-11-26). The user decides when, and is not reminded of it (2026-11-28). For the draft:
+VT restarts its activation delay at every drop of its central boiler, however short (I12.23). Meanwhile the plugin keeps to `SAFETY_EVENT` with the restart rule, and counts a
 room as fully open from 95 % applied (the duty cap is not in the API).
 
 #### I12.15 J4 and K4 🔒
@@ -318,3 +319,105 @@ counts VT's central boiler set up by its two commands, which come from the centr
 VT deletes when it is unticked; the flag is not read. The tests hand over the flag as VT does, and
 a real-VT test saves a zone through VT's own options flow
 (`research/2026-11-27-vt-central-boiler-flag.md`).
+
+The rest of this part comes from J4 on `qas` 01ef0a6 (2026-11-27/28: 48 of 51 scenarios passed,
+H1 and E6 the pack's, L1 one check), the test session's tasks of 2026-11-28 checked in the code
+(`research/2026-11-28-j4-01ef0a6-tasks.md`). The user's go-ahead of 2026-11-28 for I12.21 and
+I12.24–I12.28; I12.22 and I12.23 wait for the user's decisions, with the literature read for them
+(`research/2026-11-28-lit-outdoor-mean.md`, `research/2026-11-28-lit-off-delay.md`). One pull
+request each, in this order.
+
+#### I12.21 A reason of its own while VT's decision is unknown ✅
+
+With the zones known and VT's helper neither on nor off, the reason read `zones_unknown`, which says
+no zone is known. It reads `vt_decision_unknown` now; `zones_unknown` stays for no zone known. What
+control does is unchanged: decision 3's end state, the alarm and the repair as before.
+
+#### I12.22 The curve's outdoor mean across reloads ✅
+
+The 3-hour and 12-hour means restart at every reload and restart, so after one in a mild spell
+the curve drops at once. The user's decision of 2026-11-28: keep "the lower of now and the mean",
+keep the mean across reloads, show it as an entity, and give it a resolution.
+Done 2026-11-28: the mean is kept in the control store with its last reading's time, and through a
+new session (control switched off and on); the next reading ages it by the time it missed. The
+entity "Curve outdoor temperature" shows the value the curve uses, with the mean, the last
+reading, its source and the mean's hours. A step of resolution (0.2 or 0.5 K, either way or on
+warming only) left a room 1 K short and raised the boiler's starts above the documented ratios in
+the simulator, so control keeps none; the user is asked whether the display should be rounded
+instead (`research/2026-11-28-i12-22-resolution-sim.md`).
+
+#### I12.23 A hold on VT's "off" ✅
+
+VT's central boiler drops for 0.1–5 s at a TPI cycle's boundary and the plugin stopped the boiler
+each time (5 of 16 burner stops in 12 h with VT's 5-minute cycle). The user's decision of
+2026-11-28, "as the literature says": "on" at once, "off" after it has held 30 s (provisional, K4);
+never held for a fault, a lost link, control switched off or VT's decision unknown. VT restarts its
+own activation delay at each drop, which no hold short of it bridges.
+Done 2026-11-28: the controller holds VT's "off" while the last step applied "on" and heated, from
+the drop's start, for 30 s; L1 matches each heating write against VT's demand over the 70 s before
+it. In the simulator the plugin's starts against the boiler's own regulation fall to x0.31–x1.27
+(x1.12–x3.56 before), the rooms up to 0.1 K warmer: J4's starts criterion passes with VT's 5-minute
+cycle, and the comfort correction's cost reads about 1.3 times at most
+(`research/2026-11-28-i12-23-hold-sim.md`).
+
+#### I12.24 VT's thresholds in the documents ✅
+
+VT's thresholds default to 0, and 0 turns a threshold off, so with both at 0 VT never switches the
+helper (`feature_central_boiler_manager.py` 514–527). The user guide (setup and §4.3) and the test
+environment (§4 item 1) say at least one must be above 0 (EN, PL).
+
+#### I12.25 H1 and E6 in the runner ✅
+
+H1: VT's central boiler goes off when its thermostats are disabled and the plugin follows it; the
+check follows VT through recognition, then the hand-back and `no_zone_known`. E6: the switch-off is
+compared with the valves' state at that moment, not a sample taken seconds before.
+
+#### I12.26 The simulator's room thermometer and window ✅
+
+A signal that makes a room's thermometer fail, and a window sensor per room, so that VT's safety and
+window events and the rooms' trust (I12.10) can be brought about on the bench; the scenarios that
+use them.
+Done 2026-11-28, the simulator's part: `fail_room_sensor` (a room's thermometer unavailable),
+`set_window` and a window sensor per room (the room losing heat five times as fast while open). The
+scenarios follow in a pull request of their own.
+Then the scenarios (`devenv/j4/rooms.py`): T2, the bedroom's thermometer fails — that room alone
+untrusted while control goes on, trusted again once it reports; W2, the bath's window opens while it
+is the critical zone — no longer critical while open, critical again once it warms back. VT's
+safety event stays in-process: the bench's zones keep VT's safety delay at 1440 min.
+
+#### I12.27 Scenarios for what J4 shows only by hand ✅
+
+VT's own activation delay (the "Gives no heat" reason `activation_delay`, the start waiting); the
+blockers and repairs of I12; an entry from before I12; "Gives no heat" with no room calling, VT not
+calling, a boiler fault and a hand-back, and across a restart; the boiler link lost twice within an
+hour; the comfort correction's trim; the modulation cap. In a few pull requests.
+Done 2026-11-28, the first part: C7 (the link lost twice within an hour: back after a minute,
+then after ten), M2 (the modulation cap set, released for hot water and when control goes off), V2
+in `devenv/j4/vt_boiler.py` ("Gives no heat" off with no room calling, `vt_not_calling` below VT's
+threshold), and checks in F1 (`boiler_fault`) and B3 (not on across the restart). Next: VT's
+activation delay and the blockers, which change VT's settings through its own forms; the comfort
+correction's trim. An entry from before I12 stays a check by hand: it needs an older build deployed.
+Done 2026-11-28, the second part, in `vt_boiler.py`, VT's settings changed through VT's own forms
+(`walk.py` `set_vt_fields`) and put back: V3 (VT's activation delay at 120 s: `activation_delay`
+shown, then the boiler heats), V4 (the bath not counted by VT — the information issue
+`vt_thermostats_not_counted`; VT's "on" command elsewhere — the blocker `vt_command_not_helper`),
+V5 (VT's helper unavailable — `vt_decision_unknown`, the hand-back at once, then control back).
+`no_vt_boiler_helper`, `vt_boiler_helper_missing` and `vt_central_boiler_not_set` stay checks by
+hand: the plugin's form takes only a helper that exists, and VT's form saves its central boiler
+only with both commands. Next: the comfort correction's trim.
+Done 2026-11-28, the third part: Q6 in `corrections.py` — a curve too high with the correction on
+and every room satisfied: the trim below the curve, never more than 3 K, and back towards 0 once a
+room is short.
+
+#### I12.28 A setup script for the bench ✅
+
+A script in `devenv/` that sets up an instance as `test-environment.md` §4 says (VT's central
+configuration with the helper's commands and a threshold above 0, the zones counted, the plugin's
+entry and control).
+Done 2026-11-28, after the bench's own script (read with the user's consent, 2026-11-28):
+`devenv/j4/setup_instance.py ROLE` makes what is missing — VT's central configuration with the
+helper's commands and its safety delay, SmartPI on the gateway role, the three zones counted by VT's
+central boiler, the bath reading its window sensor, the simulated gateway, the plugin's entry for
+the role — restarts the instance once and sets VT's device threshold at 1. An in-process test walks
+it through VT 10.6.5's and the plugin's real flows for four roles; the gateway role only adds
+SmartPI, whose vendored 0.4.0 does not register with VT 10.6.5.

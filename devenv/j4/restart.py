@@ -11,7 +11,7 @@ import traceback
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from lib import CONTAINER, DIR, HA, ssh
-from run import CODE, Run, append_result, base_problem, in_order
+from run import CODE, Run, append_result, base_problem, history, in_order
 
 
 async def wait_running(limit: float = 300) -> float | None:
@@ -35,6 +35,7 @@ async def B3(notes):
         await r.switch(True)
         await ha.wait(60)
         held = await r.override()
+        no_heat_before = await r.s("no_heat")
         t = time.time()
         await ha.call("homeassistant", "restart")
         await asyncio.sleep(20)
@@ -51,12 +52,17 @@ async def B3(notes):
         # F18 (#182): the stop's own hand-back before "stopped", the boiler taken again after
         # "started".
         journaled = in_order(kinds, ["handed_back", "stopped", "started", "took_over"])
+        # I12.16: "Gives no heat" keeps its last value while Home Assistant starts; off before,
+        # it never turns on in the start (unavailable while it has no value is allowed).
+        no_heat = [state for when, state in await history(r, r.ent["no_heat"], t) if when > t]
+        steady = no_heat_before != "off" or "on" not in no_heat
         ok = [
             held,
             ("setpoint", 0) in captured,
             await r.s("control") == "on",
             await r.override(),
             journaled,
+            steady,
         ]
         notes += [
             f"override held before: {held}",
@@ -64,6 +70,7 @@ async def B3(notes):
             f"log: {log.strip()[:600]}",
             f"up again in {up and round(up)} s; control {await r.s('control')}, state {await r.s('control_state')}, override {await r.override()}",
             f"journal (F18): {kinds}",
+            f"gives no heat (I12.16): {no_heat_before} before, then {no_heat}",
         ]
         await r.reset()
     return all(ok[2:]) and (ok[1] or "hand" in log.lower())

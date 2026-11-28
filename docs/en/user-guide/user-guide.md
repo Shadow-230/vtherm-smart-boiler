@@ -93,8 +93,10 @@ Only one entry of the integration can exist: it runs one boiler.
    an on/off helper
    (Settings → Devices & services → Helpers → Toggle) and set up VT's central boiler in VT's
    central configuration: its thresholds and activation delay, and its two commands on the helper
-   (`input_boolean.your_helper/input_boolean.turn_on` and `…/input_boolean.turn_off`). Never point
-   VT's commands at the boiler itself: two controllers must never drive the same boiler.
+   (`input_boolean.your_helper/input_boolean.turn_on` and `…/input_boolean.turn_off`). Set at
+   least one threshold above 0, for example the number of devices at 1: both are 0 by default, and
+   a threshold at 0 is off, so VT would never switch the helper. Never point VT's commands at the
+   boiler itself: two controllers must never drive the same boiler.
    Monitoring works without this; control waits for it.
 2. **Create the entry.** Settings → Devices & services → Add integration → **Smart Boiler for
    Versatile Thermostat**. The first panels ask how the boiler is connected, its heat source and
@@ -251,13 +253,20 @@ boiler stays with its own control or its thermostat.
 Versatile Thermostat's central boiler decides whether the boiler heats. Set it up in VT's central
 configuration, as VT's documentation describes: its thresholds (how many devices call, or how much
 power), its activation delay, and its two commands on an on/off helper (`input_boolean`) you
-create — never on the boiler itself. Then pick that helper in the plugin's **Control behaviour**.
+create — never on the boiler itself. At least one threshold must be above 0: both are 0 by
+default, and a threshold at 0 is off, so VT never switches the helper and nothing heats. Then pick
+that helper in the plugin's **Control behaviour**.
 The plugin follows the helper: on, the boiler heats; off, it does not. It adds the water
 temperature and its safety rules. VT's activation delay is the heat call's on-delay: a room
 calling for a moment does not start the boiler. The plugin adds no pause of its own (a pause before
-the burner starts again was tried on the simulator and did not help, I13.6).
+the burner starts again was tried on the simulator and did not help, I13.6). It follows VT's
+"off" once it has lasted 30 seconds: between its cycles VT turns the helper off for up to a few
+seconds, as one room's valve closes just before another's opens, and following that stopped the
+burner for nothing (provisional).
 
-- The plugin checks every 10 seconds, and at once when the helper changes, in both directions.
+- The plugin checks every 10 seconds, and at once when the helper changes: "on" heats at once,
+  "off" stops heating once it has lasted 30 seconds. A boiler fault, a lost link, control switched
+  off and VT's decision not known are never held.
 - Control is blocked without the helper, while VT's central boiler is not set up (ticked, with
   both commands), and while its commands switch anything but the helper; a repair issue then names
   what they switch. If VT switches your boiler's relay today, pick that relay in the plugin (the
@@ -349,8 +358,11 @@ mean covers about 3 hours. Where the circuit the curve serves has a room with un
 heating, it covers about 12 hours (provisional): a floor takes a day or more to warm up or cool
 down, so its water should not follow a short mild spell; the water then stays a little warmer
 for longer when it gets mild. The plugin does not know how heavy your house is: a heavy house
-with radiators keeps the 3-hour mean. The control state shows the value in use
-(`curve_outdoor`).
+with radiators keeps the 3-hour mean. The mean is kept through a restart and a change of
+settings: it then goes on from where it was, catching up with the time it missed, rather than
+starting again at the current temperature. **Curve outdoor temperature** shows the value the curve
+uses, with the mean, the last reading, where it came from and the hours the mean covers; the
+control state shows it too (`curve_outdoor`).
 
 If the outdoor temperature is lost, the plugin uses the weather entity, then keeps the last
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
@@ -384,7 +396,8 @@ control state shows the correction with its sign: `comfort_correction` below 0 m
 curve.
 
 What it costs: more gas, and more burner starts — with VT's TPI zones it can sit at its limit:
-in the simulation up to about 3.5 times the starts in steady frost, for almost no warmth. Below the
+in the simulation up to about 1.3 times the starts in frost with the daily swing, for almost no
+warmth. Below the
 curve, a room may warm up more slowly. That is why it is off: where a room
 stays cold, raise the curve first. A "Reset comfort correction" button sets it back to zero.
 
@@ -525,7 +538,7 @@ room misses heat, and a zone algorithm can learn from the rest. Its attribute `r
 is on:
 
 - **VT's central boiler does not call for heat** (`vt_not_calling`) — a room calls, but VT's
-  helper is off: VT's thresholds are not reached;
+  helper is off: VT's thresholds are not reached, or both are 0;
 - **VT's activation delay runs** (`activation_delay`);
 - **The boiler heats hot water** (`hot_water`) — only with hot water priority;
 - **The boiler reports a fault** (`boiler_fault`);
@@ -1361,6 +1374,7 @@ disabled by default.
 | Control (experimental) | whether control is on; it switches nothing (control is switched in the options). Its attributes say what blocks it and what a hand-back does in your installation |
 | Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with; the modulation cap and why, where it is on ([4.13](#413-the-modulation-cap-opt-in)) |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
+| Curve outdoor temperature | the outdoor temperature the curve uses — the lower of now and the mean — with the mean, the last reading, its source and the hours the mean covers ([4.4](#44-the-water-temperature)); not with a relay |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
 | Gives no heat | on while a room calls for heat and the boiler gives none, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
 | Calling for heat | the rooms calling now, which they are, and the circuits they are on |

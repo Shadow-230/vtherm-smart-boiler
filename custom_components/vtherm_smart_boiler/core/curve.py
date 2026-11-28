@@ -78,12 +78,14 @@ class OutdoorSource(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class OutdoorState:
-    """Moving average of the outdoor temperature and the last effective value."""
+    """Moving average of the outdoor temperature and the last effective value — the one the
+    curve uses."""
 
     average: float | None = None
     effective: float | None = None
     source: OutdoorSource = OutdoorSource.NONE
     updated_at: float | None = None  # when a real reading last came in
+    current: float | None = None  # the last real reading, shown beside the mean
 
 
 DEFAULT_TIME_CONSTANT_S = 3 * HOUR
@@ -120,7 +122,10 @@ def update_outdoor(
     """The effective outdoor temperature from fresh readings (``None`` = missing or stale).
 
     The sensor wins over the weather entity. Without either, the last effective value holds
-    for ``hold_s``; after that the state says there is nothing usable.
+    for ``hold_s``; after that the state says there is nothing usable. A mean kept across a
+    restart (I12.22) is aged by the time since its last reading, as every step is. No step of
+    resolution: one of 0.2 or 0.5 K on the value the curve uses, either way or on warming only,
+    left a room 1 K short and raised the boiler's starts in the simulator (I12.22, 2026-11-28).
     """
     if sensor is not None:
         current, source = sensor, OutdoorSource.SENSOR
@@ -130,12 +135,14 @@ def update_outdoor(
         # A reading "later than now" (the wall clock set back) counts from now (PB-28).
         since = None if previous.updated_at is None else min(previous.updated_at, now)
         if previous.effective is not None and since is not None and now - since <= hold_s:
-            return OutdoorState(previous.average, previous.effective, OutdoorSource.HELD, since)
-        return OutdoorState(previous.average, None, OutdoorSource.NONE, since)
+            return OutdoorState(
+                previous.average, previous.effective, OutdoorSource.HELD, since, previous.current
+            )
+        return OutdoorState(previous.average, None, OutdoorSource.NONE, since, previous.current)
     if previous.average is None or previous.updated_at is None:
         average = current
     else:
         elapsed = max(0.0, now - previous.updated_at)
         weight = 1.0 - math.exp(-elapsed / time_constant_s) if time_constant_s > 0 else 1.0
         average = previous.average + weight * (current - previous.average)
-    return OutdoorState(average, min(current, average), source, now)
+    return OutdoorState(average, min(current, average), source, now, current)

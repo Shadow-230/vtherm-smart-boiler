@@ -14,7 +14,11 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     ControlState,
     Reason,
 )
-from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
+from custom_components.vtherm_smart_boiler.core.curve import (
+    HeatingCurve,
+    OutdoorSource,
+    OutdoorState,
+)
 from custom_components.vtherm_smart_boiler.core.demand import zone_wants_heat
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
@@ -303,6 +307,14 @@ def test_a_new_session_keeps_the_comfort_corrections_weather_and_starts() -> Non
     assert fresh.correction == 0.0
 
 
+def test_a_new_session_keeps_the_curves_outdoor_mean() -> None:
+    """I12.22: the outdoor mean is the weather's, not the session's: switching control off and on
+    keeps it, so a mild spell's curve does not drop at once to the current temperature's."""
+    outdoor = OutdoorState(-3.0, -3.0, OutdoorSource.SENSOR, 300.0, current=4.0)
+    fresh = new_session(LoopState(control=ControlState(outdoor=outdoor)), 400.0).control
+    assert fresh.outdoor == outdoor
+
+
 def test_a_new_session_keeps_the_boiler_link_window() -> None:
     """X2: the link's samples are a fact about the link, not the session — switching control
     off and on while the link is lost does not make it fresh: still lost, nothing written,
@@ -358,7 +370,7 @@ def test_ignored_from_the_start_keeps_the_other_target() -> None:
     assert events == [GuardEvent.IGNORED]
     assert outs[-1][1].ignored == ("setpoint",)
     state, outs = run(state, config, 370.0, 400.0, 0.0, opening=0.0)
-    assert outs[0][1].ch_enable is False  # heating off goes
+    assert outs[-1][1].ch_enable is False  # heating off goes, once VT's off has held (I12.23)
     assert all(out.setpoint is None for _t, out in outs)
     # VT asks for heat again (its frost preset, say): heating goes on.
     state, out = loop_step(state, inputs(410.0), 0.0, config)
