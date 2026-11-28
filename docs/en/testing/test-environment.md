@@ -165,7 +165,10 @@ instances are started by you):
    SmartPI in the bedroom, a zone algorithm that learns. In each zone's advanced settings, its own
    safety delay of 1440 min: VT takes a sensor whose state has not been written for its delay
    (60 min by default) for dead and switches the zone to its safety mode, and the simulator's
-   steady rooms, or a steady outdoor temperature, keep one value longer than that.
+   steady rooms, or a steady outdoor temperature, keep one value longer than that. In the bath,
+   window detection by a sensor, `binary_sensor.boiler_sim_zone_bath_window`, at VT's defaults
+   (30 s, the zone turned off): W2 opens that window (`devenv/j4/rooms.py`), and is not run
+   without it.
 3. **Smart Boiler for Versatile Thermostat**:
    - Signals: `binary_sensor.boiler_sim_flame`, `sensor.boiler_sim_flow`,
      `sensor.boiler_sim_return`, `sensor.boiler_sim_modulation`,

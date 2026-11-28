@@ -167,6 +167,9 @@ instancjach testowych uruchamiasz Ty):
    ustaw jej własne opóźnienie bezpieczeństwa 1440 min: VT uznaje za martwy czujnik, którego stan nie był
    zapisany przez czas tego opóźnienia (domyślnie 60 min), i przełącza strefę w tryb bezpieczeństwa,
    a ustabilizowane pokoje symulatora albo stała temperatura zewnętrzna trzymają jedną wartość dłużej.
+   W łazience wykrywanie okna czujnikiem, `binary_sensor.boiler_sim_zone_bath_window`, z ustawieniami
+   domyślnymi VT (30 s, strefa wyłączana): W2 otwiera to okno (`devenv/j4/rooms.py`), a bez niego
+   nie jest uruchamiany.
 3. **Smart Boiler for Versatile Thermostat**:
    - Sygnały: `binary_sensor.boiler_sim_flame`, `sensor.boiler_sim_flow`,
      `sensor.boiler_sim_return`, `sensor.boiler_sim_modulation`,
