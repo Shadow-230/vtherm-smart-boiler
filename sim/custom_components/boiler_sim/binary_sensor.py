@@ -1,11 +1,12 @@
-"""Flame, hot water, heating demand, pump, the DHW-enable bit and the boiler's own faults."""
+"""Flame, hot water, heating demand, pump, the DHW-enable bit, the boiler's own faults, and a
+window sensor per room."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -36,7 +37,11 @@ async def async_setup_platform(
     if discovery_info is None:
         return
     hub: SimHub = hass.data[DOMAIN]
-    async_add_entities(Flag(hub, key, name, value) for key, (name, value) in FLAGS.items())
+    entities: list[BinarySensorEntity] = [
+        Flag(hub, key, name, value) for key, (name, value) in FLAGS.items()
+    ]
+    entities += [WindowSensor(hub, zone.zone_id) for zone in hub.sim.zones]
+    async_add_entities(entities)
 
 
 class Flag(SimEntity, BinarySensorEntity):
@@ -51,3 +56,18 @@ class Flag(SimEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self._value(self.hub.sim)
+
+
+class WindowSensor(SimEntity, BinarySensorEntity):
+    """A room's window (I12.26), for VT's window detection by a sensor: on while open."""
+
+    platform_domain = "binary_sensor"
+    _attr_device_class = BinarySensorDeviceClass.WINDOW
+
+    def __init__(self, hub: SimHub, zone: str) -> None:
+        super().__init__(hub, f"{zone}_window", f"{zone} window")
+        self.zone = zone
+
+    @property
+    def is_on(self) -> bool:
+        return self.hub.sim.window(self.zone)

@@ -240,7 +240,9 @@ reach, its commands dropped — the lost link; `relay`: the relay's state unknow
 `thermostat_setpoint`; a fault signal), `force_setpoint` (another controller), `ignore_writes`,
 `refuse_id1` (confirmed, then dropped), `clip_setpoint`, `drop_override` (a single fall-back),
 `start_dhw`, `set_topology`, `set_zone_mode` (a zone VT switched off closes its valve),
-`set_room_temperature` (one room set at once, as to 4 °C for frost), `reset_gateway` and
+`set_room_temperature` (one room set at once, as to 4 °C for frost), `fail_room_sensor` (a room's
+thermometer unavailable), `set_window` (a room's window sensor `binary_sensor.boiler_sim_<zone>_window`
+open or closed; the room loses heat five times as fast while it is open), `reset_gateway` and
 `restart_device` (a lost command with a trace), `relay_restart` (seen, or with `reported: false`
 unseen), `relay_wifi_loss`, `relay_switch` (an automation or its button), `set_wall_setpoint`,
 `set_fault` — the stub's own `opentherm_gw.reset_gateway`, the options (control switched through them: "Control mode", "Control on", I11), and

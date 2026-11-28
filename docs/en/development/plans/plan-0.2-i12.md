@@ -363,6 +363,9 @@ compared with the valves' state at that moment, not a sample taken seconds befor
 A signal that makes a room's thermometer fail, and a window sensor per room, so that VT's safety and
 window events and the rooms' trust (I12.10) can be brought about on the bench; the scenarios that
 use them.
+Done 2026-11-28, the simulator's part: `fail_room_sensor` (a room's thermometer unavailable),
+`set_window` and a window sensor per room (the room losing heat five times as fast while open). The
+scenarios follow in a pull request of their own.
 
 #### I12.27 Scenarios for what J4 shows only by hand
 

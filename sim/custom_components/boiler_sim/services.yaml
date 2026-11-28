@@ -160,6 +160,46 @@ set_zone_mode:
             - heat
             - "off"
             - sleep
+fail_room_sensor:
+  name: Fail a room's thermometer
+  description: >-
+    A simulated room's temperature sensor becomes unavailable, as a failed sensor leaves it. Call
+    again with "failed" off to bring it back.
+  fields:
+    zone:
+      name: Zone
+      description: The zone's ID in the simulator's layout.
+      required: true
+      example: bedroom
+      selector:
+        text:
+    failed:
+      name: Failed
+      description: Off brings the sensor back.
+      required: false
+      default: true
+      selector:
+        boolean:
+set_window:
+  name: Open or close a room's window
+  description: >-
+    A simulated room's window sensor shows it open or closed; while it is open the room loses heat
+    five times as fast.
+  fields:
+    zone:
+      name: Zone
+      description: The zone's ID in the simulator's layout.
+      required: true
+      example: bath
+      selector:
+        text:
+    open:
+      name: Open
+      description: Off closes the window.
+      required: false
+      default: true
+      selector:
+        boolean:
 set_room_temperature:
   name: Set a room's temperature
   description: A simulated room's temperature, set at once; the house model goes on from it.
