@@ -352,7 +352,7 @@ VT's thresholds default to 0, and 0 turns a threshold off, so with both at 0 VT 
 helper (`feature_central_boiler_manager.py` 514–527). The user guide (setup and §4.3) and the test
 environment (§4 item 1) say at least one must be above 0 (EN, PL).
 
-#### I12.25 H1 and E6 in the runner
+#### I12.25 H1 and E6 in the runner ✅
 
 H1: VT's central boiler goes off when its thermostats are disabled and the plugin follows it; the
 check follows VT through recognition, then the hand-back and `no_zone_known`. E6: the switch-off is
