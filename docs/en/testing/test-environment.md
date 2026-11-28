@@ -148,10 +148,13 @@ Proxmox host, so the firewall there is out of its reach.
 
 ## 4. The test installation
 
-Set up in the user interface — or by Claude through the API at J4, once you say to start:
+Set up in the user interface — or through the API by the J4 session you start (tests on the test
+instances are started by you):
 
 1. **VT central configuration**: with the central mode select, and VT's central boiler on, its
-   thresholds at VT's defaults and its two commands on the helper
+   threshold of devices at 1 (VT's thresholds are 0 by default, and 0 turns a threshold off, so VT
+   would never switch the helper), the power threshold and the activation delay at 0, and its two
+   commands on the helper
    `input_boolean.j4_vt_central_boiler`, which every configuration in `devenv/config/` holds:
    `input_boolean.j4_vt_central_boiler/input_boolean.turn_on` and `…/input_boolean.turn_off`.
    VT decides whether the boiler heats; the plugin follows the helper (I12.8). Never point these
