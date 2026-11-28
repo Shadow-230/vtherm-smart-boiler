@@ -383,6 +383,14 @@ in `devenv/j4/vt_boiler.py` ("Gives no heat" off with no room calling, `vt_not_c
 threshold), and checks in F1 (`boiler_fault`) and B3 (not on across the restart). Next: VT's
 activation delay and the blockers, which change VT's settings through its own forms; the comfort
 correction's trim. An entry from before I12 stays a check by hand: it needs an older build deployed.
+Done 2026-11-28, the second part, in `vt_boiler.py`, VT's settings changed through VT's own forms
+(`walk.py` `set_vt_fields`) and put back: V3 (VT's activation delay at 120 s: `activation_delay`
+shown, then the boiler heats), V4 (the bath not counted by VT — the information issue
+`vt_thermostats_not_counted`; VT's "on" command elsewhere — the blocker `vt_command_not_helper`),
+V5 (VT's helper unavailable — `vt_decision_unknown`, the hand-back at once, then control back).
+`no_vt_boiler_helper`, `vt_boiler_helper_missing` and `vt_central_boiler_not_set` stay checks by
+hand: the plugin's form takes only a helper that exists, and VT's form saves its central boiler
+only with both commands. Next: the comfort correction's trim.
 
 #### I12.28 A setup script for the bench
 

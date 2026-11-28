@@ -149,24 +149,40 @@ async def set_vt_cycle(rest: Rest, entry_id: str, minutes: int) -> bool:
     then "finalize". ``False``, the flow closed and nothing saved, for an entry whose "main"
     form asks no cycle. Raises ``OptionsNotSaved`` where VT refuses an answer or does not
     save."""
+    return await set_vt_fields(rest, entry_id, "main", {VT_CYCLE: minutes})
+
+
+async def set_vt_fields(rest: Rest, entry_id: str, step: str, changes: dict[str, Any]) -> bool:
+    """A VT entry's ``changes`` saved through VT's own options flow, as a user makes them
+    (I12.27: VT's activation delay in its central configuration's "central_boiler" form, "Used by
+    central boiler" in a thermostat's "main" form): the menu's ``step`` answered with what it
+    shows but the changes, a form VT shows after it with what it shows, then "finalize".
+    ``False``, the flow closed and nothing saved, where the menu offers no such step or the form
+    asks one of the changes not. Raises ``OptionsNotSaved`` where VT refuses an answer or does
+    not save."""
     _status, d = await rest("POST", FLOW, {"handler": entry_id, "show_advanced_options": True})
     path = f"{FLOW}/{d['flow_id']}"
     if d.get("type") == "menu":
-        _status, d = await rest("POST", path, {"next_step_id": "main"})
-    if d.get("type") != "form" or d.get("step_id") != "main" or VT_CYCLE not in fields(d):
+        if step not in (d.get("menu_options") or []):
+            await rest("DELETE", path, None)
+            return False
+        _status, d = await rest("POST", path, {"next_step_id": step})
+    if d.get("type") != "form" or d.get("step_id") != step or not set(changes) <= fields(d):
         await rest("DELETE", path, None)
         return False
-    _status, d = await rest("POST", path, shown(d) | {VT_CYCLE: minutes})
+    _status, d = await rest("POST", path, shown(d) | changes)
     showings = 0
     while d.get("type") == "form" and not d.get("errors") and showings < MAX_SHOWINGS:
         showings += 1
         _status, d = await rest("POST", path, shown(d))
     if d.get("type") == "form":
         await rest("DELETE", path, None)
-        raise OptionsNotSaved(f"VT refused the cycle: {d.get('errors') or d.get('step_id')}", d)
+        raise OptionsNotSaved(
+            f"VT refused {sorted(changes)}: {d.get('errors') or d.get('step_id')}", d
+        )
     if d.get("type") == "menu":
         _status, d = await rest("POST", path, {"next_step_id": "finalize"})
     if d.get("type") != "create_entry":
         await rest("DELETE", path, None)
-        raise OptionsNotSaved(f"VT did not save the cycle: {d.get('type')}", d)
+        raise OptionsNotSaved(f"VT did not save {sorted(changes)}: {d.get('type')}", d)
     return True

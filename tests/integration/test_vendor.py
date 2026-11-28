@@ -1034,6 +1034,53 @@ async def test_j4_sets_a_real_vts_cycle_through_vts_own_options(
     assert state.attributes["configuration"]["cycle_min"] == 15
 
 
+async def test_j4_sets_vts_delay_and_a_zones_count_through_vts_own_options(
+    hass: HomeAssistant, hass_client: Any
+) -> None:
+    """J4's tool for VT's settings (I12.27, ``devenv/j4/walk.py`` ``set_vt_fields``): VT's
+    activation delay set in its central configuration's "central_boiler" form, and "Used by
+    central boiler" unticked in a thermostat's "main" form, through VT's own options flow over
+    Home Assistant's REST API; the central boiler's commands stay. A step the entry's menu does
+    not offer saves nothing."""
+    from custom_components.versatile_thermostat import const as vt
+
+    helpers = {"vt_boiler": {}, "living_valve": {}}
+    assert await async_setup_component(hass, "input_boolean", {"input_boolean": helpers})
+    await room_and_boiler(hass)
+    # As VT's flow stores a central configuration, its power and presence flags off: missing,
+    # VT's options flow counts them on (``_init_central_config_flags``) and, without their
+    # sensors, the configuration not complete, so it offers no "finalize".
+    central = MockConfigEntry(
+        version=vt.CONFIG_VERSION,
+        minor_version=vt.CONFIG_MINOR_VERSION,
+        domain=vt.DOMAIN,
+        title="Central",
+        unique_id="central",
+        data={
+            **vt_central_with_boiler().data,
+            vt.CONF_USE_POWER_CENTRAL_CONFIG: False,
+            vt.CONF_USE_PRESENCE_CENTRAL_CONFIG: False,
+        },
+    )
+    zone = vt_thermostat(current=True, **{vt.CONF_USED_BY_CENTRAL_BOILER: True})
+    await setup(hass, central)
+    await setup(hass, zone)
+    walk = _j4_walk()
+    rest = await _vt_rest(hass, hass_client)
+    delay = {vt.CONF_CENTRAL_BOILER_ACTIVATION_DELAY_SEC: 120}
+    assert await walk.set_vt_fields(rest, central.entry_id, "central_boiler", delay)
+    await hass.async_block_till_done()
+    saved = {**central.data, **central.options}
+    assert saved[vt.CONF_CENTRAL_BOILER_ACTIVATION_DELAY_SEC] == 120
+    assert saved[vt.CONF_CENTRAL_BOILER_ACTIVATION_SRV] == f"{VT_HELPER}/input_boolean.turn_on"
+    assert saved[vt.CONF_CENTRAL_BOILER_DEACTIVATION_SRV] == f"{VT_HELPER}/input_boolean.turn_off"
+    unticked = {vt.CONF_USED_BY_CENTRAL_BOILER: False}
+    assert await walk.set_vt_fields(rest, zone.entry_id, "main", unticked)
+    await hass.async_block_till_done()
+    assert {**zone.data, **zone.options}[vt.CONF_USED_BY_CENTRAL_BOILER] is False
+    assert not await walk.set_vt_fields(rest, zone.entry_id, "central_boiler", delay)
+
+
 async def test_j4_leaves_a_vt_entry_whose_main_form_asks_no_cycle() -> None:
     """Negative: an entry whose "main" form asks no cycle (VT's central configuration) is left
     — its flow closed, nothing saved, ``False``."""
