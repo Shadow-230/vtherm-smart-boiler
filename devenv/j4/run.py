@@ -29,6 +29,7 @@ from options import (
     CIRCUIT_ASKS_NEED,
     GATEWAY_ITEMS,
     REMOVE_CIRCUIT,
+    VT_HELPER,
 )
 from page_checks import (
     burns_problems,
@@ -760,7 +761,9 @@ async def G3(r: Run):
 
 
 async def H1(r: Run):
-    """every VT zone unavailable: the command held through recognition, then handed back to the thermostat"""
+    """every VT zone unavailable: control follows VT's central boiler while the zones are in
+    their grace — VT turns its helper off as its thermostats go (I12) — then the hand-back to
+    the thermostat and the alarm once no zone is known"""
     await r.switch(True)
     await r.ha.wait(60)
     entries = [await r.ha.entry("versatile_thermostat", z) for z, _ in ZONES]
@@ -771,9 +774,18 @@ async def H1(r: Run):
         )
     await r.ha.wait(540)
     st = await r.st("control_state")
+    reasons = st["attributes"].get("reasons") or []
+    helper = (await r.ha.state(VT_HELPER) or {}).get("state")
     r.check(
-        st["attributes"].get("reasons") == ["zones_recognition"],
-        f"held: reasons {st['attributes'].get('reasons')}, unknown {st['attributes'].get('unknown_zones')}",
+        "zones_unknown" not in reasons and st["state"] != "handed_back",
+        f"zones in their grace: {st['state']} {reasons}, unknown {st['attributes'].get('unknown_zones')}",
+    )
+    # J4 on qas 01ef0a6: the zones go one by one, so no recognition period need start; VT's
+    # helper goes off with its thermostats, and control follows it (the recognition period,
+    # where it starts, holds the command instead).
+    r.check(
+        helper != "off" or "no_demand" in reasons or "zones_recognition" in reasons,
+        f"control follows VT's helper ({helper}): {st['state']} {reasons}",
     )
     r.check(await r.s("alarm_no_zone_known") == "off", "no alarm yet")
     await r.ha.wait(90)
@@ -1553,7 +1565,7 @@ async def E5(r: Run):
 
 async def E6(r: Run):
     """an oversized boiler in mild weather starting often on its own: heating follows VT's
-    zones and is never switched off while a zone calls"""
+    central boiler and is never switched off while VT's helper is on"""
     valves = [f"switch.boiler_sim_{zone}_valve" for zone, _t in ZONES]
     try:
         await r.sim("set_boiler", profile="short_cycling")
@@ -1570,12 +1582,13 @@ async def E6(r: Run):
             flame = now_flame
             await r.ha.wait(5)
         ch = [(at, v) for at, k, v in r.ha.since(t, "ch")]
+        # J4 on qas 01ef0a6: the plugin follows VT's helper at once, 4 ms after the last valve
+        # closes, so a valve sample seconds before still shows a call. The helper's changes as
+        # the recorder kept them judge each switch-off: wrong only if the helper was on all
+        # through the 10 s before it and the 2 s after (the runner's and the instance's clocks).
+        helper = await history(r, VT_HELPER, t)
         wrong = [
-            round(at - t)
-            for at, on in ch
-            if on is False
-            and (before := [calling for when, calling in seen if when < at - 2])
-            and before[-1]
+            round(at - t) for at, on in ch if on is False and on_throughout(helper, at - 10, at + 2)
         ]
         r.check(starts >= 6, f"the boiler cycled: {starts} starts in the hour")
         r.check(any(calling for _w, calling in seen), "a zone called")
@@ -1589,6 +1602,28 @@ async def E6(r: Run):
         # E6 off a starts instance's condensing_large (J4 of 2026-11-18).
         await r.sim("set_boiler", profile="condensing_small")
         await r.sim("set_outdoor", temperature=3.0)
+
+
+async def history(r: Run, entity_id: str, since: float) -> list[tuple[float, str]]:
+    """An entity's states since a minute before ``since``, as the recorder kept them: (when, on
+    the instance's clock; state)."""
+    start = dt.datetime.fromtimestamp(since - 60, dt.UTC).isoformat()
+    _s, h = await r.ha.rest(
+        "GET",
+        f"/api/history/period/{start}?filter_entity_id={entity_id}&minimal_response&no_attributes",
+    )
+    return [
+        (dt.datetime.fromisoformat(x["last_changed"]).timestamp(), x["state"])
+        for x in (h[0] if h else [])
+        if x.get("last_changed")
+    ]
+
+
+def on_throughout(states: list[tuple[float, str]], start: float, end: float) -> bool:
+    """Whether the entity was "on" from ``start`` to ``end`` without a break."""
+    before = [state for when, state in states if when <= start]
+    within = [state for when, state in states if start < when <= end]
+    return bool(before) and before[-1] == "on" and all(state == "on" for state in within)
 
 
 GUARD_ALARMS = ("write_failed", "write_ignored", "outside_change", "commands_lost")
