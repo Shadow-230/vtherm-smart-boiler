@@ -2325,7 +2325,10 @@ class ControlUnit:
         if in_recognition(watch) and not no_zone_issue_due(watch, now):
             return
         kind: str | None = None
-        acting = Reason.ZONES_UNKNOWN in decision.reasons
+        acting = (
+            Reason.ZONES_UNKNOWN in decision.reasons
+            or Reason.VT_DECISION_UNKNOWN in decision.reasons
+        )
         effect = "handed_back" if working_thermostat(self.options) else "off"
         if no_zone_issue_due(watch, now):
             kind = effect if acting else "monitor"
