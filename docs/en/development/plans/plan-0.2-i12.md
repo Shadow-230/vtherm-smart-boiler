@@ -358,7 +358,7 @@ H1: VT's central boiler goes off when its thermostats are disabled and the plugi
 check follows VT through recognition, then the hand-back and `no_zone_known`. E6: the switch-off is
 compared with the valves' state at that moment, not a sample taken seconds before.
 
-#### I12.26 The simulator's room thermometer and window
+#### I12.26 The simulator's room thermometer and window ✅
 
 A signal that makes a room's thermometer fail, and a window sensor per room, so that VT's safety and
 window events and the rooms' trust (I12.10) can be brought about on the bench; the scenarios that
@@ -366,6 +366,10 @@ use them.
 Done 2026-11-28, the simulator's part: `fail_room_sensor` (a room's thermometer unavailable),
 `set_window` and a window sensor per room (the room losing heat five times as fast while open). The
 scenarios follow in a pull request of their own.
+Then the scenarios (`devenv/j4/rooms.py`): T2, the bedroom's thermometer fails — that room alone
+untrusted while control goes on, trusted again once it reports; W2, the bath's window opens while it
+is the critical zone — no longer critical while open, critical again once it warms back. VT's
+safety event stays in-process: the bench's zones keep VT's safety delay at 1440 min.
 
 #### I12.27 Scenarios for what J4 shows only by hand
 
