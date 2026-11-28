@@ -1772,6 +1772,29 @@
           }
         }
       },
+      "curve_outdoor": {
+        "name": "Temperatura zewnętrzna dla krzywej",
+        "state_attributes": {
+          "mean": {
+            "name": "Średnia temperatura zewnętrzna"
+          },
+          "now": {
+            "name": "Temperatura zewnętrzna teraz"
+          },
+          "source": {
+            "name": "Źródło",
+            "state": {
+              "sensor": "Czujnik zewnętrzny kotła",
+              "weather": "Pogoda",
+              "held": "Utrzymana ostatnia wartość",
+              "none": "Brak"
+            }
+          },
+          "mean_hours": {
+            "name": "Średnia z (godzin)"
+          }
+        }
+      },
       "features": {
         "name": "Funkcje",
         "state_attributes": {

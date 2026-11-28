@@ -445,6 +445,7 @@ async def async_setup_entry(
         if coordinator.control.options.write_path is not WritePath.RELAY:
             # A relay sets no water temperature (R15).
             entities.append(ControlSetpointSensor(coordinator))
+            entities.append(CurveOutdoorSensor(coordinator))  # I12.22
     coordinator.expect_entities("sensor", entities)
     async_add_entities(entities)
 
@@ -786,4 +787,31 @@ class ControlSetpointSensor(ControlEntity, SensorEntity):
             "read_back": _round(status.read_back, 1),
             "confirmation": status.setpoint_check,
             "last_change": _time(status.last_change_at),
+        }
+
+
+class CurveOutdoorSensor(ControlEntity, SensorEntity):
+    """I12.22: the outdoor temperature the curve uses — the lower of the last reading and its
+    mean, moved in steps of at least half a kelvin — with the mean, the last reading, where it
+    came from and the mean's time constant; unknown before control has decided once."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: SmartBoilerCoordinator) -> None:
+        super().__init__(coordinator, "curve_outdoor")
+
+    @property
+    def native_value(self) -> float | None:
+        return _round(self.control.status.curve_outdoor, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        status = self.control.status
+        return {
+            "mean": _round(status.outdoor_mean, 1),
+            "now": _round(status.outdoor_now, 1),
+            "source": status.outdoor_source,
+            "mean_hours": status.outdoor_mean_hours,
         }

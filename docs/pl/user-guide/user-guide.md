@@ -372,8 +372,11 @@ obejmuje około 3 godzin. Gdy w obiegu, któremu służy krzywa, jest pokój z o
 podłogowym, obejmuje około 12 godzin (wartość tymczasowa): podłoga nagrzewa się i stygnie dobę
 albo dłużej, więc jej woda nie powinna iść za krótkim ociepleniem; przy ociepleniu woda zostaje
 wtedy dłużej nieco cieplejsza. Wtyczka nie wie, jak ciężki jest Twój dom: ciężki dom z
-grzejnikami zostaje przy średniej z 3 godzin. Stan sterowania pokazuje używaną wartość
-(`curve_outdoor`).
+grzejnikami zostaje przy średniej z 3 godzin. Średnia przetrwa restart i zmianę ustawień:
+liczy się dalej od miejsca, w którym była, nadrabiając czas, który minął, zamiast zaczynać od
+bieżącej temperatury. **Temperatura zewnętrzna dla krzywej** pokazuje wartość, której używa
+krzywa, ze średnią, ostatnim odczytem, jego źródłem i liczbą godzin średniej; pokazuje ją też
+stan sterowania (`curve_outdoor`).
 
 Gdy brakuje temperatury zewnętrznej, wtyczka używa encji pogody, potem przez 3 godziny trzyma
 ostatnią znaną wartość, a następnie używa twojej nastawy awaryjnej albo punktu projektowego
@@ -1422,6 +1425,7 @@ domyślnie wyłączone.
 | Sterowanie (eksperymentalne) | czy sterowanie jest włączone; niczego nie przełącza (sterowanie przełącza się w opcjach). Jego atrybuty mówią, co je blokuje i co w twojej instalacji robi oddanie sterowania |
 | Stan sterowania | wyłączone, niedozwolone, oddane kotłu, czeka na dane, grzanie, postój, nastawa awaryjna albo usterka kotła — z przyczynami; temperatury pokoju i na zewnątrz krzywej, z którymi ustalono wodę; ograniczenie modulacji i jego powód, gdy jest włączone ([4.13](#413-ograniczenie-modulacji-do-włączenia)) |
 | Nastawa zasilania ze sterowania | nastawa, jaką potwierdza kocioł; inaczej nieznana, nigdy wartość żądana |
+| Temperatura zewnętrzna dla krzywej | temperatura zewnętrzna, której używa krzywa — niższa z bieżącej i średniej — ze średnią, ostatnim odczytem, jego źródłem i liczbą godzin średniej ([4.4](#44-temperatura-wody)); nie przy przekaźniku |
 | Wezwanie do grzania | włączone, gdy wtyczka wzywa kocioł do grzania, wyłączone z powodem, gdy nie; przy zmianie wysyłane jest zdarzenie |
 | Nie daje ciepła | włączone, gdy pokój woła o ciepło, a kocioł go nie daje, z powodem; niedostępne, gdy sterowanie jest wyłączone — dla algorytmów stref ([Nie daje ciepła](#nie-daje-ciepła)) |
 | Wołające o ciepło | pokoje wołające teraz, które to są i na jakich obiegach |

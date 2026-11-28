@@ -3750,6 +3750,34 @@ async def test_an_underfloor_curve_follows_a_slower_outdoor_mean(
     assert curve_outdoor() == 0.0
 
 
+async def test_the_curves_outdoor_mean_is_kept_through_a_reload(rig: Rig) -> None:
+    """I12.22: an hour at 10 °C after 5 °C, then the entry reloaded (options saved, control
+    switched in the settings, a restart): the curve keeps reading the 3-hour mean, aged by the
+    reload's minute, not the current 10 °C. "Curve outdoor temperature" shows that value, with
+    the mean, the last reading, where it came from and the mean's hours."""
+    await set_up(rig, add_entry(rig, with_circuit(rig, {"max_flow": 40})))
+    await rig.switch(True)
+    await rig.advance(60)
+    rig.outdoor = 10.0
+    await rig.advance(3600, step=60.0)
+
+    def curve_outdoor() -> float:
+        return rig.state("sensor", "control_state").attributes["curve_outdoor"]
+
+    before = curve_outdoor()
+    assert before == pytest.approx(6.4, abs=0.051)
+    assert rig.entry is not None
+    assert await rig.hass.config_entries.async_reload(rig.entry.entry_id)
+    await rig.advance(60)
+    assert curve_outdoor() == pytest.approx(before, abs=0.2)  # not 10 °C again
+    shown = rig.state("sensor", "curve_outdoor")
+    assert float(shown.state) == pytest.approx(curve_outdoor(), abs=0.051)
+    assert shown.attributes["mean"] == pytest.approx(curve_outdoor(), abs=0.051)
+    assert shown.attributes["now"] == 10.0
+    assert shown.attributes["source"] == "sensor"
+    assert shown.attributes["mean_hours"] == 3.0
+
+
 async def test_a_stuck_outdoor_sensor_leaves_the_curve(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -14,7 +14,11 @@ from custom_components.vtherm_smart_boiler.core.controller import (
     ControlState,
     Reason,
 )
-from custom_components.vtherm_smart_boiler.core.curve import HeatingCurve
+from custom_components.vtherm_smart_boiler.core.curve import (
+    HeatingCurve,
+    OutdoorSource,
+    OutdoorState,
+)
 from custom_components.vtherm_smart_boiler.core.demand import zone_wants_heat
 from custom_components.vtherm_smart_boiler.core.guards import (
     DAY,
@@ -301,6 +305,14 @@ def test_a_new_session_keeps_the_comfort_corrections_weather_and_starts() -> Non
     assert fresh.starts_baseline == baseline
     assert fresh.outdoor_seen == control.outdoor_seen
     assert fresh.correction == 0.0
+
+
+def test_a_new_session_keeps_the_curves_outdoor_mean() -> None:
+    """I12.22: the outdoor mean is the weather's, not the session's: switching control off and on
+    keeps it, so a mild spell's curve does not drop at once to the current temperature's."""
+    outdoor = OutdoorState(-3.0, -3.0, OutdoorSource.SENSOR, 300.0, current=4.0)
+    fresh = new_session(LoopState(control=ControlState(outdoor=outdoor)), 400.0).control
+    assert fresh.outdoor == outdoor
 
 
 def test_a_new_session_keeps_the_boiler_link_window() -> None:
