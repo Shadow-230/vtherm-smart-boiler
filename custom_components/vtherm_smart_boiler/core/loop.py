@@ -168,7 +168,8 @@ def new_session(state: LoopState, now: float) -> LoopState:
     recognition period again or drop a zone's last answer in its grace (decision 3) — and the
     comfort correction's outdoor readings and starts baseline (rules 3 and 5, decision 11 of
     0.2.3): the weather's last hour stays known, and a new session's rise is judged against the
-    hours before the last one began until it has stayed at 0 for the window."""
+    hours before the last one began until it has stayed at 0 for the window — and the curve's
+    outdoor mean (I12.22), the weather's, not the session's."""
     control = state.control
     return LoopState(
         control=ControlState(
@@ -177,6 +178,7 @@ def new_session(state: LoopState, now: float) -> LoopState:
             zones=control.zones,
             starts_baseline=control.starts_baseline,
             outdoor_seen=control.outdoor_seen,
+            outdoor=control.outdoor,
         ),
         setpoint=for_new_session(state.setpoint, now),
         switch=for_new_session(state.switch, now),

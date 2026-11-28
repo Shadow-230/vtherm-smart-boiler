@@ -332,11 +332,18 @@ With the zones known and VT's helper neither on nor off, the reason read `zones_
 no zone is known. It reads `vt_decision_unknown` now; `zones_unknown` stays for no zone known. What
 control does is unchanged: decision 3's end state, the alarm and the repair as before.
 
-#### I12.22 The curve's outdoor mean across reloads 🔒
+#### I12.22 The curve's outdoor mean across reloads ✅
 
 The 3-hour and 12-hour means restart at every reload and restart, so after one in a mild spell
-the curve drops at once. Waits for the user's decision: keep "the lower of now and the mean" and
-keep the mean across reloads, or follow the current temperature for radiator circuits.
+the curve drops at once. The user's decision of 2026-11-28: keep "the lower of now and the mean",
+keep the mean across reloads, show it as an entity, and give it a resolution.
+Done 2026-11-28: the mean is kept in the control store with its last reading's time, and through a
+new session (control switched off and on); the next reading ages it by the time it missed. The
+entity "Curve outdoor temperature" shows the value the curve uses, with the mean, the last
+reading, its source and the mean's hours. A step of resolution (0.2 or 0.5 K, either way or on
+warming only) left a room 1 K short and raised the boiler's starts above the documented ratios in
+the simulator, so control keeps none; the user is asked whether the display should be rounded
+instead (`research/2026-11-28-i12-22-resolution-sim.md`).
 
 #### I12.23 A hold on VT's "off" 🔒
 

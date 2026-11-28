@@ -353,8 +353,11 @@ mean covers about 3 hours. Where the circuit the curve serves has a room with un
 heating, it covers about 12 hours (provisional): a floor takes a day or more to warm up or cool
 down, so its water should not follow a short mild spell; the water then stays a little warmer
 for longer when it gets mild. The plugin does not know how heavy your house is: a heavy house
-with radiators keeps the 3-hour mean. The control state shows the value in use
-(`curve_outdoor`).
+with radiators keeps the 3-hour mean. The mean is kept through a restart and a change of
+settings: it then goes on from where it was, catching up with the time it missed, rather than
+starting again at the current temperature. **Curve outdoor temperature** shows the value the curve
+uses, with the mean, the last reading, where it came from and the hours the mean covers; the
+control state shows it too (`curve_outdoor`).
 
 If the outdoor temperature is lost, the plugin uses the weather entity, then keeps the last
 known value for 3 hours, then uses your fallback setpoint or the curve's design point. A failed
@@ -1365,6 +1368,7 @@ disabled by default.
 | Control (experimental) | whether control is on; it switches nothing (control is switched in the options). Its attributes say what blocks it and what a hand-back does in your installation |
 | Control state | off, not allowed, handed back, waiting for data, heating, idle, fallback setpoint or boiler fault — with its reasons; the curve's room and outdoor temperatures the water was decided with; the modulation cap and why, where it is on ([4.13](#413-the-modulation-cap-opt-in)) |
 | Control flow setpoint | the setpoint as the boiler confirms it; unknown otherwise, never the value asked for |
+| Curve outdoor temperature | the outdoor temperature the curve uses — the lower of now and the mean — with the mean, the last reading, its source and the hours the mean covers ([4.4](#44-the-water-temperature)); not with a relay |
 | Heat call | on while the plugin calls the boiler for heat, off with the reason while it does not; an event fires when it changes |
 | Gives no heat | on while a room calls for heat and the boiler gives none, with the reason; unavailable while control is off — for zone algorithms ([Gives no heat](#gives-no-heat)) |
 | Calling for heat | the rooms calling now, which they are, and the circuits they are on |

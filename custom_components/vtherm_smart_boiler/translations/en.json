@@ -1772,6 +1772,29 @@
           }
         }
       },
+      "curve_outdoor": {
+        "name": "Curve outdoor temperature",
+        "state_attributes": {
+          "mean": {
+            "name": "Outdoor mean"
+          },
+          "now": {
+            "name": "Outdoor now"
+          },
+          "source": {
+            "name": "Source",
+            "state": {
+              "sensor": "Boiler's outdoor sensor",
+              "weather": "Weather",
+              "held": "Last value held",
+              "none": "None"
+            }
+          },
+          "mean_hours": {
+            "name": "Mean over (hours)"
+          }
+        }
+      },
       "features": {
         "name": "Features",
         "state_attributes": {

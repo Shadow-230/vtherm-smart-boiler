@@ -195,6 +195,7 @@ from .core.controller import (
     clock_start,
     reset_correction,
 )
+from .core.curve import OutdoorSource, OutdoorState
 from .core.demand import zone_wants_heat
 from .core.guards import (
     PREVIOUS_EXEMPT_S,
@@ -562,6 +563,36 @@ def _memory_moved(before: LoopState, after: LoopState) -> bool:
     )
 
 
+def _stored_outdoor(outdoor: OutdoorState) -> dict[str, Any]:
+    """I12.22: the curve's outdoor mean as stored, with the value the curve used and when its
+    last reading came; nothing while no reading has come."""
+    if outdoor.average is None or outdoor.updated_at is None:
+        return {}
+    return {
+        "outdoor": {
+            "average": outdoor.average,
+            "effective": outdoor.effective,
+            "source": outdoor.source.value,
+            "updated_at": outdoor.updated_at,
+        }
+    }
+
+
+def _outdoor(raw: Any) -> OutdoorState:
+    """A stored outdoor mean (I12.22); anything else raises ``ValueError``. The next reading ages
+    it by the time since ``updated_at``; without one, the value the curve used holds for the
+    hold time from then, as before the reload."""
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"not an outdoor mean: {raw!r}")
+    effective = raw.get("effective")
+    return OutdoorState(
+        average=_setpoint(raw.get("average")),
+        effective=None if effective is None else _setpoint(effective),
+        source=OutdoorSource(str(raw.get("source"))),
+        updated_at=_setpoint(raw.get("updated_at")),
+    )
+
+
 def _times(raw: Any) -> tuple[float, ...]:
     """A stored list of moments; anything else raises ``ValueError``."""
     if not isinstance(raw, list):
@@ -728,6 +759,12 @@ class ControlStatus:
     curve_room: float | None = None  # the curve's room temperature now, °C (G11 D)
     # The outdoor temperature the water was decided with, as the curve reads it (I10.3c), °C.
     curve_outdoor: float | None = None
+    # I12.22: the outdoor mean behind it, the last reading, where that came from, and the mean's
+    # time constant in hours (3, or 12 with underfloor heating, I13.8).
+    outdoor_mean: float | None = None
+    outdoor_now: float | None = None
+    outdoor_source: str | None = None
+    outdoor_mean_hours: float | None = None
     activation_at: float | None = None  # when VT's central boiler's activation delay ends
     # X8, the relay path (R15): the relay as seen ("on", "off", "other", "unreachable"), where
     # the command stands with it (``core.relay.RelayCheck``), whether the boiler shows it heats
@@ -858,6 +895,7 @@ class ControlUnit:
         self._wrote_setpoint = False
         self._release_baseline: float | None = None
         self._baseline: float | None = None  # this session's, noted before a step may reset it
+        self._outdoor_hours: float | None = None  # the curve's outdoor mean, in hours (I12.22)
         # Targets another controller holds after the hand-back: done, never written again.
         self._taken_targets: set[str] = set()
         self._taken_issue = False  # its repair issue is up
@@ -1157,6 +1195,8 @@ class ControlUnit:
             "link_lost_issue": HAND_BACK_LINK in self._hand_back_issues and not self.hand_back_only,
             # I13.7: the boiler may hold a modulation cap of ours: released at the next start.
             **({"modulation_cap_in_force": True} if self._cap.in_force else {}),
+            # I12.22: the curve's outdoor mean, kept through a reload and a restart.
+            **_stored_outdoor(session.loop.control.outdoor),
         }
 
     def restore(self, data: Mapping[str, Any]) -> None:
@@ -1188,6 +1228,7 @@ class ControlUnit:
         relay_restarts: tuple[float, ...] = field("relay_restarts", _times, ())
         relay_timer_seen: float | None = field("relay_timer_seen_s", _length, None)
         relay_lapses: tuple[tuple[float, float], ...] = field("relay_lapses", _lapses, ())
+        outdoor: OutdoorState = field("outdoor", _outdoor, OutdoorState())
         relay = self.options.relay
         if data.get("relay_timer_entity") != relay.entity or relay.timer is not RelayTimer.UNKNOWN:
             # Another relay's, or its timer declared since: nothing to recognise any more.
@@ -1209,7 +1250,9 @@ class ControlUnit:
             } or None
         self._session = _Session(
             loop=LoopState(
-                control=ControlState(latched=latched, latched_by=latched_by if latched else ()),
+                control=ControlState(
+                    latched=latched, latched_by=latched_by if latched else (), outdoor=outdoor
+                ),
                 setpoint=GuardState(
                     rewritten_at=rewritten_at,
                     baseline=baseline,
@@ -2051,6 +2094,10 @@ class ControlUnit:
             correction=out.decision.correction,
             curve_room=out.decision.curve_room,
             curve_outdoor=out.decision.effective_outdoor,
+            outdoor_mean=session.loop.control.outdoor.average,
+            outdoor_now=session.loop.control.outdoor.current,
+            outdoor_source=session.loop.control.outdoor.source.value,
+            outdoor_mean_hours=self._outdoor_hours,
             activation_at=self._vt_delay_end(now),
             relay_state=relay_state,
             relay_check=relay_shown,
@@ -2152,13 +2199,15 @@ class ControlUnit:
         before = session.loop
         setpoint_context, heating_context = self._contexts(now, dhw)
         installation = self._coordinator.config.installation.with_rooms([z.zone_id for z in zones])
+        # The curve's default exponent (I12.17) and its outdoor mean (I13.8) from the rooms VT
+        # hands over.
+        loop_config = with_rooms_curve(self.options, installation).loop
+        self._outdoor_hours = loop_config.control.outdoor_time_constant_s / 3600.0
         session.loop, out = loop_step(
             session.loop,
             inputs,
             confirmed,
-            # The curve's default exponent (I12.17) and its outdoor mean (I13.8) from the rooms
-            # VT hands over.
-            with_rooms_curve(self.options, installation).loop,
+            loop_config,
             self._confirmed_heating(),
             setpoint_context=setpoint_context,
             heating_context=heating_context,
