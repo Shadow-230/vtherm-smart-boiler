@@ -345,13 +345,19 @@ warming only) left a room 1 K short and raised the boiler's starts above the doc
 the simulator, so control keeps none; the user is asked whether the display should be rounded
 instead (`research/2026-11-28-i12-22-resolution-sim.md`).
 
-#### I12.23 A hold on VT's "off" 🔒
+#### I12.23 A hold on VT's "off" ✅
 
 VT's central boiler drops for 0.1–5 s at a TPI cycle's boundary and the plugin stopped the boiler
-each time (5 of 16 burner stops in 12 h with VT's 5-minute cycle). Proposed: "on" at once, "off"
-after it has held 30 s (provisional, K4); never held for a fault, a lost link, control switched off
-or a hand-back. VT restarts its own activation delay at each drop, which no hold short of it
-bridges. Waits for the user's decision; L1's check follows it.
+each time (5 of 16 burner stops in 12 h with VT's 5-minute cycle). The user's decision of
+2026-11-28, "as the literature says": "on" at once, "off" after it has held 30 s (provisional, K4);
+never held for a fault, a lost link, control switched off or VT's decision unknown. VT restarts its
+own activation delay at each drop, which no hold short of it bridges.
+Done 2026-11-28: the controller holds VT's "off" while the last step applied "on" and heated, from
+the drop's start, for 30 s; L1 matches each heating write against VT's demand over the 70 s before
+it. In the simulator the plugin's starts against the boiler's own regulation fall to x0.31–x1.27
+(x1.12–x3.56 before), the rooms up to 0.1 K warmer: J4's starts criterion passes with VT's 5-minute
+cycle, and the comfort correction's cost reads about 1.3 times at most
+(`research/2026-11-28-i12-23-hold-sim.md`).
 
 #### I12.24 VT's thresholds in the documents ✅
 

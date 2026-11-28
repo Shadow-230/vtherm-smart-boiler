@@ -259,9 +259,14 @@ that helper in the plugin's **Control behaviour**.
 The plugin follows the helper: on, the boiler heats; off, it does not. It adds the water
 temperature and its safety rules. VT's activation delay is the heat call's on-delay: a room
 calling for a moment does not start the boiler. The plugin adds no pause of its own (a pause before
-the burner starts again was tried on the simulator and did not help, I13.6).
+the burner starts again was tried on the simulator and did not help, I13.6). It follows VT's
+"off" once it has lasted 30 seconds: between its cycles VT turns the helper off for up to a few
+seconds, as one room's valve closes just before another's opens, and following that stopped the
+burner for nothing (provisional).
 
-- The plugin checks every 10 seconds, and at once when the helper changes, in both directions.
+- The plugin checks every 10 seconds, and at once when the helper changes: "on" heats at once,
+  "off" stops heating once it has lasted 30 seconds. A boiler fault, a lost link, control switched
+  off and VT's decision not known are never held.
 - Control is blocked without the helper, while VT's central boiler is not set up (ticked, with
   both commands), and while its commands switch anything but the helper; a repair issue then names
   what they switch. If VT switches your boiler's relay today, pick that relay in the plugin (the
@@ -391,7 +396,8 @@ control state shows the correction with its sign: `comfort_correction` below 0 m
 curve.
 
 What it costs: more gas, and more burner starts — with VT's TPI zones it can sit at its limit:
-in the simulation up to about 3.5 times the starts in steady frost, for almost no warmth. Below the
+in the simulation up to about 1.3 times the starts in frost with the daily swing, for almost no
+warmth. Below the
 curve, a room may warm up more slowly. That is why it is off: where a room
 stays cold, raise the curve first. A "Reset comfort correction" button sets it back to zero.
 

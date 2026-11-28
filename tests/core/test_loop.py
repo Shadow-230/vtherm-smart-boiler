@@ -370,7 +370,7 @@ def test_ignored_from_the_start_keeps_the_other_target() -> None:
     assert events == [GuardEvent.IGNORED]
     assert outs[-1][1].ignored == ("setpoint",)
     state, outs = run(state, config, 370.0, 400.0, 0.0, opening=0.0)
-    assert outs[0][1].ch_enable is False  # heating off goes
+    assert outs[-1][1].ch_enable is False  # heating off goes, once VT's off has held (I12.23)
     assert all(out.setpoint is None for _t, out in outs)
     # VT asks for heat again (its frost preset, say): heating goes on.
     state, out = loop_step(state, inputs(410.0), 0.0, config)

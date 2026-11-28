@@ -95,10 +95,11 @@ a heat pump controller (excluded), or anything that sends data outside.
     controlled with blind repeats and shown as "controlled without confirmation"; freshness then
     applies to the inputs of the decision — the zones and the outdoor temperature.
 12. **VT decides whether to heat** — VT's central boiler, with its own thresholds and activation
-    delay, switches a helper the plugin follows (I12): heating goes on and off as VT decides, at
-    once and in both directions; the plugin decides only how
-    warm the water is — the curve, the limits and the ramp. Nothing the plugin counts or times
-    holds heating off, or on, against VT: an old boiler with a high minimum output cycles a lot
+    delay, switches a helper the plugin follows (I12): heating goes on and off as VT decides —
+    on at once, off once VT's "off" has lasted 30 s, as VT drops for a moment at its cycles'
+    boundaries (I12.23); the plugin decides only how
+    warm the water is — the curve, the limits and the ramp. Beyond that hold, nothing the plugin
+    counts or times holds heating off, or on, against VT: an old boiler with a high minimum output cycles a lot
     on its own, and blocking it would leave the house cold. Frequent starts are information — an
     alarm with its threshold, and the verdict. (The user's decision, 2026-09-25.) The stated
     exceptions, each with its reason (§7; the user's decisions of 2026-09-26/27):
@@ -639,7 +640,7 @@ inputs; every feature works with what it has.
 How control decides (principle 12):
 
 - Heating goes on and off with VT's decision at every control step (10 s), and at once when the
-  helper changes, in both directions. The decision interval (an option, default 5 min) applies
+  helper changes: on at once, off once VT's "off" has lasted 30 s (I12.23, provisional, K4). The decision interval (an option, default 5 min) applies
   only to the water temperature.
 - **VT decides whether to heat** (I12, the user's decision of 2026-11-25). VT's central boiler,
   set up in VT with its own thresholds (devices calling, total power) and activation delay,
@@ -1215,7 +1216,7 @@ Defaults of the safety options and why (the user reviews them at K4):
 | A timeout hand-back's device timeout | 1 min (1–60), the device's own entered by the user | the release is judged only once it has run, and "hand-back failed" 3 min after it; a longer real timeout gives a false alarm that clears once the release shows (decision 5 of `docs/en/development/plans/plan-0.2.3.md`; provisional, K4) |
 | Fallback setpoint | the last effective outdoor temperature for 3 h, then the design flow, or the user's fixed value (decision 9) | never zero heat; the valves keep rooms from overheating |
 | VT's helper | none — the user picks the helper VT's central boiler switches; control waits for it | the plugin follows VT's decision and never guesses one (I12.8) |
-| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day once a room has been short for an hour; down to 3 K below the curve while every room is under 70 % open (I13.3) | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: up to about 3.5 times the starts in the simulation since I13.3's slower pace (steady −5 °C; with a daily outdoor swing x1.3 and x2.2, against x1.1 and x2.0 with it off; about 2 to 6 times before), for under 0.15 K of comfort; below the curve a room may warm up more slowly; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
+| Comfort correction | off (K4, decided by the user 2026-11-17, reversing 2026-10-10 after J4's F8 and the literature; an entry keeps what it stored); switched on, up to its limit, 3 K by default (at most 10 K), rising at most 3 K a day once a room has been short for an hour; down to 3 K below the curve while every room is under 70 % open (I13.3) | with VT's TPI zones it can hold the water at its +3 K edge while a zone at full duty stays short of its target by TPI's own offset, and every zone's cycle then stops the burner: up to about 1.3 times the starts in the simulation since I12.23's hold on VT's "off" (x1.04 at a steady −5 °C, x1.27 with a daily outdoor swing; x0.39 and x0.60 at +8 °C; against x0.31 to x0.64 with it off; about 3.5 times before, about 2 to 6 times before I13.3), for under 0.15 K of comfort; below the curve a room may warm up more slowly; switched on, it helps a room its emitter cannot heat on the curve, bounded so the others do not overheat |
 | Alarm reaction | information; the hand-backs of decision 7 always | another controller is writing — never fight; the plugin stops heating only where the boiler itself stops |
 | Circuit-maximum alarm | the circuit's maximum + 5 K, for 10 min (information); on a circuit fed straight from the boiler, hot water with priority not counted | the boiler may overshoot the maximum; the user sees it (decision 10); the hot water does not reach that circuit (2026-10-12) |
 | "Add water" threshold | none | the value comes from the boiler's manual; a wrong default stops nothing but misleads |
@@ -1261,6 +1262,7 @@ harm thresholds the literature gives: the starts per hour (6 for the warning, 12
 | Rewrite window 24 h | `core/guards.py` | decided 2026-09-25 |
 | Hand-back retry 60 s | `control.py` | existing |
 | Lost link: 5 min stale within 10 min; back after 60 s fresh, after 10 min following a second loss within an hour (I13.2) | `core/controller.py` | 5 min decided 2026-09-25; window and recovery provisional, K4 |
+| VT's "off" followed once it has lasted 30 s; "on" at once (I12.23) | `core/controller.py` | provisional, K4 (the user's decision of 2026-11-28, from the literature) |
 | Outdoor hold 3 h; outdoor time constant 3 h, 12 h where the curve's circuit has a room with underfloor heating (I13.8) | `core/curve.py` | the hold: decision 9; the time constants: provisional, K4 (3 h: reason to confirm, Open after 0.2.2, #27; 12 h: rooms with underfloor heating answer over 20–70 h, Kull et al. 2017, and a weather compensator's manual filters over 10–20 h for most buildings, Siemens LMS14 — 12 h in the lower part, as a longer mean keeps the water up longer through a mild spell) |
 | Stuck sensor: one value held 12 h while the weather moves 3 K or more; deviation 6 K over at least 2 h of overlap | `core/signal_check.py` | provisional, K4 (reason to confirm) |
 | Modulation cap (I13.7): never below 30 %, nor within 10 points of the boiler's minimum as a share of its maximum; lifted 3 h after the flow stays more than 5 K below the setpoint for 10 min with the flame on; repeated every 30 s (an expiring entity) or every 5 min (a gateway, a held entity); a failed write, or a release its entity does not show, sent again after 60 s; the read-back judged after 120 s; the suggestion the design load × 1.2, up to 5 %, none at 90 % or more | `core/modulation_cap.py`, `core/cap_suggestion.py`, `modulation_cap.py` | provisional, K4 (the floor: boilers' minimum is 20–30 % of the maximum, Bennett 2018, and a cap at the minimum drives on/off, HEM-VAL-05; the repeats: EMS-ESP's `selburnpow` lapses within about a minute, a gateway's `MM=` is held until a reset) |

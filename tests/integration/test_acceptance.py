@@ -33,6 +33,7 @@ from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.vtherm_smart_boiler.const import DOMAIN
 from custom_components.vtherm_smart_boiler.control_config import MIGRATED_HARD_MIN
+from custom_components.vtherm_smart_boiler.core.controller import VT_OFF_HOLD_S
 
 from .harness import VT_HELPER, VT_PLATFORM, FakeZones, ServiceSpy, analyse_now
 
@@ -491,8 +492,8 @@ async def test_a_thermostat_heats_again_after_a_hand_back_that_followed_off(rig:
 
 
 async def test_heating_follows_the_zones_at_once_both_ways(rig: Rig) -> None:
-    """VT decides whether to heat: heating goes off within a step of the rooms being satisfied
-    and on within a step of a call, with no hold of any kind."""
+    """VT decides whether to heat: heating goes on within a step of a call, and off once the
+    rooms have been satisfied for 30 s — VT's "off" held (I12.23) — with no other hold."""
     await start(rig)
     await rig.switch(True)
     await rig.advance(20)
@@ -505,6 +506,8 @@ async def test_heating_follows_the_zones_at_once_both_ways(rig: Rig) -> None:
 
     rooms(2.0)
     await rig.advance(10)
+    assert rig.gateway("ch")[-1][2] is True  # held
+    await rig.advance(30)
     assert rig.gateway("ch")[-1][2] is False
     rooms(-2.0)
     await rig.advance(10)
@@ -618,7 +621,7 @@ async def test_vt_stopped_means_no_demand_not_a_hand_back(rig: Rig) -> None:
     hass.states.async_set(select.entity_id, "Stopped")
     rig.vt_mode = "off"  # VT applies it to the thermostats that follow the central mode
     rig.mirror_zones()
-    await rig.advance(10)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert rig.gateway("ch")[-1][2] is False
     assert 0.0 not in rig.setpoints()  # not handed back
     assert rig.sim.plant.override_active(rig.now())
@@ -1103,7 +1106,7 @@ async def test_zones_in_auto_or_of_the_over_climate_type_decide_as_well(
     assert rig.gateway("ch")[-1][2] is True
     assert "demand" in rig.state("sensor", "control_state").attributes["reasons"]
     rooms(2.0)
-    await rig.advance(20)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert rig.gateway("ch")[-1][2] is False
 
 
@@ -1625,7 +1628,8 @@ async def test_tpi_zones_under_control_with_the_heating_read_back(rig: Rig, outd
     on-percent of every 5-minute cycle, so VT's demand pulses — and the heating switch is read
     back from the boiler's "Central heating 1". Twelve hours, mild and cold: the plugin's own
     heating toggles are never judged an outside change or an ignored write, nothing latches,
-    and every heating write follows VT's demand as the step read it."""
+    and every heating write follows VT's demand as the step read it — "on" for 30 s after VT's
+    last call too, VT's "off" held (I12.23)."""
     await start(rig, sim={"outdoor": outdoor, "valves": "tpi"}, ch_confirmed_entity=CH_ENABLED)
     await rig.switch(True)
     mismatched: list[tuple[float, object, bool]] = []
@@ -1633,13 +1637,19 @@ async def test_tpi_zones_under_control_with_the_heating_read_back(rig: Rig, outd
     raised: set[str] = set()
     latched: set[str] = set()
     seen = len(rig.gateway("ch"))
+    last_call: float | None = None
     for _ in range(12 * 360):
         calling = zones_calling(rig)  # what the next step reads
+        if calling:
+            last_call = rig.now()
+        held = last_call is not None and rig.now() - last_call < VT_OFF_HOLD_S + 10.0
         await rig.advance(10)
         ch = rig.gateway("ch")
-        mismatched += [(t, v, calling) for t, _k, v in ch[seen:] if bool(v) is not calling]
+        mismatched += [
+            (t, v, calling) for t, _k, v in ch[seen:] if bool(v) is not (calling or held)
+        ]
         seen = len(ch)
-        if not ch or bool(ch[-1][2]) is not calling:
+        if not ch or bool(ch[-1][2]) is not (calling or held):
             behind.append(rig.now())
         raised |= {
             a for a in GUARD_ALARMS if rig.state("binary_sensor", f"alarm_{a}").state == "on"
@@ -2312,7 +2322,7 @@ async def test_an_optimistic_relay_is_controlled_without_confirmation(rig: Rig) 
     assert relay_commands(rig)[count:] == [True]  # the blind repeat put it back
     assert relay_model(rig).on
     rooms_call(rig, False)
-    await rig.advance(620)
+    await rig.advance(660)  # VT's "off" held 30 s (I12.23), then repeated
     assert relay_commands(rig)[-3:] == [False, False, False]  # "off" repeated too
     assert alarm(rig, "outside_change") == "off"
 
@@ -2346,7 +2356,7 @@ async def test_relay_proof_of_heat_outlasts_the_restart_lockout(rig: Rig) -> Non
     await relay_on_under_control(rig)
     assert rig.sim.last.flame
     rooms_call(rig, False)
-    await rig.advance(30)
+    await rig.advance(50)  # VT's "off" held 30 s (I12.23)
     assert not relay_model(rig).on
     assert not rig.sim.last.flame
     rig.sim.plant.water = 20.0  # cooled: it would fire at once but for its lockout
@@ -2560,7 +2570,7 @@ async def test_vts_activation_delay_holds_a_start_on_both_paths(rig: Rig, path: 
     await rig.advance(30)
     rig.zones.set_helper("off")
     rooms_call(rig, False)
-    await rig.advance(10)
+    await rig.advance(40)  # VT's "off" held 30 s (I12.23)
     assert not heating()
 
 
