@@ -260,7 +260,8 @@ it — fixed by refusing VT's entities by the registry first.
 #### I12.14 VT's author 🔒
 
 Decision 9, once the user has read the issue and consented. Waits: nothing is published (the
-user, 2026-11-26). Meanwhile the plugin keeps to `SAFETY_EVENT` with the restart rule, and counts a
+user, 2026-11-26). The user decides when, and is not reminded of it (2026-11-28). For the draft:
+VT restarts its activation delay at every drop of its central boiler, however short (I12.23). Meanwhile the plugin keeps to `SAFETY_EVENT` with the restart rule, and counts a
 room as fully open from 95 % applied (the duty cap is not in the API).
 
 #### I12.15 J4 and K4 🔒
