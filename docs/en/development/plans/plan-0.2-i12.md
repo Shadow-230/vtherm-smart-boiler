@@ -371,7 +371,7 @@ untrusted while control goes on, trusted again once it reports; W2, the bath's w
 is the critical zone — no longer critical while open, critical again once it warms back. VT's
 safety event stays in-process: the bench's zones keep VT's safety delay at 1440 min.
 
-#### I12.27 Scenarios for what J4 shows only by hand
+#### I12.27 Scenarios for what J4 shows only by hand ✅
 
 VT's own activation delay (the "Gives no heat" reason `activation_delay`, the start waiting); the
 blockers and repairs of I12; an entry from before I12; "Gives no heat" with no room calling, VT not
@@ -391,6 +391,9 @@ V5 (VT's helper unavailable — `vt_decision_unknown`, the hand-back at once, th
 `no_vt_boiler_helper`, `vt_boiler_helper_missing` and `vt_central_boiler_not_set` stay checks by
 hand: the plugin's form takes only a helper that exists, and VT's form saves its central boiler
 only with both commands. Next: the comfort correction's trim.
+Done 2026-11-28, the third part: Q6 in `corrections.py` — a curve too high with the correction on
+and every room satisfied: the trim below the curve, never more than 3 K, and back towards 0 once a
+room is short.
 
 #### I12.28 A setup script for the bench
 

@@ -134,3 +134,11 @@ async def test_vts_entries_are_told_apart_by_their_titles(j4) -> None:
     central, zones = await vt_boiler.vt_entries(run.Run(FakeHA([], entries), {}))
     assert central["title"] == "Central"
     assert [zone["title"] for zone in zones] == ["zone_living", "zone_bedroom", "zone_bath"]
+
+
+def test_the_trim_scenario_is_registered(j4) -> None:
+    """Q6, the comfort correction's trim (I13.3), beside the corrections' other scenarios."""
+    run, _vt_boiler = j4
+    corrections = importlib.import_module("corrections")
+    assert run.SCENARIOS["Q6"] is corrections.Q6
+    assert run.scenario_roles("Q6") == {"gateway"}
