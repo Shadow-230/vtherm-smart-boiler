@@ -243,7 +243,9 @@ są gubione — utrata łączności; `relay`: stan przekaźnika nieznany;
 `thermostat_setpoint`; sygnał usterki), `force_setpoint` (inny sterownik), `ignore_writes`,
 `refuse_id1` (potwierdzone, potem porzucone), `clip_setpoint`, `drop_override` (pojedynczy powrót awaryjny),
 `start_dhw`, `set_topology`, `set_zone_mode` (strefa wyłączona przez VT zamyka swój zawór),
-`set_room_temperature` (jeden pokój ustawiany od razu, na przykład na 4 °C jak przy ochronie przed mrozem), `reset_gateway` i
+`set_room_temperature` (jeden pokój ustawiany od razu, na przykład na 4 °C jak przy ochronie przed mrozem), `fail_room_sensor`
+(termometr pokoju niedostępny), `set_window` (czujnik okna pokoju `binary_sensor.boiler_sim_<zone>_window`
+otwarty lub zamknięty; przy otwartym oknie pokój traci ciepło pięć razy szybciej), `reset_gateway` i
 `restart_device` (utracone polecenie ze śladem), `relay_restart` (zauważony albo, z `reported: false`,
 niezauważony), `relay_wifi_loss`, `relay_switch` (automatyka albo jego przycisk), `set_wall_setpoint`,
 `set_fault` — oraz własnej usługi atrapy `opentherm_gw.reset_gateway` i opcji (przez nie przełącza się sterowanie: „Tryb sterowania”, „Sterowanie włączone”, I11), a także

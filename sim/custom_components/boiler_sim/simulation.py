@@ -536,6 +536,14 @@ class Simulation:
     def room(self, zone_id: str) -> float:
         return self.plant.room[self._index[zone_id]]
 
+    def set_window(self, zone_id: str, open_: bool) -> None:
+        """A room's window opened or closed (I12.26): its sensor shows it, and the room loses
+        heat faster while it is open."""
+        self.plant.window_open[self._index[zone_id]] = open_
+
+    def window(self, zone_id: str) -> bool:
+        return self.plant.window_open[self._index[zone_id]]
+
     def opening(self, zone_id: str) -> float:
         return self.last.openings[self._index[zone_id]]
 

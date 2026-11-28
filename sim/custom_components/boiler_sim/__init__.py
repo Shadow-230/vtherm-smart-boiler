@@ -290,6 +290,19 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
         sim.set_room(call.data["zone"], float(call.data["temperature"]))
         hub.refresh()
 
+    async def fail_room_sensor(call: ServiceCall) -> None:
+        # I12.26: the room's thermometer unavailable, as a failed or flat sensor leaves it.
+        key = f"{call.data['zone']}_temperature"
+        if call.data.get("failed", True):
+            sim.failed.add(key)
+        else:
+            sim.failed.discard(key)
+        hub.refresh()
+
+    async def set_window(call: ServiceCall) -> None:
+        sim.set_window(call.data["zone"], bool(call.data.get("open", True)))
+        hub.refresh()
+
     async def reset_gateway(call: ServiceCall) -> None:
         sim.reset_gateway(hub.now())
         hub.refresh()
@@ -406,6 +419,14 @@ def _register_scenario_services(hass: HomeAssistant, hub: SimHub) -> None:
                 vol.Required("zone"): vol.In(zone_ids),
                 vol.Required("temperature"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=40)),
             },
+        ),
+        "fail_room_sensor": (
+            fail_room_sensor,
+            {vol.Required("zone"): vol.In(zone_ids), vol.Optional("failed"): cv.boolean},
+        ),
+        "set_window": (
+            set_window,
+            {vol.Required("zone"): vol.In(zone_ids), vol.Optional("open"): cv.boolean},
         ),
         "reset_gateway": (reset_gateway, {}),
         "drop_override": (drop_override, {}),
