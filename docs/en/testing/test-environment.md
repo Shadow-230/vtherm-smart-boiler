@@ -149,7 +149,9 @@ Proxmox host, so the firewall there is out of its reach.
 ## 4. The test installation
 
 Set up in the user interface — or through the API by the J4 session you start (tests on the test
-instances are started by you):
+instances are started by you), with `HA_INSTANCE=N scripts/env.sh python devenv/j4/setup_instance.py
+ROLE` (gateway, starts, relay, entity or standalone): it makes what is missing of items 1 to 5,
+restarts the instance once, and sets VT's device threshold at 1:
 
 1. **VT central configuration**: with the central mode select, and VT's central boiler on, its
    threshold of devices at 1 (VT's thresholds are 0 by default, and 0 turns a threshold off, so VT
